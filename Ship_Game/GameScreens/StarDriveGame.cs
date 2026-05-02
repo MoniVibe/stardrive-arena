@@ -80,6 +80,29 @@ namespace Ship_Game
             ResourceManager.WaitForExit();
         }
 
+        // Verifies the Media Foundation backend is usable on this machine.
+        // Catches missing MF codec stack (Win10/11 N/KN editions) by attempting
+        // to construct VideoPlayer and set Volume — both should succeed on a
+        // working install. Sets GlobalStats.VideoDisabled if either throws so
+        // GameLoadingScreen skips the splash and jumps straight to MainMenu.
+        //
+        // Phase 2.6.A: dropped the unconditional force-disable that worked
+        // around MonoGame WindowsDX 3.8.0.1641's broken VideoPlayer
+        // (Play/GetTexture both threw NRE). MonoGame 3.8.1+ fixes both.
+        static void ProbeVideoBackend()
+        {
+            try
+            {
+                using var player = new Microsoft.Xna.Framework.Media.VideoPlayer();
+                player.Volume = 0.5f;
+            }
+            catch (Exception ex)
+            {
+                GlobalStats.VideoDisabled = true;
+                Log.Warning($"Media Foundation unavailable; videos disabled: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
         protected override void Initialize()
         {
             Instance = this;
@@ -88,6 +111,7 @@ namespace Ship_Game
             ScreenManager = new(this, Graphics);
             InitializeAudio();
             ApplyGraphics(GraphicsSettings.FromGlobalStats());
+            ProbeVideoBackend();
 
             // run initialization handler which is able to cancel and exit the game
             if (OnInitialize != null && OnInitialize() == false)

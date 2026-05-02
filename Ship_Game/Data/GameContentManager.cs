@@ -35,11 +35,33 @@ namespace Ship_Game.Data
 
         readonly object LoadSync = new();
 
+        // TODO Phase 2.2: each name here must be rewritten as HLSL and MGFX-compiled,
+        // then removed from this set. See memory: project_phase2_effect_xnb_drift.md
+        static readonly HashSet<string> Phase2BrokenEffectXnbs = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "Effects/BeamFX.xnb",
+            "Effects/scale.xnb",
+            "Effects/Thrust.xnb",
+            "Effects/desaturate.xnb",
+            "Effects/BasicFogOfWar.xnb",
+            "Effects/PlanetHalo.xnb",
+        };
+        static readonly HashSet<string> Phase2WarnedEffects = new(StringComparer.OrdinalIgnoreCase);
+        static void WarnPhase2BrokenEffectOnce(string assetName)
+        {
+            lock (Phase2WarnedEffects)
+            {
+                if (Phase2WarnedEffects.Add(assetName))
+                    Log.Warning($"Phase 2.2 stub: returning null for Effect '{assetName}' (XNA 3.1 D3DX bytecode incompatible with MGFX)");
+            }
+        }
+
         public override string ToString() => $"Content:{Name} Assets:{LoadedAssets.Count} Root:{RootDirectory}";
 
         static GameContentManager()
         {
             FixSunBurnTypeLoader();
+            Xna31Compat.Register();
         }
 
         public GameContentManager(IServiceProvider services, string name, string rootDirectory = "Content") : base(services, rootDirectory)
@@ -68,6 +90,12 @@ namespace Ship_Game.Data
         object GetField(string field)
             => typeof(ContentManager).GetField(field, BindingFlags.Instance|BindingFlags.NonPublic)?.GetValue(this);
         
+        // MonoGame's SpriteFont stores the underlying Texture2D in private field `_texture`
+        // (XNA 3.1 used `textureValue`). Reflection lookup tolerates absence so the
+        // disposal/size paths don't NRE on partially-constructed or stub fonts.
+        static Texture2D GetSpriteFontTexture(SpriteFont font)
+            => font == null ? null : GetField<Texture2D>(font, "_texture");
+
         static T GetField<T>(object obj, string name)
         {
             return (T)obj.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(obj);
@@ -197,7 +225,7 @@ namespace Ship_Game.Data
                 }
                 else if (asset is Graphics.Font font)
                 {
-                    var fontTex = GetField<Texture2D>(font, "textureValue");
+                    var fontTex = GetSpriteFontTexture(font.XnaFont);
                     numBytes += TextureSize(fontTex);
                     numBytes += font.NumCharacters * 64;
                 }
@@ -279,8 +307,8 @@ namespace Ship_Game.Data
                     break;
                 // SkinnedModel case removed in Phase 1.9 — XNAnimation deleted, TODO Phase 2.
                 case SpriteFont font:
-                    var texture = GetField<Texture2D>(font, "textureValue");
-                    if (!texture.IsDisposed)
+                    var texture = GetSpriteFontTexture(font);
+                    if (texture != null && !texture.IsDisposed)
                     {
                         if (DebugAssetLoading) Log.Write(ConsoleColor.Magenta, "Disposing font     "+(assetName??texture.Name));
                         texture.Dispose();
@@ -311,7 +339,7 @@ namespace Ship_Game.Data
                 case Model model: return StaticMesh.IsModelDisposed(model);
                 // SkinnedModel case removed in Phase 1.9 — XNAnimation deleted, TODO Phase 2.
                 case Video _: return false; // nothing to dispose
-                case SpriteFont font: return GetField<Texture2D>(font, "textureValue").IsDisposed;
+                case SpriteFont font: { var t = GetSpriteFontTexture(font); return t == null || t.IsDisposed; }
                 // Effect/Shader cases removed — both inherit GraphicsResource (handled above).
             }
             // anything that falls here is of non-disposable type, such as `Video`
@@ -418,6 +446,15 @@ namespace Ship_Game.Data
             var asset = new AssetName(assetName);
             if (assetType == typeof(SubTexture))
                 return (T)(object)LoadSubTexture(asset.RelPathWithExt);
+
+            // TODO Phase 2.2: XNA 3.1-baked Effect XNBs are D3DX fx_2_0 bytecode,
+            // which MonoGame's MGFX-based Effect reader rejects. Return null until each
+            // effect is rewritten as HLSL and MGFX-compiled. Call sites null-guard.
+            if (assetType == typeof(Effect) && Phase2BrokenEffectXnbs.Contains(asset.RelPathWithExt))
+            {
+                WarnPhase2BrokenEffectOnce(asset.RelPathWithExt);
+                return default;
+            }
 
             if (useCache && TryGetAsset(asset.RelPathWithExt, out T existing))
                 return existing;
@@ -618,25 +655,34 @@ namespace Ship_Game.Data
             return new SubTexture(texture.Name, texture, modTexPath);
         }
 
-        // Load and compile an .fx file
+        // Load an Effect from either a precompiled .mgfx or a sibling .fx (lookup
+        // resolves to .mgfx if the .fx-named asset isn't present, then falls through
+        // to a .mgfx of the same base name).
         // TODO: replace LoadEffect calls with LoadShader
         public Effect LoadEffect(string effectFile)
         {
             AssetName asset = new(effectFile);
             if (TryGetAsset(asset.RelPathWithExt, out Effect existing))
                 return existing;
-            
-            FileInfo file = ResourceManager.GetModOrVanillaFile(asset.RelPathWithExt);
+
+            // Phase 2.2: XNA 3.1 runtime HLSL compilation API was removed in MonoGame.
+            // Effects must now be precompiled to MGFX via the MonoGame Effect Compiler
+            // (mgfxc) at build time, then loaded as raw bytes through the Effect ctor.
+            // For .fx requests, look for a sibling .mgfx with the same base name.
+            string mgfxPath = asset.RelPathWithExt.EndsWith(".fx", StringComparison.OrdinalIgnoreCase)
+                ? asset.RelPathWithExt.Substring(0, asset.RelPathWithExt.Length - 3) + ".mgfx"
+                : asset.RelPathWithExt;
+
+            FileInfo file = ResourceManager.GetModOrVanillaFile(mgfxPath);
             if (file == null)
-                throw new FileNotFoundException($"LoadEffect {asset.RelPathWithExt} failed");
+                throw new FileNotFoundException($"LoadEffect {asset.RelPathWithExt}: no precompiled MGFX at '{mgfxPath}'");
 
             if (DebugAssetLoading) Log.Write(ConsoleColor.Cyan, $"LoadEffect {file.RelPath()}");
 
-            // TODO Phase 2: XNA 3.1 runtime HLSL compilation API removed in MonoGame
-            // (CompiledEffect / CompileEffectFromSource / CompilerOptions / TargetPlatform).
-            // Phase 2 should switch to MGFX precompiled effects via the content pipeline.
-            throw new NotImplementedException(
-                $"Phase 1: runtime .fx compilation disabled, cannot LoadEffect '{asset.RelPathWithExt}'");
+            byte[] bytes = File.ReadAllBytes(file.FullName);
+            var effect = new Effect(Device, bytes);
+            lock (LoadSync) RecordCacheObject(asset.RelPathWithExt, ref effect);
+            return effect;
         }
 
         // Load and compile an .fx file as an SDGraphics Shader
@@ -686,8 +732,25 @@ namespace Ship_Game.Data
                 if (animated)
                     Log.Warning($"Phase 1: skinned model '{asset.RelPathWithExt}' loaded as static (XNAnimation removed)");
 
-                Model model = LoadAsset<Model>(asset.RelPathWithExt, useCache:false);
-                mesh = StaticMesh.FromStaticModel(asset.RelPathWithExt, model);
+                // TODO Phase 2.2/3: XNA 3.1-baked Model XNBs use a VertexDeclaration
+                // binary layout that diverges from MonoGame 4.0+ (no stored vertexStride;
+                // VertexElement struct had Stream + ElementMethod fields that 4.0 dropped;
+                // exact per-element layout is undocumented and didn't fit any obvious
+                // shape in the empirical hex dump). MonoGame's ModelReader hits "Index
+                // was outside the bounds of the array" inside VertexDeclaration ctor.
+                // Tolerate by returning a stub StaticMesh — same pattern as MeshImporter.
+                // See memory: project_phase2_xnb_model_drift.md for the dump and plan.
+                try
+                {
+                    Model model = LoadAsset<Model>(asset.RelPathWithExt, useCache:false);
+                    mesh = StaticMesh.FromStaticModel(asset.RelPathWithExt, model);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning($"Phase 2.2 stub: XNB Model '{asset.RelPathWithExt}' load failed ({ex.GetType().Name}: {ex.Message}); returning empty StaticMesh");
+                    var stubBounds = new BoundingBox(-Microsoft.Xna.Framework.Vector3.One, Microsoft.Xna.Framework.Vector3.One);
+                    mesh = new StaticMesh(asset.RelPathWithExt, stubBounds);
+                }
             }
 
             lock (LoadSync) RecordCacheObject(asset.RelPathWithExt, ref mesh);

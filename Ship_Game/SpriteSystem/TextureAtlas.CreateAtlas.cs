@@ -27,23 +27,19 @@ namespace Ship_Game.SpriteSystem
                 // We compress the DDS color into DXT5 and then reload it later through XNA
                 // DXT5 size in mem after loading is 4x smaller than RGBA32, but quality sucks!
                 // DXT1 size in mem is 8x smaller than RGBA32
-                DDSFlags format = (flags & AtlasFlags.Alpha) != 0 ? DDSFlags.Dxt5BGRA : DDSFlags.Dxt1BGRA;
+                DDSFlags format = (flags & AtlasFlags.Alpha) != 0 ? DDSFlags.Dxt5 : DDSFlags.Dxt1;
                 ImageUtils.ConvertToDDS(texturePath, Width, Height, color, format);
             }
             else
             {
-                // For this atlas, compression is forbidden, so we save with BGRA color
-                // Although this will take 4x more memory
-                // TODO Phase 2: Texture2D.Save (DDS) removed in MonoGame; use SDNative
-                // ConvertToDDS path or restore via a custom DDS writer.
-                using (var atlas = new Texture2D(ResourceManager.RootContent.Device,
-                                                 Width, Height, false, SurfaceFormat.Color))
-                {
-                    atlas.SetData(color);
-                    using FileStream fs = File.Create(System.IO.Path.ChangeExtension(texturePath, "png"));
-                    atlas.SaveAsPng(fs, atlas.Width, atlas.Height);
-                    atlas.Dispose();
-                }
+                // PNG fallback for AtlasNoCompress atlases (EmpireTopBar, NewUI, Popup).
+                // SpriteBatch's AlphaBlend uses the premultiplied formula. The atlas-DDS
+                // path gets premul applied at LoadDds time; the PNG path's LoadPng does
+                // not premultiply, so we bake premultiplication into the saved PNG to
+                // keep the same on-GPU contract. Without this, bright-and-transparent
+                // pixels in NewUI/EmpireTopBar/Popup atlases saturate to white at draw.
+                ImageUtils.PremultiplyAlpha(color, color.Length);
+                ImageUtils.SaveAsPng(System.IO.Path.ChangeExtension(texturePath, "png"), Width, Height, color);
             }
         }
 

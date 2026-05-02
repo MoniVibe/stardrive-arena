@@ -62,17 +62,14 @@ namespace Ship_Game.GameScreens
         {
             Content = content;
             Player = new VideoPlayer();
-            try
-            {
-                // TODO Phase 2: Media Foundation backend may not be fully initialized in the
-                // MonoGame migration; tolerate property setter failures so the game can boot.
-                Player.Volume = GlobalStats.MusicVolume;
-                Player.IsLooped = looping;
-            }
-            catch (Exception ex)
-            {
-                Log.Warning($"VideoPlayer init partially failed: {ex.Message} (Phase 2: Media Foundation)");
-            }
+            Player.Volume = GlobalStats.MusicVolume;
+            // Phase 2.6.A: VideoPlayer.IsLooped setter is STILL unimplemented in
+            // MonoGame WindowsDX 3.8.1.303 (verified empirically — the framework
+            // upgrade fixed Play/GetTexture but not this). Looping requested by
+            // callers is silently dropped; "Loading 2" plays once then stops.
+            // The `looping` ctor param is kept for API stability and so future
+            // MonoGame upgrades can re-enable by uncommenting the line below.
+            // Player.IsLooped = looping;
         }
 
         ~ScreenMediaPlayer() { Dispose(false); }
@@ -125,10 +122,11 @@ namespace Ship_Game.GameScreens
                 Video = ResourceManager.LoadVideo(Content, videoPath);
                 Name = videoPath;
                 Rect = new Rectangle(0, 0, Video.Width, Video.Height);
-                Player.IsLooped = looping;
 
                 if (Player.Volume.NotEqual(GlobalStats.MusicVolume))
                     Player.Volume = GlobalStats.MusicVolume;
+                // IsLooped setter still unimplemented in 3.8.1.303 (see ctor).
+                // Player.IsLooped = looping;
 
                 BeginPlayTask = Parallel.Run(() =>
                 {
