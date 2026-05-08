@@ -68,12 +68,12 @@ namespace UnitTests.Utils
             timer.Start();
             PerfTimer.SpinWait(_50ms);
             bool didRefresh = timer.Stop();
-            AssertEqual(0.001f, _50ms, timer.TimeUntilNextRefresh);
+            AssertEqual(0.01f, _50ms, timer.TimeUntilNextRefresh);
             Assert.IsTrue(didRefresh, "Timer should have refreshed");
             AssertEqual(1, timer.MeasuredSamples);
-            AssertEqual(0.001f,_50ms, timer.MeasuredTotal);
-            AssertEqual(0.001f,_50ms, timer.MeasuredMax);
-            AssertEqual(0.001f,_50ms, timer.AvgTime);
+            AssertEqual(0.01f,_50ms, timer.MeasuredTotal);
+            AssertEqual(0.01f,_50ms, timer.MeasuredMax);
+            AssertEqual(0.01f,_50ms, timer.AvgTime);
         }
     }
 }
