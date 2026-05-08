@@ -4,10 +4,11 @@
 
 [Phase 4](migration-plan-phase4.md) closes the development side of the x64 + MonoGame migration: Combined Arms regression sweep, zero-warnings gate, performance budget, visual polish, mesh-export toolchain decision (§4.7 — DONE 2026-05-08), NanoMesh upstream PR, and Steam SDK x64. Phase 5 is purely about turning that work into a downloadable artefact.
 
-Two sub-phases:
+Three sub-phases:
 
-1. **§5.1 — Cut 1.60 release.** Signed installer + ZIP + Steam-folder install path. A GitHub Action under `.github/workflows/release.yml` (replicating the legacy AppVeyor steps — we don't have access to modify RedFox20's AppVeyor) builds the artefacts. Maintainer manually downloads the signed artefacts and uploads to itch.io for full releases. Patch tags trigger an additional `publish-patch` job that chunks the patch ZIP and uploads to the in-game updater path. Promoted from §4.11 in the prior plan so the release work has its own document and isn't gated on Phase 4 sign-off; UAC elevation, code signing, and the Steam-folder install path are user-facing and deserve their own PR cadence.
-2. **§5.2 — Migration close (optional, post-release).** PHASE4_RESULTS.md + ARCHITECTURE.md update + memory cleanup. Promoted from §4.10 in the prior plan and reordered after the release because the release is what ships value to users; the wrap-up doc captures what already lives in commits/memory and is not a release blocker.
+1. **§5.0 — Mars-line forward-compat patch (cross-major upgrade discovery).** Ships *before* §5.1 work begins. A final 1.51.x Mars patch adds a new `MajorUpgradeAvailablePopup` that fires when GitHub reports a higher-major release (e.g., `1.60`) — the existing `IsSameMajorVer` silently suppresses the standard new-version popup on major-mismatch, so without §5.0 a 1.51 user has no in-game signal that Jupiter exists. Same code is forward-ported to the migration branch so 1.60 (and any future major bump) inherits the behavior. Authored on the Mars maintenance line, testable in dev by bumping the local AssemblyVersion to simulate a major mismatch.
+2. **§5.1 — Cut 1.60 release.** Signed installer + ZIP + Steam-folder install path. A GitHub Action under `.github/workflows/release.yml` (replicating the legacy AppVeyor steps — we don't have access to modify RedFox20's AppVeyor) builds the artefacts. Maintainer manually downloads the signed artefacts and uploads to itch.io for full releases. Patch tags trigger an additional `publish-patch` job that chunks the patch ZIP and uploads to the in-game updater path. Promoted from §4.11 in the prior plan so the release work has its own document and isn't gated on Phase 4 sign-off; UAC elevation, code signing, and the Steam-folder install path are user-facing and deserve their own PR cadence.
+3. **§5.2 — Migration close (optional, post-release).** PHASE4_RESULTS.md + ARCHITECTURE.md update + memory cleanup. Promoted from §4.10 in the prior plan and reordered after the release because the release is what ships value to users; the wrap-up doc captures what already lives in commits/memory and is not a release blocker.
 
 **Related memory**:
 - [project_phase2_backlog_runtime.md](c:/Users/gkapu/.claude/projects/c--Development-stardrive-BlackBoxPlus/memory/project_phase2_backlog_runtime.md) — Steam SDK execution recipe (relevant when verifying §4.9 in §5.1.E smoke)
@@ -26,7 +27,7 @@ Two sub-phases:
    - Coexistence — 1.51 already installed at `C:\Games\StarDrivePlus`, 1.60 lands at `StarDrivePlus64` (Option A clean break: no upgrade-detection from `HKLM\Software\StarDrive\InstallPath`); both versions launch independently, each sees only its own SaveGameVersion.
    - Manual upgrade-in-place — user explicitly browses to `C:\Games\StarDrivePlus`; 1.51 binaries replaced; saves preserved (1.51 v20 saves stay on disk but invisible to 1.60).
 5. **README + Sentry release record updated** to point at 1.60.
-6. **Cross-major upgrade discovery channel live**: Mars-line patch shipping the new `MajorUpgradeAvailablePopup` published before the `jupiter-release-1.60` tag (no deliberate soak needed — the patch *is* the discovery channel whenever a user lands on it via the standard intra-major auto-update; the natural 1–2 day gap from release-pipeline timing is sufficient). Same code forward-ported to the migration branch so 1.60 inherits the behavior for any future major bump (§5.1.G).
+6. **Cross-major upgrade discovery channel live**: §5.0's Mars-line patch shipping `MajorUpgradeAvailablePopup` already **published** before the `jupiter-release-1.60` tag pushes (no deliberate user-soak needed — the patch *is* the discovery channel whenever a user lands on it via the standard intra-major auto-update). Same code forward-ported to the migration branch so 1.60 inherits the behavior for any future major bump.
 7. *(Optional, §5.2)* **PHASE4_RESULTS.md committed; ARCHITECTURE.md updated** to mark the migration roadmap §9 items DONE; memory entries marked RESOLVED with commit refs.
 
 **Anti-goals for Phase 5** (out of scope):
@@ -60,10 +61,66 @@ Two sub-phases:
 
 | # | Title | Risk |
 |---|---|---|
+| 5.0 | Mars-line forward-compat patch: cross-major upgrade discovery popup (ships *before* §5.1) | Low |
 | 5.1 | Cut 1.60 release: signed installer + ZIP + Steam-folder install path | Medium |
 | 5.2 | Migration close (optional, post-release): PHASE4_RESULTS.md + ARCHITECTURE.md update + memory cleanup | Low |
 
-Each sub-phase ends with a commit and is rollback-able. §5.1 ships the artefact; §5.2 documents the closed migration.
+Each sub-phase ends with a commit and is rollback-able. §5.0 puts the discovery channel into 1.51 users' hands first; §5.1 then ships the Jupiter artefact; §5.2 documents the closed migration.
+
+---
+
+## 5.0 — Mars-line Forward-compat Patch: Cross-major Upgrade Discovery Popup
+
+**Goal**: ship a final 1.51.x Mars patch *before* §5.1 release work begins that gives existing 1.51 users an in-game discovery channel for Jupiter. Same code is forward-ported into the migration branch so 1.60 inherits the behavior for any future major bump.
+
+**Why this is §5.0 and not part of §5.1**: §5.0 ships through the existing Mars-line release pipeline against the **current** AutoUpdateChecker codebase; it has no dependency on Jupiter codename rename, install-path change, or SaveGameVersion bump. Promoting it ahead of §5.1 means the discovery channel is already live in users' hands before the §5.1.A version bump even starts — there's no risk of forgetting the §5.0 prerequisite mid-way through cutting Jupiter.
+
+**Background — why a separate popup is needed**: [AutoUpdateChecker.IsSameMajorVer](../Ship_Game/GameScreens/MainMenu/AutoUpdateChecker.cs#L220-L235) compares `version.Split('.').Take(2)` between current and latest GitHub release. On mismatch (e.g., `1.51` vs `1.60`), [IsLatestVerNewer](../Ship_Game/GameScreens/MainMenu/AutoUpdateChecker.cs#L207-L218) returns `false` and the standard new-version popup is silently suppressed — log line `AutoUpdater: Major version mismatch ... Will not update` is the only trace. This is intentional: the in-game patch flow at [AutoPatcher.cs](../Ship_Game/GameScreens/MainMenu/AutoPatcher.cs) drops files into `Directory.GetCurrentDirectory()` and can't safely cross install-dir / SaveGameVersion / dependency-graph boundaries that a major bump introduces. So a 1.51 user has zero in-game signal that 1.60 exists. §5.0 adds a *second* popup that fires on major-mismatch instead of just logging — distinct from the standard NewVersionPopup, positioned top-left so it doesn't collide with intra-major patch popups in the bottom-right `Popups` UIList stack.
+
+**Mod path** (verified): mods bypass the major-version check entirely — [line 212](../Ship_Game/GameScreens/MainMenu/AutoUpdateChecker.cs#L212) gates `IsSameMajorVer` on `!isMod`. Mod patches are files-into-folder operations with no install-dir / save-format invariants, so the in-game patcher can already cross "major" mod versions without the suppression. **No mod-path change in §5.0** — the new popup is vanilla-only, matching the existing asymmetry.
+
+**Sub-steps**:
+
+1. **Author `MajorUpgradeAvailablePopup`** alongside the existing [NewVersionPopup](../Ship_Game/GameScreens/MainMenu/AutoUpdateChecker.cs#L56-L146). Different visual: positioned at the **top-left of the screen** (not via the bottom-right `Popups` UIList at `Screen.Height * 0.6f`), so it doesn't fight for stack slots with intra-major patch notifications. Click → opens URL via `Process.Start(new ProcessStartInfo(url) { UseShellExecute = true })` and `Application.Exit()` (game closes so the user can run the new installer cleanly).
+
+2. **URL config via on-disk txt file**. New file `game/upgrade-url.txt` containing the destination URL on a single line. Read at popup-creation time; first nonblank line wins. Fallback to a hardcoded constant in code (`https://stardriveteam.itch.io/mars-160`) if the file is missing/empty/IO-error. **Why on-disk**: lets us redirect users (itch.io URL changes, or we move the project to another store) without shipping another C# binary patch — push a txt-file-only patch through the existing AutoPatcher flow. Ship `upgrade-url.txt` (default content `https://stardriveteam.itch.io/mars-160`) in the Mars patch's `Release.txt` manifest *and* in the Jupiter `game/` baseline.
+
+3. **Wire into AutoUpdateChecker**. Refactor [IsLatestVerNewer / IsSameMajorVer](../Ship_Game/GameScreens/MainMenu/AutoUpdateChecker.cs#L207-L235) so that on major-mismatch, the parallel-task path can `RunOnNextFrame` a `MajorUpgradeAvailablePopup` (the existing pattern at [line 152](../Ship_Game/GameScreens/MainMenu/AutoUpdateChecker.cs#L152) for cross-thread popup creation). Existing log line stays. The popup-creation site replaces the current bare `return false` in `IsSameMajorVer`.
+
+4. **Dev-side test recipe** (before shipping). Verify the wiring against a real GitHub release without needing a live 1.60 to exist:
+   - Locally bump `AssemblyVersion` *down* (e.g., to `1.50.99999`) so the running build sees the live 1.51 GitHub release as a "higher major" — `IsSameMajorVer` will return false, the new popup should fire.
+   - Or bump *up* (e.g., to a fake `1.51.99999`) and create a draft GitHub release tagged `jupiter-release-1.60.16000` to validate the real major-mismatch path.
+   - Either path validates the wiring + URL config + thread-marshaling without shipping anything to users.
+
+5. **Ship the Mars patch**.
+   - Branch from the last 1.51 commit on the Mars maintenance line (likely the predecessor of `migration/monogame_migration`; verify before starting against tag `mars-patch-1.51.15112`).
+   - Bump `AssemblyVersion` `1.51.15112` → `1.51.<next-build>`; tag `mars-patch-1.51.<next-build>`.
+   - Use whichever pipeline the Mars line ran on (legacy AppVeyor, if still operational; or mirror through the new GitHub Action).
+   - Verify on a clean 1.51 install: in-game AutoUpdateChecker prompts (existing intra-major flow) → patch downloads + applies → restart → new code is live → next launch's GitHub poll triggers `MajorUpgradeAvailablePopup` against the dev-side staging release from step 4.
+
+6. **Forward-port to `migration/monogame_migration`**. Cherry-pick the `MajorUpgradeAvailablePopup` class + AutoUpdateChecker wiring + `upgrade-url.txt` + manifest entry. Verify compile + smoke. The forward-port means Jupiter ships with the same major-mismatch popup from day one, and any 1.7+ release in the future automatically gives 1.60 users the same in-game discovery — the popup behavior is now permanent, not a Mars-line patch-only feature.
+
+7. **Sequencing**. §5.0 must be **published** before §5.1.D step 3 (the `jupiter-release-1.60` tag push). **No deliberate soak is required**: the patch itself is the discovery channel — whenever a 1.51 user lands on the patched build via standard intra-major auto-update (immediately after publish, or weeks later when they next launch), they'll see the cross-major popup against whatever the live GitHub release is. The natural 1–2 day gap from release-pipeline timing (Mars patch goes through CI → §5.1.A starts) is fine; it gives the patch a small head-start with no downside. Without §5.0 shipped, 1.51 users have no in-game discovery for Jupiter — they'd have to find out through external channels alone (itch.io listing, README link).
+
+**Tests added**:
+- Dev-side (per step 4): bump local AssemblyVersion to `1.50.99999`, run game → on launch, GitHub poll fires `MajorUpgradeAvailablePopup` against the live 1.51 GitHub release; click opens browser to `upgrade-url.txt` URL; game exits.
+- Smoke (manual, post-patch-ship): on 1.51.<patched>, point AutoUpdateChecker at a staging GitHub release tagged `jupiter-release-1.60.16000`, verify `MajorUpgradeAvailablePopup` fires top-left, click opens browser at `upgrade-url.txt` URL, game exits.
+- Edge: missing `upgrade-url.txt` → popup fires, click opens hardcoded fallback URL (`https://stardriveteam.itch.io/mars-160`).
+- Edge: malformed `upgrade-url.txt` (CRLF, BOM, multiple lines, blank lines) → first nonblank line wins; if no valid URL, fall back to hardcoded.
+- Forward-port smoke: on 1.60.<build>, point GitHub at a hypothetical `saturn-release-1.70` (or whatever the next major codename becomes), verify same popup fires.
+- Negative: 1.51.<patched> with GitHub returning a 1.51.<later-patch> → standard NewVersionPopup fires (existing intra-major flow), no MajorUpgradeAvailablePopup. Both code paths coexist.
+
+**Verification**:
+- 1.51.<patched> install + 1.60 release on GitHub → MajorUpgradeAvailablePopup fires top-left; click opens correct URL; game exits.
+- 1.51.<patched> install + 1.51.<later-patch> release on GitHub → standard NewVersionPopup fires (no Major popup).
+- 1.60 install (post-Jupiter) + 1.60.<later-patch> on GitHub → standard NewVersionPopup; no Major popup.
+- Forward-port verified: 1.60 install + simulated 1.70 release on GitHub → MajorUpgradeAvailablePopup fires (proves the migration-branch port works).
+
+**Rollback**:
+- Mars patch can be rolled back via standard patch rollback. Existing 1.51.<patched> users keep the new behavior harmlessly (popup keeps firing, click leads to whatever `upgrade-url.txt` says — push a txt-only patch to redirect or neutralize if needed).
+- Migration-branch forward-port can be reverted via `git revert` of the cherry-picked commit if a regression surfaces during §5.1.D pre-tag smoke.
+
+**Risk**: Low. The change is additive: failure mode is the popup doesn't fire (= existing silent log-only behavior, no regression). One concern worth flagging: AutoUpdateChecker runs the version-check on `Parallel.Run`; popup creation must use `RunOnNextFrame` for thread-safe UI marshaling (the pattern is already used at line 152). Audit the wiring in step 3 to confirm marshaling discipline before shipping the Mars patch.
 
 ---
 
@@ -205,7 +262,7 @@ We can't use the existing AppVeyor (`ci.appveyor.com/project/RedFox20/stardrive`
      - Emit the signed artefacts as **workflow artefacts** (downloadable from the run's summary page) so the maintainer can grab them for the manual itch.io upload.
    - `publish-patch` (conditional — see §5.1.F).
 
-3. Tag `jupiter-release-1.60` on the merged Phase 4 branch and push it. The workflow's `build` job runs. **Prerequisite**: §5.1.G's Mars-line forward-compat patch must be **published** before this tag pushes — no deliberate user-soak is needed (the patch itself is the discovery channel whenever a user lands on it via standard intra-major auto-update), but the natural 1–2 day gap from release-pipeline timing is fine and gives a small head-start. Without §5.1.G shipped, existing 1.51 users get no in-game discovery channel for Jupiter.
+3. Tag `jupiter-release-1.60` on the merged Phase 4 branch and push it. The workflow's `build` job runs. **Prerequisite**: §5.0 already shipped (the Mars-line forward-compat patch with `MajorUpgradeAvailablePopup` is published). No deliberate user-soak is needed — the patch is the discovery channel whenever a user lands on it via standard intra-major auto-update — but §5.0 must have happened, otherwise existing 1.51 users get no in-game discovery channel for Jupiter.
 
 4. **Verify the GitHub Action ran successfully**: open the Actions tab, confirm the `release.yml` run for tag `jupiter-release-1.60` reports `build` job green. Specifically check:
    - All build + sign + `SignedBinaryCheck.ps1` steps green.
@@ -273,51 +330,6 @@ Patches (1.60.x bumps) ship more often than majors, so the post-build steps that
      - Sentry release record posted.
    - **End-to-end smoke** (one-off, not every patch): on a 1.60 install, force the updater to re-check (or wait for the launch poll), confirm AutoPatcher downloads all chunks, `PostProcessMultipleZipChunks` reassembles, and the patch applies without error.
    - If any step failed, the patch chunks aren't reachable to in-game updaters; do **not** announce the patch until the workflow is fixed and re-run.
-
-**§5.1.G — Mars-line forward-compat patch (cross-major upgrade discovery)**
-
-**Goal**: ship a final 1.51.x Mars patch *before* `jupiter-release-1.60` goes live that gives existing 1.51 users an in-game discovery channel for Jupiter. Same code is forward-ported into the migration branch so 1.60 inherits the behavior for any future major bump.
-
-**Background — why a separate popup is needed**: [AutoUpdateChecker.IsSameMajorVer](../Ship_Game/GameScreens/MainMenu/AutoUpdateChecker.cs#L220-L235) compares `version.Split('.').Take(2)` between current and latest GitHub release. On mismatch (e.g., `1.51` vs `1.60`), [IsLatestVerNewer](../Ship_Game/GameScreens/MainMenu/AutoUpdateChecker.cs#L207-L218) returns `false` and the standard new-version popup is silently suppressed — log line `AutoUpdater: Major version mismatch ... Will not update` is the only trace. This is intentional: the in-game patch flow at [AutoPatcher.cs](../Ship_Game/GameScreens/MainMenu/AutoPatcher.cs) drops files into `Directory.GetCurrentDirectory()` and can't safely cross install-dir / SaveGameVersion / dependency-graph boundaries that a major bump introduces. So a 1.51 user has zero in-game signal that 1.60 exists. §5.1.G adds a *second* popup that fires on major-mismatch instead of just logging — distinct from the standard NewVersionPopup, positioned top-left so it doesn't collide with intra-major patch popups in the bottom-right `Popups` UIList stack.
-
-**Mod path** (verified): mods bypass the major-version check entirely — [line 212](../Ship_Game/GameScreens/MainMenu/AutoUpdateChecker.cs#L212) gates `IsSameMajorVer` on `!isMod`. Mod patches are files-into-folder operations with no install-dir / save-format invariants, so the in-game patcher can already cross "major" mod versions without the suppression. **No mod-path change in §5.1.G** — the new popup is vanilla-only, matching the existing asymmetry.
-
-**Sub-steps**:
-
-1. **Author `MajorUpgradeAvailablePopup`** alongside the existing [NewVersionPopup](../Ship_Game/GameScreens/MainMenu/AutoUpdateChecker.cs#L56-L146). Different visual: positioned at the **top-left of the screen** (not via the bottom-right `Popups` UIList at `Screen.Height * 0.6f`), so it doesn't fight for stack slots with intra-major patch notifications. Click → opens URL via `Process.Start(new ProcessStartInfo(url) { UseShellExecute = true })` and `Application.Exit()` (game closes so the user can run the new installer cleanly).
-
-2. **URL config via on-disk txt file**. New file `game/upgrade-url.txt` containing the destination URL on a single line (default content: the Jupiter itch.io page URL). Read at popup-creation time; first nonblank line wins. Fallback to a hardcoded constant in code if the file is missing/empty/IO-error. **Why on-disk**: lets us redirect users (itch.io URL changes, or we move the project to another store) without shipping another C# binary patch — push a txt-file-only patch through the existing AutoPatcher flow. Ship `upgrade-url.txt` in the Mars patch's `Release.txt` manifest *and* in the Jupiter `game/` baseline.
-
-3. **Wire into AutoUpdateChecker**. Refactor [IsLatestVerNewer / IsSameMajorVer](../Ship_Game/GameScreens/MainMenu/AutoUpdateChecker.cs#L207-L235) so that on major-mismatch, the parallel-task path can `RunOnNextFrame` a `MajorUpgradeAvailablePopup` (the existing pattern at [line 152](../Ship_Game/GameScreens/MainMenu/AutoUpdateChecker.cs#L152) for cross-thread popup creation). Existing log line stays. The popup-creation site replaces the current bare `return false` in `IsSameMajorVer`.
-
-4. **Ship the Mars patch**.
-   - Branch from the last 1.51 commit on whichever branch the Mars line was last released from (verify before starting; likely a tag like `mars-release-1.51` or the predecessor of `migration/monogame_migration`).
-   - Bump `AssemblyVersion` `1.51.15100` → `1.51.<next-build>`; tag `mars-release-1.51.<next-build>-patch`.
-   - Use whichever pipeline the Mars line ran on (legacy AppVeyor, if still operational; or mirror through the new GitHub Action).
-   - Verify on a clean 1.51 install: in-game AutoUpdateChecker prompts (existing intra-major flow) → patch downloads + applies → restart → new code is live → next launch's GitHub poll triggers `MajorUpgradeAvailablePopup` against a staging "1.60" release.
-
-5. **Forward-port to `migration/monogame_migration`**. Cherry-pick the `MajorUpgradeAvailablePopup` class + AutoUpdateChecker wiring + `upgrade-url.txt` + manifest entry. Verify compile + smoke. The forward-port means Jupiter ships with the same major-mismatch popup from day one, and any 1.7+ release in the future automatically gives 1.60 users the same in-game discovery — the popup behavior is now permanent, not a Mars-line patch-only feature.
-
-6. **Sequencing**. §5.1.G's 1.51 patch must be **published** before the `jupiter-release-1.60` tag pushes (§5.1.D step 3). **No deliberate soak is required**: the patch itself is the discovery channel — whenever a 1.51 user lands on the patched build via standard intra-major auto-update (immediately after publish, or weeks later when they next launch), they'll see the cross-major popup against whatever the live GitHub release is. The natural 1–2 day gap from release-pipeline timing (Mars patch goes through CI → Jupiter installer + GitHub Action build) is fine; it gives the patch a small head-start with no downside. Without §5.1.G shipped, 1.51 users have no in-game discovery for Jupiter — they'd have to find out through external channels alone (itch.io listing, README link).
-
-**Tests added**:
-- Smoke (manual): on 1.51.<patched>, point AutoUpdateChecker at a staging GitHub release tagged `jupiter-release-1.60.16000`, verify `MajorUpgradeAvailablePopup` fires top-left, click opens browser at `upgrade-url.txt` URL, game exits.
-- Edge: missing `upgrade-url.txt` → popup fires, click opens hardcoded fallback URL.
-- Edge: malformed `upgrade-url.txt` (CRLF, BOM, multiple lines, blank lines) → first nonblank line wins; if no valid URL, fall back to hardcoded.
-- Forward-port smoke: on 1.60.<build>, point GitHub at a hypothetical `saturn-release-1.70` (or whatever the next major codename becomes), verify same popup fires.
-- Negative: 1.51.<patched> with GitHub returning a 1.51.<later-patch> → standard NewVersionPopup fires (existing intra-major flow), no MajorUpgradeAvailablePopup. Both code paths coexist.
-
-**Verification**:
-- 1.51.<patched> install + 1.60 release on GitHub → MajorUpgradeAvailablePopup fires top-left; click opens correct URL; game exits.
-- 1.51.<patched> install + 1.51.<later-patch> release on GitHub → standard NewVersionPopup fires (no Major popup).
-- 1.60 install (post-Jupiter) + 1.60.<later-patch> on GitHub → standard NewVersionPopup; no Major popup.
-- Forward-port verified: 1.60 install + simulated 1.70 release on GitHub → MajorUpgradeAvailablePopup fires (proves the migration-branch port works).
-
-**Rollback**:
-- Mars patch can be rolled back via standard patch rollback. Existing 1.51.<patched> users keep the new behavior harmlessly (popup keeps firing, click leads to whatever `upgrade-url.txt` says — push a txt-only patch to redirect or neutralize if needed).
-- Migration-branch forward-port can be reverted via `git revert` of the cherry-picked commit if a regression surfaces during §5.1.D pre-tag smoke.
-
-**Risk**: Low. The change is additive: failure mode is the popup doesn't fire (= existing silent log-only behavior, no regression). One concern worth flagging: AutoUpdateChecker runs the version-check on `Parallel.Run`; popup creation must use `RunOnNextFrame` for thread-safe UI marshaling (the pattern is already used at line 152). Audit the wiring in step 3 to confirm marshaling discipline before shipping the Mars patch.
 
 ### Tests added
 - `Deploy/SignedBinaryCheck.ps1` *(`release.yml` build-job step)* — runs `signtool.exe verify /pa /v` against `StarDrive.exe`, `SDNative.dll`, and the installer EXE. Fails the workflow if any binary is unsigned or has an expired timestamp.
@@ -408,7 +420,8 @@ Steam-folder install is straightforward but the UAC elevation change introduces 
 
 | Sub-phase | Risk | Mitigation |
 |---|---|---|
-| 5.1 1.60 Release | Medium | Signing infra (Microsoft Trusted Signing identity verification has unpredictable lead time) is the largest unknown. Steam-folder install + UAC elevation are mechanical. §5.1.G adds a Mars-line forward-compat patch dependency: the 1.51 patch must be **published** before `jupiter-release-1.60` tags. No deliberate soak is required — the patch is the discovery channel whenever a 1.51 user lands on it via standard intra-major auto-update, regardless of timing relative to the Jupiter tag. Fallback: ship unsigned 1.60 to the existing 1.51 audience, follow up with a signed 1.60.<build+1> patch when signing infra is ready. |
+| 5.0 Mars-line forward-compat patch | Low | Additive change to AutoUpdateChecker on the Mars maintenance line. Failure mode is the popup doesn't fire (= existing silent log-only behavior, no regression). One concern worth flagging: popup creation from a `Parallel.Run` task must go through `RunOnNextFrame` for thread-safe UI marshaling — pattern already used at AutoUpdateChecker line 152. Dev-side test (local AssemblyVersion bump + live 1.51 GitHub release) validates the wiring before the Mars patch ships. |
+| 5.1 1.60 Release | Medium | Signing infra (Microsoft Trusted Signing identity verification has unpredictable lead time) is the largest unknown. Steam-folder install + UAC elevation are mechanical. §5.0 must be **published** before `jupiter-release-1.60` tags (cross-major discovery channel). No deliberate user-soak required — the §5.0 patch is the discovery channel whenever a 1.51 user lands on it via standard intra-major auto-update. Fallback for signing: ship unsigned 1.60 to the existing 1.51 audience, follow up with a signed 1.60.<build+1> patch when signing infra is ready. |
 | 5.2 Migration close (optional) | Low | Documentation only. The release in §5.1 is what users see; this step is for future maintainers. |
 
 **Migration close**: §5.1 ships `jupiter-release-1.60`. After that, ARCHITECTURE.md §9's "Suggested Migration Order" gets a "Migration completed" marker (in §5.2 if done, or directly when convenient otherwise), and all migration-related memory entries are settled. Future work falls under "post-migration" — gameplay features, mod support extensions, engine upgrades — and is out of scope for this plan series.
