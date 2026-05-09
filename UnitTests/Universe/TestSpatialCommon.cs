@@ -225,6 +225,7 @@ namespace UnitTests.Universe
         }
         
         [TestMethod]
+        [TestCategory("Performance")]
         public void TreeUpdatePerformance()
         {
             ISpatial tree = CreateQuadTree(1_000_000, 5_000);
@@ -367,6 +368,7 @@ namespace UnitTests.Universe
         }
         
         [TestMethod]
+        [TestCategory("Performance")]
         public void CollisionPerformance()
         {
             ISpatial tree = CreateQuadTree(40_000, 2_000);

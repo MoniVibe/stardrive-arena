@@ -1304,6 +1304,7 @@ namespace UnitTests.Serialization
         }
 
         [TestMethod]
+        [TestCategory("Performance")]
         public void SavedGameSerializerPerf()
         {
             CreateCustomUniverseSandbox(numOpponents: 6, galSize: GalSize.Large, numExtraShipsPerEmpire: 100);

@@ -27,6 +27,7 @@ public class TypeSerializerTests : StarDriveTest
     }
 
     [TestMethod]
+    [TestCategory("Performance")]
     public void CreateInstancePerf()
     {
         const int iterations = 100_000;
@@ -55,6 +56,7 @@ public class TypeSerializerTests : StarDriveTest
     }
     
     [TestMethod]
+    [TestCategory("Performance")]
     public void CreateStructPerf()
     {
         const int iterations = 1_000_000;

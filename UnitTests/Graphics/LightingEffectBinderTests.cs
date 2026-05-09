@@ -59,14 +59,20 @@ public class LightingEffectBinderTests : StarDriveTest
     }
 
     [TestMethod]
-    public void NoLightsSubmitted_LightingDisabled()
+    public void NoLightsSubmitted_AmbientFloorApplied()
     {
         var lightManager = new SunBurnLights.LightManager();
         var env = new SceneEnvironment { AmbientLightColor = Vector3.Zero };
         using var fx = new LightingEffect(Game.GraphicsDevice);
         LightingEffectBinder.Apply(fx, lightManager.ActiveLights, env, Vector3.Zero);
 
-        Assert.IsFalse(fx.LightingEnabled, "LightingEnabled should be false when no lights and zero ambient.");
+        // §4.6 #12: MinAmbient floor (0.2) lifts zero ambient so hulls
+        // never go fully black. LightingEnabled stays true as a result.
+        Assert.IsTrue(fx.LightingEnabled, "Ambient floor should keep lighting enabled.");
+        Assert.AreEqual(0.2f, fx.AmbientLightColor.X, 0.001f, "Ambient.X should be lifted to MinAmbient.");
+        Assert.AreEqual(0.2f, fx.AmbientLightColor.Y, 0.001f, "Ambient.Y should be lifted to MinAmbient.");
+        Assert.AreEqual(0.2f, fx.AmbientLightColor.Z, 0.001f, "Ambient.Z should be lifted to MinAmbient.");
+
         Assert.IsFalse(fx.DirectionalLight0.Enabled);
         Assert.IsFalse(fx.DirectionalLight1.Enabled);
         Assert.IsFalse(fx.DirectionalLight2.Enabled);
