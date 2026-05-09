@@ -138,15 +138,34 @@ namespace Ship_Game
             if (Debugger.IsAttached && settings.Mode == WindowMode.Fullscreen)
                 settings.Mode = WindowMode.Borderless;
 
-            Graphics.PreferredBackBufferWidth = settings.Width;
-            Graphics.PreferredBackBufferHeight = settings.Height;
-            Graphics.SynchronizeWithVerticalRetrace = settings.VSync;
-
+            // FormBorderStyle MUST be set BEFORE PreferredBackBuffer*: changing
+            // the border fires a WinForms SizeChanged event, and MonoGame
+            // WindowsDX's SizeChanged handler clobbers PreferredBackBufferWidth
+            // /Height with the form's current ClientSize (the Phase 2.2 trap
+            // documented below). For Borderless that wasn't fatal — the
+            // form.ClientSize assignment further down re-fires SizeChanged with
+            // the right values. Fullscreen skips that block, so the clobber
+            // stuck and ToggleFullScreen() entered hardware mode at the
+            // wrong resolution.
+            //
+            // Fullscreen also needs Border=None: MonoGame's exclusive fullscreen
+            // hides the form visually, but the underlying WinForms client-area
+            // origin is still offset by the title-bar height. Mouse-coord
+            // transforms clamp to client area, producing a ~25px dead zone at
+            // the top — invisible on the main menu, fatal on the universe HUD
+            // where interactive elements sit at Y=0. Only surfaces outside the
+            // debugger because Debugger.IsAttached above silently downgrades
+            // Fullscreen to Borderless for VS launches.
             switch (settings.Mode)
             {
                 case WindowMode.Windowed:   form.FormBorderStyle = FormBorderStyle.Fixed3D; break;
                 case WindowMode.Borderless: form.FormBorderStyle = FormBorderStyle.None;    break;
+                case WindowMode.Fullscreen: form.FormBorderStyle = FormBorderStyle.None;    break;
             }
+
+            Graphics.PreferredBackBufferWidth = settings.Width;
+            Graphics.PreferredBackBufferHeight = settings.Height;
+            Graphics.SynchronizeWithVerticalRetrace = settings.VSync;
 
             if (settings.Mode != WindowMode.Fullscreen && Graphics.IsFullScreen ||
                 settings.Mode == WindowMode.Fullscreen && !Graphics.IsFullScreen)

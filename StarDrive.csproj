@@ -994,7 +994,11 @@
     an itch.io single-file ZIP).
   -->
   <Target Name="MakeMajorInstaller" AfterTargets="Build" Condition="'$(Configuration)' == 'Deploy'">
-    <Exec Command="py -3 &quot;$(SolutionDir)Deploy\MakeInstaller.py&quot; --root_dir &quot;$(SolutionDir).&quot; --major --type=nsis" />
+    <!-- Use $(MSBuildProjectDirectory), not $(SolutionDir): when msbuild is
+         pointed at the .csproj directly (not the .sln), $(SolutionDir) is
+         literal *Undefined* and the post-build crashes. The repo root is
+         where the .csproj lives. -->
+    <Exec Command="py -3 &quot;$(MSBuildProjectDirectory)\Deploy\MakeInstaller.py&quot; --root_dir &quot;$(MSBuildProjectDirectory)&quot; --major --type=nsis" />
   </Target>
 
 </Project>
