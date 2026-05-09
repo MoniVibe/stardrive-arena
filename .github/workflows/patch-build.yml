@@ -1,0 +1,207 @@
+name: Patch Build
+
+# Replicates the legacy AppVeyor patch flow (RedFox20/stardrive on AppVeyor) which we
+# can't modify. Mirrored steps captured from AppVeyor build 15118 (job v3ap90let099hhk0):
+#   checkout (with submodules) → patch AssemblyInfo → nuget restore → msbuild → vstest →
+#   MakeInstaller.py (zip + nsis) → upload artefacts → create GitHub release (publish).
+#
+# This workflow diverges in two places:
+#   1. Release is created as DRAFT — maintainer publishes manually after sanity-checking.
+#   2. Release body includes a one-line-per-commit summary since the previous patch tag.
+#
+# Triggers on pushes to the migration branch for the duration of the migration cycle.
+# Once migration/monogame_migration merges to main, change this to `main` to match
+# AppVeyor's deploy gate (should_deploy() returns true only for main/develop).
+# workflow_dispatch is enabled for manual testing on any branch the workflow file exists on.
+
+on:
+  push:
+    branches: [migration/monogame_migration]
+  workflow_dispatch:
+
+# Codename + major.minor are stable per release line; bump these in lockstep with §5.1.A
+# (Mars → Jupiter rename, 1.51 → 1.60). Build counter comes from github.run_number, which
+# is monotonically incremented per-workflow-file by GitHub Actions — equivalent to
+# AppVeyor's APPVEYOR_BUILD_VERSION counter.
+env:
+  CODENAME: Mars
+  MAJOR_MINOR: "1.51"
+
+jobs:
+  build:
+    runs-on: windows-2022
+    permissions:
+      contents: write   # required for `gh release create`
+
+    steps:
+      - name: Checkout (with submodules + tags)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0    # need full history + tags for commit summary
+
+      - name: Compute build version
+        id: version
+        shell: pwsh
+        run: |
+          $build  = '{0:D5}' -f ${{ github.run_number }}
+          $version = "${env:MAJOR_MINOR}.$build"
+          $tag    = "$($env:CODENAME.ToLower())-patch-$version"
+          $title  = "$($env:CODENAME) Patch v$version"
+          Write-Host "version=$version`ntag=$tag`ntitle=$title"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag"         >> $env:GITHUB_OUTPUT
+          "title=$title"     >> $env:GITHUB_OUTPUT
+
+      - name: Patch AssemblyInfo files
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $files = @(
+            'Properties/AssemblyInfo.cs',
+            'SDGraphics/Properties/AssemblyInfo.cs',
+            'SDUtils/Properties/AssemblyInfo.cs',
+            'UnitTests/Properties/AssemblyInfo.cs'
+          )
+          foreach ($f in $files) {
+            (Get-Content $f) `
+              -replace 'AssemblyVersion\("[^"]*"\)',              "AssemblyVersion(`"$version`")" `
+              -replace 'AssemblyInformationalVersion\("[^"]*"\)', "AssemblyInformationalVersion(`"$version`")" `
+              | Set-Content $f
+            Write-Host "Patched $f -> $version"
+          }
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: NuGet restore
+        run: nuget restore StarDrive.sln
+
+      - name: Build solution (Release|x64)
+        run: msbuild StarDrive.sln /m /verbosity:minimal /p:Configuration=Release /p:Platform=x64
+
+      - name: Run unit tests
+        run: dotnet test UnitTests/SDUnitTests.csproj --configuration Release --no-build --settings unittests.runsettings --logger "console;verbosity=normal"
+
+      - name: Build patch artefacts (ZIP + NSIS)
+        env:
+          APPVEYOR_BUILD_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          py -3 Deploy/MakeInstaller.py --root_dir=. --patch --type=zip
+          py -3 Deploy/MakeInstaller.py --root_dir=. --patch --type=nsis
+
+      - name: List produced artefacts
+        shell: pwsh
+        run: Get-ChildItem -Path Deploy/upload -File | Select-Object Name, Length
+
+      - name: Generate commit summary since previous patch tag
+        id: summary
+        shell: pwsh
+        run: |
+          $codename = $env:CODENAME.ToLower()
+          $prev = git tag --list "$codename-patch-*" --sort=-v:refname | Select-Object -First 1
+          if ($prev) {
+            Write-Host "Previous tag: $prev"
+            $log = git log "$prev..HEAD" --oneline --no-merges
+          } else {
+            Write-Host "No previous patch tag; falling back to last 20 commits"
+            $log = git log -20 --oneline --no-merges
+          }
+          if (-not $log) { $log = "_(no new commits since previous patch)_" }
+
+          $delim = "EOF_$([guid]::NewGuid().ToString('N'))"
+          "summary<<$delim" >> $env:GITHUB_OUTPUT
+          $log               >> $env:GITHUB_OUTPUT
+          $delim             >> $env:GITHUB_OUTPUT
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag    = '${{ steps.version.outputs.tag }}'
+          $title  = '${{ steps.version.outputs.title }}'
+          $body   = @"
+          ## Changes since previous patch
+
+          ${{ steps.summary.outputs.summary }}
+          "@
+          $bodyFile = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          Set-Content -Path $bodyFile -Value $body -Encoding utf8
+
+          $assets = Get-ChildItem -Path Deploy/upload -File | ForEach-Object FullName
+          Write-Host "Creating draft release $tag with $($assets.Count) asset(s)"
+
+          $args = @(
+            'release', 'create', $tag,
+            '--draft',
+            '--title',     $title,
+            '--target',    '${{ github.sha }}',
+            '--notes-file', $bodyFile
+          ) + $assets
+
+          & gh @args
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit $LASTEXITCODE" }
+
+      - name: Notify Discord (build status)
+        if: always()
+        shell: pwsh
+        env:
+          WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          STATUS:      ${{ job.status }}
+          VERSION:     ${{ steps.version.outputs.version }}
+          TAG:         ${{ steps.version.outputs.tag }}
+          RUN_URL:     ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPO:        ${{ github.repository }}
+          BRANCH:      ${{ github.ref_name }}
+          COMMIT_SHA:  ${{ github.sha }}
+          ACTOR:       ${{ github.actor }}
+        run: |
+          if (-not $env:WEBHOOK_URL) {
+            Write-Host "DISCORD_WEBHOOK_URL secret not set; skipping Discord notification"
+            exit 0
+          }
+
+          # Discord embed colors: green/red/gray for success/failure/cancelled
+          $color = switch ($env:STATUS) {
+            'success'   { 3066993 }
+            'failure'   { 15158332 }
+            'cancelled' { 9807270 }
+            default     { 9807270 }
+          }
+          $statusUpper = $env:STATUS.ToUpper()
+          $shortSha    = $env:COMMIT_SHA.Substring(0, 7)
+          $title       = if ($env:VERSION) { "${env:CODENAME} Patch v$($env:VERSION) - $statusUpper" } else { "Patch Build - $statusUpper" }
+
+          $payload = @{
+            username = 'GitHub Actions'
+            embeds   = @(@{
+              title       = $title
+              url         = $env:RUN_URL
+              color       = $color
+              description = "Status: **$statusUpper**"
+              fields      = @(
+                @{ name = 'Repository'; value = $env:REPO;   inline = $true }
+                @{ name = 'Branch';     value = $env:BRANCH; inline = $true }
+                @{ name = 'Commit';     value = $shortSha;   inline = $true }
+                @{ name = 'Tag';        value = $(if ($env:TAG) { $env:TAG } else { '_(not assigned)_' }); inline = $true }
+                @{ name = 'Triggered by'; value = $env:ACTOR; inline = $true }
+              )
+            })
+          } | ConvertTo-Json -Depth 6 -Compress
+
+          try {
+            Invoke-RestMethod -Uri $env:WEBHOOK_URL -Method Post -ContentType 'application/json' -Body $payload | Out-Null
+            Write-Host "Discord notification sent ($statusUpper)"
+          } catch {
+            Write-Host "Discord webhook failed: $($_.Exception.Message)"
+            # don't fail the workflow over a notification miss
+          }

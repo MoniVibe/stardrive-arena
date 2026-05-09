@@ -1,0 +1,63 @@
+name: Notify Discord on Release
+
+# Fires when a draft release is published (clicking "Publish release" in the GitHub UI).
+# Publishing a draft is the moment the tag actually lands in the repo, so this also covers
+# the "tag created" notification — drafts don't push the tag until publish.
+#
+# Direct `git push --tags` of a tag created outside the release flow won't trigger this
+# workflow. If that ever becomes a use case, add a `push: tags: ['*']` trigger.
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Discord webhook
+        shell: bash
+        env:
+          WEBHOOK_URL:  ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_TAG:  ${{ github.event.release.tag_name }}
+          RELEASE_URL:  ${{ github.event.release.html_url }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          ACTOR:        ${{ github.event.release.author.login }}
+          REPO:         ${{ github.repository }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "DISCORD_WEBHOOK_URL secret not set; skipping notification"
+            exit 0
+          fi
+
+          # Discord embed description has a 4096 char limit; truncate body just in case.
+          BODY_TRIMMED=$(printf '%s' "$RELEASE_BODY" | head -c 1500)
+
+          # Build payload with jq so quoting/escaping is handled correctly (the legacy
+          # AppVeyor PowerShell webhook tripped on this — `Invoke-RestMethod : The request
+          # body contains invalid JSON` in build 15118).
+          PAYLOAD=$(jq -n \
+            --arg name  "$RELEASE_NAME" \
+            --arg tag   "$RELEASE_TAG" \
+            --arg url   "$RELEASE_URL" \
+            --arg body  "$BODY_TRIMMED" \
+            --arg actor "$ACTOR" \
+            --arg repo  "$REPO" \
+            '{
+              username: "GitHub Releases",
+              embeds: [{
+                title:       $name,
+                url:         $url,
+                color:       3447003,
+                description: ("New tag `" + $tag + "` published in " + $repo + " by " + $actor + "\n\n" + $body),
+                fields: [
+                  { name: "Tag",  value: $tag,   inline: true },
+                  { name: "Repo", value: $repo,  inline: true },
+                  { name: "By",   value: $actor, inline: true }
+                ]
+              }]
+            }')
+
+          curl -sS -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$WEBHOOK_URL"
+          echo "Discord release notification sent for $RELEASE_TAG"
