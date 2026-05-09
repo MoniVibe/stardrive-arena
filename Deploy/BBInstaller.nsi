@@ -92,15 +92,63 @@ SectionGroup /e "BlackBox"
         DetailPrint "${PRODUCT_NAME} ${PRODUCT_VERSION}"
         DetailPrint "Initializing Installation"
         DetailPrint "*************************"
-    ;     ;Check if the installation dir is correct.
-    ;     IfFileExists "$INSTDIR\${LAUNCHER}" FolderCorrect FolderIncorrect
-    ; FolderIncorrect:
-    ;     MessageBox MB_OKCANCEL|MB_TOPMOST "${LAUNCHER} not found. This install will not work correctly unless installed to the main StarDrive folder$\n$\nClick OK to Continue anyway" IDOK ContinueInstallation IDCANCEL 0
-    ;     Abort
-    ; FolderCorrect:
-    ;     DetailPrint "Found $INSTDIR\${LAUNCHER}"
-    ; ContinueInstallation:
-    ;     DetailPrint "Installation directory: $INSTDIR "
+
+        ;-----------------------------------------------------------------
+        ; .NET 8 Desktop Runtime check (Jupiter line is net8.0-windows;
+        ; Mars 1.51 ran on net48 which ships with Windows, so this is new).
+        ;
+        ; Major release: bundles + runs the .NET 8 Desktop Runtime installer
+        ; as a prerequisite (gated by BUNDLE_RUNTIME defined in
+        ; BlackBox-Jupiter.nsi — patch installers omit it since patch users
+        ; came from a major install that already provisioned the runtime).
+        ;
+        ; Microsoft's apphost shows a "must install runtime" dialog when the
+        ; runtime is missing — but as of .NET 8.0.26 + .NET 9 SDK build
+        ; tooling, that dialog's Download link comes out broken (URL gets
+        ; truncated to just "&gui=true"). Rather than fight Microsoft's
+        ; broken UX, we bundle the runtime installer ourselves.
+        ;
+        ; Detection: probe the standard install location. .NET runtimes
+        ; live at C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App\<ver>\.
+        ; If a 8.x subdir exists, skip the prereq installer.
+        ; The runtime installer is idempotent — if a current or newer
+        ; version is already present, it exits immediately.
+        ;-----------------------------------------------------------------
+        !ifdef BUNDLE_RUNTIME
+        DetailPrint "Checking for .NET 8 Desktop Runtime..."
+        IfFileExists "$PROGRAMFILES64\dotnet\shared\Microsoft.WindowsDesktop.App\8.*\*" RuntimePresent RuntimeMissing
+
+      RuntimeMissing:
+        DetailPrint ".NET 8 Desktop Runtime not found — running bundled installer"
+        SetOutPath "$PLUGINSDIR"
+        File "prereq\windowsdesktop-runtime-8.0.26-win-x64.exe"
+        ; /install /quiet shows a brief progress UI; /norestart prevents auto-reboot
+        ; after install. /passive would show a full progress dialog; /quiet is the
+        ; standard MS-recommended silent flag. UAC elevation prompt fires
+        ; automatically because the runtime installer is admin-required.
+        ExecWait '"$PLUGINSDIR\windowsdesktop-runtime-8.0.26-win-x64.exe" /install /quiet /norestart' $0
+        Delete "$PLUGINSDIR\windowsdesktop-runtime-8.0.26-win-x64.exe"
+        ${If} $0 = 0
+            DetailPrint ".NET 8 Desktop Runtime installed successfully"
+        ${ElseIf} $0 = 1602
+            ; 1602 = User cancelled (clicked No on UAC or installer's prompt).
+            ; Continue install — user can manually install runtime later.
+            DetailPrint "WARNING: .NET 8 Desktop Runtime install cancelled by user"
+            DetailPrint "BlackBox will not launch until the runtime is installed."
+            DetailPrint "Get it from: https://dotnet.microsoft.com/download/dotnet/8.0"
+            MessageBox MB_OK|MB_ICONEXCLAMATION \
+                ".NET 8 Desktop Runtime install was cancelled.$\r$\n$\r$\nBlackBox needs this runtime to launch. You can install it later from:$\r$\n  https://dotnet.microsoft.com/download/dotnet/8.0$\r$\n  (pick: Windows Desktop Runtime x64)$\r$\n$\r$\nContinuing the BlackBox install — the game will not launch until the runtime is installed."
+        ${Else}
+            DetailPrint "WARNING: .NET 8 Desktop Runtime installer exited with code $0"
+            DetailPrint "BlackBox may not launch — see https://dotnet.microsoft.com/download/dotnet/8.0"
+        ${EndIf}
+        Goto RuntimeDone
+
+      RuntimePresent:
+        DetailPrint ".NET 8 Desktop Runtime detected — skipping prerequisite installer"
+
+      RuntimeDone:
+        !endif ; BUNDLE_RUNTIME
     SectionEnd
 
     Section "-BlackBox" SecMain

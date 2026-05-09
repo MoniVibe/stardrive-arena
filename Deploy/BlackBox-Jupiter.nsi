@@ -18,5 +18,10 @@ CRCCheck force
 !define INSTALLER_NAME   "BlackBox_Jupiter"
 !define PRODUCT_VERSION  ${VERSION}
 
+;; Major release bundles the .NET 8 Desktop Runtime installer as a prerequisite
+;; (~56 MB). The patch NSI script does not — patch users came from a major
+;; install, which already provisioned the runtime.
+!define BUNDLE_RUNTIME
+
 ;; Payload:
 !include "BBInstaller.nsi"

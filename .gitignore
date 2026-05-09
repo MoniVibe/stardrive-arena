@@ -178,3 +178,8 @@ game/SharpDX.Mathematics.dll
 game/SharpDX.MediaFoundation.dll
 game/SharpDX.XAudio2.dll
 game/SharpDX.XInput.dll
+
+# Bundled .NET 8 Desktop Runtime installer (~56 MB; downloaded by maintainer
+# from Microsoft, not tracked in git). NSIS picks it up at build time.
+# See Deploy/prereq/README.md for fetch instructions.
+Deploy/prereq/*.exe

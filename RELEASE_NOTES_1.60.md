@@ -51,7 +51,7 @@ If you're on a Mars 1.51 build *before* `15118`, the popup does not exist — yo
 ## System requirements
 
 - **Windows 10 or later, 64-bit**.
-- **.NET 8 Desktop Runtime (x64)** — required, **separate download**. The Mars 1.51 line ran on .NET Framework 4.8, which ships with Windows; Jupiter migrated to .NET 8 (`net8.0-windows`), which is a separate install. If you don't already have it, the installer or first launch will surface a "must install .NET Desktop Runtime" prompt — Windows usually offers a "Download it now" link, but if not, grab it directly from <https://dotnet.microsoft.com/download/dotnet/8.0> (pick **Windows → Desktop Runtime → x64**). Install once; future Jupiter patches reuse the same runtime.
+- **.NET 8 Desktop Runtime (x64)** — **bundled with the installer**. The Mars 1.51 line ran on .NET Framework 4.8 (built into Windows); Jupiter migrated to .NET 8 (`net8.0-windows`), which is a separate runtime. The Jupiter 1.60 installer detects whether you already have it and runs Microsoft's official runtime installer as a prerequisite step if you don't (~56 MB extra at install time, accept the UAC prompt when it appears). Install once; future Jupiter patches reuse the same runtime — patches do NOT bundle it. If you ever need the runtime separately, grab it from <https://dotnet.microsoft.com/download/dotnet/8.0> (pick **Windows → Desktop Runtime → x64**).
 
 ## Known limitations
 
