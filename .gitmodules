@@ -3,4 +3,9 @@
 	url = https://github.com/RedFox20/ReCpp.git
 [submodule "SDNative/NanoMesh"]
 	path = SDNative/NanoMesh
-	url = https://github.com/RedFox20/NanoMesh.git
+	# Pinned to gkapulis fork while the migration's NanoMesh changes (FBX skin/anim
+	# read-write, cluster bind-matrix recovery, /W3 size_t→int cleanup) live on the
+	# `blackbox-migration` branch ahead of upstream. When the upstream PR
+	# (gkapulis/NanoMesh:upstream-pr/fbx-skin-anim → RedFox20/NanoMesh) merges, flip
+	# this URL back to RedFox20/NanoMesh.git and bump the submodule pin to upstream tip.
+	url = https://github.com/gkapulis/NanoMesh.git
