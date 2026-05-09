@@ -24,7 +24,7 @@ Three sub-phases:
 4. **All four install scenarios pass** (see §5.1.E):
    - Clean machine, standalone install at the new default `C:\Games\StarDrivePlus64`.
    - Clean machine, Steam-folder install (replaces original StarDrive 1 in Steam library; original backed up).
-   - Coexistence — 1.51 already installed at `C:\Games\StarDrivePlus`, 1.60 lands at `StarDrivePlus64` (Option A clean break: no upgrade-detection from `HKLM\Software\StarDrive\InstallPath`); both versions launch independently, each sees only its own SaveGameVersion.
+   - Coexistence — 1.51 already installed at `C:\Games\StarDrivePlus`, 1.60's directory page defaults to `StarDrivePlus64` (Option A clean break: installer reads `HKLM\Software\StarDrivePlus64\InstallPath` only — empty on this machine — and never falls back to Mars's `HKLM\Software\StarDrive\InstallPath`); both versions launch independently, each sees only its own SaveGameVersion.
    - Manual upgrade-in-place — user explicitly browses to `C:\Games\StarDrivePlus`; 1.51 binaries replaced; saves preserved (1.51 v20 saves stay on disk but invisible to 1.60).
 5. **README + Sentry release record updated** to point at 1.60.
 6. **Cross-major upgrade discovery channel live**: §5.0's Mars-line patch shipping `MajorUpgradeAvailablePopup` already **published** before the `jupiter-release-1.60` tag pushes (no deliberate user-soak needed — the patch *is* the discovery channel whenever a user lands on it via the standard intra-major auto-update). Same code forward-ported to the migration branch so 1.60 inherits the behavior for any future major bump.
@@ -158,18 +158,18 @@ The post-migration release line is **BlackBox Jupiter** (was Mars through 1.51) 
    - [Ship_Game/GlobalStats.cs:44-45](../Ship_Game/GlobalStats.cs#L44-L45) — refresh the example doc-comments (`"Mars : 1.20.12000 develop/f83ab4a"`) to use a Jupiter example.
    - `README.md` — release-name + badge label references
 
-3. **Default install path → `C:\Games\StarDrivePlus64`** (clean-break, Option A). Edit [Deploy/BBInstaller.nsi:64-78](../Deploy/BBInstaller.nsi#L64-L78) `.onInit`:
-   - Remove the `ReadRegStr $PREVDIR HKLM ${REGPATH} InstallPath` upgrade-detection path (Mars-line ergonomics; ignored for Jupiter).
-   - Set `$INSTDIR` directly to `C:\Games\StarDrivePlus64`.
-   - Update `${REGPATH}` to `Software\StarDrivePlus64` (or equivalent new key) so writes don't clobber Mars's `Software\StarDrive` keys.
+3. **Default install path → `C:\Games\StarDrivePlus64`** (clean-break from Mars, but registry-driven upgrade-detection within the Jupiter line — Option A refined). Edit [Deploy/BBInstaller.nsi:64-78](../Deploy/BBInstaller.nsi#L64-L78) `.onInit`:
+   - Update `${REGPATH}` (defined earlier in the file) to `Software\StarDrivePlus64` so the installer never reads or writes Mars's `Software\StarDrive` key.
+   - Keep the `ReadRegStr $PREVDIR HKLM ${REGPATH} InstallPath` mechanic, but point it at the new `Software\StarDrivePlus64` key. This makes subsequent Jupiter patches (1.60.x → 1.60.y) detect the existing Jupiter install and seed `$INSTDIR` from `$PREVDIR` as usual — same registry-driven upgrade ergonomics the Mars line had, scoped to the Jupiter key.
+   - **Cross-major fresh install (no Jupiter key yet)**: when `$PREVDIR` is empty after the `ReadRegStr`, default `$INSTDIR` to `C:\Games\StarDrivePlus64` and let the user override via the standard NSIS directory page. **Do not** fall back to reading `Software\StarDrive` (Mars) or any Steam path — the user must explicitly browse there if they want it. This is what prevents the installer from silently landing inside the Steam app dir for Steam-Mars users (the maintainer has no SteamPipe push access — see project_steam_partner_access.md — so co-locating Jupiter under Steam's manifest creates a silent mismatch).
    - Mirror the Wix HKCU registry path in [Deploy/Product.wxs:68,78](../Deploy/Product.wxs#L68): `Software\StarDrivePlus` → `Software\StarDrivePlus64`.
    - Mirror the Wix `INSTALLFOLDER` Name in [Deploy/Product.wxs:43](../Deploy/Product.wxs#L43): `StarDrivePlus` → `StarDrivePlus64`.
 
-   Users who explicitly want to upgrade-in-place can manually browse to `C:\Games\StarDrivePlus` from the installer's path-picker page; the radio-button default just doesn't pre-select that.
+   Users who explicitly want to upgrade-in-place over their existing Mars 1.51 can manually browse to `C:\Games\StarDrivePlus` from the directory page; the default just never pre-selects that.
 
 4. **Bump `SaveGameVersion`** to partition saves cleanly. Edit [Ship_Game/SavedGame.cs:27](../Ship_Game/SavedGame.cs#L27): `public const int SaveGameVersion = 20` → `21`. Effect: the exact-match filter at [LoadSaveScreen.cs:56](../Ship_Game/GameScreens/LoadSaveItems/LoadSaveScreen.cs#L56) means 1.51 sees only Version-20 saves, 1.60 sees only Version-21 saves. Save folder stays single (`%APPDATA%\StarDrive\`) — no `Dir.StarDriveAppData` change. No save corruption; both versions silently filter the other's saves out of the load list.
 
-5. Update README.md "Current Major Release Link" to point at the **itch.io page** for 1.60 (replacing the 1.51 GitHub Releases link). Replace the "BlackBox - Hyperion" future-goals list (the migration is now done) with a "BlackBox Jupiter 1.60 — 64-bit + MonoGame" achievements list.
+5. **README.md is deferred to §5.1.D** (after the Jupiter itch.io page is live with downloadable artefacts). Updating it now would publish a dead `https://stardriveteam.itch.io/mars-160` link on the public repo and rebrand "current release" to a release that hasn't shipped yet. §5.1.D will: point "Current Major Release Link" at the itch.io page, replace the "BlackBox - Hyperion" future-goals list with a "BlackBox Jupiter 1.60 — 64-bit + MonoGame" achievements list, refresh the dev-setup branch hint (`mars-1.51` → `main`), and refresh the CLI example log line (`Mars : 1.51.15100` → `Jupiter : 1.60.<build>`).
 
 6. Author `RELEASE_NOTES_1.60.md` summarizing user-visible changes since 1.51:
    - **Codename: Jupiter** (replaces Mars). 1.60 is the first Jupiter release.
@@ -275,12 +275,18 @@ We can't use the existing AppVeyor (`ci.appveyor.com/project/RedFox20/stardrive`
 
 7. Run `Deploy/notify-sentry-of-release.bash` with `APPVEYOR_BUILD_VERSION=1.60.<build>` (manual after the upload; env var name preserved for compat with the existing script).
 
-8. Update README.md "Current Major Release Link" to point at the itch.io page (replacing the 1.51 GitHub Releases link). Replace the AppVeyor build badge with the GitHub Actions one (or remove if the legacy badge is misleading now).
+8. **README.md refresh** (deferred from §5.1.A — must happen *after* the itch.io upload in step 6 so links resolve):
+   - Update the "Current Major Release Link" to point at the itch.io page (replacing the 1.51 GitHub Releases link).
+   - Replace the AppVeyor build badge with the GitHub Actions one (or remove if the legacy badge is misleading now).
+   - Replace the "BlackBox - Hyperion" future-goals list with a "BlackBox Jupiter 1.60 — 64-bit + MonoGame" achievements list (the migration is now done).
+   - Update the intro paragraph: "current release is BlackBox - Mars" → "current release is BlackBox - Jupiter (the post-migration release line)".
+   - Refresh the dev-setup branch hint: `Switch to mars-1.51 branch` → `Switch to main branch`.
+   - Refresh the CLI example log line: `Mars : 1.51.15100 develop-latest` → `Jupiter : 1.60.<build>`.
 
 9. *(Optional, secondary mirror)* If we keep a GitHub Release page in addition to itch.io: publish under tag `jupiter-release-1.60`, body = `RELEASE_NOTES_1.60.md` content. Decide once based on whether external downloaders (e.g., third-party mod listings) link at GitHub.
 
 **§5.1.E — Smoke test on four install scenarios**
-1. **Clean machine, standalone install (default path)**: download installer via Edge or Chrome, run it, confirm no SmartScreen warning, accept the default `C:\Games\StarDrivePlus64`, complete install, launch game.
+1. **Clean machine, standalone install (default path)**: download installer via Edge or Chrome, run it, confirm no SmartScreen warning, accept the default `C:\Games\StarDrivePlus64`, complete install, launch game. Then **re-run the same installer**: confirm the directory page is pre-filled from `HKLM\Software\StarDrivePlus64\InstallPath` (the value the first install just wrote) — this validates the Jupiter-line registry-driven upgrade path that future full-installer reinstalls (e.g. 1.60.0 → 1.60.5 catch-up) rely on.
 2. **Clean machine, Steam install**: same as scenario 1 but pick the Steam-folder option. Confirm Steam still launches StarDrive (now showing BlackBox Jupiter 1.60). Confirm achievements/stats round-trip via §4.9.
 3. **Coexistence — 1.51 already installed at `C:\Games\StarDrivePlus`**: run the 1.60 installer, accept the default `C:\Games\StarDrivePlus64`. Verify (a) installer does NOT default to the 1.51 path (Option A clean break — no `HKLM\Software\StarDrive\InstallPath` detection); (b) installer writes `HKLM\Software\StarDrivePlus64\InstallPath`, leaving `Software\StarDrive` untouched; (c) post-install, both `StarDrive.exe` (1.51) and `StarDrivePlus64\StarDrive.exe` (1.60) launch independently; (d) saves at `%APPDATA%\StarDrive\` are visible to both, but each version's load list shows only its own SaveGameVersion (1.51 sees v20, 1.60 sees v21).
 4. **Manual upgrade-in-place** (user explicitly chooses old path): on a 1.51 machine, run the 1.60 installer, browse the path-picker to `C:\Games\StarDrivePlus`, complete install. Confirm 1.51 binaries are replaced in place; 1.51 desktop shortcut now launches 1.60. Saves preserved (load list shows only v21 saves; v20 saves still on disk but invisible until user reinstalls 1.51).
