@@ -103,10 +103,14 @@ jobs:
           $vstest = Join-Path $vsPath 'Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe'
           if (-not (Test-Path $vstest)) { throw "vstest.console.exe not found at $vstest" }
 
-          $candidates = Get-ChildItem -Path UnitTests/bin -Recurse -Filter UnitTests.dll -ErrorAction SilentlyContinue `
-            | Where-Object { $_.FullName -like '*\Release\*' }
+          # NOTE: UnitTests/SDUnitTests.csproj:13 hardcodes <OutputPath>bin\Debug\</OutputPath>
+          # for ALL configs (Release builds ALSO land in bin/Debug/), so we can't filter
+          # by path containing 'Release'. The msbuild step is the only build action in
+          # this workflow, so the freshest UnitTests.dll under UnitTests/bin/ IS the
+          # Release-config output we just built.
+          $candidates = Get-ChildItem -Path UnitTests/bin -Recurse -Filter UnitTests.dll -ErrorAction SilentlyContinue
           if (-not $candidates) {
-            throw "No Release UnitTests.dll found under UnitTests/bin/. Build step likely failed silently."
+            throw "No UnitTests.dll found under UnitTests/bin/. Build step likely failed silently."
           }
           $dll = $candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
           Write-Host "Running tests against: $dll"
