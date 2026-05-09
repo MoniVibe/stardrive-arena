@@ -88,13 +88,32 @@ jobs:
       - name: Build solution (Release|x64)
         run: msbuild StarDrive.sln /m /verbosity:minimal /p:Configuration=Release /p:Platform=x64
 
+      - name: Pre-seed StarDrive.user.config (workaround for GlobalStats NRE)
+        # GlobalStats.OpenUserConfiguration() at line 460 NREs in fresh testhost
+        # environments where neither exeCfg nor roamingCfg can find ConfigVersion:
+        # the default literal baseVersion=1 != default field ConfigVersion=0, so we
+        # enter the upgrade branch, then `roamingSettings["ConfigVersion"].Value =
+        # exeSettings["ConfigVersion"].Value` NREs on the null indexer access.
+        #
+        # On AppVeyor (net48 mars-1.51), the testhost was vstest's net48 host which
+        # loads UnitTests.dll.config — exeCfg got populated and the upgrade branch
+        # never fired. On net8 (this branch), vstest spawns `dotnet testhost.dll`
+        # which ignores the test assembly's .config — exeCfg is empty.
+        #
+        # CI workaround: pre-seed StarDrive.user.config with ConfigVersion=1 so the
+        # roamingCfg load gives ConfigVersion=1 == baseVersion=1, skipping the
+        # upgrade branch entirely. The proper fix is in GlobalStats.OpenUserConfiguration.
+        shell: pwsh
+        run: |
+          $appDataDir = Join-Path $env:APPDATA 'StarDrive'
+          New-Item -Path $appDataDir -ItemType Directory -Force | Out-Null
+          Copy-Item -Path 'UnitTests/app.config' -Destination (Join-Path $appDataDir 'StarDrive.user.config') -Force
+          Write-Host "Seeded $appDataDir/StarDrive.user.config from UnitTests/app.config"
+
       - name: Run unit tests
-        # Use vstest.console (not `dotnet test`) so UnitTests.dll is the entry assembly
-        # and `ConfigurationManager.OpenExeConfiguration(...)` reads UnitTests.dll.config
-        # (mirrored from UnitTests/app.config). Under `dotnet test`, testhost.dll is the
-        # entry assembly and its empty .config makes GlobalStats.OpenUserConfiguration
-        # NRE at line 460 on `exeSettings["ConfigVersion"].Value`. AppVeyor's known-good
-        # invocation was vstest.console UnitTests.dll — same shape used here.
+        # Use vstest.console (not `dotnet test`) — closer to AppVeyor's known-good
+        # invocation. Either runner hits the OpenUserConfiguration NRE without the
+        # pre-seed step above; vstest is just the lower-overhead path.
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
