@@ -8,12 +8,7 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyDescription("")]
 [assembly: AssemblyProduct("StarDrive BlackBox")]
 
-#if !STEAM
-[assembly: AssemblyTitle("StarDrive BlackBox")] 
-#endif
-#if STEAM
 [assembly: AssemblyTitle("StarDrive BlackBox")]
-#endif
 
 
 [assembly: AssemblyTrademark("")]

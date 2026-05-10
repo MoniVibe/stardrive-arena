@@ -37,13 +37,15 @@ namespace Ship_Game
             Log.Write(ConsoleColor.Yellow, $"PhysicalCores={Parallel.NumPhysicalCores} MaxParallelism={Parallel.MaxParallelism}");
             Log.Write(ConsoleColor.Yellow, $"GameDir={Directory.GetCurrentDirectory()}");
 
-        #if STEAM
+            // SteamManager is currently a stub (returns false / no-op).
+            // Calls remain unconditional so when Steamworks.NET is wired back
+            // (see migration-plan-phase2 §"Deferred Final Step") only
+            // SteamManager.cs needs to change.
             if (SteamManager.Initialize())
             {
                 SteamManager.RequestStats();
                 SteamManager.AchievementUnlocked("Thanks");
             }
-        #endif
 
             Exiting += GameExiting;
 
@@ -63,14 +65,12 @@ namespace Ship_Game
 
         public void SetSteamAchievement(string name)
         {
-        #if STEAM
             if (SteamManager.IsInitialized)
             {
                 SteamManager.AchievementUnlocked(name);
             }
             else
             { Log.Warning("Steam not initialized"); }
-        #endif
         }
 
         void GameExiting(object sender, EventArgs e)
@@ -199,9 +199,7 @@ namespace Ship_Game
         {
             base.Dispose(disposing);
             Instance = null;
-            #if STEAM
-                SteamManager.Shutdown();
-            #endif
+            SteamManager.Shutdown();
         }
     }
 }
