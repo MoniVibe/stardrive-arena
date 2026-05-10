@@ -177,7 +177,11 @@ public class AutoUpdateChecker : UIElementContainer
             headline.AxisAlign = Align.CenterLeft;
             headline.SetLocalPos(20, -20);
 
-            UILabel version = base.Add(new UILabel($"BlackBox {latestVersion}", Fonts.Pirulen12));
+            // Trim build counter — popup reads cleaner as "BlackBox 1.60" than
+            // "BlackBox 1.60.00000". Full version still goes to Log.Write for
+            // diagnostics.
+            string displayVersion = string.Join(".", latestVersion.Split('.').Take(2));
+            UILabel version = base.Add(new UILabel($"BlackBox {displayVersion}", Fonts.Pirulen12));
             version.TextAlign = TextAlign.HorizontalCenter;
             version.AxisAlign = Align.CenterLeft;
             version.SetLocalPos(20, 2);
