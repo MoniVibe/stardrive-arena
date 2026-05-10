@@ -261,8 +261,22 @@ public class AutoUpdateChecker : UIElementContainer
             {
                 // "https://github.com/TeamStarDrive/StarDrive/releases" --> "TeamStarDrive/StarDrive"
                 string teamAndRepo = RegexExtractTeamAndRepo(downloadUrl, "\\/([\\w-]+\\/[\\w-]+)\\/releases");
-                downloadUrl = $"https://api.github.com/repos/{teamAndRepo}/releases/latest";
-                info = GetLatestVersionInfoGitHub(downloadUrl, isMod);
+                string apiBase = $"https://api.github.com/repos/{teamAndRepo}/releases";
+
+                // Pass 1: /releases/latest for the in-line patch flow. Whatever
+                // is flagged "Set as latest" — the Mars 1.51 line keeps a Mars
+                // patch flagged latest so this returns intra-major hotfixes.
+                info = GetLatestVersionInfoGitHub(apiBase + "/latest", isMod);
+
+                // Pass 2 (vanilla only): scan /releases for any release whose
+                // major.minor is higher than current. Jupiter 1.60+ patches are
+                // NOT flagged "Set as latest" by design, so /releases/latest
+                // would never return them — without this scan, Mars 1.51 users
+                // would never see the Jupiter cross-major popup. Gated on
+                // MajorReleaseUpgradeNotified so the popup doesn't double-fire
+                // if Pass 1 already detected a cross-major.
+                if (!isMod && !MajorReleaseUpgradeNotified)
+                    ScanForCrossMajorRelease(apiBase);
             }
             else if (downloadUrl.Contains("bitbucket.org"))
             {
@@ -285,6 +299,63 @@ public class AutoUpdateChecker : UIElementContainer
         {
             // can easily fail due to network issues etc, shouldn't be a big deal
             Log.Warning($"GetVersionAsync {modName} {downloadUrl} failed: {e.Message}");
+        }
+    }
+
+    // Scan the full /releases array for any release whose major.minor is HIGHER
+    // than the current install's. Used by the Mars 1.51 vanilla auto-updater to
+    // surface Jupiter 1.60 (and any future major) since those releases stay
+    // unflagged as "Set as latest" on GitHub. In-line 1.51.x patches are NOT
+    // handled here — Pass 1 (/releases/latest) covers them.
+    void ScanForCrossMajorRelease(string apiBase)
+    {
+        try
+        {
+            string jsonText = DownloadWithCancel(apiBase, AsyncTask, timeout: TimeSpan.FromSeconds(30));
+            if (AsyncTask is { IsCancelRequested: true })
+                return;
+
+            string currentVerStr = GlobalStats.Version.Split(' ').First();
+            if (!System.Version.TryParse(currentVerStr, out System.Version currentVer))
+            {
+                Log.Warning($"AutoUpdater: cannot parse current version '{currentVerStr}' — skipping cross-major scan");
+                return;
+            }
+
+            object[] releases = new JavaScriptSerializer().DeserializeObject(jsonText) as object[];
+            if (releases == null)
+                return;
+
+            System.Version bestVer = null;
+            string bestVerStr = null;
+            foreach (dynamic release in releases)
+            {
+                string tagName = release["tag_name"] as string;
+                if (string.IsNullOrEmpty(tagName)) continue;
+                string versionStr = tagName.Split('-').FindMax(s => s.Count(c => c == '.'));
+                if (string.IsNullOrEmpty(versionStr)) continue;
+                if (!System.Version.TryParse(versionStr, out System.Version v)) continue;
+
+                // Skip same-or-lower major.minor; only HIGHER lines qualify here.
+                if (v.Major < currentVer.Major) continue;
+                if (v.Major == currentVer.Major && v.Minor <= currentVer.Minor) continue;
+
+                if (bestVer == null || v > bestVer)
+                {
+                    bestVer = v;
+                    bestVerStr = versionStr;
+                }
+            }
+
+            if (bestVerStr != null)
+            {
+                Log.Write($"AutoUpdater: cross-major upgrade detected on /releases: {currentVerStr} -> {bestVerStr}");
+                NotifyMajorUpgradeIfConfigured(bestVerStr);
+            }
+        }
+        catch (Exception e)
+        {
+            Log.Warning($"AutoUpdater: cross-major /releases scan failed: {e.Message}");
         }
     }
 
