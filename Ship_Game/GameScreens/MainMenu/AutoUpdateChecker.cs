@@ -39,6 +39,17 @@ public class AutoUpdateChecker : UIElementContainer
 
     public override void OnAdded(UIElementContainer parent)
     {
+        // Resume mode: AutoPatcher is about to apply the exact version we'd
+        // otherwise notify about, so skip the scan entirely. Without this the
+        // "New Version!" popup slides in from the left at the same time the
+        // patcher chrome appears, which is both noisy and confusing — the user
+        // has already accepted UAC and is watching the patch apply.
+        if (Program.ResumePatchVersion.NotEmpty())
+        {
+            Log.Write("AutoUpdater: resume mode — skipping version scan");
+            return;
+        }
+
         AsyncTask = Parallel.Run(() =>
         {
             string vanillaUrl = GlobalStats.VanillaDefaults.DownloadSite;
@@ -61,7 +72,11 @@ public class AutoUpdateChecker : UIElementContainer
 
     public override void OnRemoved()
     {
-        AsyncTask.Cancel();
+        // AsyncTask is null when we bailed out of OnAdded (e.g. resume mode),
+        // so make the cancel call null-safe — a hot-reload of MainMenus.yaml
+        // (which patches do) triggers RemoveAll on this component and would
+        // otherwise NRE here, tearing down MainMenuScreen mid-unload.
+        AsyncTask?.Cancel();
     }
 
     class NewVersionPopup : UIPanel

@@ -84,8 +84,10 @@ internal class AutoPatcher : PopupWindow
         if (ResumeMode)
         {
             // Elevated resume: download + unzip already done by the non-elevated
-            // pre-elevation pass. Skip straight to file moves against the cached
-            // patch in AppData/Patches/<version>/.
+            // pre-elevation pass. Pre-fill those two bars to 100% so the user
+            // sees the same 4-bar layout as the normal flow, then continue with
+            // the file-move phases against the cached patch in
+            // %APPDATA%\StarDrive\Patches\<version>\.
             Log.Write($"AutoPatcher: resuming pre-downloaded patch {Info.Version} in elevated mode");
             string outputFolder = GetPatchOutputFolder();
             if (!Directory.Exists(outputFolder))
@@ -96,6 +98,8 @@ internal class AutoPatcher : PopupWindow
                 DeletePendingPatchMarker();
                 return;
             }
+            AddProgressBar("Downloading").SetProgress(100);
+            AddProgressBar($"Unzipping {Info.Version}").SetProgress(100);
             string patchFilesFolder = GetPatchFilesFolder(outputFolder);
             AddProgressAndRunTaskOnNextFrame("Deleting Stale Files", nextP => DeleteStaleFiles(patchFilesFolder, nextP));
             return;
@@ -168,7 +172,13 @@ internal class AutoPatcher : PopupWindow
             return;
 
         string requestedVer = Program.ResumePatchVersion;
-        Program.ResumePatchVersion = null; // consume regardless of outcome
+        // ResumePatchVersion stays set for the lifetime of the elevated process
+        // — AutoUpdateChecker uses it to know "we're applying a patch right
+        // now, don't show a 'new version available' popup". The post-success
+        // restart spawns a new process *without* --apply-patch (see
+        // RestartAsync), so the field naturally clears on the next launch.
+        // Re-entry safety on this same process is handled by the marker check
+        // below — once RestartAsync deletes it, TryResumePending bails here.
 
         if (!File.Exists(PendingPatchMarkerPath))
         {
@@ -200,7 +210,22 @@ internal class AutoPatcher : PopupWindow
         // ZipUrls/Changelog/InstallerUrl unused on the resume path; pass through
         // empty placeholders so the synthetic ReleaseInfo is well-formed.
         var synthetic = new ReleaseInfo(marker.Name, marker.Version, "", new List<string>(), null);
-        screen.ScreenManager.AddScreen(new AutoPatcher(screen, synthetic, marker.IsMod, resumeMode: true));
+        // Wait for MainMenuScreen's fade-in (TransitionOnTime = 1s) to fully
+        // complete before adding the AutoPatcher screen. Without this delay,
+        // PopupWindow.LoadContent computes its chrome rectangles against the
+        // transient mid-fade screen state and the progress-bar PerformLayout
+        // pass never propagates Rect to the inner ProgressBar widget — the
+        // bar then renders at (0,0,width,18) instead of inside the popup,
+        // and the chrome looks misaligned. 1.5s gives the menu time to fully
+        // settle before the patch screen pops on top.
+        Parallel.Run(() =>
+        {
+            Thread.Sleep(1500);
+            screen.RunOnNextFrame(() =>
+            {
+                screen.ScreenManager.AddScreen(new AutoPatcher(screen, synthetic, marker.IsMod, resumeMode: true));
+            });
+        });
     }
 
     // Self-elevation: write marker, relaunch with --apply-patch=<version> and
@@ -212,7 +237,6 @@ internal class AutoPatcher : PopupWindow
         {
             Log.Write("AutoPatcher: install dir requires elevation; writing marker and relaunching as admin");
             WritePendingPatchMarker(Info, IsMod);
-            Log.FlushAllLogs();
 
             // De-duplicate: if the user somehow already had --apply-patch on the
             // command line (shouldn't happen, but defensive), strip it before
@@ -229,6 +253,14 @@ internal class AutoPatcher : PopupWindow
                 Verb            = "runas", // triggers the Windows UAC prompt
                 Arguments       = argString,
             };
+
+            // Release blackbox.log BEFORE spawning the elevated child. Process.Start
+            // returns as soon as the kernel hands back a handle for the new
+            // process; the child boots immediately and Log.Initialize re-opens
+            // the same path with FileMode.Create. If we still hold the handle,
+            // the child crashes with "file is being used by another process".
+            Log.Close();
+
             System.Diagnostics.Process.Start(psi);
 
             Thread.Sleep(500); // give the elevated instance a moment to claim the window
@@ -263,6 +295,16 @@ internal class AutoPatcher : PopupWindow
     {
         ProgressBarElement p = ProgressSteps.Add(new ProgressBarElement(new(0,0, ProgressSteps.Width, 18), 100));
         p.EnableProgressLabel(progressLabel, Fonts.TahomaBold9);
+        if (ResumeMode)
+        {
+            // Resume runs before the parent screen has fully settled — the
+            // bar's PerformLayout would not otherwise fire before first draw,
+            // leaving ProgressBar.Rect at the constructor origin (0,0) instead
+            // of inside the popup. Force the layout pass here. Normal flow
+            // gets enough idle Update ticks before drawing for this to fire
+            // incidentally; the explicit call is unnecessary there.
+            ProgressSteps.PerformLayout();
+        }
         return p;
     }
 
@@ -389,10 +431,18 @@ internal class AutoPatcher : PopupWindow
             {
                 RunOnNextFrame(() =>
                 {
-                    var label = ProgressSteps.AddLabel("Patch downloaded — relaunching as administrator to apply...");
+                    var label = ProgressSteps.AddLabel("Patch downloaded — UAC prompt to apply patch in 3 seconds...");
                     label.Color = Color.Yellow;
                     label.Anim().Alpha(new(0.5f, 1.0f)).Loop();
-                    CurrentTask = Parallel.Run(RelaunchAsAdminWithMarker);
+                    // Give the user a moment to read the label before UAC steals
+                    // focus. Without this, the prompt appears almost
+                    // simultaneously with the label and the user has no time
+                    // to understand why the OS is asking for elevation.
+                    CurrentTask = Parallel.Run(() =>
+                    {
+                        Thread.Sleep(3000);
+                        RelaunchAsAdminWithMarker();
+                    });
                 });
                 return;
             }

@@ -194,6 +194,17 @@ namespace Ship_Game
             }
             StopLogThread();
             FlushAllLogs();
+            // Dispose the file stream so another process can open blackbox.log
+            // (the AutoPatcher self-elevation flow spawns an elevated child that
+            // needs write access to this exact path before the parent exits).
+            // Lock(Sync) so any in-flight LogAsyncWriter iteration completes
+            // before we tear the stream down. Idempotent — Log.Write/Flush all
+            // null-check LogFile, so subsequent writes become safe no-ops.
+            lock (Sync)
+            {
+                try { LogFile?.Dispose(); } catch { }
+                LogFile = null;
+            }
         }
 
         public static void AddThreadMonitor()
