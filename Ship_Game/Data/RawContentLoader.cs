@@ -3,7 +3,6 @@ using System.IO;
 using Microsoft.Xna.Framework.Content;
 using Microsoft.Xna.Framework.Graphics;
 using SDUtils;
-using SgMotion;
 using Ship_Game.Data.Mesh;
 using Ship_Game.Data.Texture;
 
@@ -205,20 +204,30 @@ namespace Ship_Game.Data
                         if (!MeshExport.IsAlreadySavedTexture(tex))
                         {
                             string texSavePath = TexExport.GetSaveAutoFormatPath(tex, savePath);
-                            texSavePath = texSavePath.Replace("_0.", ".");
-                            Log.Write(ConsoleColor.Green, $"  Export Lone Texture: {texSavePath}");
-                            GameLoadingScreen.SetStatus("ExportTexture", texSavePath);
-                            TexExport.SaveAutoFormat(tex, texSavePath);
-                            MeshExport.AddAlreadySavedTexture(tex, texSavePath);
+                            if (texSavePath == null)
+                            {
+                                Log.Write(ConsoleColor.DarkYellow, $"  Ignored Lone Texture: {relativePath}");
+                            }
+                            else
+                            {
+                                texSavePath = texSavePath.Replace("_0.", ".");
+                                Log.Write(ConsoleColor.Green, $"  Export Lone Texture: {texSavePath}");
+                                GameLoadingScreen.SetStatus("ExportTexture", texSavePath);
+                                TexExport.SaveAutoFormat(tex, texSavePath);
+                                MeshExport.AddAlreadySavedTexture(tex, texSavePath);
+                            }
                         }
                     }
                     else
                     {
                         var tex3d = Content.Load<Texture3D>(relativePath);
                         string texSavePath = Path.ChangeExtension(savePath, "dds");
-                        Log.Write(ConsoleColor.DarkYellow, $"  Export Lone Texture3D: {texSavePath}");
-                        GameLoadingScreen.SetStatus("ExportTexture", texSavePath);
-                        TexExport.Save(tex3d, texSavePath);
+                        if (texSavePath != null)
+                        {
+                            Log.Write(ConsoleColor.DarkYellow, $"  Export Lone Texture3D: {texSavePath}");
+                            GameLoadingScreen.SetStatus("ExportTexture", texSavePath);
+                            TexExport.Save(tex3d, texSavePath);
+                        }
                     }
                 }
                 catch (Exception e)
@@ -228,17 +237,10 @@ namespace Ship_Game.Data
                 return;
             }
 
-            try
-            {
-                SkinnedModel model = Content.LoadSkinnedModel(relativePath);
-                Log.Write(ConsoleColor.Cyan, $"  Export AnimatedMesh: {savePath}");
-                GameLoadingScreen.SetStatus("ExportMesh", savePath);
-                MeshExport.Export(model, nameNoExt, savePath);
-            }
-            catch (ContentLoadException e)
-            {
-                Log.Warning($"Failed to export {relativePath}: {e.Message}");
-            }
+            // Skinned/animated mesh export lives on the legacy/mesh_exporter_xna31
+            // branch, where the XNA 3.1 + XNAnimation stack is intact. Migration's
+            // RawContentLoader is static-mesh only; skinned content reaches the
+            // runtime as pre-exported .fbx via the §3.10 pipeline.
         }
 
         public void ExportAllXnbMeshes(string extension)

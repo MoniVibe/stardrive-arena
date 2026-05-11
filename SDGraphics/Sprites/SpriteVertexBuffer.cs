@@ -1,4 +1,5 @@
 ﻿using System;
+using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using SDGraphics.Rendering;
 using SDUtils;
@@ -31,7 +32,7 @@ internal sealed class SpriteVertexBuffer : IDisposable
     public SpriteVertexBuffer(GraphicsDevice device)
     {
         Quads = new VertexCoordColor[Size * 4];
-        VertexBuffer = new(device, VertexCoordColor.SizeInBytes*Size*4, BufferUsage.WriteOnly);
+        VertexBuffer = new(device, VertexCoordColor.VertexDeclaration, Size * 4, BufferUsage.WriteOnly);
     }
 
     ~SpriteVertexBuffer()
@@ -99,13 +100,14 @@ internal sealed class SpriteVertexBuffer : IDisposable
         }
 
         GraphicsDevice device = sr.Device;
-        // set the vertex buffer
-        device.Vertices[0].SetSource(vbo, 0, VertexCoordColor.SizeInBytes);
+        // MonoGame: SetVertexBuffer carries the VertexDeclaration
+        device.SetVertexBuffer(vbo);
 
         sr.ShaderBegin(texture, Color.White);
-        device.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0,
-                                     startIndex * 4, drawCount * 4, // 4 points
-                                     startIndex * 6, drawCount * 2); // 2 triangles
+        device.DrawIndexedPrimitives(PrimitiveType.TriangleList,
+                                     baseVertex: 0,
+                                     startIndex: startIndex * 6,
+                                     primitiveCount: drawCount * 2); // 2 triangles per quad
         sr.ShaderEnd();
     }
 }

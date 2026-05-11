@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using Ship_Game.Audio;
 using Ship_Game.Data.Yaml;
 using Ship_Game.GameScreens.Scene;
@@ -61,6 +62,11 @@ namespace Ship_Game.GameScreens.MainMenu
 
             Add(new AutoUpdateChecker(this));
 
+            // If the game was launched by AutoPatcher self-elevation
+            // (--apply-patch=<version>), pick up where the non-elevated pass
+            // left off and apply the cached patch from AppData/Patches/.
+            AutoPatcher.TryResumePending(this);
+
             if (GlobalStats.HasMod)
             {
                 ScreenManager.AddHotLoadTarget(this, new FileInfo(GlobalStats.ModFile), OnModChanged);
@@ -93,7 +99,7 @@ namespace Ship_Game.GameScreens.MainMenu
 
         void CreateVersionArea()
         {
-            VersionArea = Panel(Rectangle.Empty, Color.TransparentBlack);
+            VersionArea = Panel(Rectangle.Empty, Color.Transparent);
             VersionArea.Name = "version_area";
             VersionArea.StartFadeIn(3.0f, delay: 2.0f);
 

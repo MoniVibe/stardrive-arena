@@ -9,19 +9,14 @@ name: Patch Build
 #   1. Release is created as DRAFT — maintainer publishes manually after sanity-checking.
 #   2. Release body includes a one-line-per-commit summary since the previous patch tag.
 #
-# MAIN-ONLY STUB: this copy of the workflow lives on main solely so the
-# GitHub Actions UI registers it and surfaces the "Run workflow" button.
-# The full active version (with `on: push: branches: [main]` re-enabled)
-# lives on the `migration/monogame_migration` branch and is what runs at
-# dispatch time when you pick that branch in the UI dropdown.
-#
-# When the migration branch merges into main, restore the full `on:` block
-# below — Git will see this stub vs. migration's version as a conflict on
-# this file; resolve by taking migration's side. Until then, leaving
-# `push:` off prevents accidental fires against the Mars-1.51 source still
-# on main (which would build a bogus Mars-line patch).
+# Triggers on pushes to main — matches AppVeyor's deploy gate (should_deploy() returns
+# true only for main/develop). The migration cycle is closed; the migration branch is
+# preserved for history but no longer cuts patches.
+# workflow_dispatch is enabled for manual testing on any branch the workflow file exists on.
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       run_perf_tests:

@@ -1,64 +1,49 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+<Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
-    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
-    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{4112FFA8-1BF3-4966-818F-0935695D48F7}</ProjectGuid>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Platforms>x64</Platforms>
     <OutputType>Library</OutputType>
-    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>UnitTests</RootNamespace>
     <AssemblyName>UnitTests</AssemblyName>
-    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
-    <FileAlignment>512</FileAlignment>
-    <ProjectTypeGuids>{3AC096D0-A1C2-E12C-1390-A8335801FDAB};{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>
-    <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">15.0</VisualStudioVersion>
-    <VSToolsPath Condition="'$(VSToolsPath)' == ''">$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)</VSToolsPath>
-    <ReferencePath>$(ProgramFiles)\Common Files\microsoft shared\VSTT\$(VisualStudioVersion)\UITestExtensionPackages</ReferencePath>
-    <IsCodedUITest>False</IsCodedUITest>
-    <TestProjectType>UnitTest</TestProjectType>
-    <NuGetPackageImportStamp>
-    </NuGetPackageImportStamp>
-    <TargetFrameworkProfile />
-  </PropertyGroup>
-  <PropertyGroup>
     <LangVersion>latest</LangVersion>
-    <RuntimeIdentifiers>win-x86</RuntimeIdentifiers>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x86'">
-    <DebugSymbols>true</DebugSymbols>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Deterministic>true</Deterministic>
     <OutputPath>bin\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
-    <DebugType>pdbonly</DebugType>
-    <PlatformTarget>x86</PlatformTarget>
-    <ErrorReport>prompt</ErrorReport>
-    <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+    <EnableDefaultNoneItems>false</EnableDefaultNoneItems>
+    <EnableDefaultContentItems>false</EnableDefaultContentItems>
+    <EnableMGCBItems>false</EnableMGCBItems>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x86'">
-    <OutputPath>bin\Release\</OutputPath>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <DebugType>portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <DefineConstants>TRACE</DefineConstants>
     <Optimize>true</Optimize>
-    <DebugType>pdbonly</DebugType>
-    <PlatformTarget>x86</PlatformTarget>
-    <ErrorReport>prompt</ErrorReport>
-    <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
+    <DebugType>portable</DebugType>
     <DebugSymbols>true</DebugSymbols>
+    <!-- §4.3 warning gate; matches StarDrive.csproj.
+         If a future MSTest analyzer bump introduces new noise that's not actionable,
+         the right fix is a targeted NoWarn here, not lifting the gate. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+
+  <!-- Inherit Range alias from StarDrive (net8 System.Range collision). -->
   <ItemGroup>
-    <Reference Include="Microsoft.Xna.Framework, Version=3.1.0.0, Culture=neutral, PublicKeyToken=6d5c3888ef60e27d, processorArchitecture=x86">
-      <HintPath>..\game\Microsoft.Xna.Framework.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="System" />
-    <Reference Include="System.Core" />
-    <Reference Include="System.Numerics" />
-    <Reference Include="System.Windows.Forms" />
-    <Reference Include="System.Xml" />
-    <Reference Include="XNAnimation, Version=0.7.0.0, Culture=neutral, PublicKeyToken=0c21691816f8c6d0, processorArchitecture=x86">
-      <HintPath>..\game\XNAnimation.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
+    <Using Include="SDGraphics.Range" Alias="Range" />
   </ItemGroup>
+
   <ItemGroup>
     <Compile Include="AITests\Empire\BudgetTests.cs" />
     <Compile Include="AITests\Empire\SpaceRoadsTests.cs" />
@@ -74,12 +59,37 @@
     <Compile Include="Collections\StableCollectionTests.cs" />
     <Compile Include="Collections\TestDequeT.cs" />
     <Compile Include="Collections\TestEnumFlatMap.cs" />
+    <Compile Include="Content\EffectXnbCompatTests.cs" />
+    <Compile Include="Content\SpriteFontXnbCompatTests.cs" />
+    <Compile Include="Content\SunBurnReaderStubTests.cs" />
+    <Compile Include="Content\Xna31VertexDeclarationDecodeTests.cs" />
     <Compile Include="Data\TestAudioConfig.cs" />
     <Compile Include="Data\TestMeshImportExport.cs" />
+    <Compile Include="Data\MeshExporterStaticPathTests.cs" />
+    <Compile Include="Data\MeshImporterTests.cs" />
+    <Compile Include="Data\SkinnedVertexDataRoundtripTests.cs" />
+    <Compile Include="Data\SkinnedFbxExportTests.cs" />
+    <Compile Include="Data\AnimationClipFbxExportTests.cs" />
+    <Compile Include="Data\SkinnedMeshRoundtripTests.cs" />
+    <Compile Include="Data\BoneAnimationPlayerTests.cs" />
+    <Compile Include="Data\StaticMeshAutoPlayTests.cs" />
+    <Compile Include="Data\Ship17DiagnosticTest.cs" />
+    <Compile Include="Data\Ship17EndToEndTest.cs" />
     <Compile Include="Data\TestLocalizedText.cs" />
     <Compile Include="Empires\IncomingThreatDetectorTests.cs" />
     <Compile Include="ExoticSystems\ResearchStations.cs" />
     <Compile Include="Fleets\FleetTests.cs" />
+    <Compile Include="Graphics\BloomFilterTests.cs" />
+    <Compile Include="Graphics\DistortionComponentTests.cs" />
+    <Compile Include="Graphics\FogOfWarTests.cs" />
+    <Compile Include="Graphics\FbxMaterialSurveyTests.cs" />
+    <Compile Include="Graphics\ForwardRendererTests.cs" />
+    <Compile Include="Graphics\LightingEffectBinderTests.cs" />
+    <Compile Include="Graphics\MeshLightingEffectTests.cs" />
+    <Compile Include="Graphics\ParticleManagerTests.cs" />
+    <Compile Include="Graphics\PostProcessChainTests.cs" />
+    <Compile Include="Graphics\ShadowMapTests.cs" />
+    <Compile Include="Graphics\SkinnedLightingEffectTests.cs" />
     <Compile Include="ImpactSimulation.cs" />
     <Compile Include="Collections\ArrayT_Tests.cs" />
     <Compile Include="Collections\TestCollectionExt.cs" />
@@ -122,6 +132,7 @@
     <Compile Include="StoryAndEvents\TestNotifications.cs" />
     <Compile Include="Ships\TestShipRanges.cs" />
     <Compile Include="StarDriveTest.cs" />
+    <Compile Include="TestEnvironment.cs" />
     <Compile Include="Ships\TestWeaponMunition.cs" />
     <Compile Include="Ships\TestWeaponModifiers.cs" />
     <Compile Include="Technologies\TestResearchPriorities.cs" />
@@ -148,6 +159,7 @@
     <Compile Include="TestImpactPredictor.cs" />
     <Compile Include="Serialization\YamlDeserializerTests.cs" />
     <Compile Include="Serialization\BinarySerializerTests.cs" />
+    <Compile Include="UI\AutoUpdateCheckerTests.cs" />
     <Compile Include="UI\MockGameScreen.cs" />
     <Compile Include="UI\MockInputProvider.cs" />
     <Compile Include="UI\TestScrollList.cs" />
@@ -167,75 +179,30 @@
     <None Include="app.config" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Microsoft.Xna.Framework.Game\Microsoft.Xna.Framework.Game.csproj">
-      <Project>{dd32a813-1393-421a-baf8-455f02167be3}</Project>
-      <Name>Microsoft.Xna.Framework.Game</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\SDGraphics\SDGraphics.csproj">
-      <Project>{46c4d1db-3168-470f-aba8-4ccaef60f107}</Project>
-      <Name>SDGraphics</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\SDUtils\SDUtils.csproj">
-      <Project>{dd03444f-b149-40db-b1df-cb31541008ed}</Project>
-      <Name>SDUtils</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\StarDrive.csproj">
-      <Project>{8071e07a-300e-485d-b139-066e15e82178}</Project>
-      <Name>StarDrive</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\SynapseGaming-SunBurn-Pro\SDSunBurn.csproj">
-      <Project>{bb003976-4764-4f4e-9a98-ddfb8449eccd}</Project>
-      <Name>SDSunBurn</Name>
-    </ProjectReference>
-  </ItemGroup>
-  <ItemGroup>
     <Content Include="..\game\libfbxsdk.dll">
       <Link>libfbxsdk.dll</Link>
     </Content>
     <Content Include="..\game\SDNative.dll">
       <Link>SDNative.dll</Link>
     </Content>
-    <Content Include="XnaNative.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="Microsoft.Xna.Framework.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="d3d9.dll">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="d3dx9_31.dll">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
     <Content Include="X3DAudio1_6.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
+
   <ItemGroup>
-    <PackageReference Include="LargeAddressAware">
-      <Version>1.0.6</Version>
-    </PackageReference>
-    <PackageReference Include="MSTest.TestAdapter">
-      <Version>3.8.2</Version>
-    </PackageReference>
-    <PackageReference Include="MSTest.TestFramework">
-      <Version>3.8.2</Version>
-    </PackageReference>
-    <PackageReference Include="System.Memory">
-      <Version>4.6.0</Version>
-    </PackageReference>
-    <PackageReference Include="System.Runtime.CompilerServices.Unsafe">
-      <Version>6.1.0</Version>
-    </PackageReference>
+    <ProjectReference Include="..\SDGraphics\SDGraphics.csproj" />
+    <ProjectReference Include="..\SDUtils\SDUtils.csproj" />
+    <ProjectReference Include="..\StarDrive.csproj" />
   </ItemGroup>
-  <Import Project="$(VSToolsPath)\TeamTest\Microsoft.TestTools.targets" Condition="Exists('$(VSToolsPath)\TeamTest\Microsoft.TestTools.targets')" />
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <PropertyGroup>
-    <PreBuildEvent>
-    </PreBuildEvent>
-  </PropertyGroup>
-  <PropertyGroup>
-    <PostBuildEvent>
-    </PostBuildEvent>
-  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.1.303" />
+    <PackageReference Include="MonoGame.Content.Builder.Task" Version="3.8.1.303" />
+    <PackageReference Include="LargeAddressAware" Version="1.0.6" />
+    <PackageReference Include="MSTest.TestAdapter" Version="3.11.1" />
+    <PackageReference Include="MSTest.TestFramework" Version="3.11.1" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+  </ItemGroup>
+
 </Project>

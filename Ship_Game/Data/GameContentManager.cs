@@ -10,11 +10,12 @@ using Microsoft.Xna.Framework.Media;
 using SDGraphics;
 using SDGraphics.Shaders;
 using SDUtils;
-using SgMotion;
 using Ship_Game.Data.Mesh;
 using Ship_Game.SpriteSystem;
-using SynapseGaming.LightingSystem.Core;
 using SynapseGaming.LightingSystem.Processors;
+// SynapseGaming.LightingSystem.Core/Processors usings were removed in Phase 1.8.12
+// (SunBurn type loader stubbed). IEffectCache restored via SunBurnStubs.cs in Phase 1.9.
+// Historical context only — no further action.
 // ReSharper disable UnusedMember.Local
 
 namespace Ship_Game.Data
@@ -24,7 +25,7 @@ namespace Ship_Game.Data
         // If non-null, a parent resource manager is checked first for existing resources
         // to avoid double loading resources into memory
         readonly GameContentManager Parent;
-        Dictionary<string, object> LoadedAssets; // uses OrdinalIgnoreCase
+        new Dictionary<string, object> LoadedAssets; // uses OrdinalIgnoreCase
         public string Name { get; }
 
         // Enables verbose logging for all asset loads and disposes
@@ -35,11 +36,47 @@ namespace Ship_Game.Data
 
         readonly object LoadSync = new();
 
+        // Phase 3.3: each XNA 3.1 D3DX-compiled Effect XNB still in this set is
+        // hand-rewritten as HLSL and shipped as a .mgfxo sibling — preferred via the
+        // .xnb -> .mgfxo fallback in LoadAsset before this stub fires. As entries are
+        // restored (mgfxo built + verified), remove them here. The set itself can go
+        // once it's empty. See memory: project_phase2_effect_xnb_drift.md
+        //
+        // 2026-05-02: Effects/desaturate.xnb restored via desaturate.mgfxo (probe).
+        // 2026-05-02: BasicFogOfWar attempted + reverted — 4-instruction PS rewrite did
+        //   not produce the right fog mask. Failure was the manual Pass.Apply()-
+        //   after-SpriteBatch-Begin pattern (silent black under MGFX 3.8.1.303 /
+        //   DX11), not the shader logic. Re-restored 2026-05-06 (§3.7 step 3) via
+        //   SpriteBatch.Begin(effect:) + parameter-driven LightsTexture sampler-
+        //   state, mirroring the BloomCombine pattern.
+        // 2026-05-03: Effects/PlanetHalo.xnb restored via PlanetHalo.mgfxo (vs_2_0+ps_2_0
+        //   atmospheric ring rewrite; no textures so no sampler-binding pitfalls).
+        // 2026-05-04: Effects/scale.xnb restored via scale.mgfxo (vs_1_1+ps_2_0 shield
+        //   gradient rewrite — UV-zoom VS, alpha-mask PS).
+        // 2026-05-04: Effects/Thrust.xnb restored via Thrust.mgfxo (vs_3_0+ps_3_0 thruster
+        //   cone rewrite — animated volume noise + cone falloff + silhouette term).
+        // 2026-05-05: Effects/BeamFX.xnb restored via BeamFX.mgfxo (vs_1_1+ps_2_0 beam
+        //   weapon rewrite — WVP + UV-scroll VS, single tex2D PS). Decode unblocked
+        //   by fixing the LZX framing byte-order bug in EffectXnbDump.
+        static readonly HashSet<string> Phase2BrokenEffectXnbs = new(StringComparer.OrdinalIgnoreCase)
+        {
+        };
+        static readonly HashSet<string> Phase2WarnedEffects = new(StringComparer.OrdinalIgnoreCase);
+        static void WarnPhase2BrokenEffectOnce(string assetName)
+        {
+            lock (Phase2WarnedEffects)
+            {
+                if (Phase2WarnedEffects.Add(assetName))
+                    Log.Warning($"Phase 2.2 stub: returning null for Effect '{assetName}' (XNA 3.1 D3DX bytecode incompatible with MGFX)");
+            }
+        }
+
         public override string ToString() => $"Content:{Name} Assets:{LoadedAssets.Count} Root:{RootDirectory}";
 
         static GameContentManager()
         {
-            FixSunBurnTypeLoader();
+            Xna31Compat.Register();
+            Mesh.SunBurnReaderStubs.Register();
         }
 
         public GameContentManager(IServiceProvider services, string name, string rootDirectory = "Content") : base(services, rootDirectory)
@@ -68,6 +105,12 @@ namespace Ship_Game.Data
         object GetField(string field)
             => typeof(ContentManager).GetField(field, BindingFlags.Instance|BindingFlags.NonPublic)?.GetValue(this);
         
+        // MonoGame's SpriteFont stores the underlying Texture2D in private field `_texture`
+        // (XNA 3.1 used `textureValue`). Reflection lookup tolerates absence so the
+        // disposal/size paths don't NRE on partially-constructed or stub fonts.
+        static Texture2D GetSpriteFontTexture(SpriteFont font)
+            => font == null ? null : GetField<Texture2D>(font, "_texture");
+
         static T GetField<T>(object obj, string name)
         {
             return (T)obj.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(obj);
@@ -117,12 +160,12 @@ namespace Ship_Game.Data
                     asset = assetObj;
                     return true;
                 }
-                Log.Error($"Asset '{assetNameWithExt}' already loaded as '{existing.GetType()}' while Load requested type '{typeof(T)}'");
+                Log.Warning($"Asset '{assetNameWithExt}' already loaded as '{existing.GetType()}' while Load requested type '{typeof(T)}'");
             }
             asset = default;
             return false;
         }
-        
+
         // SUNBURN COMPATIBILITY
         public bool TryGetEffect<T>(string assetName, out T asset) where T : Effect
         {
@@ -152,8 +195,7 @@ namespace Ship_Game.Data
                 case SurfaceFormat.Dxt1: mul = 0.5f; break;
                 case SurfaceFormat.Dxt3: mul = 1.0f; break;
                 case SurfaceFormat.Dxt5: mul = 1.0f; break;
-                case SurfaceFormat.Rgb32: mul = 4.0f; break;
-                case SurfaceFormat.Rgba32: mul = 4.0f; break;
+                // MonoGame removed Rgb32/Rgba32; only Color/HalfVector4/etc. remain.
                 case SurfaceFormat.Color: mul = 4.0f; break;
             }
             try { if (tex.LevelCount > 1) mul *= 1.75f; } // mip maps 
@@ -189,12 +231,16 @@ namespace Ship_Game.Data
                 else if (asset is Model mod)
                 {
                     numBytes += mod.Bones.Count * 256;
+                    // Note: ModelMesh.IndexBuffer/VertexBuffer moved to ModelMeshPart in MonoGame
+                    // — already accounted for via the inner MeshParts loop below.
                     foreach (ModelMesh mesh in mod.Meshes)
-                        numBytes += mesh.IndexBuffer.SizeInBytes + mesh.VertexBuffer.SizeInBytes;
+                        foreach (ModelMeshPart part in mesh.MeshParts)
+                            numBytes += (part.IndexBuffer?.IndexCount ?? 0) * 2
+                                      + (part.VertexBuffer?.VertexCount ?? 0) * part.VertexBuffer.VertexDeclaration.VertexStride;
                 }
                 else if (asset is Graphics.Font font)
                 {
-                    var fontTex = GetField<Texture2D>(font, "textureValue");
+                    var fontTex = GetSpriteFontTexture(font.XnaFont);
                     numBytes += TextureSize(fontTex);
                     numBytes += font.NumCharacters * 64;
                 }
@@ -274,35 +320,19 @@ namespace Ship_Game.Data
                         StaticMesh.DisposeModel(model);
                     }
                     break;
-                case SkinnedModel skinnedModel:
-                    if (!StaticMesh.IsModelDisposed(skinnedModel))
-                    {
-                        if (DebugAssetLoading) Log.Write(ConsoleColor.Magenta, "Disposing aniModel "+(assetName??skinnedModel.Model.Meshes[0].Name));
-                        StaticMesh.DisposeModel(skinnedModel);
-                    }
-                    break;
+                // Skinned meshes load as StaticMesh (with IsSkinned=true and a BoneAnimationPlayer)
+                // through the §3.10 FBX pipeline, so the historical XNA SkinnedModel switch arm
+                // is no longer needed.
                 case SpriteFont font:
-                    var texture = GetField<Texture2D>(font, "textureValue");
-                    if (!texture.IsDisposed)
+                    var texture = GetSpriteFontTexture(font);
+                    if (texture != null && !texture.IsDisposed)
                     {
                         if (DebugAssetLoading) Log.Write(ConsoleColor.Magenta, "Disposing font     "+(assetName??texture.Name));
                         texture.Dispose();
                     }
                     break;
-                case Effect fx:
-                    if (!fx.IsDisposed)
-                    {
-                        if (DebugAssetLoading) Log.Write(ConsoleColor.Magenta, "Disposing effect   "+(assetName??"unknown"));
-                        fx.Dispose();
-                    }
-                    break;
-                case Shader shader:
-                    if (!shader.IsDisposed)
-                    {
-                        if (DebugAssetLoading) Log.Write(ConsoleColor.Magenta, "Disposing shader   "+(assetName??"unknown"));
-                        shader.Dispose();
-                    }
-                    break;
+                // Effect and Shader cases removed — both inherit from GraphicsResource in MonoGame
+                // and are already handled by the case above. (XNA 3.1 had a different hierarchy.)
                 case Video _: // video is just a reference object, nothing to dispose
                     break;
                 case IDisposable disposable:
@@ -324,11 +354,10 @@ namespace Ship_Game.Data
                 case TextureAtlas atlas: return atlas.IsDisposed;
                 case StaticMesh mesh: return mesh.IsDisposed;
                 case Model model: return StaticMesh.IsModelDisposed(model);
-                case SkinnedModel sm: return StaticMesh.IsModelDisposed(sm);
+                // Skinned meshes share the StaticMesh case above; no separate SkinnedModel arm.
                 case Video _: return false; // nothing to dispose
-                case SpriteFont font: return GetField<Texture2D>(font, "textureValue").IsDisposed;
-                case Effect fx: return fx.IsDisposed;
-                case Shader shader: return shader.IsDisposed;
+                case SpriteFont font: { var t = GetSpriteFontTexture(font); return t == null || t.IsDisposed; }
+                // Effect/Shader cases removed — both inherit GraphicsResource (handled above).
             }
             // anything that falls here is of non-disposable type, such as `Video`
             return false;
@@ -434,6 +463,35 @@ namespace Ship_Game.Data
             var asset = new AssetName(assetName);
             if (assetType == typeof(SubTexture))
                 return (T)(object)LoadSubTexture(asset.RelPathWithExt);
+
+            // Phase 3.3: prefer a .mgfxo sibling over the (often broken) D3DX fx_2_0
+            // .xnb. The .mgfxo is a hand-rewritten HLSL effect compiled by mgfxc to
+            // MonoGame-compatible MGFX. Mod-friendly: GetContentPath resolves through
+            // Mods/Vanilla so a mod can ship its own .fx (compiled to .mgfxo) and have
+            // it win over the vendored one. Falls through to the legacy stub list when
+            // no sibling exists.
+            if (assetType == typeof(Effect) && asset.RelPathWithExt.EndsWith(".xnb", StringComparison.OrdinalIgnoreCase))
+            {
+                if (useCache && TryGetAsset(asset.RelPathWithExt, out T cachedFx))
+                    return cachedFx;
+
+                string mgfxoRel = asset.RelPathWithExt.Substring(0, asset.RelPathWithExt.Length - 4) + ".mgfxo";
+                string mgfxoPath = RawContentLoader.GetContentPath(mgfxoRel);
+                if (File.Exists(mgfxoPath))
+                {
+                    byte[] mgfxBytes = File.ReadAllBytes(mgfxoPath);
+                    var fx = (T)(object)new Effect(Device, mgfxBytes) { Name = asset.RelPathWithExt };
+                    if (useCache)
+                        lock (LoadSync) RecordCacheObject(asset.RelPathWithExt, ref fx);
+                    return fx;
+                }
+
+                if (Phase2BrokenEffectXnbs.Contains(asset.RelPathWithExt))
+                {
+                    WarnPhase2BrokenEffectOnce(asset.RelPathWithExt);
+                    return default;
+                }
+            }
 
             if (useCache && TryGetAsset(asset.RelPathWithExt, out T existing))
                 return existing;
@@ -634,33 +692,34 @@ namespace Ship_Game.Data
             return new SubTexture(texture.Name, texture, modTexPath);
         }
 
-        // Load and compile an .fx file
+        // Load an Effect from either a precompiled .mgfx or a sibling .fx (lookup
+        // resolves to .mgfx if the .fx-named asset isn't present, then falls through
+        // to a .mgfx of the same base name).
         // TODO: replace LoadEffect calls with LoadShader
         public Effect LoadEffect(string effectFile)
         {
             AssetName asset = new(effectFile);
             if (TryGetAsset(asset.RelPathWithExt, out Effect existing))
                 return existing;
-            
-            FileInfo file = ResourceManager.GetModOrVanillaFile(asset.RelPathWithExt);
+
+            // Phase 2.2: XNA 3.1 runtime HLSL compilation API was removed in MonoGame.
+            // Effects must now be precompiled to MGFX via the MonoGame Effect Compiler
+            // (mgfxc) at build time, then loaded as raw bytes through the Effect ctor.
+            // For .fx requests, look for a sibling .mgfx with the same base name.
+            string mgfxPath = asset.RelPathWithExt.EndsWith(".fx", StringComparison.OrdinalIgnoreCase)
+                ? asset.RelPathWithExt.Substring(0, asset.RelPathWithExt.Length - 3) + ".mgfx"
+                : asset.RelPathWithExt;
+
+            FileInfo file = ResourceManager.GetModOrVanillaFile(mgfxPath);
             if (file == null)
-                throw new FileNotFoundException($"LoadEffect {asset.RelPathWithExt} failed");
+                throw new FileNotFoundException($"LoadEffect {asset.RelPathWithExt}: no precompiled MGFX at '{mgfxPath}'");
 
             if (DebugAssetLoading) Log.Write(ConsoleColor.Cyan, $"LoadEffect {file.RelPath()}");
 
-            string pathToShader = file.FullName;
-            string sourceCode = File.ReadAllText(pathToShader);
-            var handler = Shader.CreateIncludeHandler(pathToShader);
-            CompiledEffect compiled = Effect.CompileEffectFromSource(sourceCode, Empty<CompilerMacro>.Array, handler, 
-                                                                     CompilerOptions.None, TargetPlatform.Windows);
-            if (!compiled.Success)
-            {
-                throw new($"LoadEffect {asset.RelPathWithExt} failed: {compiled.ErrorsAndWarnings}");
-            }
-            
-            var fx = new Effect(Device, compiled.GetEffectCode(), CompilerOptions.None, null);
-            lock (LoadSync) RecordCacheObject(asset.RelPathWithExt, ref fx);
-            return fx;
+            byte[] bytes = File.ReadAllBytes(file.FullName);
+            var effect = new Effect(Device, bytes);
+            lock (LoadSync) RecordCacheObject(asset.RelPathWithExt, ref effect);
+            return effect;
         }
 
         // Load and compile an .fx file as an SDGraphics Shader
@@ -696,23 +755,68 @@ namespace Ship_Game.Data
             AssetName asset = new(meshName);
             if (TryGetAsset(asset.RelPathWithExt, out StaticMesh mesh))
                 return mesh;
-            
-            if (DebugAssetLoading) Log.Write(ConsoleColor.Cyan, $"LoadStaticMesh {asset.RelPathWithExt}");
 
-            if (RawContentLoader.IsSupportedMesh(asset.RelPathWithExt))
+            // Phase 3.2: prefer .fbx/.obj sibling over stubbed .xnb. The XNB Model
+            // ContentTypeReader chain is still stubbed (§3.4 work); routing to the
+            // raw asset unblocks the visual restore for content shipping both
+            // source (.fbx/.obj) and baked (.xnb) forms — currently the 9 asteroids.
+            string loadPath = asset.RelPathWithExt;
+            if (loadPath.EndsWith(".xnb", StringComparison.OrdinalIgnoreCase))
             {
-                mesh = RawContent.LoadStaticMesh(asset.RelPathWithExt);
+                string baseName = loadPath.Substring(0, loadPath.Length - 4);
+                // Prefer .fbx over .obj — FBX preserves per-group transforms and
+                // material parameters (alpha, specular, normal/specular paths) that
+                // the OBJ MTL format can't carry. OBJ stays as a fallback for content
+                // that ships without an FBX sibling.
+                foreach (string ext in new[] { ".fbx", ".obj" })
+                {
+                    string candidate = baseName + ext;
+                    if (File.Exists(RawContentLoader.GetContentPath(candidate)))
+                    {
+                        loadPath = candidate;
+                        break;
+                    }
+                }
             }
-            else if (animated)
+
+            if (DebugAssetLoading) Log.Write(ConsoleColor.Cyan, $"LoadStaticMesh {loadPath}");
+
+            if (RawContentLoader.IsSupportedMesh(loadPath))
             {
-                // cannot cache these, otherwise we'll get a duplicate Model load
-                SkinnedModel skinned = LoadAsset<SkinnedModel>(asset.RelPathWithExt, useCache:false);
-                mesh = StaticMesh.FromSkinnedModel(asset.RelPathWithExt, skinned);
+                mesh = RawContent.LoadStaticMesh(loadPath);
             }
             else
             {
-                Model model = LoadAsset<Model>(asset.RelPathWithExt, useCache:false);
-                mesh = StaticMesh.FromStaticModel(asset.RelPathWithExt, model);
+                // No .fbx/.obj sidecar found. Skinned content normally arrives via the
+                // §3.10 FBX pipeline (offline export on legacy/mesh_exporter_xna31 →
+                // SkinnedMesh + BoneAnimationPlayer at load), so reaching this branch
+                // with `animated=true` means a mod shipped an XNB without a sibling
+                // .fbx/.obj — the static-Model fallback below loses the skin data.
+                if (animated)
+                    Log.Warning($"Skinned model '{asset.RelPathWithExt}' has no .fbx sidecar; loading as static (skin data lost)");
+
+                // Defensive XNB Model fallback. Phase 3.4 pivoted from "decode 3.1 XNB
+                // Models at runtime" to an offline FBX/OBJ export pipeline (see
+                // legacy/mesh_exporter_xna31 branch + commit 9bd3b7128); Phase B then
+                // archived every Model XNB out of game/Content/Model/ (commits
+                // 6f68b9396 + a5da742b4). The .fbx-first preference above means this
+                // branch only runs if a mod ships an XNB Model that has neither an
+                // .fbx nor .obj sibling. The Phase 1 Xna31VertexDeclarationReader
+                // decodes part of the XNA-3.1 wire format but not enough on its own —
+                // the Model XNB itself has structural drift (TODO Post-1.60: write
+                // Xna31ModelReader). Stub-StaticMesh fallback keeps the runtime alive.
+                // See memory: project_phase2_xnb_model_drift.md for the original hex.
+                try
+                {
+                    Model model = LoadAsset<Model>(asset.RelPathWithExt, useCache:false);
+                    mesh = StaticMesh.FromStaticModel(asset.RelPathWithExt, model);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning($"Phase 2.2 stub: XNB Model '{asset.RelPathWithExt}' load failed ({ex.GetType().Name}: {ex.Message}); returning empty StaticMesh");
+                    var stubBounds = new BoundingBox(-Microsoft.Xna.Framework.Vector3.One, Microsoft.Xna.Framework.Vector3.One);
+                    mesh = new StaticMesh(asset.RelPathWithExt, stubBounds);
+                }
             }
 
             lock (LoadSync) RecordCacheObject(asset.RelPathWithExt, ref mesh);
@@ -724,10 +828,8 @@ namespace Ship_Game.Data
             return Load<Model>(modelName);
         }
 
-        public SkinnedModel LoadSkinnedModel(string modelName)
-        {
-            return Load<SkinnedModel>(modelName);
-        }
+        // Skinned-mesh playback now goes through StaticMesh + BoneAnimationPlayer
+        // (§3.10), so the XNA SkinnedModel surface stays retired.
 
         protected override Stream OpenStream(string assetNameWithExt)
         {
@@ -773,66 +875,6 @@ namespace Ship_Game.Data
                     throw new ContentLoadException($"Asset '{assetNameWithExt}' was not found", ex);
                 if (ex is ArgumentException || ex is NotSupportedException || ex is IOException || ex is UnauthorizedAccessException)
                     throw new ContentLoadException($"Asset '{assetNameWithExt}' could not be opened", ex);
-                throw;
-            }
-        }
-
-        static void FixSunBurnTypeLoader()
-        {
-            Type readerMgrType  = typeof(ContentTypeReaderManager);
-            Type contentMgrType = typeof(GameContentManager);
-
-            FieldInfo readerType = readerMgrType.GetField("readerTypeToReader", BindingFlags.NonPublic | BindingFlags.Static);
-            FieldInfo nameTo     = readerMgrType.GetField("nameToReader", BindingFlags.NonPublic | BindingFlags.Static);
-            ReaderTypeToReader = readerType?.GetValue(null) as Dictionary<Type, ContentTypeReader>;
-            NameToReader       = nameTo?.GetValue(null) as Dictionary<string, ContentTypeReader>;
-
-            MethodInfo oldMethod = readerMgrType.GetMethod("InstantiateTypeReader", BindingFlags.NonPublic | BindingFlags.Static);
-            MethodInfo newMethod = contentMgrType.GetMethod("InstantiateTypeReader", BindingFlags.NonPublic | BindingFlags.Static);
-            MethodUtil.ReplaceMethod(newMethod, oldMethod);
-
-            XnaAssembly = readerMgrType.Assembly;
-            SunburnAssemblyName = typeof(SceneInterface).Assembly.FullName;
-        }
-
-        static Dictionary<Type, ContentTypeReader> ReaderTypeToReader;
-        static Dictionary<string, ContentTypeReader> NameToReader;
-        static Assembly XnaAssembly;
-        static string SunburnAssemblyName;
-
-        // @note This IS used, but only through reflection. It's referenced by string in `FixSunBurnTypeLoader()`
-        static bool InstantiateTypeReader(string readerTypeName, ContentReader contentReader, out ContentTypeReader reader)
-        {
-            try
-            {
-                Type type;
-                if (readerTypeName.StartsWith("SynapseGaming."))
-                {
-                    string typeName = readerTypeName.Substring(0, readerTypeName.IndexOf(','));
-                    string reroutedFullName = typeName + ", " + SunburnAssemblyName;
-                    type = Type.GetType(reroutedFullName);
-                }
-                else
-                {
-                    type = XnaAssembly.GetType(readerTypeName) ?? Type.GetType(readerTypeName);
-                }
-
-                if (type == null)
-                {
-                    throw new ContentLoadException($"{contentReader.AssetName} load failed: TypeReader not found for {readerTypeName}");
-                }
-                if (ReaderTypeToReader.TryGetValue(type, out reader))
-                {
-                    NameToReader.Add(readerTypeName, reader);
-                    return false;
-                }
-                reader = (ContentTypeReader)Activator.CreateInstance(type);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                if (ex is ArgumentException || ex is TargetInvocationException || (ex is TypeLoadException || ex is NotSupportedException) || (ex is MemberAccessException || ex is InvalidCastException))
-                    throw new ContentLoadException($"{contentReader.AssetName} load failed: TypeReader {readerTypeName} is invalid", ex);
                 throw;
             }
         }

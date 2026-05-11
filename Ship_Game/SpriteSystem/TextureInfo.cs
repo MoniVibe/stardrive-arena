@@ -1,6 +1,7 @@
-﻿using System;
+using System;
 using System.IO;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using Ship_Game.Data.Texture;
 
 namespace Ship_Game.SpriteSystem
@@ -15,6 +16,10 @@ namespace Ship_Game.SpriteSystem
         public int Height;
         public Texture2D Texture;
         public bool NoPack; // This texture should not be packed
+        // §4.6 #7: when true and the texture is Color+alpha, SaveAsDds writes
+        // a PNG (lossless) instead of DXT5 (banded). Set per-folder via
+        // ResourceManager.AtlasLosslessAlphaFolders during CreateTextureInfos.
+        public bool LosslessAlpha;
 
         public string SourcePath;
 
@@ -88,40 +93,72 @@ namespace Ship_Game.SpriteSystem
         public string SaveAsPng(string filename)
         {
             string path = Path.ChangeExtension(filename, "png");
-            Texture.Save(path, ImageFileFormat.Png);
+            using FileStream fs = File.Create(path);
+            Texture.SaveAsPng(fs, Texture.Width, Texture.Height);
             return path;
         }
 
         public string SaveAsDds(string filename)
         {
-            string path = Path.ChangeExtension(filename, "dds");
+            string ddsPath = Path.ChangeExtension(filename, "dds");
+            string pngPath = Path.ChangeExtension(filename, "png");
             SurfaceFormat format = Texture.Format;
             if (format == SurfaceFormat.Dxt5 || format == SurfaceFormat.Dxt1)
             {
-                Texture.Save(path, ImageFileFormat.Dds); // already compressed
+                // Round-trip already-compressed DXT bytes back to a real DDS file
+                // (header + raw blocks, no re-encoding). MonoGame removed XNA's
+                // Texture2D.Save(path, ImageFileFormat.Dds); without this writer
+                // the cache fallback was SaveAsPng — decode DXT to RGBA then PNG
+                // encode, ~300ms per nopack texture vs sub-ms here. The big
+                // nopack atlases (Suns 33 nopack, PlanetTiles 23 nopack, Nebulas
+                // 20 nopack) dominated full-rebuild time pre this fix.
+                bool isDxt5 = format == SurfaceFormat.Dxt5;
+                int blockBytes = isDxt5 ? 16 : 8;
+                int blocksWide = Math.Max(1, (Texture.Width + 3) / 4);
+                int blocksHigh = Math.Max(1, (Texture.Height + 3) / 4);
+                var blocks = new byte[blocksWide * blocksHigh * blockBytes];
+                Texture.GetData(blocks);
+                ImageUtils.WriteCompressedDds(ddsPath, Texture.Width, Texture.Height, blocks, isDxt5);
+                return ddsPath;
             }
-            else if (format == SurfaceFormat.Color)
+            if (format == SurfaceFormat.Color)
             {
                 var color = new Color[Texture.Width * Texture.Height];
                 Texture.GetData(color);
 
                 bool alpha = ImageUtils.HasTransparentPixels(color, Width, Height);
-                
-                DDSFlags flags = alpha ? DDSFlags.Dxt5BGRA : DDSFlags.Dxt1BGRA;
-                ImageUtils.ConvertToDDS(path, Width, Height, color, flags);
+
+                if (alpha && LosslessAlpha)
+                {
+                    // §4.6 #7: avoid DXT5 alpha-quantization artifacts on smooth
+                    // alpha gradients (UI/node's circular alpha mask read as a
+                    // visible dark ring at the sensor-circle edge in the FOW
+                    // composite). DXT5 alpha is 8-level-per-4x4-block; for
+                    // gradient textures this produces banding that bilinear
+                    // sampling doesn't fully smooth. Folder must be in
+                    // ResourceManager.AtlasLosslessAlphaFolders to opt in;
+                    // game-art atlases (Suns, Nebulas, PlanetTiles, etc.) take
+                    // the DXT5 fast path below — banding is invisible against
+                    // the noisy art content, and PNG encoding is ~20× slower
+                    // per nopack texture on full-rebuild.
+                    ImageUtils.SaveAsPng(pngPath, Width, Height, color);
+                    return pngPath;
+                }
+
+                DDSFlags flags = alpha ? DDSFlags.Dxt5 : DDSFlags.Dxt1;
+                ImageUtils.ConvertToDDS(ddsPath, Width, Height, color, flags);
+                return ddsPath;
             }
-            else if (format == SurfaceFormat.Bgr32)
+            if (format == SurfaceFormat.Bgr32)
             {
                 var color = new Color[Texture.Width * Texture.Height];
                 Texture.GetData(color);
-                ImageUtils.ConvertToDDS(path, Width, Height, color, DDSFlags.Dxt1BGRA);
+                ImageUtils.ConvertToDDS(ddsPath, Width, Height, color, DDSFlags.Dxt1);
+                return ddsPath;
             }
-            else
-            {
-                Log.Error($"Unsupported format '{format}' from texture '{Name}.{Type}': "
-                          +"Ensure you are using BGRA32 or BGR32 textures.");
-            }
-            return path;
+            Log.Error($"Unsupported format '{format}' from texture '{Name}.{Type}': "
+                      +"Ensure you are using BGRA32 or BGR32 textures.");
+            return ddsPath;
         }
     }
 }

@@ -41,8 +41,8 @@ public static class GlobalStats
 
     // 1.Major.Patch commit
     public static string Version = ""; // "1.30.13000 develop/f83ab4a"
-    public static string ExtendedVersion = ""; // "Mars : 1.20.12000 develop/f83ab4a"
-    public static string ExtendedVersionNoHash = ""; // "Mars : 1.20.12000"
+    public static string ExtendedVersion = ""; // "Jupiter : 1.60.12345 develop/f83ab4a"
+    public static string ExtendedVersionNoHash = ""; // "Jupiter : 1.60.12345"
         
     // Global GamePlay options for BB+ and for Mods which are loaded from Globals.yaml
     public static GamePlayGlobals Defaults;
@@ -97,6 +97,12 @@ public static class GlobalStats
 
     // PERF global option to Disable asteroids for increased performance
     public static bool DisableAsteroids;
+
+    // Set TRUE by the Media Foundation probe at startup if VideoPlayer can't be
+    // constructed (e.g. Win10/11 N/KN editions without the codec stack). When
+    // true, ScreenMediaPlayer construction is skipped and GameLoadingScreen
+    // jumps straight to MainMenu without splash/loading videos.
+    public static bool VideoDisabled;
 
     // PERF this is a graphics performance toggle, disabling engine trails makes everything much faster
     public static bool EnableEngineTrails = true;
@@ -246,6 +252,8 @@ public static class GlobalStats
     public static WindowMode WindowMode = WindowMode.Fullscreen;
     public static int AntiAlias = 2;
     public static bool RenderBloom = true;
+    public static bool RenderShieldDistortion = true;
+    public static bool RenderShadows = true;
     public static bool VSync = true;
     // Render quality & detail options
     public static int TextureQuality;      // 0=High, 1=Medium, 2=Low, 3=Off (DetailPreference enum)
@@ -302,8 +310,8 @@ public static class GlobalStats
                 .GetCustomAttributes(typeof(AssemblyInformationalVersionAttribute), false)
             as AssemblyInformationalVersionAttribute[])?[0].InformationalVersion ?? "";
 
-        ExtendedVersion = $"Mars : {Version}";
-        ExtendedVersionNoHash = $"Mars : {Version.Split(' ')[0]}";
+        ExtendedVersion = $"Jupiter : {Version}";
+        ExtendedVersionNoHash = $"Jupiter : {Version.Split(' ')[0]}";
             
         var config = OpenUserConfiguration();
         GetSetting(config, "ConfigVersion", ref ConfigVersion);
@@ -315,6 +323,8 @@ public static class GlobalStats
         GetSetting(config, "AutoSaveFreq", ref AutoSaveFreq);
         GetSetting(config, "AntiAliasSamples", ref AntiAlias);
         GetSetting(config, "PostProcessBloom", ref RenderBloom);
+        GetSetting(config, "PostProcessShieldDistortion", ref RenderShieldDistortion);
+        GetSetting(config, "RenderShadows", ref RenderShadows);
         GetSetting(config, "VSync", ref VSync);
         GetSetting(config, "TextureQuality", ref TextureQuality);
         GetSetting(config, "TextureSampling", ref TextureSampling);
@@ -417,6 +427,28 @@ public static class GlobalStats
         }
     }
 
+    // First-launch only: stamp XRES/YRES from the primary monitor's native bounds,
+    // capped at 2560x1440 so 4K/ultrawide users don't land at panel-max with no
+    // chance to dial it back before the first menu render. User can change this
+    // freely afterwards through OptionsScreen — it only fires when no user.config
+    // exists in %APPDATA%/StarDrive yet.
+    static void AutoDetectScreenResolution(Configuration exeCfg)
+    {
+        try
+        {
+            var bounds = System.Windows.Forms.Screen.PrimaryScreen.Bounds;
+            int w = Math.Min(bounds.Width, 2560);
+            int h = Math.Min(bounds.Height, 1440);
+            var settings = exeCfg.AppSettings.Settings;
+            if (settings["XRES"] != null) settings["XRES"].Value = w.ToString();
+            if (settings["YRES"] != null) settings["YRES"].Value = h.ToString();
+        }
+        catch
+        {
+            // fall back to shipped XRES/YRES defaults from app.config
+        }
+    }
+
     static Configuration OpenUserConfiguration()
     {
         string configFile = Dir.StarDriveAppData + "/StarDrive.user.config";
@@ -425,6 +457,7 @@ public static class GlobalStats
         // if the AppData config file doesn't exist, create one based on current defaults
         if (!File.Exists(configFile))
         {
+            AutoDetectScreenResolution(exeCfg);
             exeCfg.SaveAs(configFile, ConfigurationSaveMode.Full);
         }
 
@@ -479,6 +512,8 @@ public static class GlobalStats
         WriteSetting(config, "AutoSaveFreq", AutoSaveFreq);
         WriteSetting(config, "AntiAliasSamples", AntiAlias);
         WriteSetting(config, "PostProcessBloom", RenderBloom);
+        WriteSetting(config, "PostProcessShieldDistortion", RenderShieldDistortion);
+        WriteSetting(config, "RenderShadows", RenderShadows);
         WriteSetting(config, "VSync", VSync);
         WriteSetting(config, "TextureQuality", TextureQuality);
         WriteSetting(config, "TextureSampling", TextureSampling);

@@ -1,7 +1,8 @@
-﻿using Ship_Game.AI;
+using Ship_Game.AI;
 using SynapseGaming.LightingSystem.Core;
 using System;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using Ship_Game.AI.ExpansionAI;
 using Ship_Game.AI.Tasks;
@@ -164,6 +165,7 @@ namespace Ship_Game.Ships
                                  * Matrix.CreateRotationY(YRotation)
                                  * Matrix.CreateRotationZ(Rotation)
                                  * Matrix.CreateTranslation(new Vector3(Position, 0f));
+
                     ShipSO.UpdateAnimation(timeStep.FixedTime);
 
                     UpdateThrusters(timeStep);

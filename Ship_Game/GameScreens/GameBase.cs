@@ -60,34 +60,11 @@ namespace Ship_Game
 
             Graphics = new GraphicsDeviceManager(this)
             {
-                MinimumPixelShaderProfile = ShaderProfile.PS_2_0,
-                MinimumVertexShaderProfile = ShaderProfile.VS_2_0,
-                PreferredDepthStencilFormat = DepthFormat.Depth16, // only supported: Depth24Stencil8, 
-                PreferMultiSampling = false
+                PreferredDepthStencilFormat = DepthFormat.Depth16, // only supported: Depth24Stencil8,
             };
-
-            Graphics.PreparingDeviceSettings += PrepareDeviceSettings;
-        }
-
-        static void PrepareDeviceSettings(object sender, PreparingDeviceSettingsEventArgs e)
-        {
-            GraphicsAdapter a = e.GraphicsDeviceInformation.Adapter;
-            PresentationParameters p = e.GraphicsDeviceInformation.PresentationParameters;
-
-            var samples = (MultiSampleType)GlobalStats.AntiAlias;
-            if (a.CheckDeviceMultiSampleType(DeviceType.Hardware, a.CurrentDisplayMode.Format,
-                false, samples, out int quality))
-            {
-                p.MultiSampleQuality = (quality == 1 ? 0 : 1);
-                p.MultiSampleType    = samples;
-            }
-            else
-            {
-                p.MultiSampleType    = MultiSampleType.None;
-                p.MultiSampleQuality = 0;
-            }
-
-            e.GraphicsDeviceInformation.PresentationParameters.RenderTargetUsage = RenderTargetUsage.PlatformContents;
+            Graphics.PreferMultiSampling = true;
+            Graphics.GraphicsProfile = GraphicsProfile.HiDef;
+            Graphics.ApplyChanges();
         }
 
         void UpdateRendererPreferences(ref GraphicsSettings settings)
@@ -161,15 +138,34 @@ namespace Ship_Game
             if (Debugger.IsAttached && settings.Mode == WindowMode.Fullscreen)
                 settings.Mode = WindowMode.Borderless;
 
-            Graphics.PreferredBackBufferWidth = settings.Width;
-            Graphics.PreferredBackBufferHeight = settings.Height;
-            Graphics.SynchronizeWithVerticalRetrace = settings.VSync;
-
+            // FormBorderStyle MUST be set BEFORE PreferredBackBuffer*: changing
+            // the border fires a WinForms SizeChanged event, and MonoGame
+            // WindowsDX's SizeChanged handler clobbers PreferredBackBufferWidth
+            // /Height with the form's current ClientSize (the Phase 2.2 trap
+            // documented below). For Borderless that wasn't fatal — the
+            // form.ClientSize assignment further down re-fires SizeChanged with
+            // the right values. Fullscreen skips that block, so the clobber
+            // stuck and ToggleFullScreen() entered hardware mode at the
+            // wrong resolution.
+            //
+            // Fullscreen also needs Border=None: MonoGame's exclusive fullscreen
+            // hides the form visually, but the underlying WinForms client-area
+            // origin is still offset by the title-bar height. Mouse-coord
+            // transforms clamp to client area, producing a ~25px dead zone at
+            // the top — invisible on the main menu, fatal on the universe HUD
+            // where interactive elements sit at Y=0. Only surfaces outside the
+            // debugger because Debugger.IsAttached above silently downgrades
+            // Fullscreen to Borderless for VS launches.
             switch (settings.Mode)
             {
                 case WindowMode.Windowed:   form.FormBorderStyle = FormBorderStyle.Fixed3D; break;
                 case WindowMode.Borderless: form.FormBorderStyle = FormBorderStyle.None;    break;
+                case WindowMode.Fullscreen: form.FormBorderStyle = FormBorderStyle.None;    break;
             }
+
+            Graphics.PreferredBackBufferWidth = settings.Width;
+            Graphics.PreferredBackBufferHeight = settings.Height;
+            Graphics.SynchronizeWithVerticalRetrace = settings.VSync;
 
             if (settings.Mode != WindowMode.Fullscreen && Graphics.IsFullScreen ||
                 settings.Mode == WindowMode.Fullscreen && !Graphics.IsFullScreen)
@@ -177,9 +173,14 @@ namespace Ship_Game
                 Graphics.ToggleFullScreen();
             }
 
-            bool deviceChanged = ApplySettings(ref settings);
-
-            if (settings.Mode != WindowMode.Fullscreen) // set to screen center
+            // Phase 2.2: in MonoGame WindowsDX 3.8 the WinForms platform binds the
+            // backbuffer size to the form's ClientSize via a SizeChanged handler. If we
+            // call ApplyChanges() BEFORE the form has been resized, the backbuffer stays
+            // at MonoGame's 800x480 default (the SizeChanged event hasn't fired yet to
+            // override the preferred values). Result: a tiny 800x480 backbuffer
+            // presented in the corner of the oversized form. Resize the form FIRST,
+            // then call ApplySettings so the backbuffer tracks the form's ClientSize.
+            if (settings.Mode != WindowMode.Fullscreen)
             {
                 form.WindowState = FormWindowState.Normal;
                 form.ClientSize = new Size(settings.Width, settings.Height);
@@ -194,9 +195,14 @@ namespace Ship_Game
                 // but also make sure that we stay inside the screen, otherwise XNA mouse cursor
                 // position reporting goes crazy
                 if (pt.X < bounds.Left) pt.X = bounds.Left;
-                if (pt.Y < bounds.Top) pt.Y = bounds.Top; 
+                if (pt.Y < bounds.Top) pt.Y = bounds.Top;
                 form.Location = pt;
             }
+
+            bool deviceChanged = ApplySettings(ref settings);
+
+            PresentationParameters pp = GraphicsDevice.PresentationParameters;
+            Log.Write(ConsoleColor.Cyan, $"ApplyGraphics: backbuffer={pp.BackBufferWidth}x{pp.BackBufferHeight} form={form.ClientSize.Width}x{form.ClientSize.Height}");
 
             return deviceChanged;
         }
@@ -206,7 +212,7 @@ namespace Ship_Game
             GameAudio.Initialize(null, "Audio/AudioConfig.yaml");
         }
 
-        protected void UpdateGame(float deltaTime)
+        protected void UpdateGame(GameTime gameTime)
         {
             if (Log.IsTerminating) // game is crashing, don't update anymore
             {
@@ -217,7 +223,8 @@ namespace Ship_Game
             try
             {
                 ++FrameId;
-                TotalElapsed = (float)base.TotalGameTime;
+                TotalElapsed = (float)gameTime.TotalGameTime.TotalSeconds;
+                float deltaTime = (float)gameTime.ElapsedGameTime.TotalSeconds;
                 Elapsed = new UpdateTimes(deltaTime, TotalElapsed);
 
                 if (IsDeviceGood) // only Update if device is OK
@@ -226,7 +233,7 @@ namespace Ship_Game
                     ScreenManager.Update(Elapsed);
                 }
 
-                base.Update(deltaTime); // Update XNA components
+                base.Update(gameTime); // MonoGame Update
             }
             catch (Exception ex)
             {

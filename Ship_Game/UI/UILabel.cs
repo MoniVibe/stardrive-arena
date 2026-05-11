@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using SDUtils;
 using Ship_Game.Audio;
 using Vector2 = SDGraphics.Vector2;
@@ -68,7 +69,7 @@ namespace Ship_Game
             set
             {
                 TextHoverColor = value;
-                EnableHighlights = (value != Color.TransparentBlack);
+                EnableHighlights = (value != Color.Transparent);
             }
         }
 

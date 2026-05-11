@@ -1,15 +1,51 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Security.Principal;
+using System.Text.Json;
 using System.Threading;
 using System.Windows.Forms;
 using SDUtils;
-using Color = Microsoft.Xna.Framework.Graphics.Color;
+using Color = Microsoft.Xna.Framework.Color;
 
 namespace Ship_Game.GameScreens.MainMenu;
 
+// AutoPatcher — applies an in-line file-drop patch from GitHub Releases.
+//
+// Lifecycle:
+//   1. AutoUpdateChecker discovers a newer codename-tagged release (vanilla
+//      filters /releases by VanillaDefaults.ReleaseTagPrefix; mods hit
+//      /releases/latest) and pushes AutoPatcher onto the screen stack.
+//   2. Download phase: pulls the patch zip(s) from Info.ZipUrls into
+//      %APPDATA%\StarDrive\Patches\<version>\. Chunked patches are concatenated
+//      in name order before unzip — see Deploy/MakeInstaller.py for the
+//      "001-…", "002-…" chunk layout.
+//   3. Unzip phase: extracts into the same per-version cache folder.
+//
+// UAC self-elevation (Option A — split-pass):
+//   The download/unzip pass runs in the original (non-elevated) process so it
+//   can write under %APPDATA% without any prompt. After unzip, NeedsElevation
+//   gates on `gameDir.Contains("Program Files")` && !IsInRole(Administrator).
+//   If true:
+//     a. WritePendingPatchMarker writes %APPDATA%\StarDrive\PendingPatch.json
+//        with { Version, Name, IsMod }.
+//     b. RelaunchAsAdminWithMarker spawns StarDrive.exe again with
+//        --apply-patch=<version> and Verb="runas". Windows shows the UAC
+//        dialog. The original process exits.
+//     c. The new (elevated) process boots normally; Program.ParseMainArgs sees
+//        --apply-patch and stashes the version in Program.ResumePatchVersion.
+//     d. MainMenuScreen.LoadContent calls AutoPatcher.TryResumePending. If the
+//        marker matches, it builds a synthetic ReleaseInfo and pushes a new
+//        AutoPatcher with ResumeMode=true.
+//     e. ResumeMode skips Download/Unzip (the cache is already on disk) and
+//        jumps straight to DeleteStaleFiles + file-move into the install dir.
+//   The marker is deleted on RestartAsync (success path) and on the
+//   "cached patch missing" branch, so a failed second leg doesn't loop.
+//
+// Mods: NeedsElevation also fires when the active mod folder lands inside
+// "Program Files". Mod patches go through the same UAC dance.
 /// <summary>
 /// This will automatically apply the latest patch,
 /// while showing progress
@@ -19,15 +55,18 @@ internal class AutoPatcher : PopupWindow
     readonly GameScreen Screen;
     readonly ReleaseInfo Info;
     readonly bool IsMod;
+    readonly bool ResumeMode; // true = elevated resume; skip download/unzip
     TaskResult CurrentTask;
 
     UIList ProgressSteps;
 
-    public AutoPatcher(GameScreen screen, in ReleaseInfo info, bool isMod) : base(screen, 520, 220)
+    public AutoPatcher(GameScreen screen, in ReleaseInfo info, bool isMod, bool resumeMode = false)
+        : base(screen, 520, 220)
     {
         Screen = screen;
         Info = info;
         IsMod = isMod;
+        ResumeMode = resumeMode;
         TitleText = "AutoPatcher " + info.Name;
         CanEscapeFromScreen = false;
     }
@@ -42,8 +81,202 @@ internal class AutoPatcher : PopupWindow
         ProgressSteps.AxisAlign = Align.TopCenter;
         ProgressSteps.SetLocalPos(0, 70);
 
+        if (ResumeMode)
+        {
+            // Elevated resume: download + unzip already done by the non-elevated
+            // pre-elevation pass. Pre-fill those two bars to 100% so the user
+            // sees the same 4-bar layout as the normal flow, then continue with
+            // the file-move phases against the cached patch in
+            // %APPDATA%\StarDrive\Patches\<version>\.
+            Log.Write($"AutoPatcher: resuming pre-downloaded patch {Info.Version} in elevated mode");
+            string outputFolder = GetPatchOutputFolder();
+            if (!Directory.Exists(outputFolder))
+            {
+                AddErrorMessageAndAllowExit(
+                    "Cached patch missing",
+                    $"Expected pre-downloaded patch at {outputFolder} but the folder is gone. Try the update again from the main menu.");
+                DeletePendingPatchMarker();
+                return;
+            }
+            AddProgressBar("Downloading").SetProgress(100);
+            AddProgressBar($"Unzipping {Info.Version}").SetProgress(100);
+            string patchFilesFolder = GetPatchFilesFolder(outputFolder);
+            AddProgressAndRunTaskOnNextFrame("Deleting Stale Files", nextP => DeleteStaleFiles(patchFilesFolder, nextP));
+            return;
+        }
+
         ProgressBarElement p = AddProgressBar("Downloading");
         CurrentTask = Parallel.Run(() => Download(p));
+    }
+
+    bool NeedsElevation()
+    {
+        string gameDir = Directory.GetCurrentDirectory();
+        if (IsMod) gameDir = Path.Combine(gameDir, GlobalStats.ModPath.Replace('/', '\\'));
+        bool inProgramFiles = gameDir.Contains("Program Files");
+        return inProgramFiles && !IsInRole(WindowsBuiltInRole.Administrator);
+    }
+
+    // Persisted between the non-elevated download/unzip pass and the elevated
+    // apply pass. Stores enough Info for the elevated instance to construct an
+    // AutoPatcher in resume mode without re-querying GitHub.
+    class PendingPatchMarker
+    {
+        public string Version { get; set; }
+        public string Name    { get; set; }
+        public bool   IsMod   { get; set; }
+    }
+
+    static string PendingPatchMarkerPath
+        => Path.Combine(Dir.StarDriveAppData, "PendingPatch.json");
+
+    static void WritePendingPatchMarker(in ReleaseInfo info, bool isMod)
+    {
+        try
+        {
+            var marker = new PendingPatchMarker
+            {
+                Version = info.Version,
+                Name    = info.Name,
+                IsMod   = isMod,
+            };
+            string json = JsonSerializer.Serialize(marker, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(PendingPatchMarkerPath, json);
+            Log.Write($"AutoPatcher: wrote pending-patch marker {PendingPatchMarkerPath}");
+        }
+        catch (Exception e)
+        {
+            Log.Warning($"AutoPatcher: failed to write marker: {e.Message}");
+        }
+    }
+
+    static void DeletePendingPatchMarker()
+    {
+        try
+        {
+            if (File.Exists(PendingPatchMarkerPath))
+                File.Delete(PendingPatchMarkerPath);
+        }
+        catch (Exception e)
+        {
+            Log.Warning($"AutoPatcher: failed to delete marker: {e.Message}");
+        }
+    }
+
+    // Called from MainMenuScreen.LoadContent when the game starts up. If the
+    // current launch carries --apply-patch=<version>, find the marker, build a
+    // synthetic ReleaseInfo, and push an AutoPatcher in resume mode.
+    public static void TryResumePending(GameScreen screen)
+    {
+        if (Program.ResumePatchVersion.IsEmpty())
+            return;
+
+        string requestedVer = Program.ResumePatchVersion;
+        // ResumePatchVersion stays set for the lifetime of the elevated process
+        // — AutoUpdateChecker uses it to know "we're applying a patch right
+        // now, don't show a 'new version available' popup". The post-success
+        // restart spawns a new process *without* --apply-patch (see
+        // RestartAsync), so the field naturally clears on the next launch.
+        // Re-entry safety on this same process is handled by the marker check
+        // below — once RestartAsync deletes it, TryResumePending bails here.
+
+        if (!File.Exists(PendingPatchMarkerPath))
+        {
+            Log.Warning($"AutoPatcher: --apply-patch={requestedVer} but no marker at {PendingPatchMarkerPath}; ignoring");
+            return;
+        }
+
+        PendingPatchMarker marker = null;
+        try
+        {
+            marker = JsonSerializer.Deserialize<PendingPatchMarker>(File.ReadAllText(PendingPatchMarkerPath));
+        }
+        catch (Exception e)
+        {
+            Log.Warning($"AutoPatcher: failed to read marker: {e.Message}; ignoring");
+            DeletePendingPatchMarker();
+            return;
+        }
+
+        if (marker == null || marker.Version != requestedVer)
+        {
+            Log.Warning($"AutoPatcher: marker version '{marker?.Version}' != arg '{requestedVer}'; ignoring");
+            DeletePendingPatchMarker();
+            return;
+        }
+
+        Log.Write($"AutoPatcher: --apply-patch={requestedVer} -> resuming (isMod={marker.IsMod}, elevated={IsInRole(WindowsBuiltInRole.Administrator)})");
+
+        // ZipUrls/Changelog/InstallerUrl unused on the resume path; pass through
+        // empty placeholders so the synthetic ReleaseInfo is well-formed.
+        var synthetic = new ReleaseInfo(marker.Name, marker.Version, "", new List<string>(), null);
+        // Wait for MainMenuScreen's fade-in (TransitionOnTime = 1s) to fully
+        // complete before adding the AutoPatcher screen. Without this delay,
+        // PopupWindow.LoadContent computes its chrome rectangles against the
+        // transient mid-fade screen state and the progress-bar PerformLayout
+        // pass never propagates Rect to the inner ProgressBar widget — the
+        // bar then renders at (0,0,width,18) instead of inside the popup,
+        // and the chrome looks misaligned. 1.5s gives the menu time to fully
+        // settle before the patch screen pops on top.
+        Parallel.Run(() =>
+        {
+            Thread.Sleep(1500);
+            screen.RunOnNextFrame(() =>
+            {
+                screen.ScreenManager.AddScreen(new AutoPatcher(screen, synthetic, marker.IsMod, resumeMode: true));
+            });
+        });
+    }
+
+    // Self-elevation: write marker, relaunch with --apply-patch=<version> and
+    // Verb = "runas" (UAC prompt fires), exit. The elevated instance's
+    // TryResumePending picks up where we left off.
+    void RelaunchAsAdminWithMarker()
+    {
+        try
+        {
+            Log.Write("AutoPatcher: install dir requires elevation; writing marker and relaunching as admin");
+            WritePendingPatchMarker(Info, IsMod);
+
+            // De-duplicate: if the user somehow already had --apply-patch on the
+            // command line (shouldn't happen, but defensive), strip it before
+            // re-appending the current version.
+            string argString = string.Join(" ",
+                Environment.GetCommandLineArgs().Skip(1)
+                    .Where(a => !a.StartsWith("--apply-patch", StringComparison.OrdinalIgnoreCase))
+                    .Append($"--apply-patch={Info.Version}"));
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = Application.ExecutablePath,
+                UseShellExecute = true,    // required for Verb = "runas"
+                Verb            = "runas", // triggers the Windows UAC prompt
+                Arguments       = argString,
+            };
+
+            // Release blackbox.log BEFORE spawning the elevated child. Process.Start
+            // returns as soon as the kernel hands back a handle for the new
+            // process; the child boots immediately and Log.Initialize re-opens
+            // the same path with FileMode.Create. If we still hold the handle,
+            // the child crashes with "file is being used by another process".
+            Log.Close();
+
+            System.Diagnostics.Process.Start(psi);
+
+            Thread.Sleep(500); // give the elevated instance a moment to claim the window
+            Program.RunCleanup();
+            Application.Exit();
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            // ERROR_CANCELLED (1223) -> user clicked No on the UAC dialog. Drop
+            // the marker so a future re-attempt doesn't see stale state.
+            Log.Warning($"AutoPatcher: UAC elevation denied: {ex.Message}");
+            DeletePendingPatchMarker();
+            AddErrorMessageAndAllowExit(
+                "Admin rights required",
+                "The patch is downloaded but needs admin rights to write to your install folder.\nClick the update notification again and accept the UAC prompt, or right-click 'StarDrive.exe' and choose 'Run as administrator'.");
+        }
     }
 
     public override void ExitScreen()
@@ -62,6 +295,16 @@ internal class AutoPatcher : PopupWindow
     {
         ProgressBarElement p = ProgressSteps.Add(new ProgressBarElement(new(0,0, ProgressSteps.Width, 18), 100));
         p.EnableProgressLabel(progressLabel, Fonts.TahomaBold9);
+        if (ResumeMode)
+        {
+            // Resume runs before the parent screen has fully settled — the
+            // bar's PerformLayout would not otherwise fire before first draw,
+            // leaving ProgressBar.Rect at the constructor origin (0,0) instead
+            // of inside the popup. Force the layout pass here. Normal flow
+            // gets enough idle Update ticks before drawing for this to fire
+            // incidentally; the explicit call is unnecessary there.
+            ProgressSteps.PerformLayout();
+        }
         return p;
     }
 
@@ -178,6 +421,31 @@ internal class AutoPatcher : PopupWindow
 
             Log.Write($"Deleting archive {zipArchive}");
             File.Delete(zipArchive);
+
+            // Elevation check sits HERE (post-unzip, pre-file-moves). Download
+            // and unzip work fine non-elevated (write to AppData), so we save
+            // bandwidth by deferring UAC until we actually need to write into
+            // $INSTDIR. The cached download survives a UAC denial — the user
+            // can re-trigger the popup and we resume from this exact point.
+            if (NeedsElevation())
+            {
+                RunOnNextFrame(() =>
+                {
+                    var label = ProgressSteps.AddLabel("Patch downloaded — UAC prompt to apply patch in 3 seconds...");
+                    label.Color = Color.Yellow;
+                    label.Anim().Alpha(new(0.5f, 1.0f)).Loop();
+                    // Give the user a moment to read the label before UAC steals
+                    // focus. Without this, the prompt appears almost
+                    // simultaneously with the label and the user has no time
+                    // to understand why the OS is asking for elevation.
+                    CurrentTask = Parallel.Run(() =>
+                    {
+                        Thread.Sleep(3000);
+                        RelaunchAsAdminWithMarker();
+                    });
+                });
+                return;
+            }
 
             string patchFilesFolder = GetPatchFilesFolder(outputFolder);
             AddProgressAndRunTaskOnNextFrame("Deleting Stale Files", nextP => DeleteStaleFiles(patchFilesFolder, nextP));
@@ -443,10 +711,19 @@ internal class AutoPatcher : PopupWindow
         Log.FlushAllLogs();
         //Log.LogEventStats(Log.GameEvent.AutoUpdateFinished);
 
+        // Apply succeeded — drop the marker so a future launch doesn't try to
+        // resume against an already-applied patch.
+        DeletePendingPatchMarker();
+
         Thread.Sleep(2900);
         Program.RunCleanup();
 
-        string args = string.Join(" ", Environment.GetCommandLineArgs().AsSpan(1).ToArray());
+        // Strip --apply-patch from the relaunch args. The elevated instance
+        // had it set to drive the resume; the new (non-elevated) instance
+        // shouldn't see it or TryResumePending would log a stale-marker warning.
+        string args = string.Join(" ",
+            Environment.GetCommandLineArgs().Skip(1)
+                .Where(a => !a.StartsWith("--apply-patch", StringComparison.OrdinalIgnoreCase)));
         Application.Exit();
         System.Diagnostics.Process.Start(Application.ExecutablePath, args);
     }

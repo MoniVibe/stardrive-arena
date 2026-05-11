@@ -47,6 +47,7 @@ namespace UnitTests.Collections
         }
 
         [TestMethod]
+        [TestCategory("Performance")]
         public void ConcurrentPerfAddRemove()
         {
             const int iterations = 100_000;

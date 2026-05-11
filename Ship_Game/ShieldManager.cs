@@ -2,9 +2,11 @@ using System;
 using System.Collections.Generic;
 using Microsoft.Xna.Framework.Graphics;
 using SDUtils;
+using SDGraphics;
 using Ship_Game.Data.Mesh;
 using Ship_Game.Ships;
 using Matrix = SDGraphics.Matrix;
+using Vector2 = Microsoft.Xna.Framework.Vector2;
 
 namespace Ship_Game;
 
@@ -57,9 +59,11 @@ public sealed class ShieldManager : IDisposable
         var content = ResourceManager.RootContent;
         ShieldModel = content.LoadStaticMesh("Model/Projectiles/shield");
         ShieldTexture = content.Load<Texture2D>("Model/Projectiles/shield_d.dds");
-        GradientTexture = content.Load<Texture2D>("Model/Projectiles/shieldgradient");
+        GradientTexture = content.Load<Texture2D>("Model/Projectiles/shieldgradient.png");
 
         ShieldEffect = content.Load<Effect>("Effects/scale");
+        if (ShieldEffect == null) return; // defense-in-depth: scale.mgfxo restored §3.3 (2026-05-04), guard catches missing-file regressions
+
         ShieldEffect.CurrentTechnique = ShieldEffect.Techniques["Technique1"];
         ShieldEffect.Parameters["tex"].SetValue(ShieldTexture);
         ShieldEffect.Parameters["AlphaMap"].SetValue(GradientTexture);
@@ -111,6 +115,7 @@ public sealed class ShieldManager : IDisposable
                 shield.UpdateDisplacement(0.085f);
                 shield.UpdateTexScale(-0.185f);
             }
+            shield.TickDistortionTimer(timeStep.FixedTime);
         }
 
         for (int i = 0; i < shields.Length; i++)
@@ -122,6 +127,7 @@ public sealed class ShieldManager : IDisposable
                 shield.UpdateDisplacement(0.04f);
                 shield.UpdateTexScale(-0.01f);
             }
+            shield.TickDistortionTimer(timeStep.FixedTime);
         }
     }
 
@@ -129,6 +135,8 @@ public sealed class ShieldManager : IDisposable
     {
         if (IsDisposed)
             return;
+
+        if (ShieldEffect == null) return; // defense-in-depth: scale.mgfxo restored §3.3 (2026-05-04), guard catches missing-file regressions
 
         if (ShieldEffect.IsDisposed || ShieldTexture.IsDisposed)
         {
@@ -157,13 +165,77 @@ public sealed class ShieldManager : IDisposable
         }
     }
 
+    // Phase 3.7 step 2 distortion driver. Walks ship + planet shields,
+    // pulls active hit data from each, projects center+radius into the
+    // destination's UV space, and appends to `output`. Up to MaxShields
+    // entries; further hits are dropped silently (the visible shield bubble
+    // from DrawShield still draws — we only lose the screen-space ripple
+    // for the overflow). The destination is normally the post-bloom RT;
+    // its width/height drive the UV projection.
+    public void BuildDistortionSources(int destWidth, int destHeight,
+                                       List<DistortionComponent.DistortionSource> output)
+    {
+        if (IsDisposed) return;
+
+        UniverseScreen u = Universe;
+        Shield[] shields = VisibleShields;
+        Shield[] planetShields = VisiblePlanetShields;
+
+        AppendActive(shields, u, destWidth, destHeight, output);
+        if (output.Count >= DistortionComponent.MaxShields) return;
+        AppendActive(planetShields, u, destWidth, destHeight, output);
+    }
+
+    static void AppendActive(Shield[] arr, UniverseScreen u, int destW, int destH,
+                             List<DistortionComponent.DistortionSource> output)
+    {
+        if (arr == null) return;
+        for (int i = 0; i < arr.Length; i++)
+        {
+            if (output.Count >= DistortionComponent.MaxShields) return;
+
+            Shield shield = arr[i];
+            if (!shield.TryGetDistortionSource(out Vector3 worldCenter, out float worldRadius, out float intensity))
+                continue;
+            // Frustum cull — off-screen shields would land at UV outside [0,1]
+            // anyway, but skipping them up front keeps the active-slot budget
+            // clean for the on-screen ones. IsInFrustum takes SDGraphics.Vector2
+            // (the SDGraphics.Vector3 constructor extracts X/Y from worldCenter).
+            if (!u.IsInFrustum(worldCenter, worldRadius))
+                continue;
+
+            // Project center to screen, project a second point at center+radius
+            // along world-X to derive screen-space radius (matches the
+            // ProjectToScreenCoords sizing convention used elsewhere).
+            Vector2d centerPx = u.ProjectToScreenPosition(worldCenter);
+            Vector2d edgePx   = u.ProjectToScreenPosition(new Vector3(worldCenter.X + worldRadius, worldCenter.Y, worldCenter.Z));
+            double radiusPx = edgePx.Distance(centerPx);
+            if (radiusPx < 4.0) continue; // sub-pixel ripples are invisible
+
+            float invW = 1f / destW;
+            float invH = 1f / destH;
+            output.Add(new DistortionComponent.DistortionSource
+            {
+                CenterUV  = new Vector2((float)(centerPx.X * invW), (float)(centerPx.Y * invH)),
+                RadiusUV  = (float)(radiusPx * invW), // assume square pixels; UV radius in X
+                Intensity = intensity,
+            });
+        }
+    }
+
     void DrawShield(Shield shield)
     {
         shield.UpdateWorldTransform();
 
+        // scale.fx declares `float2 scale` and `float2 displacement`. MonoGame's
+        // EffectParameter.SetValue(float) on a float2 parameter only writes the .x
+        // component, leaving .y at 0. shieldgradient.png is a vertical bell curve —
+        // row y=0 is pure black — so sampling at (d, 0) returns alphaMask=0 and the
+        // shield bubble renders fully transparent. Pass an explicit Vector2(d, d) so
+        // both components carry the value, matching the original D3DX scalar-broadcast.
         World.SetValue(shield.World);
-        Scale.SetValue(shield.TexScale);
-        Displacement.SetValue(shield.Displacement);
+        Scale.SetValue(new Vector2(shield.TexScale, shield.TexScale));
+        Displacement.SetValue(new Vector2(shield.Displacement, shield.Displacement));
 
         ShieldModel.Draw(ShieldEffect);
     }

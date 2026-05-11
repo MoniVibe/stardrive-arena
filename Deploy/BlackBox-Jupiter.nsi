@@ -1,0 +1,27 @@
+Unicode True
+SetCompress auto
+SetCompressor /FINAL /SOLID bzip2
+;SetCompressor /FINAL /SOLID lzma
+;SetCompressorDictSize 25 ; LZMA dict size, default is 8MB
+CRCCheck force
+
+; This script is intended to be run with WorkingDir=C:\Projects\BlackBox
+; Written by RedFox
+!ifndef VERSION
+  !error "Missing required Script argument VERSION. Pass it via /DVERSION=x.x.x to makensis.exe"
+!endif
+!ifndef SOURCE_DIR
+  !error "Missing required Script argument SOURCE_DIR. Pass it via /DSOURCE_DIR=C:\Projects\BlackBox to makensis.exe"
+!endif
+
+!define PRODUCT_NAME     "StarDrive BlackBox Jupiter"
+!define INSTALLER_NAME   "BlackBox_Jupiter"
+!define PRODUCT_VERSION  ${VERSION}
+
+;; Major release bundles the .NET 8 Desktop Runtime installer as a prerequisite
+;; (~56 MB). The patch NSI script does not — patch users came from a major
+;; install, which already provisioned the runtime.
+!define BUNDLE_RUNTIME
+
+;; Payload:
+!include "BBInstaller.nsi"

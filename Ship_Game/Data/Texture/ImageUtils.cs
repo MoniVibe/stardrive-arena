@@ -1,6 +1,8 @@
-﻿using System;
+using System;
+using System.IO;
 using System.Runtime.InteropServices;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using Rectangle = SDGraphics.Rectangle;
 #pragma warning disable CA1060
 #pragma warning disable CA2101
@@ -72,12 +74,24 @@ namespace Ship_Game.Data.Texture
         static extern IntPtr LoadPNGImage([MarshalAs(UnmanagedType.LPStr)] string filename,
                                           OnImageLoaded onLoaded);
 
-        public static Texture2D LoadPng(GraphicsDevice device, string filename)
+        // Default `premultiplyAlpha=true` since Phase 3.3 (2026-05-03): MonoGame's
+        // BlendState.AlphaBlend expects premul bytes, and most direct PNG callers
+        // (YouLose/YouWin text panels, cursors, faction art, ad-hoc UI sprites)
+        // need premul to avoid white-edge halos. PremultiplyAlpha is idempotent
+        // (heuristic-skipped on already-premul buffers — see its body), so atlas-
+        // pipeline reloads of premul-baked atlas-PNG files don't double-premul.
+        // Atlas SOURCE PNG loads end up premul'd by this default, but downstream
+        // CreateAtlasTexture and LoadDds calls to PremultiplyAlpha are now no-ops
+        // for already-premul data. Net effect: every path converges to "premul'd
+        // on GPU exactly once".
+        public static Texture2D LoadPng(GraphicsDevice device, string filename, bool premultiplyAlpha = true)
         {
             Texture2D tex = null;
             void OnLoaded(Color[] color, int size, int width, int height)
             {
-                tex = new Texture2D(device, width, height, 1, TextureUsage.None, SurfaceFormat.Color);
+                if (premultiplyAlpha)
+                    PremultiplyAlpha(color, size);
+                tex = new Texture2D(device, width, height, false, SurfaceFormat.Color);
                 tex.SetData(color);
             }
 
@@ -88,6 +102,70 @@ namespace Ship_Game.Data.Texture
                 throw new Exception($"Load PNG {filename} failed: {message}");
             }
             return tex;
+        }
+
+        public static Texture2D LoadDds(GraphicsDevice device, string filename)
+        {
+            using FileStream fs = File.OpenRead(filename);
+            var dds = new DxtReader(fs);
+            if (dds.DecodedImage.Length == 0 || dds.Width == 0 || dds.Height == 0)
+                throw new Exception($"Load DDS {filename} failed: DxtReader produced no pixels");
+            // DxtReader's internal buffer is over-sized; trim to base-level pixel count.
+            int pixelCount = dds.Width * dds.Height;
+            if (dds.DecodedImage.Length < pixelCount)
+                throw new Exception($"Load DDS {filename} failed: decoded {dds.DecodedImage.Length} pixels, need {pixelCount}");
+            // Pre-multiply RGB by alpha. DxtReader produces non-premultiplied data, but
+            // MonoGame's SpriteBatch default (BlendState.AlphaBlend) is premultiplied.
+            // Without this, A=0 pixels keep their RGB and the AlphaBlend blend formula
+            // (result.rgb = src.rgb + dest.rgb*(1-src.a)) saturates to white wherever
+            // the source is bright-and-transparent (e.g. Bridge.dds viewport area, which
+            // is R=255 G=255 B=255 A=0 in the source DDS). XNA 3.1's Texture2D.FromFile
+            // / MonoGame's Texture2D.FromStream both pre-multiply on PNG load; this
+            // function (added in §2.3) needs to match that contract.
+            PremultiplyAlpha(dds.DecodedImage, pixelCount);
+            var tex = new Texture2D(device, dds.Width, dds.Height, false, SurfaceFormat.Color);
+            tex.SetData(dds.DecodedImage, 0, pixelCount);
+            return tex;
+        }
+
+        // Idempotent in-place premultiply.
+        //
+        // Phase 3.3 (2026-05-03): added heuristic skip so callers that may receive
+        // already-premul data (LoadDds reloading a premul'd atlas, CreateAtlasTexture
+        // composing pixels sourced from premul'd LoadPng output, etc.) don't double-
+        // multiply. The heuristic mirrors Xna31Compat.PremultiplyAlphaIfNeeded /
+        // Primitives2D.ToPremulIfNeeded: a pixel with RGB > A on any channel proves
+        // the buffer is non-premul; if no such pixel exists the buffer is consistent
+        // with premultiplied or fully-opaque data and is left untouched. False
+        // positives (re-premul'ing a premul buffer) are mathematically impossible
+        // because RGB > A is incompatible with `RGB = orig_RGB * A`.
+        public static void PremultiplyAlpha(Color[] pixels, int count)
+        {
+            // Heuristic short-circuit: scan for proof of non-premul. Returns on the
+            // first non-premul pixel — already-premul buffers pay an O(N) scan with
+            // no writes, which is fine at load time.
+            bool needsPremul = false;
+            for (int i = 0; i < count; ++i)
+            {
+                Color c = pixels[i];
+                if (c.R > c.A || c.G > c.A || c.B > c.A)
+                {
+                    needsPremul = true;
+                    break;
+                }
+            }
+            if (!needsPremul)
+                return;
+
+            for (int i = 0; i < count; ++i)
+            {
+                Color c = pixels[i];
+                if (c.A == 255) continue; // opaque: no change
+                pixels[i] = new Color((byte)((c.R * c.A) / 255),
+                                      (byte)((c.G * c.A) / 255),
+                                      (byte)((c.B * c.A) / 255),
+                                      c.A);
+            }
         }
 
         [DllImport("SDNative.dll")]
@@ -128,35 +206,127 @@ namespace Ship_Game.Data.Texture
             }
         }
 
-
-        [DllImport("SDNative.dll")]
-        static extern unsafe IntPtr CopyPixelsPadded(Color* dst, int dstWidth, int dstHeight, 
-                                                     int x, int y, Color* src, int w, int h);
-
-        public static unsafe void CopyPixelsWithPadding(Color[] dst, int dstWidth, int dstHeight, 
-                                                        int x, int y, Color[] src, int w, int h)
+        // Write a DDS file containing already-compressed DXT1 or DXT5 blocks.
+        // Used to round-trip an in-memory compressed Texture2D back to disk
+        // without re-encoding. MonoGame removed XNA 3.1's
+        // Texture2D.Save(path, ImageFileFormat.Dds); without this writer the
+        // fallback was Texture2D.SaveAsPng (decode DXT -> RGBA -> PNG-encode),
+        // ~300ms per nopack texture. This path is sub-millisecond per file.
+        // DDS spec: https://learn.microsoft.com/en-us/windows/win32/direct3ddds/dds-header
+        public static void WriteCompressedDds(string filename, int width, int height,
+                                              byte[] blocks, bool isDxt5)
         {
-            fixed (Color* pDst = dst)
-            {
-                fixed (Color* pSrc = src)
-                {
-                    CopyPixelsPadded(pDst, dstWidth, dstHeight, x, y, pSrc, w, h);
-                }
-            }
+            if (width == 0 || height == 0)
+                throw new ArgumentException($"DDS Width/Height cannot be zero: {width}x{height}");
+
+            int blockBytes = isDxt5 ? 16 : 8;
+            int blocksWide = Math.Max(1, (width + 3) / 4);
+            int blocksHigh = Math.Max(1, (height + 3) / 4);
+            int linearSize = blocksWide * blocksHigh * blockBytes;
+            if (blocks.Length < linearSize)
+                throw new ArgumentException(
+                    $"DDS block buffer too small for {width}x{height} {(isDxt5 ? "DXT5" : "DXT1")}: have {blocks.Length}, need {linearSize}");
+
+            const uint MAGIC            = 0x20534444; // 'DDS '
+            const uint DDSD_CAPS        = 0x1;
+            const uint DDSD_HEIGHT      = 0x2;
+            const uint DDSD_WIDTH       = 0x4;
+            const uint DDSD_PIXELFORMAT = 0x1000;
+            const uint DDSD_LINEARSIZE  = 0x80000;
+            const uint DDPF_FOURCC      = 0x4;
+            const uint DDSCAPS_TEXTURE  = 0x1000;
+            const uint FOURCC_DXT1      = 0x31545844;
+            const uint FOURCC_DXT5      = 0x35545844;
+
+            uint flags  = DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT | DDSD_LINEARSIZE;
+            uint fourCC = isDxt5 ? FOURCC_DXT5 : FOURCC_DXT1;
+
+            using FileStream fs = File.Create(filename);
+            using BinaryWriter bw = new(fs);
+
+            bw.Write(MAGIC);
+
+            // DDS_HEADER (124 bytes)
+            bw.Write(124u);             // dwSize
+            bw.Write(flags);            // dwFlags
+            bw.Write((uint)height);     // dwHeight
+            bw.Write((uint)width);      // dwWidth
+            bw.Write((uint)linearSize); // dwPitchOrLinearSize
+            bw.Write(0u);               // dwDepth
+            bw.Write(0u);               // dwMipMapCount
+            for (int i = 0; i < 11; ++i)
+                bw.Write(0u);           // dwReserved1[11]
+
+            // DDS_PIXELFORMAT (32 bytes)
+            bw.Write(32u);              // dwSize
+            bw.Write(DDPF_FOURCC);      // dwFlags
+            bw.Write(fourCC);           // dwFourCC
+            bw.Write(0u);               // dwRGBBitCount
+            bw.Write(0u);               // dwRBitMask
+            bw.Write(0u);               // dwGBitMask
+            bw.Write(0u);               // dwBBitMask
+            bw.Write(0u);               // dwABitMask
+
+            // Caps + reserved
+            bw.Write(DDSCAPS_TEXTURE);  // dwCaps
+            bw.Write(0u);               // dwCaps2
+            bw.Write(0u);               // dwCaps3
+            bw.Write(0u);               // dwCaps4
+            bw.Write(0u);               // dwReserved2
+
+            // Compressed blocks
+            bw.Write(blocks, 0, linearSize);
         }
 
-        [DllImport("SDNative.dll")]
-        static extern unsafe IntPtr FillPixels(Color* dst, int dstWidth, int dstHeight,
-                                               int x, int y, Color color, int w, int h);
 
-        // Fills pixels with an uniform color
-        public static unsafe void FillPixels(Color[] dst, int dstWidth, int dstHeight, 
-                                             int x, int y, Color color, int w, int h)
+        // Phase 2.3: managed replacement for SDNative's CopyPixelsPadded. The native
+        // version takes Image-by-value structs (dst, src) which use the x86 stack-passing
+        // ABI; in x64 the ABI passes 16-byte structs by hidden pointer in RCX, so the
+        // C#→C++ argument shape no longer matches and the C++ side dereferences pixel
+        // data as a struct pointer (AccessViolationException). Atlas-build-time only,
+        // perf cost negligible. Same semantics as the C++ version: copy src rect to
+        // dst[x,y] PLUS replicate edge pixels into a 1-pixel padding gutter so atlas
+        // sampling at rect boundaries doesn't bleed.
+        public static void CopyPixelsWithPadding(Color[] dst, int dstWidth, int dstHeight,
+                                                 int x, int y, Color[] src, int w, int h)
         {
-            fixed (Color* pDst = dst)
-            {
-                FillPixels(pDst, dstWidth, dstHeight, x, y, color, w, h);
-            }
+            // Main rect: src(0..w, 0..h) -> dst(x..x+w, y..y+h)
+            for (int sy = 0; sy < h; ++sy)
+                Array.Copy(src, sy * w, dst, (y + sy) * dstWidth + x, w);
+
+            // 1px padding gutter (replicates edge pixels of src into a border around the dst rect).
+            bool padTop    = y > 0;
+            bool padBottom = (y + h) < dstHeight;
+            bool padLeft   = x > 0;
+            bool padRight  = (x + w) < dstWidth;
+
+            if (padTop)    Array.Copy(src, 0,           dst, (y - 1) * dstWidth + x, w);
+            if (padBottom) Array.Copy(src, (h - 1) * w, dst, (y + h) * dstWidth + x, w);
+            if (padLeft)
+                for (int sy = 0; sy < h; ++sy)
+                    dst[(y + sy) * dstWidth + (x - 1)] = src[sy * w];
+            if (padRight)
+                for (int sy = 0; sy < h; ++sy)
+                    dst[(y + sy) * dstWidth + (x + w)] = src[sy * w + (w - 1)];
+
+            // 4 corner pixels
+            if (padTop    && padLeft)  dst[(y - 1) * dstWidth + (x - 1)] = src[0];
+            if (padTop    && padRight) dst[(y - 1) * dstWidth + (x + w)] = src[w - 1];
+            if (padBottom && padLeft)  dst[(y + h) * dstWidth + (x - 1)] = src[(h - 1) * w];
+            if (padBottom && padRight) dst[(y + h) * dstWidth + (x + w)] = src[(h - 1) * w + (w - 1)];
+        }
+
+        // Fills pixels with an uniform color. Managed replacement for SDNative's
+        // FillPixels (same x64-ABI bug as CopyPixelsPadded). Bounds-clamped per the
+        // C++ semantics (endX/endY clamp to dst dimensions).
+        public static void FillPixels(Color[] dst, int dstWidth, int dstHeight,
+                                      int x, int y, Color color, int w, int h)
+        {
+            int endX = Math.Min(x + w - 1, dstWidth  - 1);
+            int endY = Math.Min(y + h - 1, dstHeight - 1);
+            for (int iy = y; iy <= endY; ++iy)
+                for (int ix = x; ix <= endX; ++ix)
+                    dst[iy * dstWidth + ix] = color;
         }
 
         // Draws a hollow rectangle (purely for debugging)
@@ -184,16 +354,16 @@ namespace Ship_Game.Data.Texture
             }
         }
 
-        [DllImport("SDNative.dll")]
-        static extern unsafe bool HasTransparentPixels(Color* img, int width, int height);
-
-        // @return TRUE if image has at least 1 transparent pixel (A != 255)
-        public static unsafe bool HasTransparentPixels(Color[] img, int width, int height)
+        // @return TRUE if image has at least 1 transparent pixel (A != 255).
+        // Phase 2.3: managed replacement for SDNative's HasTransparentPixels (same
+        // x64-ABI bug as CopyPixelsPadded — Image-by-value mismatch with C# pointer
+        // signature). Atlas-build-time path; perf cost negligible.
+        public static bool HasTransparentPixels(Color[] img, int width, int height)
         {
-            fixed (Color* pImg = img)
-            {
-                return HasTransparentPixels(pImg, width, height);
-            }
+            int n = Math.Min(img.Length, width * height);
+            for (int i = 0; i < n; ++i)
+                if (img[i].A != 255) return true;
+            return false;
         }
 
         /// <summary>

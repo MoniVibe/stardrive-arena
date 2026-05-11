@@ -102,6 +102,7 @@ namespace UnitTests.Ships
         }
 
         [TestMethod]
+        [TestCategory("Performance")]
         public void ShipDesignWriter_Perf_String()
         {
             const int iterations = 1000;
@@ -127,6 +128,7 @@ namespace UnitTests.Ships
         }
 
         [TestMethod]
+        [TestCategory("Performance")]
         public void ShipDesignWriter_Perf_Char()
         {
             const int iterations = 1000;
@@ -151,6 +153,7 @@ namespace UnitTests.Ships
         }
 
         [TestMethod]
+        [TestCategory("Performance")]
         public void ShipDesignWriter_Perf_KeyValStr()
         {
             const int iterations = 1000;
@@ -180,6 +183,7 @@ namespace UnitTests.Ships
         }
 
         [TestMethod]
+        [TestCategory("Performance")]
         public void ShipDesignWriter_Perf_StrArray()
         {
             const int iterations = 1000;
@@ -225,6 +229,7 @@ namespace UnitTests.Ships
 
 
         [TestMethod]
+        [TestCategory("Performance")]
         public void ShipDesignWriter_Perf_IntFloatDouble()
         {
             const int iterations = 1000;

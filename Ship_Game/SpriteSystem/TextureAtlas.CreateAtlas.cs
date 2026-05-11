@@ -1,8 +1,9 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using SDUtils;
 using Ship_Game.Data.Texture;
 using Rectangle = SDGraphics.Rectangle;
@@ -26,20 +27,19 @@ namespace Ship_Game.SpriteSystem
                 // We compress the DDS color into DXT5 and then reload it later through XNA
                 // DXT5 size in mem after loading is 4x smaller than RGBA32, but quality sucks!
                 // DXT1 size in mem is 8x smaller than RGBA32
-                DDSFlags format = (flags & AtlasFlags.Alpha) != 0 ? DDSFlags.Dxt5BGRA : DDSFlags.Dxt1BGRA;
+                DDSFlags format = (flags & AtlasFlags.Alpha) != 0 ? DDSFlags.Dxt5 : DDSFlags.Dxt1;
                 ImageUtils.ConvertToDDS(texturePath, Width, Height, color, format);
             }
             else
             {
-                // For this atlas, compression is forbidden, so we save with BGRA color
-                // Although this will take 4x more memory
-                using (var atlas = new Texture2D(ResourceManager.RootContent.Device, 
-                                                 Width, Height, 1, TextureUsage.None, SurfaceFormat.Color))
-                {
-                    atlas.SetData(color);
-                    atlas.Save(texturePath, ImageFileFormat.Dds);
-                    atlas.Dispose();
-                }
+                // PNG fallback for AtlasNoCompress atlases (EmpireTopBar, NewUI, Popup).
+                // SpriteBatch's AlphaBlend uses the premultiplied formula. The atlas-DDS
+                // path gets premul applied at LoadDds time; the PNG path's LoadPng does
+                // not premultiply, so we bake premultiplication into the saved PNG to
+                // keep the same on-GPU contract. Without this, bright-and-transparent
+                // pixels in NewUI/EmpireTopBar/Popup atlases saturate to white at draw.
+                ImageUtils.PremultiplyAlpha(color, color.Length);
+                ImageUtils.SaveAsPng(System.IO.Path.ChangeExtension(texturePath, "png"), Width, Height, color);
             }
         }
 
@@ -69,8 +69,11 @@ namespace Ship_Game.SpriteSystem
                 {
                     if (t.NoPack)
                     {
-                        t.UnpackedPath = $"{compressedCacheDir}{t.Name}.dds";
-                        t.SaveAsDds(t.UnpackedPath);
+                        // §4.6 #7: SaveAsDds may return a .png path for Color+alpha
+                        // textures (DXT5 alpha quantization is lossy on smooth
+                        // gradients — see TextureInfo.SaveAsDds). Use the actual
+                        // saved path so UnpackedPath matches the file on disk.
+                        t.UnpackedPath = t.SaveAsDds($"{compressedCacheDir}{t.Name}.dds");
                     }
                 }
             }
@@ -146,7 +149,14 @@ namespace Ship_Game.SpriteSystem
                 Width = width;
                 Height = height;
 
-                if (NumPacked > 0 && !File.Exists(atlasTex))
+                // §4.6 #7: AtlasNoCompress atlases write .png instead of the
+                // .dds path stored in CacheAtlasTex. GetAtlasTexture probes
+                // both extensions on load, so the existence check here must
+                // do the same — otherwise every AtlasNoCompress atlas
+                // invalidates on every launch (texture-missing) even though
+                // the real file is sitting next to it as .png.
+                if (NumPacked > 0 && !File.Exists(atlasTex)
+                                 && !File.Exists(System.IO.Path.ChangeExtension(atlasTex, "png")))
                 {
                     if (ResourceManager.Verbose)
                         Log.Write(ConsoleColor.Cyan, $"{Mod} AtlasCache  {Name}  INVALIDATED  (texture-missing)");
@@ -169,7 +179,20 @@ namespace Ship_Game.SpriteSystem
                     int.TryParse(entry[4], out t.Width);
                     int.TryParse(entry[5], out t.Height);
                     t.Name = entry[6];
-                    t.UnpackedPath = t.NoPack ? $"{compressedCacheDir}{t.Name}.dds" : null;
+                    // §4.6 #7: nopack path may be .dds OR .png on disk (Color+alpha
+                    // textures save as PNG to preserve smooth alpha gradients —
+                    // DXT5 quantization is lossy and read as visible banding/dark
+                    // fringes at the FOW sensor circle edge in the original cache).
+                    if (t.NoPack)
+                    {
+                        string ddsPath = $"{compressedCacheDir}{t.Name}.dds";
+                        string pngPath = $"{compressedCacheDir}{t.Name}.png";
+                        t.UnpackedPath = File.Exists(pngPath) ? pngPath : ddsPath;
+                    }
+                    else
+                    {
+                        t.UnpackedPath = null;
+                    }
                     t.SourcePath = Path.OriginalName + "/" + t.Name + "." + t.Type;
                     textures.Add(t);
                 }

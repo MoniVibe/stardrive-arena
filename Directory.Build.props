@@ -1,0 +1,36 @@
+<Project>
+
+  <!--
+    Suppress CA1416 (platform-compat analyzer) repo-wide.
+
+    Every SDK-style project here targets `net8.0-windows`, which already
+    declares Windows as the supported platform. CA1416 still fires on
+    MonoGame types (MouseState.X, Color.White, Viewport.Width, etc.)
+    because the package annotates them with `[SupportedOSPlatform("windows7.0")]`
+    while our effective `SupportedOSPlatformVersion` is the unversioned default —
+    the analyzer treats that gap as "call site reachable on all platforms."
+    The runtime target *is* Windows, the warning is noise, and there is no
+    cross-platform variant of this codebase. Suppress at the repo root so new
+    projects inherit it automatically.
+
+    Per-project `<NoWarn>` entries must use `$(NoWarn)` so they don't shadow
+    this value (see StarDrive.csproj for the pattern).
+  -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+
+  <!--
+    Suppress NETSDK1206 repo-wide.
+
+    Fires on net8 builds because a transitive package (Libuv via test infra)
+    advertises distro-specific RIDs (debian-x64, fedora-x64, opensuse-x64,
+    rhel-x64, win7-arm, win7-x64, win7-x86) that net8+ no longer auto-resolves.
+    We don't ship to those RIDs (Windows-only target), so the warning is noise
+    sourced from a dependency we don't control. Suppress at the repo root.
+  -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);NETSDK1206</NoWarn>
+  </PropertyGroup>
+
+</Project>

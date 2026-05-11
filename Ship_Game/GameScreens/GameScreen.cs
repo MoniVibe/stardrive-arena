@@ -2,6 +2,7 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using Ship_Game.Audio;
 using Ship_Game.Data;
@@ -189,11 +190,11 @@ namespace Ship_Game
         public void AddLight(ILight light, bool dynamic) => ScreenManager.AddLight(light, dynamic);
         public void RemoveLight(ILight light, bool dynamic) => ScreenManager.RemoveLight(light, dynamic);
 
-        public void AssignLightRig(LightRigIdentity identity, string rigContentPath)
-        {
-            var lightRig = TransientContent.Load<LightRig>(rigContentPath);
-            ScreenManager.AssignLightRig(identity, lightRig);
-        }
+        // Resets active+pending lights and stamps the screen identity. The original
+        // SunBurn pipeline loaded a LightRig XNB here; post-purge the rigs hold no
+        // data, so loading is a no-op — see §4.5.B in migration-plan-phase4.md.
+        public void AssignLightRig(LightRigIdentity identity)
+            => ScreenManager.AssignLightRig(identity);
 
         // ExitScreen will also call this.Dispose(true)
         public virtual void ExitScreen()

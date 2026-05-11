@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using SDUtils;
 using Ship_Game.AI;
@@ -13,6 +14,9 @@ using Ship_Game.GameScreens.Universe.Debug;
 using Ship_Game.Ships;
 using Ship_Game.UI;
 using Ship_Game.Universe;
+using SynapseGaming.LightingSystem.Lights;
+// SunBurn + MonoGame both define DirectionalLight; we want SunBurn's here.
+using DirectionalLight = SynapseGaming.LightingSystem.Lights.DirectionalLight;
 using Point = SDGraphics.Point;
 using Rectangle = SDGraphics.Rectangle;
 
@@ -45,6 +49,14 @@ namespace Ship_Game
         Vector3 CameraPos = new Vector3(0f, 0f, 1300f);
         float DesiredCamHeight = 1300f;
         Vector2 StartDragPos;
+
+        // Slow ambient orbit of the Key/Fill/Back rig around the world Y axis
+        // (~105s per revolution at 0.06 rad/s). Each frame Update recomputes
+        // each light's Direction by rotating its captured initial direction.
+        DirectionalLight ShipyardKey, ShipyardFill, ShipyardBack;
+        Microsoft.Xna.Framework.Vector3 ShipyardKeyDir0, ShipyardFillDir0, ShipyardBackDir0;
+        float ShipyardLightOrbitAngle;
+        const float ShipyardLightOrbitSpeed = 0.06f;
 
         readonly Array<ShipHull> AvailableHulls = new Array<ShipHull>();
         UIButton BtnSaveAs;
@@ -408,6 +420,8 @@ namespace Ship_Game
             CameraPos.Z = CameraPos.Z.SmoothStep(DesiredCamHeight, 0.2f);
             UpdateViewMatrix(CameraPos);
 
+            UpdateShipyardLightOrbit(fixedDeltaTime);
+
             var simTime = new FixedSimTime(fixedDeltaTime);
             DesignedShip.SubLightAccelerate(100);
             DesignedShip.Velocity = new Vector2(0, 100);
@@ -418,6 +432,16 @@ namespace Ship_Game
             base.Update(fixedDeltaTime);
         }
 
+        void UpdateShipyardLightOrbit(float dt)
+        {
+            if (ShipyardKey == null) return;
+            ShipyardLightOrbitAngle += ShipyardLightOrbitSpeed * dt;
+            var yaw = Microsoft.Xna.Framework.Matrix.CreateRotationY(ShipyardLightOrbitAngle);
+            ShipyardKey.Direction  = Microsoft.Xna.Framework.Vector3.Normalize(Microsoft.Xna.Framework.Vector3.Transform(ShipyardKeyDir0,  yaw));
+            ShipyardFill.Direction = Microsoft.Xna.Framework.Vector3.Normalize(Microsoft.Xna.Framework.Vector3.Transform(ShipyardFillDir0, yaw));
+            ShipyardBack.Direction = Microsoft.Xna.Framework.Vector3.Normalize(Microsoft.Xna.Framework.Vector3.Transform(ShipyardBackDir0, yaw));
+        }
+
         public override void LoadContent()
         {
             Log.Info("ShipDesignScreen.LoadContent");
@@ -426,13 +450,71 @@ namespace Ship_Game
             CreateGUI();
             InitializeCamera();
             ScreenManager.StartMusic("ShipyardTheme");
-            AssignLightRig(LightRigIdentity.Shipyard, "example/ShipyardLightrig");
+            AssignLightRig(LightRigIdentity.Shipyard);
+            SetupShipyardLighting();
 
             ShipDesign lastWIP = ShipDesignWIP.GetLatestWipToLoad(Player);
             if (lastWIP != null)
                 ChangeHull(lastWIP);
             else
                 ChangeHull(AvailableHulls[0]);
+        }
+
+        // §4.6.B(b) follow-up: Pre-migration the shipyard scene was lit by a
+        // SunBurn `.lightRig` content file (now stub'd, MIGRATION_LIMITATIONS
+        // entry #7). Without it, AssignLightRig clears all lights and
+        // submits none — high-spec materials like Cordrazine read flat-black
+        // because there's no direction for the half-vector specular peak to
+        // align against. Mirrors BasicEffect's classic 3-directional Key /
+        // Fill / Back rig (matches the canonical SunBurn shipyard look:
+        // strong key from upper-front, warm fill from below-rear, cool rim
+        // from upper-side). All 3 lights contribute specular so the binder
+        // can give the shader 3 chances to fire `pow(N·H, SpecularPower)` on
+        // each visible hull pixel.
+        void SetupShipyardLighting()
+        {
+            ShipyardKey = new DirectionalLight
+            {
+                Name         = "Shipyard Key",
+                Direction    = new Vector3(-0.5265408f, -0.5735765f, -0.6275069f),
+                DiffuseColor = new Vector3(1f, 1f, 1f),
+                Intensity    = 1.75f,
+                Enabled      = true,
+            };
+            ShipyardKeyDir0 = ShipyardKey.Direction;
+            AddLight(ShipyardKey, dynamic: false);
+
+            ShipyardFill = new DirectionalLight
+            {
+                Name         = "Shipyard Fill",
+                Direction    = new Vector3(0.7198464f, 0.3420201f, 0.6040227f),
+                DiffuseColor = new Vector3(0.85f, 0.88f, 0.92f),
+                Intensity    = 0.8f,
+                Enabled      = true,
+            };
+            ShipyardFillDir0 = ShipyardFill.Direction;
+            AddLight(ShipyardFill, dynamic: false);
+
+            ShipyardBack = new DirectionalLight
+            {
+                Name         = "Shipyard Back",
+                Direction    = new Vector3(0.4545195f, -0.7660444f, 0.4545195f),
+                DiffuseColor = new Vector3(0.3231373f, 0.3607844f, 0.3937255f),
+                Intensity    = 0.5f,
+                Enabled      = true,
+            };
+            ShipyardBackDir0 = ShipyardBack.Direction;
+            AddLight(ShipyardBack, dynamic: false);
+            // Neutral white ambient at moderate strength — replaces the
+            // SceneInstance default `(40,60,110) × 0.75` violet that washes
+            // dark hulls into purple. The shipyard is a fixed-camera 3D view
+            // where the user expects the hull's *real* color to show.
+            AddLight(new AmbientLight
+            {
+                Name         = "Shipyard Ambient",
+                DiffuseColor = Color.White.ToVector3(),
+                Intensity    = 0.15f,
+            }, dynamic: false);
         }
 
         void OnReloadAfterTechChange()

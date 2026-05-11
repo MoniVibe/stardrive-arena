@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO;
 using System.Threading;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using SDUtils;
 using Ship_Game.Data;
@@ -281,7 +282,7 @@ namespace Ship_Game
             graph = screen.Add(new UIGraphView
             {
                 Name = name,
-                Color = Color.TransparentBlack,
+                Color = Color.Transparent,
                 LineColor = Color.Red,
                 Pos = new Vector2(x, screen.Bottom - 500),
                 Size = new Vector2(500, 250),

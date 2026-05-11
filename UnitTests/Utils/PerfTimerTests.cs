@@ -23,8 +23,10 @@ namespace UnitTests.Utils
         }
 
         [TestMethod]
+        [TestCategory("Performance")]
         public void PerfTimerWorksAsExpected()
         {
+            TestEnvironment.SkipOnAppVeyor();
             PerfTimer.SpinWait(0f); // JIT
             var timer = new PerfTimer(start:true);
             PerfTimer.SpinWait(_20ms);
@@ -41,8 +43,10 @@ namespace UnitTests.Utils
         }
 
         [TestMethod]
+        [TestCategory("Performance")]
         public void MultipleEqualSamples()
         {
+            TestEnvironment.SkipOnAppVeyor();
             var timer = new AggregatePerfTimer(statRefreshInterval:_100ms);
 
             bool didRefresh = false;
@@ -62,8 +66,10 @@ namespace UnitTests.Utils
         }
 
         [TestMethod]
+        [TestCategory("Performance")]
         public void RuntimeLongerThanRefreshInterval()
         {
+            TestEnvironment.SkipOnAppVeyor();
             var timer = new AggregatePerfTimer(statRefreshInterval:_50ms);
             timer.Start();
             PerfTimer.SpinWait(_50ms);

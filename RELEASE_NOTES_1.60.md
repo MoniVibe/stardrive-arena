@@ -1,0 +1,67 @@
+# BlackBox Jupiter 1.60 — Release Notes
+
+This is the first release in the **Jupiter** line: the post-migration, 64-bit + MonoGame revival of StarDrive BlackBox. It supersedes the Mars 1.51 line, but does **not** replace it on disk — see "Coexistence with Mars 1.51" below.
+
+## Headline changes
+
+- **Codename: Jupiter** (was Mars through 1.51). Jupiter is the largest planet — fitting for the scale of the migration.
+- **64-bit engine.** The 4 GB process-memory ceiling is gone. Combined Arms and other heavy-content modes that hit OOM on Mars run cleanly on Jupiter.
+- **MonoGame 3.8 renderer** replaces the original XNA + SunBurn stack. SunBurn middleware was discontinued in 2014; the migration ports the rendering pipeline to a maintained, open-source equivalent that runs on current Windows.
+- **All six broken-on-migration effects restored**: BeamFX, scale, Thrust, desaturate, BasicFogOfWar, PlanetHalo.
+- **Skinned/animated meshes** — the Ralyeh `ship17` family articulates again (limbs and turret animation playback).
+- **Material maps** (normal, specular, emissive) on all hulls.
+- **Post-process passes**: bloom, screen-space distortion, fog-of-war.
+- **Basic shadow maps**.
+- **Steam SDK x64** via Steamworks.NET — achievements, stats, and cloud saves work in the 64-bit binary.
+- **Combined Arms compatible** — the major 1.51 mod runs unmodified on Jupiter.
+
+## Default install path
+
+Jupiter installs to **`C:\Games\StarDrivePlus64`** by default (was `C:\Games\StarDrivePlus` through 1.51). The `64` suffix signals the bitness change so users with both versions on disk can tell them apart.
+
+The installer **prompts** you for the install location with `C:\Games\StarDrivePlus64` pre-filled. You can override via the directory page if you want to install elsewhere (for example, to upgrade in place over an existing Mars 1.51 directory). The installer does **not** auto-target the Steam app folder or the Mars 1.51 path — you have to browse to those explicitly.
+
+Subsequent Jupiter patches (1.60.x → 1.60.y) read `HKLM\Software\StarDrivePlus64\InstallPath` and re-use the directory that the first Jupiter install wrote there, so the standard upgrade-in-place ergonomics still work within the Jupiter line.
+
+## Coexistence with Mars 1.51
+
+A user with Mars 1.51 already installed at `C:\Games\StarDrivePlus` (or in their Steam library) **keeps it**. Jupiter installs side by side at `StarDrivePlus64`. The two majors share a save folder at `%APPDATA%\StarDrive\` but partition the load list by **save-game version**:
+
+- Mars 1.51 saves: `SaveGameVersion = 20`
+- Jupiter 1.60 saves: `SaveGameVersion = 21`
+
+Each version's load screen filters out the other version's saves, so you'll see only your own saves in either menu. **No saves are deleted, modified, or corrupted** — they're just invisible to the wrong version. If you uninstall Jupiter and go back to Mars 1.51, your Mars saves are still there exactly as you left them.
+
+**Practical implications**:
+
+- A save started on Mars 1.51 cannot be loaded in Jupiter 1.60, and vice versa. There's no migration path — finish your in-progress Mars campaigns on Mars, or start fresh on Jupiter.
+- The desktop shortcut behavior is install-path-dependent. If you have shortcuts pointing at `C:\Games\StarDrivePlus\StarDrive.exe`, they keep launching Mars. Jupiter installs its own shortcuts pointing at `StarDrivePlus64`.
+- **User-content folders are *not* partitioned** the way save games are. `Saved Designs\`, `Fleet Designs\`, `Saved Setups\`, `Saved Races\`, and `Colony Blueprints\` under `%APPDATA%\StarDrive\` are shared by both versions. A ship/fleet/setup file authored on Jupiter may reference modules, hulls, or tech IDs that Mars 1.51 doesn't recognise (and vice versa) — Mars will either reject it or load it with the unknown bits silently dropped, which can produce a half-working design. Until the format diverges enough to break loading outright, **treat these folders as one-way: prefer the newer (Jupiter) version, or back up the folders before switching back to Mars.**
+
+## Cross-major discovery
+
+Mars 1.51 users who have applied patch `mars-patch-1.51.15118` or later see a top-left popup on the main menu when Jupiter 1.60 is detected as available. Clicking it opens the itch.io page for Jupiter and exits the game so the new installer can run cleanly. Right-clicking dismisses it for that session.
+
+If you're on a Mars 1.51 build *before* `15118`, the popup does not exist — your game's auto-updater silently suppresses cross-major notifications. Apply the latest Mars 1.51 patch through the standard in-game flow (the prompt fires on the next launch), and the cross-major popup appears on the launch after that.
+
+## Mods
+
+- **Combined Arms** is compatible with Jupiter 1.60.
+- **Star Trek: Shattered Alliance** — verify against Jupiter before assuming compatibility; some mods that depend on specific XNA/SunBurn quirks may need maintainer updates.
+
+## System requirements
+
+- **Windows 10 or later, 64-bit**.
+- **.NET 8 Desktop Runtime (x64)** — **bundled with the installer**. The Mars 1.51 line ran on .NET Framework 4.8 (built into Windows); Jupiter migrated to .NET 8 (`net8.0-windows`), which is a separate runtime. The Jupiter 1.60 installer detects whether you already have it and runs Microsoft's official runtime installer as a prerequisite step if you don't (~56 MB extra at install time, accept the UAC prompt when it appears). Install once; future Jupiter patches reuse the same runtime — patches do NOT bundle it. If you ever need the runtime separately, grab it from <https://dotnet.microsoft.com/download/dotnet/8.0> (pick **Windows → Desktop Runtime → x64**).
+
+## Known limitations
+
+- **SmartScreen warning on first install**: the Jupiter 1.60 installer is **unsigned**, same as Mars 1.51 and earlier. When you download and run it, Windows will show a "Windows protected your PC" dialog. Click **More info** → **Run anyway** to proceed. Code signing is being evaluated for a later 1.60.x patch; for now the install path matches the Mars-line precedent. (The Mars 1.51 → Jupiter 1.60 cross-major popup, when clicked, exits the running game and opens the itch.io page — you download the new installer from there and dismiss the SmartScreen warning the same way.)
+- **Steam release**: the maintainer has no SteamPipe push access for the StarDrive Steam app (AppID 220660). The Jupiter 1.60 installer auto-detects a Steam install of StarDrive (via the Uninstall registry entry) and offers to install over it so Steam keeps tracking your playtime. Two warnings before you accept that offer: Steam's StarDrive depot is **vanilla 15b** — the original 2013 publisher build, *not* any BlackBox/Mars version — so (a) you must disable Steam auto-updates for StarDrive (Properties → Updates), else Steam silently overwrites Jupiter back to stock 15b on the next sync, and (b) never run "Verify Integrity of Game Files" — same depot, same wipe. Steam will still report this title as "StarDrive" in your profile/playtime (Steam's DisplayName for AppID 220660 is just "StarDrive" — Steam has no knowledge of BlackBox or Jupiter); achievements and cloud-save sync aren't wired in 1.60 (planned for a 1.60.x patch).
+- The legacy `mars-1.51` development branch on GitHub is preserved for back-port hotfixes to the 32-bit Mars line. New feature work targets the Jupiter line.
+- **Don't install Jupiter into a Mars 1.51 directory.** The 1.60 installer permits browsing to an existing Mars install (e.g. `C:\Games\StarDrivePlus`) and will write Jupiter files on top, but it does **not** remove pre-existing Mars files first — you end up with a Frankenstein directory: Jupiter binaries plus orphan Mars/SunBurn/XNA files, plus two registry entries (`HKLM\Software\StarDrive` from Mars and `HKLM\Software\StarDrivePlus64` from Jupiter) that both point at the same directory. Running Mars's uninstaller after this would delete a mix of Mars-era and Jupiter-era files and break the Jupiter install. The supported flow is: install Jupiter at the default `C:\Games\StarDrivePlus64`, leave Mars where it is (or uninstall Mars separately first via Add/Remove Programs).
+
+## For developers
+
+- Branch: Jupiter line lives on `main` (post §5.1 release).
+- Build counter: stamped at CI build time from `github.run_number` (zero-padded to 5 digits), so the public version stamp is `1.60.<run_number>`. The static `AssemblyVersion` value in the repo (`1.60.00000`) is a placeholder for local dev builds — CI overwrites it.

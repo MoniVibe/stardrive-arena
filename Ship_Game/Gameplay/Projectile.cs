@@ -6,6 +6,7 @@ using Ship_Game.Debug;
 using Ship_Game.Ships;
 using Ship_Game.Audio;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using Ship_Game.Data.Serialization;
 using Ship_Game.Graphics.Particles;
@@ -441,7 +442,12 @@ namespace Ship_Game.Gameplay
                 }
                 else if (ResourceManager.ProjectileMesh(ModelPath, out StaticMesh projMesh))
                 {
-                    DrawMesh(screen, projMesh, WorldMatrix, ProjectileTexture.Texture, Weapon.Scale*50f);
+                    // Phase 3.5 cheap test: dropped the legacy *50 multiplier. The
+                    // *50 compensated for XNB-baked projectile meshes whose verts
+                    // were ~unit-scale; the §3.4 FBX re-export corpus ships at
+                    // native game-unit scale (projTear ~80 long, projLong ~160
+                    // long), so the multiplier was making them ~50x too big.
+                    DrawMesh(screen, projMesh, WorldMatrix, ProjectileTexture.Texture, Weapon.Scale);
                 }
             }
 
@@ -458,7 +464,17 @@ namespace Ship_Game.Gameplay
 
         public static void DrawMesh(GameScreen screen, StaticMesh mesh, in Matrix world, Texture2D texture, float scale)
         {
-            BasicEffect effect = mesh.GetFirstEffect<BasicEffect>();
+            // Phase 2.8.C: many projectile XNB meshes still hit the GameContentManager.LoadStaticMesh
+            // stub (SunBurn ContentTypeReader unresolvable; see project_phase2_xnb_model_drift.md)
+            // and come back as empty StaticMesh — no RawMeshes, no ModelMeshes, no effects. Skip
+            // the draw rather than NRE on the missing effect; the projectile's particle trail
+            // (ProjectileTrail / FireTrail) still spawns from Projectile.UpdateLogic.
+            //
+            // Phase 3.7 step 4 (Phase A): LightingEffect now wraps MeshLighting.mgfxo
+            // (was BasicEffect-derived). Same property surface; switched the type.
+            var effect = mesh.GetFirstEffect<SynapseGaming.LightingSystem.Effects.Forward.LightingEffect>();
+            if (effect == null) return;
+
             effect.World = Matrix.CreateScale(scale) * world;
             effect.View = screen.View;
             effect.Projection = screen.Projection;
@@ -653,6 +669,12 @@ namespace Ship_Game.Gameplay
                     ProjSO = mesh.CreateSceneObject();
                     if (ProjSO != null)
                     {
+                        // SunBurnStubs.RenderScene skips any SO with Visibility==None,
+                        // and the auto-property defaults there. Ships/asteroids/etc set
+                        // it explicitly; UpdateMesh historically didn't, so missile/drone/
+                        // rocket meshes were dropped from the 3D pass even though their
+                        // particle trails (separate path) kept rendering.
+                        ProjSO.Visibility = ObjectVisibility.Rendered;
                         ProjSO.World = WorldMatrix;
                         Universe.Screen.AddObject(ProjSO);
                     }
@@ -724,13 +746,29 @@ namespace Ship_Game.Gameplay
         PointLight CreateLight()
         {
             var pos = new Vector3(Position.X, Position.Y, -25f);
+            // §4.6 #2: glow radius scales with projectile size. ProjectileRadius
+            // ranges from ~3 (rapid PD bolts) to ~48 (massive disruptors / lances)
+            // and the bolt sprite itself is drawn at 20 × ProjectileRadius × Scale,
+            // so a constant glow radius made small bolts read as overlit halos and
+            // big shells read as a tiny dot of light at the core. The 25× factor
+            // matches the legacy default (ProjectileRadius=4, Scale=1 → R=100,
+            // the historical SunBurn value) and the 500-unit cap keeps a massive
+            // shell from lighting up the whole formation.
+            //
+            // Intensity 3.5 compensates for the LDR forward path (no tone-mapped
+            // composite, so the same light reads dimmer than under SunBurn's
+            // deferred composite — see MIGRATION_LIMITATIONS.md item #5). Held
+            // constant across weapon sizes; bigger bolts already cover more
+            // pixels via the larger radius, so per-pixel brightness doesn't
+            // also need to scale up.
+            float glowRadius = (Weapon.ProjectileRadius * Weapon.Scale * 25f).Clamped(60f, 500f);
             var light = new PointLight
             {
                 Position = pos,
-                Radius = 100f,
+                Radius = glowRadius,
                 World = Matrix.CreateTranslation(pos),
                 ObjectType = ObjectType.Dynamic,
-                Intensity = 1.7f,
+                Intensity = 3.5f,
                 FillLight = true,
                 Enabled = true
             };

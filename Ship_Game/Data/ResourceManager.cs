@@ -1,4 +1,5 @@
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using Microsoft.Xna.Framework.Media;
 using Ship_Game.Gameplay;
 using Ship_Game.Ships;
@@ -223,6 +224,10 @@ namespace Ship_Game
                 GlobalStats.SetActiveModNoSave(mod);
             else
                 GlobalStats.ClearActiveMod();
+
+            // Must run after mod state is set (cache root depends on mod name)
+            // and before any atlas load reads from the cache folder.
+            TextureAtlas.PurgeCacheIfVersionChanged();
 
             Log.ConfigureStatsReporter();
             LoadContent();
@@ -795,8 +800,28 @@ namespace Ship_Game
 
         public static void CreateCoreGfxResources()
         {
-            WhitePixel = new Texture2D(RootContent.Device, 1, 1, 1, TextureUsage.None, SurfaceFormat.Color);
+            WhitePixel = new Texture2D(RootContent.Device, 1, 1, false, SurfaceFormat.Color);
             WhitePixel.SetData(new []{ Color.White });
+
+            // Phase 3.7 step 4 (Phase A): pre-load the MeshLighting MGFX bytes
+            // before the first LightingEffect ctor fires. Path resolution goes
+            // through RawContentLoader to honor the standard mods / vanilla
+            // search order.
+            string meshLightingPath = RawContentLoader.GetContentPath("Effects/MeshLighting.mgfxo");
+            if (!SynapseGaming.LightingSystem.Effects.Forward.LightingEffect.TryLoadShared(meshLightingPath))
+            {
+                Log.Warning($"LightingEffect: MeshLighting.mgfxo not found at '{meshLightingPath}'. Mesh rendering will fail until the .mgfxo ships.");
+            }
+
+            // Phase 3.10.B.5: skinned variant. Optional — static-only scenes
+            // never construct SkinnedEffect, so a missing .mgfxo is logged but
+            // not fatal. Skinned ships will silently fall back to the static
+            // path (no animation) until the file ships.
+            string skinnedPath = RawContentLoader.GetContentPath("Effects/SkinnedEffect.mgfxo");
+            if (!SynapseGaming.LightingSystem.Effects.Forward.SkinnedLightingEffect.TryLoadShared(skinnedPath))
+            {
+                Log.Warning($"SkinnedEffect: SkinnedEffect.mgfxo not found at '{skinnedPath}'. Skinned mesh animation will be disabled.");
+            }
         }
 
         public static SubTexture ErrorTexture   => TextureOrNull("NewUI/x_red");
@@ -875,6 +900,18 @@ namespace Ship_Game
         public static readonly HashSet<string> AtlasNoCompressFolders = new HashSet<string>(new []
         {
             "NewUI", "EmpireTopBar", "Popup", "ResearchMenu"
+        });
+
+        // Atlases whose nopack Color+alpha textures need lossless alpha (PNG cache).
+        // DXT5 alpha is 8-level-per-4x4-block — fine for noisy game art (planet
+        // surfaces, suns, nebulas) but produces visible banding on smooth UI alpha
+        // gradients. UI/node (FOW sensor-circle outer ring) was the original §4.6 #7
+        // trigger. Other atlases default to DXT5 (much faster encoding, matches
+        // pre-migration cache size). Add new folders here only if alpha banding
+        // shows up elsewhere.
+        public static readonly HashSet<string> AtlasLosslessAlphaFolders = new HashSet<string>(new []
+        {
+            "UI"
         });
 
         static TextureAtlas LoadAtlas(string folder)
@@ -1300,11 +1337,22 @@ namespace Ship_Game
             TransportableGoods = YamlParser.DeserializeArray<Good>("/Goods/Goods.yaml");
         }
 
-        // loads models from a model folder that match "modelPrefixNNN.xnb" format, where N is an integer
+        // Gather mesh files for a folder, preferring .fbx (the canonical format post-Phase B),
+        // falling back to .obj, and finally .xnb if any are still on disk (e.g. unreleased mods).
+        // Mirrors what GameContentManager.LoadStaticMesh resolves at the per-asset level.
+        static FileInfo[] GatherMeshFilesModOrVanilla(string dir)
+        {
+            var files = GatherFilesModOrVanilla(dir, "fbx");
+            if (files.Length == 0) files = GatherFilesModOrVanilla(dir, "obj");
+            if (files.Length == 0) files = GatherFilesModOrVanilla(dir, "xnb");
+            return files;
+        }
+
+        // loads models from a model folder that match "modelPrefixNNN.{fbx,obj,xnb}" format, where N is an integer
         static void LoadNumberedModels(Array<StaticMesh> models, string modelFolder, string modelPrefix)
         {
             models.Clear();
-            var files = GatherFilesModOrVanilla(modelFolder, "xnb");
+            var files = GatherMeshFilesModOrVanilla(modelFolder);
             DebugResourceLoading(modelPrefix, files);
             foreach (FileInfo info in files)
             {
@@ -1444,7 +1492,7 @@ namespace Ship_Game
 
         static void LoadCustomProjectileMeshes(string modelFolder)
         {
-            var files = GatherFilesModOrVanilla(modelFolder, "xnb");
+            var files = GatherMeshFilesModOrVanilla(modelFolder);
             DebugResourceLoading(modelFolder, files);
 
             foreach (FileInfo info in files)
@@ -1646,9 +1694,14 @@ namespace Ship_Game
             ShipHull[] newHulls = Parallel.Select(hullFiles, LoadShipHull);
             foreach (ShipHull hull in newHulls)
             {
-                // error check that all models exist, otherwise the game could crash when this hull is spawned
+                // error check that all models exist, otherwise the game could crash when this hull is spawned.
+                // Mirror the GameContentManager.LoadStaticMesh sibling-fallback: accept .xnb (legacy bake)
+                // OR .fbx / .obj (raw mesh) — Phase B archived obsolete .xnb under game/LegacyMesh/, so
+                // the on-disk presence of an .xnb is no longer required for hulls that ship with FBX/OBJ.
                 if (GetModOrVanillaFile(hull.ModelPath) == null &&
-                    GetModOrVanillaFile(hull.ModelPath + ".xnb"/*legacy XNB models*/) == null)
+                    GetModOrVanillaFile(hull.ModelPath + ".xnb") == null &&
+                    GetModOrVanillaFile(hull.ModelPath + ".fbx") == null &&
+                    GetModOrVanillaFile(hull.ModelPath + ".obj") == null)
                 {
                     throw new FileNotFoundException(
                         $"Could not find ModelPath={hull.ModelPath} for hull {hull.Source.Name} in {ContentDirectory}"

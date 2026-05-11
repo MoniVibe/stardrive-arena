@@ -238,6 +238,7 @@ namespace UnitTests.AITests.Empire
         }
 
         [TestMethod]
+        [TestCategory("Performance")]
         public void ShipListConcurrencyStressTest()
         {
             AssertEqual(0, Enemy.OwnedShips.Count);

@@ -34,8 +34,10 @@ namespace UnitTests.LinearAlgebra
         }
         
         [TestMethod]
+        [TestCategory("Performance")]
         public void TestFastSinPerf()
         {
+            TestEnvironment.SkipOnAppVeyor();
             float x = 0; double y = 0;
             float step = (2*RadMath.PI) / 10000;
 
@@ -78,8 +80,10 @@ namespace UnitTests.LinearAlgebra
         }
         
         [TestMethod]
+        [TestCategory("Performance")]
         public void TestFastCosPerf()
         {
+            TestEnvironment.SkipOnAppVeyor();
             float x = 0; double y = 0;
             float step = (2*RadMath.PI) / 10000;
 
@@ -213,8 +217,10 @@ namespace UnitTests.LinearAlgebra
         }
         
         [TestMethod]
+        [TestCategory("Performance")]
         public void TestOrbitalOffsetRotatePerf()
         {
+            TestEnvironment.SkipOnAppVeyor();
             var center = new Vector2(0,0);
             float orbitRadius = 100f;
             float orbitStep = 5f;

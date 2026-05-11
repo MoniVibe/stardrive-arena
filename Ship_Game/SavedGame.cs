@@ -23,8 +23,11 @@ namespace Ship_Game
     public sealed class SavedGame
     {
         // Every time the savegame layout changes significantly,
-        // this version needs to be bumped to avoid loading crashes
-        public const int SaveGameVersion = 20;
+        // this version needs to be bumped to avoid loading crashes.
+        // Bumped 20 → 21 for Jupiter 1.60 to partition saves cleanly from Mars 1.51:
+        // LoadSaveScreen's exact-match filter means each major silently filters the
+        // other's saves out of the load list (no corruption, no menu noise).
+        public const int SaveGameVersion = 21;
 
         public bool Verbose;
 

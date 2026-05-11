@@ -55,6 +55,7 @@ namespace UnitTests.Ships
         }
 
         [TestMethod]
+        [TestCategory("Performance")]
         public void PowerGridPerformanceTest()
         {
             TestShip ship = SpawnShip("Heavy Carrier mk5-b", Player, new Vector2(12213,123123));

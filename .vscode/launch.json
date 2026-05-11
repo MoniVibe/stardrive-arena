@@ -1,0 +1,37 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run StarDrive (x86 Debug)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/game/StarDrive.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/game",
+            "console": "internalConsole",
+            "stopAtEntry": false
+        },
+        {
+            "name": "Run StarDrive (x86 Release)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build x86 Release",
+            "program": "${workspaceFolder}/game/StarDrive.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/game",
+            "console": "internalConsole",
+            "stopAtEntry": false
+        },
+        {
+            "name": "Launch (no build)",
+            "type": "coreclr",
+            "request": "launch",
+            "program": "${workspaceFolder}/game/StarDrive.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/game",
+            "console": "internalConsole",
+            "stopAtEntry": false
+        }
+    ]
+}

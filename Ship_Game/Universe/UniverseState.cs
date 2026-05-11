@@ -402,6 +402,12 @@ namespace Ship_Game.Universe
 
         public void Dispose(bool disposing)
         {
+            // Finalizer thread (disposing==false): every member touched below has
+            // its own finalizer (NativeSpatial, SystemsTree, PlanetsTree, ...).
+            // Reaching into them now races their own finalization and AVs on
+            // already-freed native handles (observed: SpatialClear on freed Spat).
+            if (!disposing) return;
+
             RemoveSceneObjects();
 
             Objects.Clear();

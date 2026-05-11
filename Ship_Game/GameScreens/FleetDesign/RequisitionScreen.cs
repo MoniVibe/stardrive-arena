@@ -1,4 +1,5 @@
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using SDUtils;
 using Ship_Game.Commands.Goals;
@@ -36,7 +37,7 @@ namespace Ship_Game
             Background = Add(new Submenu(RectF));
             Background.SetBackground(new Color(0, 0, 0, 180));
 
-            var main = Background.Add(new UIList(Background.ClientArea, Color.TransparentBlack));
+            var main = Background.Add(new UIList(Background.ClientArea, Color.Transparent));
             main.Padding = new(4, 8);
 
             var stats = main.Add(new UIList(new(main.Width, 20), ListLayoutStyle.ResizeList));

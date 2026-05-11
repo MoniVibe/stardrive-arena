@@ -1,4 +1,4 @@
-﻿Default: Mars
+﻿Default: Jupiter
 MainMenus:
   - MainMenu:
     Name: Venus
@@ -8,3 +8,7 @@ MainMenus:
     Name: Mars
     UILayoutFile: UI/MMenu.Mars.yaml
     SceneFile: UI/MMenu.Mars.scene.yaml
+  - MainMenu:
+    Name: Jupiter
+    UILayoutFile: UI/MMenu.Jupiter.yaml
+    SceneFile: UI/MMenu.Jupiter.scene.yaml

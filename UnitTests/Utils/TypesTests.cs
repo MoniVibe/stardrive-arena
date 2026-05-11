@@ -23,6 +23,7 @@ namespace UnitTests.Utils
         }
 
         [TestMethod]
+        [TestCategory("Performance")]
         public void EnumFlagsPerformance()
         {
             Flags flags = Flags.Second | Flags.Third;

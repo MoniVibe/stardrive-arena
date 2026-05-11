@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using Ship_Game.GameScreens;
 using Ship_Game.GameScreens.MainMenu;
 using Rectangle = SDGraphics.Rectangle;
@@ -26,9 +27,14 @@ namespace Ship_Game
             CanEscapeFromScreen = false;
             ShowSplash = showSplash;
             ResetResources = resetResources;
-            LoadingPlayer = new ScreenMediaPlayer(TransientContent);
-            SplashPlayer  = new ScreenMediaPlayer(TransientContent);
+            if (!GlobalStats.VideoDisabled)
+            {
+                LoadingPlayer = new ScreenMediaPlayer(TransientContent);
+                SplashPlayer  = new ScreenMediaPlayer(TransientContent);
+            }
         }
+
+        bool ShowSplashVideo => ShowSplash && !Debugger.IsAttached && SplashPlayer != null;
 
         static string StatusText;
 
@@ -37,8 +43,6 @@ namespace Ship_Game
         {
             StatusText = item.NotEmpty() ? (category + ":" + item) : category;
         }
-
-        bool ShowSplashVideo => ShowSplash && !Debugger.IsAttached;
 
         public override void Draw(SpriteBatch batch, DrawTimes elapsed)
         {
@@ -53,17 +57,21 @@ namespace Ship_Game
             else
                 Thread.Sleep(50); // faster loading
 
+            // Always clear before the LoadingFinished() check: when VideoDisabled is
+            // true, LoadingFinished() returns true the first tick LoadResult completes
+            // (no splash gating), and without an unconditional clear the DXGI default
+            // white backbuffer flashes for a frame between here and MainMenu's first draw.
+            ScreenManager.ClearScreen(Color.Black);
+
             if (!LoadingFinished())
             {
-                ScreenManager.ClearScreen(Color.Black);
-
                 try
                 {
                     batch.SafeBegin();
                     try
                     {
-                        LoadingPlayer.Draw(batch);
-                        SplashPlayer.Draw(batch);
+                        LoadingPlayer?.Draw(batch);
+                        SplashPlayer?.Draw(batch);
                     }
                     catch
                     {
@@ -91,8 +99,8 @@ namespace Ship_Game
 
         public override void Update(float fixedDeltaTime)
         {
-            LoadingPlayer.Update(this);
-            SplashPlayer.Update(this);
+            LoadingPlayer?.Update(this);
+            SplashPlayer?.Update(this);
             base.Update(fixedDeltaTime);
         }
 
@@ -137,8 +145,11 @@ namespace Ship_Game
             BridgeRect = new Rectangle(screenCx - bridgeW/2, screenCy - bridgeH/2, bridgeW, bridgeH);
 
             // little loading icon
-            LoadingPlayer.PlayVideo("Loading 2", looping:true);
-            LoadingPlayer.Rect = new Rectangle(screenCx - 64, screenCy - 64, 128, 128);
+            if (LoadingPlayer != null)
+            {
+                LoadingPlayer.PlayVideo("Loading 2", looping:true);
+                LoadingPlayer.Rect = new Rectangle(screenCx - 64, screenCy - 64, 128, 128);
+            }
 
             if (ShowSplashVideo)
             {
@@ -173,8 +184,8 @@ namespace Ship_Game
 
         protected override void Dispose(bool disposing)
         {
-            LoadingPlayer.Dispose();
-            SplashPlayer.Dispose();
+            LoadingPlayer?.Dispose();
+            SplashPlayer?.Dispose();
             LoadResult?.Dispose();
             base.Dispose(disposing);
         }

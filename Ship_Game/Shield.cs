@@ -1,4 +1,5 @@
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using Ship_Game.Audio;
 using Ship_Game.Gameplay;
@@ -19,6 +20,16 @@ namespace Ship_Game
         public readonly GameObject Owner; // is null for PlanetaryShields
         Vector2 PlanetCenter; // only valid for PlanetaryShields
         PointLight Light;
+
+        // Phase 3.7 step 2 distortion timer (seconds remaining). Set on each
+        // HitShield, decayed in ShieldManager.Update, gates the screen-space
+        // ripple. Decoupled from Light.Intensity because ship-shield Light
+        // decay is intentionally slow (~42s for the visible bubble while
+        // taking continuous fire); the per-impact ripple should resolve in
+        // a fraction of a second so it reads as a transient hit, not a
+        // persistent halo.
+        float DistortionTimeLeft;
+        const float DistortionDuration = 0.2f;
 
         public Shield()
         {
@@ -45,7 +56,12 @@ namespace Ship_Game
         {
             if (Owner != null)
             {
-                World = Matrix.CreateScale(Radius /2) 
+                // Phase 3.5: factor was /2 in the XNA build where shield.xnb shipped
+                // as a unit-sphere mesh. The §3.4 FBX re-export corpus has shield.fbx
+                // at ~33-unit native radius (the source .max file's units), so /2 was
+                // putting the bubble a lot bigger than it should be. *0.025 brings it
+                // back to what looks right at typical ShieldHitRadius (60–210).
+                World = Matrix.CreateScale(Radius * 0.025f)
                       * Matrix.CreateRotationZ(Rotation)
                       * Matrix.CreateTranslation(Owner.Position.X, Owner.Position.Y, 0f);
             }
@@ -124,6 +140,7 @@ namespace Ship_Game
                 Light.Enabled      = true;
             }
 
+            DistortionTimeLeft = DistortionDuration;
 
             var particles = planet.Universe.Screen.Particles;
             Vector3 impactNormal = center3D.DirectionToTarget(pos);
@@ -172,6 +189,9 @@ namespace Ship_Game
                 Light.Intensity = random.Float(intensity * 0.5f, 10f);
                 Light.Enabled = true;
             }
+
+            DistortionTimeLeft = DistortionDuration;
+
             CreateShieldHitParticles(universe.Particles, proj.Position, module.Center3D, beamFlash: false);
         }
 
@@ -189,6 +209,48 @@ namespace Ship_Game
         }
 
         public bool LightEnabled => Light?.Enabled == true;
+
+        // Phase 3.7 step 2 distortion signal. Active during the brief window
+        // (~80 frames for ship shields, fewer for planet shields) when a
+        // shield was just hit and Light.Intensity is decaying toward zero.
+        // The returned worldCenter is z=0 for ship shields and z=2500 for
+        // planet shields (matches UpdateWorldTransform).
+        public bool TryGetDistortionSource(out Vector3 worldCenter, out float worldRadius, out float intensity)
+        {
+            worldCenter = default;
+            worldRadius = 0f;
+            intensity   = 0f;
+
+            if (Radius <= 0f || DistortionTimeLeft <= 0f)
+                return false;
+
+            // 1.0 right after hit, fading linearly to 0 over DistortionDuration.
+            // Continuous fire refreshes the timer each HitShield call so the
+            // ripple stays alive for as long as the shield is being hit.
+            float norm = DistortionTimeLeft / DistortionDuration;
+            if (norm > 1f) norm = 1f;
+
+            if (Owner != null)
+            {
+                worldCenter = new Vector3(Owner.Position.X, Owner.Position.Y, 0f);
+            }
+            else
+            {
+                worldCenter = new Vector3(PlanetCenter.X, PlanetCenter.Y, 2500f);
+            }
+            worldRadius = Radius;
+            intensity   = norm;
+            return true;
+        }
+
+        public void TickDistortionTimer(float deltaSeconds)
+        {
+            if (DistortionTimeLeft > 0f)
+            {
+                DistortionTimeLeft -= deltaSeconds;
+                if (DistortionTimeLeft < 0f) DistortionTimeLeft = 0f;
+            }
+        }
 
         public void UpdateTexScale(float value)
         {

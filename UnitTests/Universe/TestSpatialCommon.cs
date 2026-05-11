@@ -225,6 +225,7 @@ namespace UnitTests.Universe
         }
         
         [TestMethod]
+        [TestCategory("Performance")]
         public void TreeUpdatePerformance()
         {
             ISpatial tree = CreateQuadTree(1_000_000, 5_000);
@@ -247,9 +248,10 @@ namespace UnitTests.Universe
         }
         
         [TestMethod]
-        [Ignore] // Flaky on AppVeyor: shared-VM scheduler stalls poison wall-clock perf comparison (saw tree=27ms vs linear=15ms)
+        [TestCategory("Performance")]
         public void TreeSearchPerformance()
         {
+            TestEnvironment.SkipOnAppVeyor();
             ISpatial tree = CreateQuadTree(500_000, 1_000);
             const float defaultSensorRange = 30000f;
 
@@ -366,6 +368,7 @@ namespace UnitTests.Universe
         }
         
         [TestMethod]
+        [TestCategory("Performance")]
         public void CollisionPerformance()
         {
             ISpatial tree = CreateQuadTree(40_000, 2_000);

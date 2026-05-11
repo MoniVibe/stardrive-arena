@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using SDUtils;
 using Ship_Game.Audio;
 using Ship_Game.GameScreens;
@@ -75,6 +76,17 @@ namespace Ship_Game
             SceneInter = new(graphics);
             SceneInter.CreateDefaultManagers(useDeferredRendering:false, usePostProcessing:true);
             SceneInter.AddManager(new GameLightManager(graphics));
+        }
+
+        // Phase 3.8.B: forwards a ShadowMapComponent (constructed and owned
+        // by the active screen, e.g. UniverseScreen) to SceneInterface so
+        // RenderScene's depth pre-pass has a target. Pass null on screen
+        // unload to detach before disposing the component. SceneInter is
+        // private; the screen can't reach it directly, so the screen calls
+        // here when it loads/unloads its own renderer state.
+        public void AttachShadowMap(Ship_Game.Graphics.ShadowMapComponent component)
+        {
+            SceneInter.ShadowMap = component;
         }
 
         void GraphicsDeviceService_DeviceReset(object sender, EventArgs e)
@@ -260,11 +272,9 @@ namespace Ship_Game
         }
 
         public void RemoveAllLights(LightRigIdentity identity = LightRigIdentity.Unknown)
-        {
-            AssignLightRig(identity, null);
-        }
+            => AssignLightRig(identity);
 
-        public void AssignLightRig(LightRigIdentity identity, LightRig rig)
+        public void AssignLightRig(LightRigIdentity identity)
         {
             lock (SceneInter)
             {
@@ -272,9 +282,6 @@ namespace Ship_Game
                 SceneInter.LightManager.Clear();
                 PendingLights.Clear();
                 ActiveDynamicLights = 0;
-
-                if (rig != null)
-                    SceneInter.LightManager.Submit(rig);
             }
         }
 
@@ -439,7 +446,7 @@ namespace Ship_Game
         public void FadeBackBufferToBlack(int alpha)
         {
             SpriteBatch.SafeBegin();
-            SpriteBatch.Draw(ResourceManager.Blank, new Rectangle(0, 0, GameBase.ScreenWidth, GameBase.ScreenHeight), new Color(0, 0, 0, (byte)alpha));
+            SpriteBatch.Draw(ResourceManager.Blank, new Rectangle(0, 0, GameBase.ScreenWidth, GameBase.ScreenHeight), new Color((byte)0, (byte)0, (byte)0, (byte)alpha));
             SpriteBatch.SafeEnd();
         }
 
@@ -471,7 +478,12 @@ namespace Ship_Game
             Log.Write("ScreenManager.LoadContent");
             UpdateGraphicsDevice();
 
-            Environment = ResourceManager.RootContent.Load<SceneEnvironment>("example/scene_environment");
+            // Construct from code rather than loading example/scene_environment.xnb — the
+            // baked XNB embeds SynapseGaming.LightingSystem.Processors.SceneEnvironmentReader_Pro
+            // which doesn't exist post-SunBurn-purge. SceneEnvironment is now a plain data
+            // carrier (ambient + fog); defaults are fine for the menu/ship-design path. If
+            // per-scene environments come back in Phase 3, populate the properties here.
+            Environment = new SceneEnvironment();
 
             if (deviceWasReset) // recover
             {

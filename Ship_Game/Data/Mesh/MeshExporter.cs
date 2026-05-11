@@ -1,18 +1,30 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using Microsoft.Xna.Framework.Graphics;
-using SgMotion;
 using Ship_Game.Data.Texture;
-using SynapseGaming.LightingSystem.Effects;
 using SDGraphics;
 using SDUtils;
+using XnaMatrix = Microsoft.Xna.Framework.Matrix;
 
 namespace Ship_Game.Data.Mesh
 {
+    // Phase 3.4 step 1: static-mesh export path restored from pre-Phase-1
+    // (commit b893360a6^) and adapted to MonoGame 3.8.1.303's ModelMeshPart shape.
+    // Skinned + animated paths (XNAnimation surface) are deferred to §3.5.
+    // SunBurn `BaseMaterialEffect` material handling is deferred to §3.4 step 2
+    // (LightingMaterialReader_Pro stub) — non-BasicEffect Effects emit a warn
+    // and produce no SdMaterial for now.
+    //
+    // The end of the export path calls SDMeshSave which routes through NanoMesh's
+    // FBX writer. NanoMesh is currently built with NANOMESH_NO_FBX=1 (Phase 1
+    // carryover; FBX SDK 2018→2020 ABI swap is §3.2). Until §3.2 lands, SDMeshSave
+    // is expected to return false; the C# walks above it still execute and unit
+    // tests can pin the structural correctness.
     public class MeshExporter : MeshInterface
     {
         readonly TextureExporter TexExport;
+        readonly Dictionary<Texture2D, string> AlreadySavedTextures = new();
 
         public MeshExporter(GameContentManager content) : base(content)
         {
@@ -24,35 +36,34 @@ namespace Ship_Game.Data.Mesh
             AlreadySavedTextures.Clear();
         }
 
-        public bool Export(Model model, string name, string modelFilePath)
+        public bool IsAlreadySavedTexture(Texture2D tex) => tex != null && AlreadySavedTextures.ContainsKey(tex);
+
+        public void AddAlreadySavedTexture(Texture2D tex, string texSavePath)
         {
-            return Export(model, null, null, name, modelFilePath);
+            if (tex != null) AlreadySavedTextures[tex] = texSavePath;
         }
 
-        public bool Export(SkinnedModel model, string name, string modelFilePath)
+        public unsafe bool Export(Model model, string name, string modelFilePath)
         {
-            return Export(model.Model, model.SkeletonBones, model.AnimationClips, name, modelFilePath);
-        }
-
-        public unsafe bool Export(Model model,
-                                  SkinnedModelBoneCollection animBones, // animated bones
-                                  AnimationClipDictionary animClips, // animation clips, each clip channel maps to 1 bone
-                                  string name, string modelFilePath)
-        {
-            if (model.Meshes.Count == 0)
+            if (model == null || model.Meshes.Count == 0)
                 return false;
 
             string exportDir = Path.GetDirectoryName(modelFilePath) ?? "";
-            Directory.CreateDirectory(exportDir);
+            if (exportDir.Length > 0)
+                Directory.CreateDirectory(exportDir);
 
             SdMesh* mesh = SDMeshCreateEmpty(name);
+            if (mesh == null)
+            {
+                Log.Warning($"MeshExporter.Export: SDMeshCreateEmpty('{name}') returned null");
+                return false;
+            }
+
             try
             {
-                CreateMeshGroups(mesh, exportDir, model.Meshes);
-                if (animBones != null)
-                {
-                    CreateBones(mesh, model, animBones, animClips);
-                }
+                AddBones(mesh, model);
+                Dictionary<Effect, IntPtr> materials = ExportMaterials(mesh, exportDir, model.Meshes);
+                AddMeshGroups(mesh, model.Meshes, materials);
                 return SDMeshSave(mesh, modelFilePath);
             }
             finally
@@ -61,214 +72,134 @@ namespace Ship_Game.Data.Mesh
             }
         }
 
-        static unsafe void CreateBones(SdMesh* mesh, Model model,
-                                       SkinnedModelBoneCollection animBones,
-                                       AnimationClipDictionary animClips)
+        static unsafe void AddBones(SdMesh* mesh, Model model)
         {
-            int allBones = model.Bones.Count;
-            for (int i = 0; i < allBones; ++i)
+            int count = model.Bones.Count;
+            for (int i = 0; i < count; ++i)
             {
                 ModelBone b = model.Bones[i];
-                SDMeshAddBone(mesh, b.Name, b.Index, b.Parent?.Index ?? -1, new Matrix(b.Transform));
-            }
-
-            int animatedBones = animBones.Count;
-            for (int i = 0; i < animatedBones; ++i)
-            {
-                SkinnedModelBone bone = animBones[i];
-                Pose pose = bone.BindPose;
-                var sdPose = new SdBonePose
-                {
-                    Translation = new Vector3(pose.Translation),
-                    Orientation = pose.Orientation,
-                    Scale = new Vector3(pose.Scale)
-                };
-                SDMeshAddSkinnedBone(mesh, bone.Name, bone.Index, bone.Parent?.Index ?? -1,
-                                     sdPose, new Matrix(bone.InverseBindPoseTransform));
-            }
-
-            AnimationClip[] clips = animClips.Values.Sorted(clip => clip.Name);
-            foreach (AnimationClip animClip in clips)
-            {
-                SdAnimationClip clip = SDMeshCreateAnimationClip(mesh, 
-                    animClip.Name, (float)animClip.Duration.TotalSeconds);
-
-                foreach (KeyValuePair<string, AnimationChannel> ch in animClip.Channels)
-                {
-                    int skinnedIndex = animBones.IndexOf(b => b.Name == ch.Key);
-                    if (skinnedIndex == -1)
-                    {
-                        Log.Error($"Invalid AnimationChannel {ch.Key} does not reference a valid SkinnedBone");
-                        continue;
-                    }
-
-                    SdBoneAnimation anim = SDMeshAddBoneAnimation(mesh, clip, skinnedIndex);
-                    foreach (AnimationChannelKeyframe kf in ch.Value)
-                    {
-                        Pose pose = kf.Pose;
-                        var keyFrame = new SdAnimationKeyFrame
-                        {
-                            Time = (float)kf.Time.TotalSeconds,
-                            Pose = new SdBonePose
-                            {
-                                Translation = new Vector3(pose.Translation),
-                                Orientation = pose.Orientation,
-                                Scale = new Vector3(pose.Scale)
-                            }
-                        };
-                        SDMeshAddAnimationKeyFrame(mesh, clip, anim, keyFrame);
-                    }
-                }
+                int parentIndex = b.Parent != null ? b.Parent.Index : -1;
+                Matrix transform = new Matrix(b.Transform);
+                SDMeshAddBone(mesh, b.Name ?? "", b.Index, parentIndex, in transform);
             }
         }
 
-        unsafe void CreateMeshGroups(SdMesh* mesh, string modelExportDir, ModelMeshCollection meshes)
+        unsafe void AddMeshGroups(SdMesh* mesh, ModelMeshCollection meshes, Dictionary<Effect, IntPtr> materials)
         {
-            Map<Effect, long> materials = ExportMaterials(mesh, modelExportDir, meshes);
             foreach (ModelMesh modelMesh in meshes)
             {
-                Matrix transform = new Matrix(modelMesh.ParentBone.Transform);
+                // Compose absolute world transform by walking up the parent-bone chain.
+                // ParentBone.Transform alone misses intermediate bones in deeper hierarchies.
+                Matrix transform = Matrix.Identity;
+                for (ModelBone b = modelMesh.ParentBone; b != null; b = b.Parent)
+                    transform = new Matrix(b.Transform) * transform;
+                int partCount = modelMesh.MeshParts.Count;
 
-                for (int i = 0; i < modelMesh.MeshParts.Count; ++i)
+                for (int i = 0; i < partCount; ++i)
                 {
                     ModelMeshPart part = modelMesh.MeshParts[i];
+                    if (part.VertexBuffer == null || part.IndexBuffer == null || part.NumVertices <= 0 || part.PrimitiveCount <= 0)
+                        continue;
 
-                    string groupName = (modelMesh.MeshParts.Count > 1) ? modelMesh.Name + i : modelMesh.Name;
-                    SdMeshGroup* group = SDMeshNewGroup(mesh, groupName, &transform);
-                    VertexBuffer vb = modelMesh.VertexBuffer;
-                    IndexBuffer  ib = modelMesh.IndexBuffer;
+                    string groupName = (partCount > 1) ? modelMesh.Name + i : modelMesh.Name;
+                    SdMeshGroup* group = SDMeshNewGroup(mesh, groupName ?? "", &transform);
+                    if (group == null)
+                        continue;
 
-                    SdVertexElement[] layout = CreateVertexElements(part.VertexDeclaration);
+                    int stride = part.VertexBuffer.VertexDeclaration.VertexStride;
+                    SdVertexElement[] layout = CreateVertexElements(part.VertexBuffer.VertexDeclaration);
 
                     SdVertexData data;
-                    data.VertexStride = part.VertexStride;
+                    data.VertexStride = stride;
                     data.LayoutCount  = layout.Length;
                     data.IndexCount   = part.PrimitiveCount * 3;
                     data.VertexCount  = part.NumVertices;
 
-                    var indexData = new ushort[data.IndexCount];
-                    ib.GetData(part.StartIndex*sizeof(ushort), indexData, 0, data.IndexCount);
-
-                    var vertexData = new byte[data.VertexCount * data.VertexStride];
-                    vb.GetData(part.BaseVertex * part.VertexStride, vertexData, 0, vertexData.Length, 0);
-
-                    fixed(ushort* pIndexData = indexData)
-                    fixed(byte* pVertexData = vertexData)
-                    fixed(SdVertexElement* pLayout = layout)
+                    // 16-bit index path matches XNA 3.1 baked content. 32-bit indices on a
+                    // ship XNB would be unusual; warn and skip rather than risk mis-sized reads.
+                    if (part.IndexBuffer.IndexElementSize != IndexElementSize.SixteenBits)
                     {
-                        data.IndexData = pIndexData;
-                        data.VertexData = pVertexData;
-                        data.Layout = pLayout;
+                        Log.Warning($"MeshExporter: skipping mesh part '{groupName}' — 32-bit index buffer not supported by SDNative ushort index path");
+                        continue;
+                    }
+
+                    var indexData  = new ushort[data.IndexCount];
+                    part.IndexBuffer.GetData(part.StartIndex * sizeof(ushort), indexData, 0, data.IndexCount);
+
+                    var vertexData = new byte[data.VertexCount * stride];
+                    part.VertexBuffer.GetData(part.VertexOffset * stride, vertexData, 0, vertexData.Length, 0);
+
+                    fixed (ushort* pIndex = indexData)
+                    fixed (byte* pVertex = vertexData)
+                    fixed (SdVertexElement* pLayout = layout)
+                    {
+                        data.IndexData  = pIndex;
+                        data.VertexData = pVertex;
+                        data.Layout     = pLayout;
                         SDMeshGroupSetData(group, data);
                     }
 
-                    if (modelMesh.Effects[0] != null)
+                    Effect partEffect = part.Effect ?? (modelMesh.Effects.Count > 0 ? modelMesh.Effects[0] : null);
+                    if (partEffect != null && materials.TryGetValue(partEffect, out IntPtr matPtr) && matPtr != IntPtr.Zero)
                     {
-                        var material = (SdMaterial*)materials[modelMesh.Effects[0]];
-                        if (material != null)
-                            SDMeshGroupSetMaterial(group, material);
+                        SDMeshGroupSetMaterial(group, (SdMaterial*)matPtr);
                     }
                 }
             }
         }
-        
-        unsafe Map<Effect, long> ExportMaterials(SdMesh* mesh, string exportDir, ModelMeshCollection meshes)
+
+        unsafe Dictionary<Effect, IntPtr> ExportMaterials(SdMesh* mesh, string exportDir, ModelMeshCollection meshes)
         {
-            var exported = new Map<Effect, long>();
-            string name = mesh->Name.AsString;
+            var exported = new Dictionary<Effect, IntPtr>();
+            string meshName = mesh->Name.AsString;
+            int dedupeIndex = 0;
+
             foreach (ModelMesh modelMesh in meshes)
             {
-                for (int i = 0; i < modelMesh.Effects.Count; ++i)
+                int effectsCount = modelMesh.Effects.Count;
+                for (int i = 0; i < effectsCount; ++i)
                 {
                     Effect effect = modelMesh.Effects[i];
-                    if (!exported.ContainsKey(effect))
+                    if (effect == null || exported.ContainsKey(effect))
+                        continue;
+
+                    if (effect is BasicEffect basic)
                     {
-                        if (effect is BaseMaterialEffect sunburn)
-                        {
-                            string matName = sunburn.MaterialName;
-                            if (matName.IsEmpty())
-                                matName = name+i;
-                            exported[effect] = (long)ExportMaterial(mesh, sunburn, matName, exportDir);
-                        }
-                        else if (effect is BasicEffect basic && basic.Texture != null)
-                        {
-                            // ex: "Model\\SpaceObjects\\arazius3night_0.xnb"
-                            string matName = Path.GetFileNameWithoutExtension(basic.Texture.Name);
-                            if (matName.IsEmpty())
-                                matName = name + i;
-                            exported[effect] = (long)ExportMaterial(mesh, basic, matName, exportDir);
-                        }
-                        else
-                        {
-                            Log.Warning($"No texture for mesh {exportDir}/{name} effect {i}");
-                            exported[effect] = 0;
-                        }
+                        string matName = !string.IsNullOrEmpty(basic.Texture?.Name)
+                            ? Path.GetFileNameWithoutExtension(basic.Texture.Name)
+                            : meshName + dedupeIndex;
+                        exported[effect] = (IntPtr)ExportMaterial(mesh, basic, matName, exportDir);
                     }
+                    else
+                    {
+                        // Phase 3.4 step 2 (SunBurn LightingMaterialReader_Pro stub) lights up
+                        // BaseMaterialEffect handling. Until then, non-BasicEffect content is
+                        // exported geometry-only; the .fbx will lack texture references for
+                        // those parts. Mod-authored Effects that aren't BasicEffect also fall
+                        // through here.
+                        Log.Info($"MeshExporter: skipping material for non-BasicEffect '{effect.GetType().Name}' (mesh '{meshName}', effect #{i}); §3.4 step 2 will restore SunBurn material handling");
+                        exported[effect] = IntPtr.Zero;
+                    }
+                    ++dedupeIndex;
                 }
             }
             return exported;
         }
 
-        Map<Texture2D, string> AlreadySavedTextures = new Map<Texture2D, string>();
-
-        public bool IsAlreadySavedTexture(Texture2D tex)
+        unsafe SdMaterial* ExportMaterial(SdMesh* mesh, BasicEffect fx, string matName, string exportDir)
         {
-            return AlreadySavedTextures.ContainsKey(tex);
-        }
+            string diffusePath = "";
+            string specularPath = "";
+            string normalPath = "";
+            string emissivePath = "";
 
-        public void AddAlreadySavedTexture(Texture2D tex, string texSavePath)
-        {
-            AlreadySavedTextures[tex] = texSavePath;
-        }
-
-        string TrySaveTexture(string modelExportDir, string matName, string textureName, Texture2D texture)
-        {
-            if (textureName.IsEmpty() || texture == null)
-                return "";
-
-            string writeTo = Path.Combine(modelExportDir, Path.GetFileName(textureName));
-            writeTo = TexExport.GetSaveAutoFormatPath(texture, writeTo);
-
-            lock (texture) // Texture2D.Save will crash if 2 threads try to save the same texture
-            {
-                // This happens a lot. Many ships share a common base texture.
-                if (AlreadySavedTextures.TryGetValue(texture, out string alreadySavedPath))
-                {
-                    return Path.GetFileName(alreadySavedPath);
-                }
-
-                AlreadySavedTextures.Add(texture, writeTo);
-                if (!File.Exists(writeTo))
-                {
-                    Log.Write(ConsoleColor.Green, $"  Export Mesh MaterialTex: {matName} {writeTo}");
-                    TexExport.SaveAutoFormat(texture, writeTo);
-                }
-
-                return Path.GetFileName(writeTo);
-            }
-        }
-
-        unsafe SdMaterial* ExportMaterial(SdMesh* mesh, BaseMaterialEffect fx, string matName, string modelExportDir)
-        {
-            string diffusePath  = TrySaveTexture(modelExportDir, matName, fx.DiffuseMapFile,       fx.DiffuseMapTexture);
-            string specularPath = TrySaveTexture(modelExportDir, matName, fx.SpecularColorMapFile, fx.SpecularColorMapTexture);
-            string normalPath   = TrySaveTexture(modelExportDir, matName, fx.NormalMapFile,        fx.NormalMapTexture);
-            string emissivePath = TrySaveTexture(modelExportDir, matName, fx.EmissiveMapFile,      fx.EmissiveMapTexture);
-
-            return SDMeshCreateMaterial(mesh, matName, 
-                diffusePath, alphaPath:"",  specularPath, normalPath, emissivePath, 
-                ambientColor:Vector3.One, new Vector3(fx.DiffuseColor), specularColor:Vector3.One, Vector3.Zero, 
-                fx.SpecularAmount / 16f, fx.Transparency);
-        }
-
-        unsafe SdMaterial* ExportMaterial(SdMesh* mesh, BasicEffect fx, string matName, string modelExportDir)
-        {
-            string diffusePath, specularPath = "", normalPath = "", emissivePath = "";
             if (fx.Texture == null)
             {
-                string baseName = matName.NotEmpty() && char.IsLetter(matName[matName.Length - 1]) 
-                                ? matName.Substring(0, matName.Length-1) : matName;
-
+                // Mirror pre-Phase-1 convention: when an authored material had no runtime
+                // texture bound (artist provided sidecar PNGs), reference standard
+                // `_d/_s/_n/_g` siblings.
+                string baseName = matName.NotEmpty() && char.IsLetter(matName[matName.Length - 1])
+                                  ? matName.Substring(0, matName.Length - 1) : matName;
                 diffusePath  = baseName + "_d.png";
                 specularPath = baseName + "_s.png";
                 normalPath   = baseName + "_n.png";
@@ -276,16 +207,59 @@ namespace Ship_Game.Data.Mesh
             }
             else
             {
-                diffusePath = TrySaveTexture(modelExportDir, matName, matName+".png", fx.Texture);
+                diffusePath = TrySaveTexture(exportDir, matName, matName + ".png", fx.Texture);
             }
 
-            return SDMeshCreateMaterial(mesh, matName, 
-                diffusePath, alphaPath:"", specularPath, normalPath, emissivePath, 
+            return SDMeshCreateMaterial(mesh, matName,
+                diffusePath, alphaPath: "", specularPath, normalPath, emissivePath,
                 new Vector3(fx.AmbientLightColor),
                 new Vector3(fx.DiffuseColor),
                 new Vector3(fx.SpecularColor),
                 new Vector3(fx.EmissiveColor),
                 fx.SpecularPower, fx.Alpha);
+        }
+
+        string TrySaveTexture(string exportDir, string matName, string textureName, Texture2D texture)
+        {
+            if (string.IsNullOrEmpty(textureName) || texture == null || string.IsNullOrEmpty(exportDir))
+                return "";
+
+            string writeTo = Path.Combine(exportDir, Path.GetFileName(textureName));
+            writeTo = TexExport.GetSaveAutoFormatPath(texture, writeTo);
+
+            // Texture2D.Save isn't thread-safe per-instance; lock on the texture so concurrent
+            // export threads (if any) don't collide. Single-threaded today.
+            lock (texture)
+            {
+                if (AlreadySavedTextures.TryGetValue(texture, out string already))
+                {
+                    // Texture was already saved (possibly in a different model's folder).
+                    // Return a relative path so the .mtl reference resolves cross-folder
+                    // (e.g. "../ship09_d.dds"). Same-folder case yields just the filename.
+                    return MakeRelativePath(exportDir, already);
+                }
+
+                AlreadySavedTextures[texture] = writeTo;
+                if (!File.Exists(writeTo))
+                {
+                    Log.Write(ConsoleColor.Green, $"  Export Mesh MaterialTex: {matName} {writeTo}");
+                    TexExport.SaveAutoFormat(texture, writeTo);
+                }
+                return Path.GetFileName(writeTo);
+            }
+        }
+
+        // Forward-slash relative path from `fromDir` to `toFile`. On net8 we could use
+        // Path.GetRelativePath, but URI logic produces forward slashes which is what
+        // .mtl/.fbx writers expect — same convention as the legacy exporter.
+        static string MakeRelativePath(string fromDir, string toFile)
+        {
+            string fromFull = Path.GetFullPath(fromDir);
+            if (!fromFull.EndsWith(Path.DirectorySeparatorChar.ToString()))
+                fromFull += Path.DirectorySeparatorChar;
+            var fromUri = new Uri(fromFull);
+            var toUri = new Uri(Path.GetFullPath(toFile));
+            return Uri.UnescapeDataString(fromUri.MakeRelativeUri(toUri).ToString());
         }
     }
 }

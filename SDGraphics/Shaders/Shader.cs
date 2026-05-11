@@ -1,11 +1,14 @@
-﻿using System;
+using System;
 using System.IO;
-using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using SDUtils;
 
 namespace SDGraphics.Shaders;
 
+// XNA 3.1's runtime HLSL compilation APIs (CompiledEffect.FromFile, CompilerOptions, etc.)
+// are removed in MonoGame; effects are precompiled to .mgfx via mgfxc and loaded as raw
+// bytes through the Effect(GraphicsDevice, byte[]) ctor. FromFile expects a .fx path and
+// resolves to a sibling .mgfx of the same base name.
 public class Shader : IDisposable
 {
     Effect Fx;
@@ -15,9 +18,10 @@ public class Shader : IDisposable
     {
         Fx = fx;
         FxParameters = new();
-        foreach (EffectParameter parameter in Fx.Parameters)
+        if (fx != null)
         {
-            FxParameters[parameter.Name] = parameter;
+            foreach (EffectParameter parameter in Fx.Parameters)
+                FxParameters[parameter.Name] = parameter;
         }
     }
 
@@ -37,29 +41,20 @@ public class Shader : IDisposable
         Mem.Dispose(ref Fx);
     }
 
-    public EffectParameter this[string name] => FxParameters[name];
-    public EffectTechnique CurrentTechnique => Fx.CurrentTechnique;
+    public EffectParameter this[string name] =>
+        FxParameters.TryGetValue(name, out EffectParameter p) ? p : null;
 
-    public class IncludeHandler : CompilerIncludeHandler
+    public EffectTechnique CurrentTechnique => Fx?.CurrentTechnique;
+
+    public class IncludeHandler
     {
         public string LocalDir { get; set; }
         public IncludeHandler(string rootDir)
         {
             LocalDir = rootDir;
         }
-        public override Stream Open(CompilerIncludeHandlerType includeType, string filename)
-        {
-            // TODO: this isn't fully mod compatible
-            string path = includeType == CompilerIncludeHandlerType.Local
-                ? Path.Combine(LocalDir, filename) // for local includes: #include "Simple.fxh"
-                : Path.Combine("Content", filename); // for game-global includes #include <Effects/Simple.fxh>
-            return new FileInfo(path).OpenRead();
-        }
     }
 
-    /// <summary>
-    /// Creates a new include handler, using `pathToShader` as the directory reference
-    /// </summary>
     public static IncludeHandler CreateIncludeHandler(string pathToShader)
     {
         string rootDir = Path.GetDirectoryName(pathToShader);
@@ -68,26 +63,24 @@ public class Shader : IDisposable
 
     public static Shader FromFile(GraphicsDevice device, string pathToShader)
     {
-        string sourceCode = File.ReadAllText(pathToShader);
-        IncludeHandler handler = CreateIncludeHandler(pathToShader);
-        CompiledEffect compiled = Effect.CompileEffectFromSource(sourceCode, Empty<CompilerMacro>.Array, handler,
-                                                                 CompilerOptions.None, TargetPlatform.Windows);
-        if (!compiled.Success)
-        {
-            throw new($"Shader.FromFile {pathToShader} failed: {compiled.ErrorsAndWarnings}");
-        }
-
-        var fx = new Effect(device, compiled.GetEffectCode(), CompilerOptions.None, null);
-        return new(fx);
+        // Resolve sibling .mgfx for a .fx request; pass-through for an explicit .mgfx path.
+        string mgfxPath = pathToShader.EndsWith(".fx", StringComparison.OrdinalIgnoreCase)
+            ? pathToShader.Substring(0, pathToShader.Length - 3) + ".mgfx"
+            : pathToShader;
+        if (!File.Exists(mgfxPath))
+            throw new FileNotFoundException($"Shader.FromFile {pathToShader}: no precompiled MGFX at '{mgfxPath}'");
+        byte[] bytes = File.ReadAllBytes(mgfxPath);
+        return new Shader(new Effect(device, bytes));
     }
 
     public void Begin()
     {
-        Fx.Begin();
+        // MonoGame has no Effect.Begin; the EffectPass.Apply() call done by callers
+        // (e.g. SpriteRenderer.ShaderBegin) handles all state binding.
     }
 
     public void End()
     {
-        Fx.End();
+        // MonoGame has no Effect.End either; pass-state is owned by EffectPass.Apply().
     }
 }

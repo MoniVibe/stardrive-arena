@@ -1,0 +1,66 @@
+﻿# This file defines a 3D Scene with objects, lighting, movement and effects
+SunPos: [-50000, -50000, 13000]
+SunColor: [255,224,224]
+SunIntensity: 4.0
+AmbientColor: [40,60,110] # dark violet
+AmbientIntensity: 0.75
+CameraPos: [0, 0, -1000] # Z:-1000 means out of the screen
+LookAt: [0, 0, 10000] # we're looking far into the screen
+
+# You can control group behaviours by adding AI list commands:
+#  - [SetSpawnPos] #! Resets the ship to its original spawn position
+#  - [IdlingInDeepSpace, Range[delay] ]
+#  - [WarpingIn,         Range[delay] ]
+#  - [WarpingOut,        Range[delay] ]
+#  - [ForwardCoast,      Range[delay] ] #! object simply moves forward with spawn speed
+#  - [CoastWithRotate,   Range[delay], Vec3[rot_per_sec] ] # object rotates around its local axis and moves Forward with spawn speed, the Forward direction changes constantly with rotation
+#  - [Orbit,             Range[delay], Vec3[orbit_center], left|right, RandVec3[rot_per_sec] ]
+#     ! moves around orbit center, optionally rotate around obj axis
+#     ! if Orbit order exists, then ObjectGroup can use Orbit: [radius, min_angle, max_angle]
+#     !                                             and Offset: RandVec3[x,y,z]
+#  - [GoToState,         delay,  state_idx]  #! goto state_idx after delay seconds
+
+# Supported object types:
+# All RoleName's such as "fighter", "corvette", "frigate", "cruiser", "capital", "station", etc..
+# Asteroids: "asteroid"
+# SpaceJunk: "spacejunk"
+Groups:
+  
+  - Group:
+    Name: AsteroidsClose
+    DustTrails: true
+    #DebugTrail: true
+    AI:
+      - [Orbit, [200], [9000, -300, 43000], right, [1]] # center, direction, rot
+      - [SetSpawnPos]
+      - [GoToState, 222, 111]
+    ObjectGroups:
+      - { Type: asteroid, Count: 300, Scale: [0.2,0.5], Speed: [200], Orbit: [45500,-1000,25], Offset: [200,800,550], RandRot: [0] }
+
+  - Group:
+    Name: Junk
+    Empire: Random
+    AI:
+      - [CoastWithRotate, [80, 1000], [0, 0.24, 0]]
+      - [IdlingInDeepSpace, [15, 18]]
+    Objects:
+      - Object: { Type: spacejunk, Scale: 1, Speed: 10, Position: [600, 300, 2450], Rotation: [-25, 10, 295] } #doesnt load shipyard model
+
+  - Group:
+    Name: WarpingPatrolFleet
+    Empire: Random
+    AI:
+      - [IdlingInDeepSpace, [3, 4]]
+      - [WarpingIn, [1]]
+      - [CoastWithRotate, [30, 35], [0, 0.24, 0]]
+      - [WarpingOut, [1]]
+      - [IdlingInDeepSpace, 15, 18]
+    Objects:
+      - { Type: capital, Speed: 20, Position: [500, 400, 750], Rotation: [-40, 25, 25] }
+      - { Type: frigate, Speed: 40, Position: [-500, 100, 250], Rotation: [-40, 20, 20] }
+      - { Type: cruiser, Speed: 30, Position: [-1200, 100, 1450], Rotation: [-50, 20, 20] }
+
+      # corvette wing
+      - { Type: corvette, Speed: 50, Position: [-900, -300, 100], Rotation: [-30, 15, 35] }
+      - { Type: corvette, Speed: 50, Position: [-1000, -450, 200], Rotation: [-40, 20, 20] }
+      - { Type: corvette, Speed: 50, Position: [-1100, -350, 1400], Rotation: [-50, 20, 20] }

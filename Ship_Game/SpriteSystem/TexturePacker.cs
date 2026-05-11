@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using SDUtils;
 using Ship_Game.Data.Texture;
@@ -240,7 +241,7 @@ namespace Ship_Game.SpriteSystem
             foreach (FreeSpot f in FreeSpots)
                 ImageUtils.DrawRectangle(data, Width, Height, f.R, Color.AliceBlue);
 
-            ImageUtils.ConvertToDDS($"{CachePath}.{Iteration}.dds", Width, Height, data, DDSFlags.Dxt5BGRA); // save compressed!
+            ImageUtils.ConvertToDDS($"{CachePath}.{Iteration}.dds", Width, Height, data, DDSFlags.Dxt5); // save compressed!
         }
 
         void ResetState(TextureInfo[] textures, int width, int height)

@@ -50,12 +50,12 @@ public partial class ExceptionViewer : Form
 
     void githubIssues_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
     {
-        Process.Start("https://github.com/TeamStarDrive/StarDrive/issues");
+        Process.Start(new ProcessStartInfo("https://github.com/TeamStarDrive/StarDrive/issues") { UseShellExecute = true });
     }
 
     void discordHelpline_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
     {
-        Process.Start("https://discord.gg/dfvnfH4");
+        Process.Start(new ProcessStartInfo("https://discord.gg/dfvnfH4") { UseShellExecute = true });
     }
 
     public static void ShowExceptionDialog(string dialogText, bool autoReport)

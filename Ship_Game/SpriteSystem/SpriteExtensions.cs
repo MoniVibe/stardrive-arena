@@ -1,40 +1,45 @@
-﻿using System;
+using System;
 using System.Diagnostics;
-using System.Reflection;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using Ship_Game.Graphics;
 using XnaVector2 = Microsoft.Xna.Framework.Vector2;
-using XnaVector4 = Microsoft.Xna.Framework.Vector4;
 using XnaRect = Microsoft.Xna.Framework.Rectangle;
 using XnaMatrix = Microsoft.Xna.Framework.Matrix;
 #pragma warning disable CA1065
 
 namespace Ship_Game
 {
+    // MonoGame removed XNA 3.1's SpriteBlendMode enum (replaced by BlendState).
+    // Kept here so existing call sites (batch.SafeBegin(SpriteBlendMode.Additive)) compile;
+    // SafeBegin maps each value to a MonoGame BlendState internally.
+    public enum SpriteBlendMode
+    {
+        None,
+        AlphaBlend,
+        Additive,
+    }
+
     public static class SpriteExtensions
     {
-        delegate void InternalDrawD(SpriteBatch batch, Texture2D tex, ref XnaVector4 dst, bool scaleDst, ref XnaRect? srcRect,
-                                    Color color, float rotation, ref XnaVector2 origin, SpriteEffects effects, float depth);
-
-        static readonly InternalDrawD DrawInternal;
         static readonly XnaRect? NullRectangle = new();
 
-        static SpriteExtensions()
+        // Phase 2: XNA 3.1's internal SpriteBatch.InternalDraw took a Vector4 destination
+        // (X, Y, W, H) for sub-pixel-precise quad drawing. MonoGame doesn't expose that
+        // method, but its public Draw(Texture2D, Vector2 position, ..., Vector2 scale, ...)
+        // overload gives the same sub-pixel precision: position carries the float top-left
+        // and scale converts source dimensions into the desired destination size.
+        // The legacy `scaleDst` flag is unused by every call site in this codebase
+        // (always false); the parameter is preserved only to minimize source churn.
+        static void InternalDraw(SpriteBatch batch, Texture2D tex, in RectF dstRect, bool scaleDst, XnaRect? srcRect,
+                                 Color color, float rotation, XnaVector2 origin, SpriteEffects effects, float depth)
         {
-            const BindingFlags anyMethod = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
-            MethodInfo method = typeof(SpriteBatch).GetMethod("InternalDraw", anyMethod);
-            if (method == null)
-                throw new InvalidOperationException("Missing InternalDraw from XNA.SpriteBatch");
-            DrawInternal = (InternalDrawD)Delegate.CreateDelegate(typeof(InternalDrawD), null, method);
-        }
-
-        static void InternalDraw(SpriteBatch batch, Texture2D tex, in RectF dstRect, bool scaleDst, XnaRect? srcRect, 
-                                 Color color, float rotation, XnaVector2 origin,  SpriteEffects effects, float depth)
-        {
-            var dst = new XnaVector4(dstRect.X, dstRect.Y, dstRect.W, dstRect.H);
-            DrawInternal.Invoke(batch, tex, ref dst, scaleDst, ref srcRect, color, 
-                                rotation, ref origin, effects, depth);
+            XnaVector2 position = new(dstRect.X, dstRect.Y);
+            int srcW = srcRect?.Width  ?? tex.Width;
+            int srcH = srcRect?.Height ?? tex.Height;
+            XnaVector2 scale = new(dstRect.W / srcW, dstRect.H / srcH);
+            batch.Draw(tex, position, srcRect, color, rotation, origin, scale, effects, depth);
         }
 
         [Conditional("DEBUG")] static void CheckTextureDisposed(Texture2D texture)
@@ -299,18 +304,30 @@ namespace Ship_Game
             }
         }
 
+        // MonoGame removed SpriteBlendMode and SaveStateMode; mapped to BlendState below.
+        // The saveState parameter is preserved for source-compat but ignored — MonoGame's
+        // SpriteBatch implicitly saves/restores GraphicsDevice render state per Begin/End.
+        static BlendState ToBlendState(SpriteBlendMode mode) => mode switch
+        {
+            SpriteBlendMode.Additive   => BlendState.Additive,
+            SpriteBlendMode.AlphaBlend => BlendState.AlphaBlend,
+            SpriteBlendMode.None       => BlendState.Opaque,
+            _                          => BlendState.AlphaBlend,
+        };
+
         public static bool SafeBegin(this SpriteBatch batch, SpriteBlendMode blendMode)
         {
+            BlendState bs = ToBlendState(blendMode);
             try
             {
-                batch.Begin(blendMode);
+                batch.Begin(blendState: bs);
                 return true;
             }
             catch
             {
                 if (batch.SafeEnd())
                 {
-                    batch.Begin(blendMode);
+                    batch.Begin(blendState: bs);
                     return true;
                 }
                 return false;
@@ -320,21 +337,49 @@ namespace Ship_Game
         /// <param name="batch"></param>
         /// <param name="blendMode">Sprite blending mode</param>
         /// <param name="sortImmediate">Sorts the sprites immediately. The default is false ("Deferred")</param>
-        /// <param name="saveState">Save the previous graphics device state?</param>
+        /// <param name="saveState">Ignored under MonoGame; SpriteBatch handles state save/restore implicitly.</param>
         public static bool SafeBegin(this SpriteBatch batch, SpriteBlendMode blendMode, bool sortImmediate, bool saveState = false)
         {
             SpriteSortMode sortMode = sortImmediate ? SpriteSortMode.Immediate : SpriteSortMode.Deferred;
-            SaveStateMode stateMode = saveState ? SaveStateMode.SaveState : SaveStateMode.None;
+            BlendState bs = ToBlendState(blendMode);
             try
             {
-                batch.Begin(blendMode, sortMode, stateMode);
+                batch.Begin(sortMode, bs);
                 return true;
             }
             catch
             {
                 if (batch.SafeEnd())
                 {
-                    batch.Begin(blendMode, sortMode, stateMode);
+                    batch.Begin(sortMode, bs);
+                    return true;
+                }
+                return false;
+            }
+        }
+
+        // Overload that lets the caller pin a custom RasterizerState (e.g. one with
+        // ScissorTestEnable=true). Needed for scroll-list scissor clipping under
+        // MonoGame: device.RasterizerState set externally before Begin is fine,
+        // but the safest path is to bind it to the SpriteBatch directly so End
+        // doesn't lose it after subsequent Begin calls.
+        public static bool SafeBegin(this SpriteBatch batch, SpriteBlendMode blendMode, RasterizerState rasterizer)
+        {
+            BlendState bs = ToBlendState(blendMode);
+            try
+            {
+                batch.Begin(SpriteSortMode.Deferred, bs,
+                            samplerState: null, depthStencilState: null,
+                            rasterizerState: rasterizer);
+                return true;
+            }
+            catch
+            {
+                if (batch.SafeEnd())
+                {
+                    batch.Begin(SpriteSortMode.Deferred, bs,
+                                samplerState: null, depthStencilState: null,
+                                rasterizerState: rasterizer);
                     return true;
                 }
                 return false;
@@ -344,17 +389,18 @@ namespace Ship_Game
         public static bool SafeBegin(this SpriteBatch batch, SpriteBlendMode blendMode, bool sortImmediate, bool saveState, in XnaMatrix transform)
         {
             SpriteSortMode sortMode = sortImmediate ? SpriteSortMode.Immediate : SpriteSortMode.Deferred;
-            SaveStateMode stateMode = saveState ? SaveStateMode.SaveState : SaveStateMode.None;
+            BlendState bs = ToBlendState(blendMode);
+            XnaMatrix t = transform;
             try
             {
-                batch.Begin(blendMode, sortMode, stateMode, transform);
+                batch.Begin(sortMode, bs, transformMatrix: t);
                 return true;
             }
             catch
             {
                 if (batch.SafeEnd())
                 {
-                    batch.Begin(blendMode, sortMode, stateMode, transform);
+                    batch.Begin(sortMode, bs, transformMatrix: t);
                     return true;
                 }
                 return false;

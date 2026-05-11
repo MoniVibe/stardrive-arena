@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.IO;
 using Microsoft.Xna.Framework.Graphics;
@@ -43,11 +43,13 @@ namespace Ship_Game.Data.Texture
 
         Texture2D LoadXna(string fullPath)
         {
+            // TODO Post-1.60: XNA 3.1's Texture.GetCreationParameters/FromFile removed in MonoGame.
+            // Texture2D.FromStream is the working substitute; revisit if format-specific
+            // metadata recovery is ever needed (currently no consumers ask for it).
             try
             {
-                TextureCreationParameters p = XGraphics.Texture.GetCreationParameters(Device, fullPath);
-                var tex = (Texture2D)XGraphics.Texture.FromFile(Device, fullPath, p);
-                return tex;
+                using FileStream fs = File.OpenRead(fullPath);
+                return Texture2D.FromStream(Device, fs);
             }
             catch (Exception e)
             {
@@ -58,10 +60,9 @@ namespace Ship_Game.Data.Texture
         Texture2D ImageUtilsPNG_XnaDDS(string fullPath)
         {
             if (fullPath.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
-            {
-                Texture2D tex = ImageUtils.LoadPng(Device, fullPath);
-                return tex;
-            }
+                return ImageUtils.LoadPng(Device, fullPath);
+            if (fullPath.EndsWith(".dds", StringComparison.OrdinalIgnoreCase))
+                return ImageUtils.LoadDds(Device, fullPath);
             return LoadXna(fullPath);
         }
 
@@ -78,21 +79,27 @@ namespace Ship_Game.Data.Texture
                 int numPixels = width*width;
                 var pixels = new byte[numPixels*4];
 
-                // copy alphas
+                // Phase 3.7 step 3: write rgb = alpha (premultiplied storage)
+                // so the loaded FogMap composites correctly under the LightsTarget
+                // path's premul AlphaBlend. Pre-fix this stored rgb=255 always,
+                // which made every saved-FogMap pixel sample as fully-bright
+                // (the premul blend's dst*(1-srcA) term overshot and clamped),
+                // so loading any save lifted the entire fog overlay to 100%.
                 fixed (byte* pAlphas = alphas)
                 fixed (byte* pPixels = pixels)
                 {
                     for (int i = 0; i < numPixels; ++i)
                     {
-                        pPixels[i*4]     = 255;
-                        pPixels[i*4 + 1] = 255;
-                        pPixels[i*4 + 2] = 255;
-                        pPixels[i*4 + 3] = pAlphas[i];
+                        byte a = pAlphas[i];
+                        pPixels[i*4]     = a;
+                        pPixels[i*4 + 1] = a;
+                        pPixels[i*4 + 2] = a;
+                        pPixels[i*4 + 3] = a;
                     }
                 }
 
                 // finally create the texture and set the image pixels
-                var t = new Texture2D(Device, width, width, 0, TextureUsage.Linear, SurfaceFormat.Color);
+                var t = new Texture2D(Device, width, width, false, SurfaceFormat.Color);
                 t.SetData(pixels);
                 //t.Save(Dir.StarDriveAppData + "/Saved Games/fog.debug.png", ImageFileFormat.Png);
                 return t;

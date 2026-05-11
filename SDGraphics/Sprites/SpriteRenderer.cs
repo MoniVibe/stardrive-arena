@@ -1,4 +1,5 @@
 ﻿using System;
+using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using SDGraphics.Shaders;
 using SDUtils;
@@ -28,12 +29,12 @@ public sealed class SpriteRenderer : IDisposable
     public SpriteRenderer(GraphicsDevice device)
     {
         Device = device ?? throw new NullReferenceException(nameof(device));
-        VertexDeclaration = new(device, VertexCoordColor.VertexElements);
+        VertexDeclaration = new(VertexCoordColor.VertexElements);
         Batcher = new(device);
 
         // load the shader with parameters
         Shader simple = Shader.FromFile(device, "Content/Effects/Simple.fx");
-        DefaultEffect = new(simple);
+        DefaultEffect = new SpriteShader(simple);
         CurrentEffect = DefaultEffect;
 
         // lastly, create buffers
@@ -134,12 +135,12 @@ public sealed class SpriteRenderer : IDisposable
         CurrentEffect.SetColor(color);
 
         CurrentEffect.Shader.Begin();
-        CurrentEffect.ShaderPass.Begin();
+        CurrentEffect.ShaderPass.Apply(); // MonoGame replaces XNA Begin/End with Apply()
     }
 
     internal void ShaderEnd()
     {
-        CurrentEffect.ShaderPass.End();
+        // MonoGame: EffectPass has no End() — Apply() in ShaderBegin handles state
         CurrentEffect.Shader.End();
     }
 

@@ -1,4 +1,5 @@
-﻿using Microsoft.Xna.Framework.Graphics;
+using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using Ship_Game.UI;
 using System;
@@ -12,7 +13,7 @@ namespace Ship_Game
         public readonly ScrollList<TextBoxItem> ItemsList;
         
         public UITextBox(in RectF rect, bool useBorder = true, Graphics.Font defaultFont = null)
-            : base(rect, Color.TransparentBlack)
+            : base(rect, Color.Transparent)
         {
             DefaultFont = defaultFont ?? Fonts.Arial12Bold;
 

@@ -2,13 +2,14 @@
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Net;
-using System.Web.Script.Serialization;
+using System.Net.Http;
+using System.Text.Json;
 using SDGraphics;
 using Ship_Game.UI;
 using Ship_Game.Audio;
 using System.Text.RegularExpressions;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using SDUtils;
 
@@ -38,6 +39,17 @@ public class AutoUpdateChecker : UIElementContainer
 
     public override void OnAdded(UIElementContainer parent)
     {
+        // Resume mode: AutoPatcher is about to apply the exact version we'd
+        // otherwise notify about, so skip the scan entirely. Without this the
+        // "New Version!" popup slides in from the left at the same time the
+        // patcher chrome appears, which is both noisy and confusing — the user
+        // has already accepted UAC and is watching the patch apply.
+        if (Program.ResumePatchVersion.NotEmpty())
+        {
+            Log.Write("AutoUpdater: resume mode — skipping version scan");
+            return;
+        }
+
         AsyncTask = Parallel.Run(() =>
         {
             string vanillaUrl = GlobalStats.VanillaDefaults.DownloadSite;
@@ -60,7 +72,11 @@ public class AutoUpdateChecker : UIElementContainer
 
     public override void OnRemoved()
     {
-        AsyncTask.Cancel();
+        // AsyncTask is null when we bailed out of OnAdded (e.g. resume mode),
+        // so make the cancel call null-safe — a hot-reload of MainMenus.yaml
+        // (which patches do) triggers RemoveAll on this component and would
+        // otherwise NRE here, tearing down MainMenuScreen mid-unload.
+        AsyncTask?.Cancel();
     }
 
     class NewVersionPopup : UIPanel
@@ -161,27 +177,19 @@ public class AutoUpdateChecker : UIElementContainer
     // bumps can't be applied as a file-drop patch.
     class MajorUpgradeAvailablePopup : UIPanel
     {
-        readonly AutoUpdateChecker Updater;
-        readonly string LatestVersion;
         readonly string Url;
 
-        public MajorUpgradeAvailablePopup(AutoUpdateChecker updater, string latestVersion, string url)
+        public MajorUpgradeAvailablePopup(AutoUpdateChecker updater, string displayLabel, string url)
             : base(updater.ContentManager.LoadTextureOrDefault("Textures/MMenu/popup_banner_small.png"))
         {
-            Updater = updater;
-            LatestVersion = latestVersion;
             Url = url;
 
-            UILabel headline = base.Add(new UILabel("Major Release Available!", Fonts.Pirulen16));
+            UILabel headline = base.Add(new UILabel("Major Release Available!", Fonts.Pirulen16, Microsoft.Xna.Framework.Color.Red));
             headline.TextAlign = TextAlign.HorizontalCenter;
             headline.AxisAlign = Align.CenterLeft;
             headline.SetLocalPos(20, -20);
 
-            // Trim build counter — popup reads cleaner as "BlackBox 1.60" than
-            // "BlackBox 1.60.00000". Full version still goes to Log.Write for
-            // diagnostics.
-            string displayVersion = string.Join(".", latestVersion.Split('.').Take(2));
-            UILabel version = base.Add(new UILabel($"BlackBox {displayVersion}", Fonts.Pirulen12));
+            UILabel version = base.Add(new UILabel(displayLabel, Fonts.Pirulen12));
             version.TextAlign = TextAlign.HorizontalCenter;
             version.AxisAlign = Align.CenterLeft;
             version.SetLocalPos(20, 2);
@@ -200,7 +208,7 @@ public class AutoUpdateChecker : UIElementContainer
             Log.Write($"AutoUpdater: User clicked MajorUpgradeAvailablePopup → opening {Url} and exiting");
             try
             {
-                Process.Start(Url);
+                Process.Start(new ProcessStartInfo(Url) { UseShellExecute = true });
             }
             catch (Exception e)
             {
@@ -267,20 +275,26 @@ public class AutoUpdateChecker : UIElementContainer
                 string teamAndRepo = RegexExtractTeamAndRepo(downloadUrl, "\\/([\\w-]+\\/[\\w-]+)\\/releases");
                 string apiBase = $"https://api.github.com/repos/{teamAndRepo}/releases";
 
-                // Pass 1: /releases/latest for the in-line patch flow. Whatever
-                // is flagged "Set as latest" — the Mars 1.51 line keeps a Mars
-                // patch flagged latest so this returns intra-major hotfixes.
-                info = GetLatestVersionInfoGitHub(apiBase + "/latest", isMod);
-
-                // Pass 2 (vanilla only): scan /releases for any release whose
-                // major.minor is higher than current. Jupiter 1.60+ patches are
-                // NOT flagged "Set as latest" by design, so /releases/latest
-                // would never return them — without this scan, Mars 1.51 users
-                // would never see the Jupiter cross-major popup. Gated on
-                // MajorReleaseUpgradeNotified so the popup doesn't double-fire
-                // if Pass 1 already detected a cross-major.
-                if (!isMod && !MajorReleaseUpgradeNotified)
-                    ScanForCrossMajorRelease(apiBase);
+                // Vanilla: hit /releases (array of all published) and pick the
+                // highest-version release. If its major.minor differs from the
+                // current install, route to the cross-major popup
+                // (file-gated by game/upgrade-url.txt). Otherwise treat it as
+                // an in-game patch candidate. This decouples the release line
+                // from GitHub's "Set as latest" flag — a hotfix can be
+                // published not-as-latest without breaking discovery for new
+                // installs, and the latest flag stays free to point at a
+                // legacy line (e.g. mars-1.51 for older binaries that still
+                // hit /releases/latest from pre-Jupiter code).
+                //
+                // Mods: keep the legacy /releases/latest path. Mods don't
+                // follow the same versioning discipline and changing their
+                // behavior would affect every mod author's existing release
+                // setup.
+                Version currentLine = !isMod ? TryParseCurrentVanillaLine() : null;
+                if (currentLine != null)
+                    info = GetLatestVersionInfoGitHub(apiBase, isMod, currentLine);
+                else
+                    info = GetLatestVersionInfoGitHub(apiBase + "/latest", isMod, currentLine: null);
             }
             else if (downloadUrl.Contains("bitbucket.org"))
             {
@@ -306,112 +320,102 @@ public class AutoUpdateChecker : UIElementContainer
         }
     }
 
-    // Scan the full /releases array for any release whose major.minor is HIGHER
-    // than the current install's. Used by the Mars 1.51 vanilla auto-updater to
-    // surface Jupiter 1.60 (and any future major) since those releases stay
-    // unflagged as "Set as latest" on GitHub. In-line 1.51.x patches are NOT
-    // handled here — Pass 1 (/releases/latest) covers them.
-    void ScanForCrossMajorRelease(string apiBase)
-    {
-        try
-        {
-            string jsonText = DownloadWithCancel(apiBase, AsyncTask, timeout: TimeSpan.FromSeconds(30));
-            if (AsyncTask is { IsCancelRequested: true })
-                return;
-
-            string currentVerStr = GlobalStats.Version.Split(' ').First();
-            if (!System.Version.TryParse(currentVerStr, out System.Version currentVer))
-            {
-                Log.Warning($"AutoUpdater: cannot parse current version '{currentVerStr}' — skipping cross-major scan");
-                return;
-            }
-
-            object[] releases = new JavaScriptSerializer().DeserializeObject(jsonText) as object[];
-            if (releases == null)
-                return;
-
-            System.Version bestVer = null;
-            string bestVerStr = null;
-            foreach (dynamic release in releases)
-            {
-                string tagName = release["tag_name"] as string;
-                if (string.IsNullOrEmpty(tagName)) continue;
-                string versionStr = tagName.Split('-').FindMax(s => s.Count(c => c == '.'));
-                if (string.IsNullOrEmpty(versionStr)) continue;
-                if (!System.Version.TryParse(versionStr, out System.Version v)) continue;
-
-                // Skip same-or-lower major.minor; only HIGHER lines qualify here.
-                if (v.Major < currentVer.Major) continue;
-                if (v.Major == currentVer.Major && v.Minor <= currentVer.Minor) continue;
-
-                if (bestVer == null || v > bestVer)
-                {
-                    bestVer = v;
-                    bestVerStr = versionStr;
-                }
-            }
-
-            if (bestVerStr != null)
-            {
-                Log.Write($"AutoUpdater: cross-major upgrade detected on /releases: {currentVerStr} -> {bestVerStr}");
-                NotifyMajorUpgradeIfConfigured(bestVerStr);
-            }
-        }
-        catch (Exception e)
-        {
-            Log.Warning($"AutoUpdater: cross-major /releases scan failed: {e.Message}");
-        }
-    }
-
-    bool IsLatestVerNewer(string latestVersion, bool isMod)
+    bool IsLatestVerNewer(string latestVersion, bool isMod, string codename = null)
     {
         string currentVersion = !isMod ? GlobalStats.Version.Split(' ').First()
                                        : GlobalStats.ActiveMod.Mod.Version;
 
-        if (!isMod && !IsSameMajorVer(latestVersion, currentVersion))
-        {
-            NotifyMajorUpgradeIfConfigured(latestVersion);
-            return false;
-        }
-
         Log.Write($"AutoUpdater: latest  {latestVersion}");
         Log.Write($"AutoUpdater: current {currentVersion}");
-        return string.CompareOrdinal(latestVersion, currentVersion) > 0;
+
+        // Mods: keep legacy ordinal compare. Mod authors don't follow a strict
+        // numeric scheme and the major-upgrade popup path is vanilla-only.
+        if (isMod)
+            return string.CompareOrdinal(latestVersion, currentVersion) > 0;
+
+        switch (ClassifyVanillaUpdate(latestVersion, currentVersion))
+        {
+            case UpdateAvailability.Unparseable:
+                Log.Warning($"AutoUpdater: unparseable version (latest='{latestVersion}', current='{currentVersion}'), skipping");
+                return false;
+            case UpdateAvailability.None:
+                return false;
+            case UpdateAvailability.CrossMajor:
+                Log.Write($"AutoUpdater: Cross-major upgrade {currentVersion} -> {latestVersion}");
+                NotifyMajorUpgradeIfConfigured(latestVersion, codename);
+                return false;
+            case UpdateAvailability.InGamePatch:
+                return true;
+            default:
+                return false;
+        }
     }
 
-    static bool IsSameMajorVer(string latestVersion, string currentVersion)
+    public enum UpdateAvailability
     {
-        if (JoinVersionParts(latestVersion) != JoinVersionParts(currentVersion))
-        {
-            Log.Write($"AutoUpdater: Major version mismatch: (latest) " +
-                $"{latestVersion} != {currentVersion} (current). Will not update");
-            return false;
-        }
+        None,         // latest <= current
+        InGamePatch,  // same major.minor, latest > current — file-drop patch
+        CrossMajor,   // different major.minor, latest > current — fresh installer
+        Unparseable,  // either version string failed Version.TryParse
+    }
 
-        return true;
-
-        string JoinVersionParts(string version)
-        {
-            return string.Join(".", version.Split('.').Take(2));
-        }
+    // Pure: classify a vanilla-line update purely from version strings.
+    // Parses both via System.Version so 1.51.15118 < 1.60.00000 sorts numerically
+    // (string ordinal compare misorders these and surfaces older Mars-line tags
+    // pinned alongside Jupiter on the GitHub Releases page as "newer").
+    public static UpdateAvailability ClassifyVanillaUpdate(string latestVersion, string currentVersion)
+    {
+        if (!Version.TryParse(latestVersion, out var latest) ||
+            !Version.TryParse(currentVersion, out var current))
+            return UpdateAvailability.Unparseable;
+        if (latest <= current)
+            return UpdateAvailability.None;
+        if (latest.Major != current.Major || latest.Minor != current.Minor)
+            return UpdateAvailability.CrossMajor;
+        return UpdateAvailability.InGamePatch;
     }
 
     // Schedules a top-left MajorUpgradeAvailablePopup if game/upgrade-url.txt
     // is present with a valid URL. Absence of the file is the "stay silent"
     // signal — preserves the historical log-only behavior on major-mismatch.
-    void NotifyMajorUpgradeIfConfigured(string latestVersion)
+    void NotifyMajorUpgradeIfConfigured(string latestVersion, string codename)
     {
         string url = TryReadUpgradeUrl();
         if (url == null)
             return;
 
         MajorReleaseUpgradeNotified = true;
-        Log.Write($"AutoUpdater: Major release {latestVersion} available at {url}");
+        string displayLabel = BuildMajorUpgradeDisplayLabel(latestVersion, codename);
+        Log.Write($"AutoUpdater: Major release {latestVersion} ({displayLabel}) available at {url}");
         Screen.RunOnNextFrame(() =>
         {
-            var popup = Add(new MajorUpgradeAvailablePopup(this, latestVersion, url));
+            var popup = Add(new MajorUpgradeAvailablePopup(this, displayLabel, url));
             popup.SetLocalPos(10, 30);
         });
+    }
+
+    // "1.60.00002" + "Jupiter" -> "Jupiter 1.60". Codename comes from the
+    // GitHub tag (`jupiter-release-1.60` -> "Jupiter"); when absent we fall
+    // back to "BlackBox 1.60" so the popup still reads sensibly. Full build
+    // number stays in Log.Write for diagnostics — only the user-facing label
+    // is trimmed to major.minor.
+    public static string BuildMajorUpgradeDisplayLabel(string latestVersion, string codename)
+    {
+        string majorMinor = string.Join(".", latestVersion.Split('.').Take(2));
+        return codename.NotEmpty() ? $"{codename} {majorMinor}" : $"BlackBox {majorMinor}";
+    }
+
+    // "jupiter-release-1.60"  -> "Jupiter"
+    // "mars-patch-1.51.15118" -> "Mars"
+    // null/empty/non-alpha first segment -> null (caller falls back to "BlackBox")
+    public static string ExtractCodenameFromTag(string tagName)
+    {
+        if (tagName.IsEmpty())
+            return null;
+        string first = tagName.Split('-').FirstOrDefault();
+        if (first.IsEmpty() || !first.All(char.IsLetter))
+            return null;
+        return char.ToUpperInvariant(first[0]) + first.Substring(1).ToLowerInvariant();
     }
 
     static string TryReadUpgradeUrl()
@@ -438,32 +442,127 @@ public class AutoUpdateChecker : UIElementContainer
     }
 
 
-    ReleaseInfo? GetLatestVersionInfoGitHub(string url, bool isMod)
+    // Parses the current vanilla install version (e.g. "1.60.00000 (abcdef1)" -> Version 1.60.0).
+    // Returns null on dev builds / unparseable strings — caller falls back to /releases/latest.
+    static Version TryParseCurrentVanillaLine()
+    {
+        string currentVer = GlobalStats.Version.Split(' ').First();
+        if (Version.TryParse(currentVer, out var v))
+            return v;
+        Log.Warning($"AutoUpdater: cannot parse current vanilla version '{currentVer}' — falling back to /releases/latest");
+        return null;
+    }
+
+    static string ExtractVersionPartFromTag(string tagName)
+        => tagName.Split('-').FindMax(s => s.Count(c => c == '.')); // part-v1.2.4-withmostdots
+
+    ReleaseInfo? GetLatestVersionInfoGitHub(string url, bool isMod, Version currentLine)
     {
         string jsonText = DownloadWithCancel(url, AsyncTask, timeout: TimeSpan.FromSeconds(30));
         if (AsyncTask is { IsCancelRequested: true })
             return null;
 
-        dynamic latestRelease = new JavaScriptSerializer().DeserializeObject(jsonText);
-        string name = latestRelease["name"];
-        string tagName = latestRelease["tag_name"];
-        string changelog = latestRelease["body"];
-        string latestVersion = tagName.Split('-').FindMax(s => s.Count(c => c == '.')); // part-v1.2.4-withmostdots
+        using JsonDocument doc = JsonDocument.Parse(jsonText);
 
-        if (IsLatestVerNewer(latestVersion, isMod))
+        // /releases returns a JSON array; /releases/latest returns a single object.
+        // GetVersionAsync picks the URL based on whether a current install line
+        // could be parsed, so handle both shapes here.
+        JsonElement latestRelease;
+        if (doc.RootElement.ValueKind == JsonValueKind.Array)
+        {
+            if (currentLine == null)
+            {
+                Log.Warning("AutoUpdater: /releases array returned but no currentLine — refusing to guess");
+                return null;
+            }
+            if (!TrySelectMaxVersionRelease(doc.RootElement, predicate: null, out JsonElement maxOverall, out Version maxOverallVer))
+            {
+                Log.Write("AutoUpdater: /releases empty or no parseable versions");
+                return null;
+            }
+            // Cross-major: highest published release is on a different line than
+            // current install. Route through the popup (file-gated by
+            // game/upgrade-url.txt) and skip the in-game patcher — major bumps
+            // can't be applied as a file-drop.
+            if (maxOverallVer.Major != currentLine.Major || maxOverallVer.Minor != currentLine.Minor)
+            {
+                string overallTag = maxOverall.GetProperty("tag_name").GetString();
+                string overallVersion = ExtractVersionPartFromTag(overallTag);
+                string overallCodename = ExtractCodenameFromTag(overallTag);
+                string currentVer = GlobalStats.Version.Split(' ').First();
+                if (ClassifyVanillaUpdate(overallVersion, currentVer) == UpdateAvailability.CrossMajor)
+                {
+                    Log.Write($"AutoUpdater: cross-major upgrade detected: {currentVer} -> {overallVersion}");
+                    NotifyMajorUpgradeIfConfigured(overallVersion, overallCodename);
+                }
+                return null;
+            }
+            // Same line: max-overall is also the max-in-line, use it as the
+            // in-game patch candidate.
+            latestRelease = maxOverall;
+        }
+        else
+        {
+            latestRelease = doc.RootElement;
+        }
+
+        string name = latestRelease.GetProperty("name").GetString();
+        string tagName = latestRelease.GetProperty("tag_name").GetString();
+        string changelog = latestRelease.GetProperty("body").GetString();
+        string latestVersion = ExtractVersionPartFromTag(tagName);
+        string codename = ExtractCodenameFromTag(tagName);
+
+        if (IsLatestVerNewer(latestVersion, isMod, codename))
         {
             ReleaseInfo info = new(name, latestVersion, changelog, null, null);
             info.ZipUrls = new List<string>();
-            foreach (dynamic asset in latestRelease["assets"])
-            {
-                string assetName = asset["name"];
-                if (assetName.EndsWith(".zip"))
-                    info.ZipUrls.Add(asset["browser_download_url"]);
-            }
+            // Sort by asset name. Chunked patches use a `001-`, `002-` numeric prefix
+            // (MakeInstaller.py); GitHub's API returns assets in upload order, which
+            // currently happens to be alphabetical because patch-build.yml uses
+            // Get-ChildItem (alpha default) — but that's incidental. Sort here so a
+            // future workflow change or manual re-upload via the UI can't reorder
+            // chunks and corrupt the concatenated archive.
+            var zipAssets = latestRelease.GetProperty("assets").EnumerateArray()
+                .Where(a => a.GetProperty("name").GetString().EndsWith(".zip"))
+                .OrderBy(a => a.GetProperty("name").GetString(), StringComparer.OrdinalIgnoreCase);
+            foreach (JsonElement asset in zipAssets)
+                info.ZipUrls.Add(asset.GetProperty("browser_download_url").GetString());
 
             return info;
         }
         return null;
+    }
+
+    // Pick the highest-versioned release on a /releases array. Version-based
+    // (not date-based) so a security hotfix published to an older line can't
+    // trick a newer install into "downgrading" — only an actual higher Version
+    // wins. The version segment is the dot-richest split-on-'-' part of the
+    // tag. Pass a `predicate` to scope to a release line (e.g. major.minor
+    // match); pass null to scan all releases.
+    static bool TrySelectMaxVersionRelease(JsonElement releases, Func<Version, bool> predicate,
+                                           out JsonElement best, out Version bestVer)
+    {
+        best = default;
+        bestVer = null;
+        foreach (JsonElement release in releases.EnumerateArray())
+        {
+            if (!release.TryGetProperty("tag_name", out JsonElement tagEl))
+                continue;
+            string tag = tagEl.GetString();
+            if (tag.IsEmpty())
+                continue;
+            string verPart = ExtractVersionPartFromTag(tag);
+            if (verPart.IsEmpty() || !Version.TryParse(verPart, out var v))
+                continue;
+            if (predicate != null && !predicate(v))
+                continue;
+            if (bestVer == null || v > bestVer)
+            {
+                bestVer = v;
+                best = release;
+            }
+        }
+        return bestVer != null;
     }
 
     ReleaseInfo? GetLatestVersionInfoBitBucket(string modName, string url, bool isMod)
@@ -472,15 +571,14 @@ public class AutoUpdateChecker : UIElementContainer
         if (AsyncTask is { IsCancelRequested: true })
             return null;
 
-        dynamic downloads = new JavaScriptSerializer().DeserializeObject(jsonText);
-        IEnumerable<dynamic> values = downloads["values"];
-        dynamic value = values.First();
-        string zipName = value["name"];
+        using JsonDocument doc = JsonDocument.Parse(jsonText);
+        JsonElement value = doc.RootElement.GetProperty("values").EnumerateArray().First();
+        string zipName = value.GetProperty("name").GetString();
         string latestVersion = ParseVersionFromDownloadName(zipName);
 
         if (IsLatestVerNewer(latestVersion, isMod))
         {
-            List<string> downloadLink = [value["links"]["self"]["href"]];
+            List<string> downloadLink = [value.GetProperty("links").GetProperty("self").GetProperty("href").GetString()];
             string prettyName = $"{modName} {latestVersion}";
             return new(prettyName, latestVersion, zipName, downloadLink, null);
         }
@@ -509,15 +607,18 @@ public class AutoUpdateChecker : UIElementContainer
     // Download utility which can be cancel itself via another `cancellableTask`
     public static string DownloadWithCancel(string url, TaskResult cancellableTask, TimeSpan timeout)
     {
-        using WebClient wc = CreateWebClient((sender, e) =>
+        using var cts = LinkCancellation(cancellableTask, timeout);
+        using HttpClient http = CreateHttpClient();
+        try
         {
-            if (cancellableTask is { IsCancelRequested: true } && sender is WebClient webClient)
-                webClient.CancelAsync();
-        });
-
-        var download = wc.DownloadStringTaskAsync(url);
-        WaitForTask(download, cancellableTask, timeout);
-        return download.Result;
+            return http.GetStringAsync(url, cts.Token).GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+            if (cancellableTask is { IsCancelRequested: true })
+                throw new OperationCanceledException("Download Request cancelled");
+            throw new TimeoutException("Download Request timed out");
+        }
     }
 
     /// <summary>
@@ -525,63 +626,80 @@ public class AutoUpdateChecker : UIElementContainer
     /// Returns the path to the local file. Otherwise throws an exception on failure or cancellation.
     /// If there are several urls, they will be downloaded sequentially.
     /// </summary>
-    public static List<string> DownloadZip(List<string> urls, string localFolder, TaskResult cancellableTask, 
+    public static List<string> DownloadZip(List<string> urls, string localFolder, TaskResult cancellableTask,
                                      Action<int> onProgressPercent, TimeSpan timeout)
     {
-        int lastPercent = -1;
-        using WebClient wc = CreateWebClient((sender, e) =>
-        {
-            if (cancellableTask is { IsCancelRequested: true } && sender is WebClient webClient)
-                webClient.CancelAsync();
-            else if (onProgressPercent != null && e != null)
-            {
-                int newPercent = e.ProgressPercentage;
-                if (lastPercent != newPercent)
-                {
-                    lastPercent = newPercent;
-                    onProgressPercent(newPercent);
-                }
-            }
-        });
-
+        using var cts = LinkCancellation(cancellableTask, timeout);
+        using HttpClient http = CreateHttpClient();
         List<string> localFiles = new(urls.Count);
-        foreach (string url in urls)
+        try
         {
-            string localFile = Path.Combine(localFolder, Path.GetFileName(url));
-            var download = wc.DownloadFileTaskAsync(url, localFile);
-            WaitForTask(download, cancellableTask, timeout);
-            localFiles.Add(localFile);
+            foreach (string url in urls)
+            {
+                string localFile = Path.Combine(localFolder, Path.GetFileName(url));
+                DownloadFileWithProgress(http, url, localFile, onProgressPercent, cts.Token)
+                    .GetAwaiter().GetResult();
+                localFiles.Add(localFile);
+            }
         }
-
+        catch (OperationCanceledException)
+        {
+            if (cancellableTask is { IsCancelRequested: true })
+                throw new OperationCanceledException("Download Request cancelled");
+            throw new TimeoutException("Download Request timed out");
+        }
         return localFiles;
     }
 
-    static WebClient CreateWebClient(DownloadProgressChangedEventHandler e)
+    static HttpClient CreateHttpClient()
     {
-        WebClient wc = new();
-        wc.UseDefaultCredentials = false;
-        wc.Headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36";
-        wc.DownloadProgressChanged += e;
-        return wc;
+        var http = new HttpClient();
+        http.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36");
+        return http;
     }
 
-    static void WaitForTask(Task task, TaskResult cancellableTask, TimeSpan timeout)
+    // Bridges the legacy TaskResult-based cancellation onto a CancellationToken.
+    // Polls IsCancelRequested at 100ms granularity so the existing Cancel-button UX
+    // still works without changing its surface.
+    static CancellationTokenSource LinkCancellation(TaskResult cancellableTask, TimeSpan timeout)
     {
-        try
+        var cts = new CancellationTokenSource(timeout);
+        if (cancellableTask != null)
         {
-            for (int timeoutMs = (int)timeout.TotalMilliseconds; timeoutMs > 0; timeoutMs -= 100)
+            Task.Run(async () =>
             {
-                if (task.Wait(100)) return;
-                if (cancellableTask is { IsCancelRequested: true }) break;
+                while (!cts.IsCancellationRequested)
+                {
+                    if (cancellableTask.IsCancelRequested) { cts.Cancel(); return; }
+                    await Task.Delay(100, cts.Token).ContinueWith(_ => { });
+                }
+            });
+        }
+        return cts;
+    }
+
+    static async Task DownloadFileWithProgress(HttpClient http, string url, string localFile,
+                                               Action<int> onProgressPercent, CancellationToken ct)
+    {
+        using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+        response.EnsureSuccessStatusCode();
+        long? total = response.Content.Headers.ContentLength;
+        await using Stream src = await response.Content.ReadAsStreamAsync(ct);
+        await using FileStream dst = File.Create(localFile);
+        byte[] buffer = new byte[81920];
+        long received = 0;
+        int lastPercent = -1;
+        int read;
+        while ((read = await src.ReadAsync(buffer.AsMemory(0, buffer.Length), ct)) > 0)
+        {
+            await dst.WriteAsync(buffer.AsMemory(0, read), ct);
+            received += read;
+            if (onProgressPercent != null && total is > 0)
+            {
+                int pct = (int)(received * 100 / total.Value);
+                if (pct != lastPercent) { lastPercent = pct; onProgressPercent(pct); }
             }
         }
-        catch (AggregateException e)
-        {
-            throw e.InnerException ?? e;
-        }
-
-        if (cancellableTask is { IsCancelRequested: true })
-            throw new OperationCanceledException("Download Request cancelled");
-        throw new TimeoutException("Download Request timed out");
     }
 }

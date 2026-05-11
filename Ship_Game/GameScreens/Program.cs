@@ -11,6 +11,12 @@ internal static class Program
     public const int SCREEN_UPDATE_FAILURE = -2;
     public const int UNHANDLED_EXCEPTION = -3;
 
+    // Set by --apply-patch=<version> CLI arg. AutoPatcher's pre-elevation pass
+    // (non-elevated download + unzip) writes a PendingPatch.json marker, then
+    // relaunches itself elevated with this flag set so the elevated instance can
+    // skip download/unzip and jump straight to file moves. See AutoPatcher.cs.
+    public static string ResumePatchVersion;
+
     static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
     {
         GraphicsDeviceManager graphicsMgr = StarDriveGame.Instance?.Graphics;
@@ -117,6 +123,12 @@ internal static class Program
             else if (key == "--continue")
             {
                 GlobalStats.ContinueToGame = true;
+            }
+            else if (key == "--apply-patch")
+            {
+                // Internal — set by AutoPatcher when relaunching itself elevated
+                // so the new instance knows to resume from a pre-downloaded patch.
+                ResumePatchVersion = value;
             }
             else
             {

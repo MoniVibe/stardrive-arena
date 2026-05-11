@@ -92,15 +92,19 @@ namespace Ship_Game.UI
             batch.SafeEnd();
         }
 
+        // Phase 3.7 / §4.6 #1.c: BackAdditive layer (planet limb, Dust, Aurora,
+        // city-lights) needs a true additive composite over the planet panel.
+        // Pre-Phase-3.7 used plain AlphaBlend, which collapsed the highlights
+        // into an unblended core. Phase 3.7 swapped to a custom SoftAdditive
+        // (`src*(1-dst) + dst`) — that preserved the planet but attenuated the
+        // puff contribution so far that Dust + Aurora became invisible against
+        // a bright Mars limb. Post-§4.6 #1.c we use canonical
+        // `BlendState.Additive` (`src*srcA + dst*1`): direct add over dark
+        // space, controlled lift over the planet (Color multipliers in
+        // MMenu.Mars.yaml dial back per-panel intensity if needed).
         static void BeginAdditive(SpriteBatch batch, bool saveState = false)
         {
-            // NOTE: SaveState restores graphics device settings
-            //       just in case we mix 3D rendering with 2D rendering
-
-            batch.SafeBegin(SpriteBlendMode.AlphaBlend, sortImmediate:true, saveState:saveState);
-
-            // TODO: this is a weird alpha setting
-            RenderStates.EnableAlphaBlend(batch.GraphicsDevice, Blend.InverseDestinationColor, Blend.One);
+            batch.Begin(SpriteSortMode.Immediate, BlendState.Additive);
         }
         
         static void BatchDrawAdditive(SpriteBatch batch, DrawTimes elapsed, Array<UIElementV2> elements)

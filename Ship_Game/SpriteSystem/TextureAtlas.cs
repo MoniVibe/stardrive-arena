@@ -15,7 +15,60 @@ namespace Ship_Game.SpriteSystem
     /// </summary>
     public sealed partial class TextureAtlas : IDisposable
     {
-        const int Version = 24; // changing this will force all caches to regenerate
+        const int Version = 29; // changing this will force all caches to regenerate
+        const string CacheVersionFile = "version.txt";
+
+        // Run once per LoadAllResources, BEFORE any atlas loads. Compares the
+        // sentinel `version.txt` at the cache root against the in-code Version
+        // and wipes the whole cache folder on mismatch (or missing sentinel).
+        // Belt-and-braces over per-atlas LoadCacheAtlas hash invalidation:
+        // version bumps, removed atlases, renamed atlases, format flips
+        // (.dds <-> .png) all leave orphan files that the per-atlas check
+        // can't see. A clean rebuild is more expensive but only happens once
+        // per Version bump, and removes the entire class of stale-companion
+        // bugs.
+        public static void PurgeCacheIfVersionChanged()
+        {
+            string cacheDir = AtlasPath.GetCacheRoot();
+            if (!Directory.Exists(cacheDir))
+            {
+                Directory.CreateDirectory(cacheDir);
+                File.WriteAllText(System.IO.Path.Combine(cacheDir, CacheVersionFile), Version.ToString());
+                return;
+            }
+
+            string sentinelPath = System.IO.Path.Combine(cacheDir, CacheVersionFile);
+            int storedVersion = -1;
+            if (File.Exists(sentinelPath) &&
+                int.TryParse(File.ReadAllText(sentinelPath).Trim(), out int parsed))
+            {
+                storedVersion = parsed;
+            }
+
+            if (storedVersion == Version)
+                return;
+
+            Log.Write(ConsoleColor.Cyan,
+                $"[TextureAtlas] cache version {storedVersion} -> {Version}; purging {cacheDir}");
+
+            foreach (string entry in Directory.EnumerateFileSystemEntries(cacheDir))
+            {
+                try
+                {
+                    FileAttributes attr = File.GetAttributes(entry);
+                    if ((attr & FileAttributes.Directory) != 0)
+                        Directory.Delete(entry, recursive: true);
+                    else
+                        File.Delete(entry);
+                }
+                catch (IOException ex)
+                {
+                    Log.Warning($"[TextureAtlas] could not delete {entry}: {ex.Message}");
+                }
+            }
+
+            File.WriteAllText(sentinelPath, Version.ToString());
+        }
 
         // DEBUG: export packed textures into     {cache}/{atlas}/{sprite}.png ?
         //        export non-packed textures into {cache}/{atlas}/NoPack/{sprite}.png
@@ -114,10 +167,23 @@ namespace Ship_Game.SpriteSystem
             if (Atlas != null)
                 return Atlas;
 
-            var atlasTex = new FileInfo(Path.PrePackedTex ?? Path.CacheAtlasTex);
+            // Phase 2.3: Atlas cache files may land as .dds OR .png on disk.
+            // CreateAtlasTexture chooses Compressed→DDS (via SDNative.ConvertToDDS) for
+            // Dxt-flagged atlases and falls back to Texture2D.SaveAsPng for the
+            // uncompressed RGBA path (Phase 1 left a TODO there because MonoGame
+            // removed Texture2D.Save for DDS). Loader must check both extensions.
+            string primary = Path.PrePackedTex ?? Path.CacheAtlasTex;
+            var atlasTex = new FileInfo(primary);
+            if (!atlasTex.Exists)
+            {
+                string pngFallback = System.IO.Path.ChangeExtension(primary, "png");
+                var pngTex = new FileInfo(pngFallback);
+                if (pngTex.Exists) atlasTex = pngTex;
+            }
+
             if (atlasTex.Exists)
             {
-                var atlas = ResourceManager.RootContent.LoadUncachedTexture(atlasTex, "dds");
+                var atlas = ResourceManager.RootContent.LoadUncachedTexture(atlasTex);
                 Width = atlas.Width;
                 Height = atlas.Height;
 
@@ -127,7 +193,7 @@ namespace Ship_Game.SpriteSystem
                 return atlas;
             }
 
-            Log.Error($"Atlas texture does not exist: {Path.PrePackedTex ?? Path.CacheAtlasTex}");
+            Log.Error($"Atlas texture does not exist: {primary} (also tried .png)");
             return null;
         }
 

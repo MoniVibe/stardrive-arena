@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using Ship_Game.Ships;
 using SDGraphics;
 using SDUtils;
@@ -156,7 +157,7 @@ namespace Ship_Game
         // FleetDesign screen became visible
         public override void BecameActive()
         {
-            AssignLightRig(LightRigIdentity.FleetDesign, "example/ShipyardLightrig");
+            AssignLightRig(LightRigIdentity.FleetDesign);
         }
 
         // We opened another screen like Shipyard, or just exited this screen

@@ -1,10 +1,11 @@
 using System;
 using System.IO;
 using System.Runtime;
+using Microsoft.Xna.Framework;
 using SDUtils;
 using Ship_Game.Audio;
 using Ship_Game.GameScreens;
-using Color = Microsoft.Xna.Framework.Graphics.Color;
+using Color = Microsoft.Xna.Framework.Color;
 using Ship_Game.GameScreens.MainMenu;
 using Ship_Game.Utils;
 
@@ -36,13 +37,15 @@ namespace Ship_Game
             Log.Write(ConsoleColor.Yellow, $"PhysicalCores={Parallel.NumPhysicalCores} MaxParallelism={Parallel.MaxParallelism}");
             Log.Write(ConsoleColor.Yellow, $"GameDir={Directory.GetCurrentDirectory()}");
 
-        #if STEAM
+            // SteamManager is currently a stub (returns false / no-op).
+            // Calls remain unconditional so when Steamworks.NET is wired back
+            // (see migration-plan-phase2 §"Deferred Final Step") only
+            // SteamManager.cs needs to change.
             if (SteamManager.Initialize())
             {
                 SteamManager.RequestStats();
                 SteamManager.AchievementUnlocked("Thanks");
             }
-        #endif
 
             Exiting += GameExiting;
 
@@ -62,21 +65,43 @@ namespace Ship_Game
 
         public void SetSteamAchievement(string name)
         {
-        #if STEAM
             if (SteamManager.IsInitialized)
             {
                 SteamManager.AchievementUnlocked(name);
             }
             else
             { Log.Warning("Steam not initialized"); }
-        #endif
         }
 
         void GameExiting(object sender, EventArgs e)
         {
             IsExiting = true;
+            FrameTimeLogger.Stop();
             ScreenManager.ExitAll(clear3DObjects: true);
             ResourceManager.WaitForExit();
+        }
+
+        // Verifies the Media Foundation backend is usable on this machine.
+        // Catches missing MF codec stack (Win10/11 N/KN editions) by attempting
+        // to construct VideoPlayer and set Volume — both should succeed on a
+        // working install. Sets GlobalStats.VideoDisabled if either throws so
+        // GameLoadingScreen skips the splash and jumps straight to MainMenu.
+        //
+        // Phase 2.6.A: dropped the unconditional force-disable that worked
+        // around MonoGame WindowsDX 3.8.0.1641's broken VideoPlayer
+        // (Play/GetTexture both threw NRE). MonoGame 3.8.1+ fixes both.
+        static void ProbeVideoBackend()
+        {
+            try
+            {
+                using var player = new Microsoft.Xna.Framework.Media.VideoPlayer();
+                player.Volume = 0.5f;
+            }
+            catch (Exception ex)
+            {
+                GlobalStats.VideoDisabled = true;
+                Log.Warning($"Media Foundation unavailable; videos disabled: {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
         protected override void Initialize()
@@ -87,6 +112,12 @@ namespace Ship_Game
             ScreenManager = new(this, Graphics);
             InitializeAudio();
             ApplyGraphics(GraphicsSettings.FromGlobalStats());
+            ProbeVideoBackend();
+            // CWD at runtime is game/, so step up one to land alongside the rest of phase4-logs.
+            // Disabled — §4.1 baseline already captured. Re-enable for the next perf pass
+            // (e.g., §4.4 or anywhere we need fresh frame traces). All Begin/End/Stop calls
+            // are no-ops when Init wasn't called, so no other edits are needed.
+            // FrameTimeLogger.Init("../x64Migration/phase4-logs/perf-baseline/frames.csv");
 
             // run initialization handler which is able to cancel and exit the game
             if (OnInitialize != null && OnInitialize() == false)
@@ -136,10 +167,12 @@ namespace Ship_Game
             GraphicsDeviceWasReset = true;
         }
 
-        protected override void Update(float deltaTime)
+        protected override void Update(GameTime gameTime)
         {
+            FrameTimeLogger.BeginUpdate();
             GameAudio.Update();
-            UpdateGame(deltaTime);
+            UpdateGame(gameTime);
+            FrameTimeLogger.EndUpdate();
 
             if (IsLoaded && ScreenManager.NumScreens == 0)
             {
@@ -147,13 +180,18 @@ namespace Ship_Game
             }
         }
 
-        protected override void Draw()
+        protected override void Draw(GameTime gameTime)
         {
             if (IsDeviceGood)
             {
+                FrameTimeLogger.BeginDraw();
                 ScreenManager.ClearScreen(Color.Black);
                 ScreenManager.Draw();
-                base.Draw();
+                base.Draw(gameTime);
+                string topScreen = ScreenManager.NumScreens > 0
+                    ? ScreenManager.Current?.GetType().Name ?? ""
+                    : "";
+                FrameTimeLogger.EndFrame(topScreen);
             }
         }
 
@@ -161,9 +199,7 @@ namespace Ship_Game
         {
             base.Dispose(disposing);
             Instance = null;
-            #if STEAM
-                SteamManager.Shutdown();
-            #endif
+            SteamManager.Shutdown();
         }
     }
 }

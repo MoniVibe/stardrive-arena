@@ -1,5 +1,6 @@
 using System;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using Ship_Game.Data;
 using Ship_Game.Data.Mesh;
@@ -65,6 +66,11 @@ namespace Ship_Game
 
         public void Draw(ref Matrix view, ref Matrix project)
         {
+            // defense-in-depth: Thrust.mgfxo restored §3.3 (2026-05-04); guard
+            // catches missing-file regressions instead of NRE-ing the draw call.
+            if (Effect == null || technique == null)
+                return;
+
             matrices_combined[0] = world_matrix;
             matrices_combined[1] = (world_matrix * view) * project;
             matrices_combined[2] = inverse_scale_transpose;

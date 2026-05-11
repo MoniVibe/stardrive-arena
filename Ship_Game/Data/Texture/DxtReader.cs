@@ -1,7 +1,8 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 // ReSharper disable InconsistentNaming
 // ReSharper disable IdentifierTypo
 // ReSharper disable UnusedMember.Local
@@ -15,8 +16,10 @@ namespace Ship_Game.Data.Texture
     public class DxtReader
     {
         public Color[] DecodedImage { get; private set; } = new Color[0];
+        public int Width { get; private set; }
+        public int Height { get; private set; }
 
-        private DxtReader(byte[] ddsImage)
+        public DxtReader(byte[] ddsImage)
         {
             if (ddsImage == null) return;
             if (ddsImage.Length == 0) return;
@@ -33,7 +36,7 @@ namespace Ship_Game.Data.Texture
             }
         }
 
-        private DxtReader(Stream ddsImage)
+        public DxtReader(Stream ddsImage)
         {
             if (ddsImage == null) return;
             if (!ddsImage.CanRead) return;
@@ -53,6 +56,9 @@ namespace Ship_Game.Data.Texture
 
             if (header.depth == 0) header.depth = 1;
 
+            Width = (int)header.width;
+            Height = (int)header.height;
+
             PixelFormat format = GetFormat(header, out uint _);
             if (format == PixelFormat.UNKNOWN)
                 throw new InvalidFileHeaderException();
@@ -70,13 +76,14 @@ namespace Ship_Game.Data.Texture
             byte[] compdata;
             uint compsize;
 
-            if ((header.flags & DDSD_LINEARSIZE) > 1)
+            if ((header.flags & DDSD_LINEARSIZE) > 1 && header.sizeorpitch != 0)
             {
                 compdata = reader.ReadBytes((int)header.sizeorpitch);
                 compsize = (uint)compdata.Length;
             }
-            else
+            else if (header.pixelformat.rgbbitcount != 0 && (header.pixelformat.flags & DDPF_FOURCC) == 0)
             {
+                // Uncompressed: per-pixel bit count is meaningful
                 uint bps = header.width * header.pixelformat.rgbbitcount / 8;
                 compsize = bps * header.height * header.depth;
                 compdata = new byte[compsize];
@@ -95,6 +102,15 @@ namespace Ship_Game.Data.Texture
 
                 mem.Read(compdata, 0, compdata.Length);
                 mem.Close();
+            }
+            else
+            {
+                // Block-compressed (DXT1/DXT3/DXT5/etc.) with no LinearSize flag, or
+                // any case where the explicit size fields are zeroed: read everything
+                // remaining in the stream. The Decompress* methods only consume the
+                // base-level bytes they need; trailing mipmap data is harmless.
+                long remaining = reader.BaseStream.Length - reader.BaseStream.Position;
+                compdata = reader.ReadBytes((int)remaining);
             }
 
             return compdata;
@@ -536,7 +552,7 @@ namespace Ship_Game.Data.Texture
             return DecompressData(header, data, pixelFormat);
         }
 
-        // @return BGRA Color[width*height]
+        // @return RGBA Color[width*height]
         public static Color[] DecompressData(in DDSHeader header, byte[] data, PixelFormat pixelFormat)
         {
             switch (pixelFormat)
@@ -645,9 +661,9 @@ namespace Ship_Game.Data.Texture
                                     if (((x + i) < width) && ((y + j) < height))
                                     {
                                         uint offset = (uint)(z * sizeofplane + (y + j) * bps + (x + i) * bpp);
-                                        dest[offset + 2] = col.red;   // BGRA
+                                        dest[offset + 0] = col.red;   // RGBA (MonoGame Color byte layout)
                                         dest[offset + 1] = col.green;
-                                        dest[offset + 0] = col.blue;
+                                        dest[offset + 2] = col.blue;
                                         dest[offset + 3] = col.alpha;
                                     }
                                 }
@@ -732,9 +748,9 @@ namespace Ship_Game.Data.Texture
                                     if (((x + i) < width) && ((y + j) < height))
                                     {
                                         uint offset = (uint)(z * sizeofplane + (y + j) * bps + (x + i) * bpp);
-                                        dest[offset + 2] = colours[select].red;
+                                        dest[offset + 0] = colours[select].red;
                                         dest[offset + 1] = colours[select].green;
-                                        dest[offset + 0] = colours[select].blue;
+                                        dest[offset + 2] = colours[select].blue;
                                     }
                                 }
                             }
@@ -838,9 +854,9 @@ namespace Ship_Game.Data.Texture
                                     if (((x + i) < width) && ((y + j) < height))
                                     {
                                         uint offset = (uint)(z * sizeofplane + (y + j) * bps + (x + i) * bpp);
-                                        dest[offset + 2] = col.red; // BGRA
+                                        dest[offset + 0] = col.red; // RGBA (MonoGame Color byte layout)
                                         dest[offset + 1] = col.green;
-                                        dest[offset + 0] = col.blue;
+                                        dest[offset + 2] = col.blue;
                                     }
                                 }
                             }
@@ -942,11 +958,11 @@ namespace Ship_Game.Data.Texture
                     uint px = *((uint*)temp) & valMask;
                     temp += pixSize;
                     uint pxc = px & header.pixelformat.rbitmask;
-                    dest[2] = (byte)(((pxc >> rShift1) * rMul) >> rShift2);// BGRA
+                    dest[0] = (byte)(((pxc >> rShift1) * rMul) >> rShift2);// RGBA
                     pxc = px & header.pixelformat.gbitmask;
                     dest[1] = (byte)(((pxc >> gShift1) * gMul) >> gShift2);
                     pxc = px & header.pixelformat.bbitmask;
-                    dest[0] = (byte)(((pxc >> bShift1) * bMul) >> bShift2);
+                    dest[2] = (byte)(((pxc >> bShift1) * bMul) >> bShift2);
                     dest[3] = 0xff;
                     dest += 4;
                 }
@@ -985,11 +1001,11 @@ namespace Ship_Game.Data.Texture
                     uint px = *((uint*)temp) & valMask;
                     temp += pixSize;
                     uint pxc = px & header.pixelformat.rbitmask;
-                    dest[2] = (byte)(((pxc >> rShift1) * rMul) >> rShift2);// BGRA
+                    dest[0] = (byte)(((pxc >> rShift1) * rMul) >> rShift2);// RGBA
                     pxc = px & header.pixelformat.gbitmask;
                     dest[1] = (byte)(((pxc >> gShift1) * gMul) >> gShift2);
                     pxc = px & header.pixelformat.bbitmask;
-                    dest[0] = (byte)(((pxc >> bShift1) * bMul) >> bShift2);
+                    dest[2] = (byte)(((pxc >> bShift1) * bMul) >> bShift2);
                     pxc = px & header.pixelformat.alphabitmask;
                     dest[3] = (byte)(((pxc >> aShift1) * aMul) >> aShift2);
                     dest += 4;
@@ -1077,14 +1093,14 @@ namespace Ship_Game.Data.Texture
 
                                                 t1 = currentOffset + (x + i) * 3;
                                                 dest[t1 + 1] = ty = yColours[bitmask & 0x07];
-                                                dest[t1 + 2] = tx = xColours[bitmask2 & 0x07];
+                                                dest[t1 + 0] = tx = xColours[bitmask2 & 0x07]; // RGBA: R=X
 
                                                 //calculate b (z) component ((r/255)^2 + (g/255)^2 + (b/255)^2 = 1
                                                 int t = 127 * 128 - (tx - 127) * (tx - 128) - (ty - 127) * (ty - 128);
                                                 if (t > 0)
-                                                    dest[t1 + 0] = (byte)(Math.Sqrt(t) + 128);
+                                                    dest[t1 + 2] = (byte)(Math.Sqrt(t) + 128); // RGBA: B=Z
                                                 else
-                                                    dest[t1 + 0] = 0x7F;
+                                                    dest[t1 + 2] = 0x7F;
                                             }
                                             bitmask >>= 3;
                                             bitmask2 >>= 3;
@@ -1291,9 +1307,9 @@ namespace Ship_Game.Data.Texture
                                     if (((x + i) < width) && ((y + j) < height))
                                     {
                                         uint offset = (uint)(z * sizeofplane + (y + j) * bps + (x + i) * bpp);
-                                        dest[offset + 2] = col.red;
+                                        dest[offset + 0] = col.red;
                                         dest[offset + 1] = col.green;
-                                        dest[offset + 0] = col.blue;
+                                        dest[offset + 2] = col.blue;
                                     }
                                 }
                             }
@@ -1462,7 +1478,7 @@ namespace Ship_Game.Data.Texture
             public uint[] reserved;//[11];
 
             [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
-            public struct pixelformatstruct
+            public struct PixelFormatStruct
             {
                 public uint size;	// equals size of struct (which is part of the data file!)
                 public uint flags;
@@ -1473,17 +1489,17 @@ namespace Ship_Game.Data.Texture
                 public uint bbitmask;
                 public uint alphabitmask;
             }
-            public pixelformatstruct pixelformat;
+            public PixelFormatStruct pixelformat;
 
             [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
-            public struct ddscapsstruct
+            public struct DdsCapsStruct
             {
                 public uint caps1;
                 public uint caps2;
                 public uint caps3;
                 public uint caps4;
             }
-            public ddscapsstruct ddscaps;
+            public DdsCapsStruct ddscaps;
             public uint texturestage;
 
             //#ifndef __i386__

@@ -3,6 +3,10 @@ packages/
 StarDrive/
 Deploy/Upload/
 x64/
+!SDNative/3rdparty/fbxsdk/x64/
+!SDNative/3rdparty/fbxsdk/x64/**
+!SDNative/3rdparty/libpng/x64/
+!SDNative/3rdparty/libpng/x64/**
 .idea/
 *.psess
 *.vsp
@@ -95,11 +99,19 @@ game/StarDrive.pdb
 game/SDNativeTests.pdb
 game/Content/spellchecker.txt
 game/MeshExport/
-game/Mods/
+game/MeshExport_Old/
+game/Mods/*
+!game/Mods/ExampleMod/
 game/PatchTemp/
 Deploy/GeneratedFilesList.nsh
 Deploy/GeneratedFilesList.txt
 SDGraphics/bin/
+x64Migration/Tools/*/bin/
+x64Migration/Tools/*/obj/
+
+# Per-user Claude Code permission cache. The non-.local sibling
+# (.claude/settings.json) holds shared project config and stays tracked.
+.claude/settings.local.json
 game/SDGraphics.pdb
 game/SDGraphics.dll
 game/SDUtils.dll
@@ -121,3 +133,53 @@ game/Release.DeleteFiles.txt
 Deploy/Release/Release.DeleteFiles.txt
 Deploy/Release/Release.NewOrChanged.txt
 Deploy/Release/Vanilla.NewFiles.txt
+
+# Phase 2.3: MGCB build outputs land in-place under game/Content/Fonts/ (committed)
+# but the per-platform staging dir under game/Content/bin/ is intermediate only.
+game/Content/bin/
+
+# Phase 2.3 session debug snapshots (kept out of repo; useful only locally).
+game/blackbox.before-*.log
+game/blackbox.pre-*.log
+game/vertexdecl-diag.log
+game/xnb-readers-dump.log
+game/xnb-model-readers-dump.log
+
+# Phase 2.6.A: net8 SDK-style outputs — apphost split + dependency descriptors.
+game/StarDrive.dll
+game/StarDrive.dll.config
+game/StarDrive.deps.json
+game/StarDrive.runtimeconfig.json
+game/SDGraphics.deps.json
+game/SDUtils.deps.json
+game/runtimes/
+# MGCB tool dependencies pulled in transitively by MonoGame.Content.Builder.Task 3.8.1+
+game/Microsoft.CodeAnalysis.dll
+game/Microsoft.CodeAnalysis.CSharp.dll
+game/Microsoft.CodeAnalysis.VisualBasic.dll
+
+# Phase {1,2,3,4} session artifacts (build logs, frame-time captures, ad-hoc
+# dev screenshots, shader disassembly chunks). All session-scoped — never
+# tracked in the repo.
+x64Migration/phase1-logs/
+x64Migration/phase2-logs/
+x64Migration/phase3-logs/
+x64Migration/phase4-logs/
+
+# MonoGame / SharpDX runtime DLLs copied alongside StarDrive.exe by the build.
+game/MonoGame.Framework.dll
+game/SharpDX.dll
+game/SharpDX.D3DCompiler.dll
+game/SharpDX.DXGI.dll
+game/SharpDX.Direct2D1.dll
+game/SharpDX.Direct3D11.dll
+game/SharpDX.Direct3D9.dll
+game/SharpDX.Mathematics.dll
+game/SharpDX.MediaFoundation.dll
+game/SharpDX.XAudio2.dll
+game/SharpDX.XInput.dll
+
+# Bundled .NET 8 Desktop Runtime installer (~56 MB; downloaded by maintainer
+# from Microsoft, not tracked in git). NSIS picks it up at build time.
+# See Deploy/prereq/README.md for fetch instructions.
+Deploy/prereq/*.exe

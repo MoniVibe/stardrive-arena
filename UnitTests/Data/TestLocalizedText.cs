@@ -282,6 +282,7 @@ namespace UnitTests.Data
         double MB(long mem) => mem / (1024.0*1024.0);
 
         [TestMethod]
+        [TestCategory("Performance")]
         public void EnsureTextParsePerformance()
         {
             ResourceManager.LoadLanguage(Language.English);

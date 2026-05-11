@@ -1,5 +1,6 @@
 using System;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using Ship_Game.Audio;
 using Ship_Game.GameScreens.MainMenu;
@@ -49,20 +50,33 @@ namespace Ship_Game
         {
             ScreenManager.ClearScreen(Color.Black);
 
-            batch.SafeBegin(SpriteBlendMode.None, sortImmediate:true);
             if (desaturateEffect != null)
             {
-                desaturateEffect.Begin();
-                desaturateEffect.CurrentTechnique.Passes[0].Begin();
-
-                batch.Draw(LoseTexture, ScreenCenter, null,
-                    new Color(255, 255, 255, (byte)Saturation),
-                    0f, Origin, scale, SpriteEffects.None, 1f);
-
-                desaturateEffect.CurrentTechnique.Passes[0].End();
-                desaturateEffect.End();
+                // §4.5.A: see YouLoseScreen.Draw for the full reasoning.
+                // SpriteBatch.Begin(effect:) + manual MatrixTransform +
+                // Rectangle-form Draw is the canonical pattern; the
+                // position+origin+scale form produces no rasterized
+                // fragments under SpriteBatch+custom-effect+Immediate.
+                EffectParameter mt = desaturateEffect.Parameters["MatrixTransform"];
+                if (mt != null)
+                {
+                    Microsoft.Xna.Framework.Matrix.CreateOrthographicOffCenter(
+                        0, ScreenWidth, ScreenHeight, 0, 0, 1,
+                        out Microsoft.Xna.Framework.Matrix proj);
+                    mt.SetValue(proj);
+                }
+                int rectW = (int)(LoseTexture.Width  * scale);
+                int rectH = (int)(LoseTexture.Height * scale);
+                var rect  = new Rectangle((int)(ScreenCenter.X - LoseTexture.Width  * 0.5f * scale),
+                                          (int)(ScreenCenter.Y - LoseTexture.Height * 0.5f * scale),
+                                          rectW, rectH);
+                batch.Begin(SpriteSortMode.Immediate, BlendState.Opaque,
+                            SamplerState.LinearClamp, DepthStencilState.None,
+                            RasterizerState.CullNone, desaturateEffect);
+                batch.Draw(LoseTexture, rect,
+                    new Color((byte)255, (byte)255, (byte)255, (byte)Saturation));
+                batch.End();
             }
-            batch.SafeEnd();
 
             batch.SafeBegin();
             {
@@ -161,7 +175,11 @@ namespace Ship_Game
             }
 
             scale = 1f + 2f * TransitionPosition;
-            Saturation = 100f * (1f - TransitionPosition);
+            // Animation: starts grayscaled (TP=1 at fade-in start, Saturation=100,
+            // shader gives full luma) and slowly colorizes to fully colored at held
+            // state (TP=0, Saturation=0, shader passes orig through). Matches the
+            // pre-migration visual; the inverse `100*(1-TP)` form here was wrong.
+            Saturation = 100f * TransitionPosition;
             width = width.LerpTo((int)(960f + 960f * (1f - TransitionPosition)), 0.3f);
             height = height.LerpTo((int)(540f + 540f * (1f - TransitionPosition)), 0.3f);
             SourceRect = new Rectangle(SourceRect.X.LerpTo(960 - width / 2, 0.3f), SourceRect.Y.LerpTo(540 - height / 2, 0.3f), width, height);

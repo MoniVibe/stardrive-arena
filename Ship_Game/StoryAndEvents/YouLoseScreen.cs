@@ -1,5 +1,6 @@
 using System;
 using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
 using Ship_Game.Audio;
 using Ship_Game.GameScreens.MainMenu;
 using SDGraphics;
@@ -43,13 +44,38 @@ namespace Ship_Game
         public override void Draw(SpriteBatch batch, DrawTimes elapsed)
         {
             ScreenManager.ClearScreen(Color.Black);
-            batch.SafeBegin(SpriteBlendMode.None, sortImmediate:true);
-            desaturateEffect.Begin();
-            desaturateEffect.CurrentTechnique.Passes[0].Begin();
-            batch.Draw(LoseTexture, ScreenCenter, null, new Color(255, 255, 255, (byte)Saturation), 0f, Origin, scale, SpriteEffects.None, 1f);
-            batch.SafeEnd();
-            desaturateEffect.CurrentTechnique.Passes[0].End();
-            desaturateEffect.End();
+            if (desaturateEffect != null)
+            {
+                // §4.5.A: pass the effect to SpriteBatch.Begin's `effect:`
+                // arg — the PS-only `Pass.Apply()` after Begin pattern
+                // silently produces SpriteBatch's default tint passthrough
+                // under MGFX 3.8.1.303 / DX11 (same fix as BasicFogOfWar in
+                // Phase 3.7). Set MatrixTransform manually (SpriteBatch only
+                // auto-populates it on SpriteEffect-typed effects) and use
+                // the Rectangle form of Draw — the position+origin+scale form
+                // produces no rasterized fragments under SpriteBatch+custom-
+                // effect+Immediate, verified by a forced-red PS turning the
+                // screen black.
+                EffectParameter mt = desaturateEffect.Parameters["MatrixTransform"];
+                if (mt != null)
+                {
+                    Microsoft.Xna.Framework.Matrix.CreateOrthographicOffCenter(
+                        0, ScreenWidth, ScreenHeight, 0, 0, 1,
+                        out Microsoft.Xna.Framework.Matrix proj);
+                    mt.SetValue(proj);
+                }
+                int rectW = (int)(LoseTexture.Width  * scale);
+                int rectH = (int)(LoseTexture.Height * scale);
+                var rect  = new Rectangle((int)(ScreenCenter.X - LoseTexture.Width  * 0.5f * scale),
+                                          (int)(ScreenCenter.Y - LoseTexture.Height * 0.5f * scale),
+                                          rectW, rectH);
+                batch.Begin(SpriteSortMode.Immediate, BlendState.Opaque,
+                            SamplerState.LinearClamp, DepthStencilState.None,
+                            RasterizerState.CullNone, desaturateEffect);
+                batch.Draw(LoseTexture, rect,
+                           new Color((byte)255, (byte)255, (byte)255, (byte)Saturation));
+                batch.End();
+            }
             batch.SafeBegin();
             batch.Draw(Reason, ReasonRect, Color.White);
             if (!IsExiting && ShowingReplay)
@@ -123,7 +149,11 @@ namespace Ship_Game
         public override void Update(float fixedDeltaTime)
         {
             scale = 1f + 2f * TransitionPosition;
-            Saturation = 100f * (1f - TransitionPosition);
+            // Animation: starts grayscaled (TP=1 at fade-in start, Saturation=100,
+            // shader gives full luma) and slowly colorizes to fully colored at held
+            // state (TP=0, Saturation=0, shader passes orig through). Matches the
+            // pre-migration visual; the inverse `100*(1-TP)` form here was wrong.
+            Saturation = 100f * TransitionPosition;
             width = width.LerpTo((int)(960f + 960f * (1f - TransitionPosition)), 0.3f);
             height = height.LerpTo((int)(540f + 540f * (1f - TransitionPosition)), 0.3f);
             GameAudio.MuteGenericMusic();
