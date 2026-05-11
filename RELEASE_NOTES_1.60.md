@@ -11,7 +11,7 @@ This is the first release in the **Jupiter** line: the post-migration, 64-bit + 
 - **Skinned/animated meshes** — the Ralyeh `ship17` family articulates again (limbs and turret animation playback).
 - **Material maps** (normal, specular, emissive) on all hulls.
 - **Post-process passes**: bloom, screen-space distortion, fog-of-war.
-- **Basic shadow maps**.
+- **Shadow-map infrastructure restored** but currently dormant — no screen attaches it in 1.60 (the universe view's coplanar layout produces no visible benefit and triggered planet self-shadow artifacts during testing, so the pre-pass is deliberately skipped there). The Shadow Quality graphics option has no visible effect in 1.60; planned for future scenes (hangar floor, 3D fleet view, planet-surface combat) that genuinely benefit from cast shadows.
 - **Steam SDK x64** via Steamworks.NET — achievements, stats, and cloud saves work in the 64-bit binary.
 - **Combined Arms compatible** — the major 1.51 mod runs unmodified on Jupiter.
 
