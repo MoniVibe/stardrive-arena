@@ -301,6 +301,48 @@ namespace Ship_Game
                 && module.FieldOfFire > 0f;
         }
 
+        // Smallest signed-direction-free distance between two angles in degrees,
+        // wraparound-aware: 350° and 10° are 20° apart on the unit circle, not
+        // 340°.
+        static float AngularDistance(float a, float b)
+        {
+            float diff = Math.Abs(a - b) % 360f;
+            return diff > 180f ? 360f - diff : diff;
+        }
+
+        // For Alt-snap: find the closest existing turret angle on the ship to
+        // the cursor angle. Excludes the highlighted module being edited and
+        // (in symmetric design mode) its mirror twin, since snapping to the
+        // mirror twin's angle just swaps the symmetric pair without changing
+        // the overall layout.
+        bool TryFindClosestExistingTurretAngle(SlotStruct highlightedSlot, ShipModule highlighted,
+                                               float arc, out int closest)
+        {
+            ShipModule mirrorTwin = null;
+            if (IsSymmetricDesignMode)
+                GetMirrorModule(highlightedSlot, out mirrorTwin);
+
+            closest = 0;
+            float bestDist = float.MaxValue;
+            bool found = false;
+            foreach (SlotStruct slot in ModuleGrid.SlotsList)
+            {
+                ShipModule m = slot.Module;
+                if (m == null || !IsArcTurret(m)) continue;
+                if (m == highlighted) continue;
+                if (m == mirrorTwin) continue;
+                int t = m.TurretAngle;
+                float d = AngularDistance(t, arc);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    closest = t;
+                    found = true;
+                }
+            }
+            return found;
+        }
+
         bool HandleInputMoveArcs(InputState input, ShipModule highlighted)
         {
             bool changedArcs = false;
@@ -322,26 +364,41 @@ namespace Ship_Game
                         return true;
                     }
 
-                    if (Input.IsAltKeyDown) // modify all turrets
+                    // Snap modifier differs by AltArcControl mode:
+                    //   - Default mode: LMB-held is the activation; Alt as
+                    //     modifier means "snap to closest existing turret."
+                    //   - AltArcControl mode: Alt+LMB is the activation, so
+                    //     Alt can't double as the snap modifier (it's *always*
+                    //     held inside this block). Use Ctrl as snap modifier
+                    //     instead — Ctrl-held during a drag doesn't conflict
+                    //     with anything else in InputState (Ctrl+Z/Ctrl+Y are
+                    //     key-press combos, not Ctrl-held).
+                    bool wantSnap = GlobalStats.AltArcControl
+                        ? Input.IsCtrlKeyDown
+                        : Input.IsAltKeyDown;
+                    if (wantSnap)
                     {
-                        int minAngle = int.MinValue;
-                        int maxAngle = int.MinValue;
-                        foreach (SlotStruct slot in ModuleGrid.SlotsList)
+                        // Snap to the closest existing turret angle on the ship.
+                        // Excludes the highlighted turret itself, and (in
+                        // symmetric design mode) its mirror twin — otherwise the
+                        // snap would just shuffle the symmetric pair's angles
+                        // around (highlighted snaps to mirror's angle, then
+                        // SetFiringArc mirrors that back to the old angle).
+                        // SetFiringArc handles the symmetric mirror update for
+                        // the highlighted turret automatically.
+                        if (TryFindClosestExistingTurretAngle(slotStruct, highlighted, arc, out int snap))
                         {
-                            if (slot.Module != null && IsArcTurret(slot.Module))
-                            {
-                                int turretAngle = slot.Module.TurretAngle;
-                                if (minAngle == int.MinValue) minAngle = maxAngle = turretAngle;
-                                if (turretAngle > minAngle && turretAngle < arc) minAngle = turretAngle;
-                                if (turretAngle < maxAngle && turretAngle > arc) maxAngle = turretAngle;
-                            }
+                            SetFiringArc(slotStruct, snap, round:false);
                         }
-
-                        if (minAngle != int.MinValue)
-                        {
-                            highlighted.TurretAngle = (arc - minAngle) < (maxAngle - arc) ? minAngle : maxAngle;
-                        }
-                        changedArcs = true;
+                        // No other arc-turret on the ship to snap to; leave the
+                        // current arc unchanged rather than silently committing
+                        // the unaligned cursor angle. Still return true: the
+                        // user is actively performing an arc-move gesture and
+                        // the input should be consumed even when there's
+                        // nothing to snap to, so downstream input handlers
+                        // (HandleModuleSelection etc.) don't see the Alt-held
+                        // LMB and interpret it as something else.
+                        return true;
                     }
                     else
                     {

@@ -18,7 +18,12 @@ using Microsoft.Xna.Framework.Graphics;
 
 namespace SynapseGaming.LightingSystem.Core
 {
-    public enum DetailPreference { Low, Medium, High }
+    // Order is load-bearing: GlobalStats.SetShadowDetail / GetShadowQuality /
+    // OptionsScreen.ShadowQuality_OnClick all assume High=0, Medium=1, Low=2,
+    // Off=3 (matching the original SunBurn enum). Saved StarDrive.user.config
+    // values use these integer indices; reordering or renaming silently flips
+    // every existing user's shadow-quality preference.
+    public enum DetailPreference { High, Medium, Low, Off }
     public enum SamplingPreference { Bilinear, Trilinear, Anisotropic }
 
     [Flags]

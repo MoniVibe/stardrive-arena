@@ -167,10 +167,29 @@ namespace Ship_Game
             Graphics.PreferredBackBufferHeight = settings.Height;
             Graphics.SynchronizeWithVerticalRetrace = settings.VSync;
 
-            if (settings.Mode != WindowMode.Fullscreen && Graphics.IsFullScreen ||
-                settings.Mode == WindowMode.Fullscreen && !Graphics.IsFullScreen)
+            if (settings.Mode != WindowMode.Fullscreen && Graphics.IsFullScreen)
             {
-                Graphics.ToggleFullScreen();
+                Graphics.ToggleFullScreen(); // Exiting fullscreen — always safe
+            }
+            else if (settings.Mode == WindowMode.Fullscreen && !Graphics.IsFullScreen)
+            {
+                // Entering fullscreen can fail with DXGI_ERROR_NOT_CURRENTLY_AVAILABLE
+                // (0x887A0022) when another app holds exclusive fullscreen, when the
+                // display is mid-transition (HDR toggle, multi-monitor reconfigure),
+                // when Steam Overlay's DXGI hooks intercept at a bad moment, or when
+                // the window isn't fully realized yet during Initialize(). One retry
+                // with a 500ms gap covers the window-realization race (the most
+                // recoverable case); the other causes are persistent and fall through
+                // to the Borderless fallback. Borderless gives the same visual result
+                // for almost every user and doesn't need exclusive DXGI ownership.
+                if (!TryEnterFullScreen(maxAttempts: 2, retryDelayMs: 500))
+                {
+                    settings.Mode = WindowMode.Borderless;
+                    // FormBorderStyle is already None from the Fullscreen case above,
+                    // which matches what Borderless wants — no border-restyle needed.
+                    // The "if (settings.Mode != WindowMode.Fullscreen)" block below
+                    // will now run and size/center the form correctly.
+                }
             }
 
             // Phase 2.2: in MonoGame WindowsDX 3.8 the WinForms platform binds the
@@ -205,6 +224,49 @@ namespace Ship_Game
             Log.Write(ConsoleColor.Cyan, $"ApplyGraphics: backbuffer={pp.BackBufferWidth}x{pp.BackBufferHeight} form={form.ClientSize.Width}x{form.ClientSize.Height}");
 
             return deviceChanged;
+        }
+
+        // DXGI_ERROR_NOT_CURRENTLY_AVAILABLE — SetFullscreenState rejected the
+        // transition. Catching by HRESULT avoids a dependency on SharpDX's
+        // exception type here in GameBase; any wrapper that surfaces this code
+        // gets handled the same way.
+        const int DXGI_ERROR_NOT_CURRENTLY_AVAILABLE = unchecked((int)0x887A0022);
+
+        // Try to enter exclusive fullscreen, retrying once on DXGI transient
+        // failures. Returns false after exhausting attempts so the caller can
+        // fall back to Borderless. After a failed ApplyChanges the
+        // GraphicsDeviceManager's IsFullScreen flag may be left flipped to true
+        // (the assignment happens before the underlying SetFullscreenState
+        // throws), so each retry resets it explicitly rather than calling
+        // ToggleFullScreen — which would invert the desired direction on the
+        // second pass.
+        bool TryEnterFullScreen(int maxAttempts, int retryDelayMs)
+        {
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    Graphics.IsFullScreen = true;
+                    Graphics.ApplyChanges();
+                    return true;
+                }
+                catch (Exception ex) when (ex.HResult == DXGI_ERROR_NOT_CURRENTLY_AVAILABLE)
+                {
+                    // Reset the flag so a stale "true" doesn't leak into the
+                    // Borderless fallback path or the next retry.
+                    Graphics.IsFullScreen = false;
+                    if (attempt < maxAttempts)
+                    {
+                        Log.Warning($"DXGI rejected fullscreen (attempt {attempt}/{maxAttempts}); retrying in {retryDelayMs}ms: {ex.Message}");
+                        Thread.Sleep(retryDelayMs);
+                    }
+                    else
+                    {
+                        Log.Warning($"DXGI rejected fullscreen after {maxAttempts} attempts; falling back to Borderless: {ex.Message}");
+                    }
+                }
+            }
+            return false;
         }
 
         public void InitializeAudio()

@@ -7,11 +7,19 @@ name: Notify Discord on Release
 # Direct `git push --tags` of a tag created outside the release flow won't trigger this
 # workflow. If that ever becomes a use case, add a `push: tags: ['*']` trigger.
 #
-# Latest-release gate: only fires the Discord notification when the published release
-# is also flagged "Set as latest release" in the GitHub UI. This lets maintainers
-# publish test/staged patches as not-latest without spamming the channel.
-# The release webhook payload has no `is_latest` field — `make_latest` is write-only —
-# so we compare the published release's id against /releases/latest after publish.
+# Pre-release gate: the Discord notification fires whenever a release is published
+# UNLESS the pre-release flag is set. Rationale (Jupiter 1.60+ semantics):
+# AutoUpdateChecker scans the full /releases array via TrySelectMaxVersionRelease,
+# not /releases/latest — so any non-pre-release patch auto-distributes to users
+# regardless of whether it's flagged "Set as latest". If users are getting the
+# patch, the Discord channel should know about it. Conversely, pre-release
+# patches are skipped by TrySelectMaxVersionRelease (they don't auto-distribute),
+# so the Discord channel doesn't need to know about them either — those are for
+# manual installation by testers from the Releases page.
+#
+# "Set as latest" no longer gates this workflow. It still controls /releases/latest
+# (used by the Mars 1.51 in-line patch flow), bold-latest badging on the Releases
+# page, and the order of `gh release list` output — but not Discord announcements.
 
 on:
   release:
@@ -21,41 +29,23 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
-      - name: Check if release is flagged latest
-        id: check_latest
+      - name: Check if release is a pre-release
+        id: check_prerelease
         shell: bash
         env:
-          GH_TOKEN:   ${{ github.token }}
-          REPO:       ${{ github.repository }}
-          RELEASE_ID: ${{ github.event.release.id }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG:   ${{ github.event.release.tag_name }}
           IS_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
-          # Pre-releases are never "latest" by GitHub's rules; skip immediately.
           if [ "$IS_PRERELEASE" = "true" ]; then
-            echo "Release $RELEASE_TAG is a pre-release; skipping Discord notification"
-            echo "is_latest=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "Release $RELEASE_TAG is a pre-release; skipping Discord notification (testers install manually from the Releases page)"
+            echo "should_notify=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release $RELEASE_TAG is not a pre-release; proceeding to Discord notification"
+            echo "should_notify=true" >> "$GITHUB_OUTPUT"
           fi
-
-          LATEST_ID=$(gh api "/repos/$REPO/releases/latest" --jq .id 2>/dev/null || echo "")
-          if [ -z "$LATEST_ID" ]; then
-            echo "No 'latest' release found on $REPO; skipping Discord notification"
-            echo "is_latest=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [ "$LATEST_ID" != "$RELEASE_ID" ]; then
-            echo "Release id=$RELEASE_ID ($RELEASE_TAG) is published but NOT flagged 'Set as latest' (latest id=$LATEST_ID); skipping Discord notification"
-            echo "is_latest=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "Release $RELEASE_TAG matches /releases/latest; proceeding to Discord notification"
-          echo "is_latest=true" >> "$GITHUB_OUTPUT"
 
       - name: Send Discord webhook
-        if: steps.check_latest.outputs.is_latest == 'true'
+        if: steps.check_prerelease.outputs.should_notify == 'true'
         shell: bash
         env:
           WEBHOOK_URL:  ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}

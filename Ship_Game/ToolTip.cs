@@ -32,7 +32,12 @@ namespace Ship_Game
         static readonly Array<TipItem> ActiveTips = new();
 
         public static void ShipYardArcTip()
-            => CreateTooltip("Shift for fine tune\nAlt for previous arcs");
+            // Snap-modifier text differs by AltArcControl mode: in default
+            // mode Alt is the snap modifier; in AltArcControl mode Alt is the
+            // activation, so Ctrl is the snap modifier instead.
+            => CreateTooltip(GlobalStats.AltArcControl
+                ? "Shift for fine tune\nCtrl to match an existing turret"
+                : "Shift for fine tune\nAlt to match an existing turret");
 
         public static void PlanetLandingSpotsTip(string locationText, int spots)
             => CreateTooltip($"{locationText}\n{spots} Landing Spots");
