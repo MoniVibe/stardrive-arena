@@ -1,3 +1,5 @@
+using System;
+using System.Text.Json;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Ship_Game.GameScreens.MainMenu;
 using static Ship_Game.GameScreens.MainMenu.AutoUpdateChecker.UpdateAvailability;
@@ -68,6 +70,82 @@ namespace UnitTests.UI
         public void ExtractCodename_Cases(string tag, string expected)
         {
             Assert.AreEqual(expected, AutoUpdateChecker.ExtractCodenameFromTag(tag));
+        }
+
+        [TestMethod]
+        public void TrySelectMaxVersionRelease_SkipsPreReleases()
+        {
+            // Pre-release 1.60.00012 must NOT win against a stable 1.60.00009 —
+            // matches GitHub's /releases/latest semantic and prevents staged
+            // patches from auto-distributing.
+            string json = """
+            [
+                { "tag_name": "jupiter-patch-1.60.00012", "prerelease": true },
+                { "tag_name": "jupiter-patch-1.60.00009", "prerelease": false }
+            ]
+            """;
+            using JsonDocument doc = JsonDocument.Parse(json);
+            bool found = AutoUpdateChecker.TrySelectMaxVersionRelease(
+                doc.RootElement, predicate: null,
+                out _, out Version best);
+            Assert.IsTrue(found, "Stable release should be selected when a higher pre-release exists");
+            Assert.AreEqual(new Version(1, 60, 9), best);
+        }
+
+        [TestMethod]
+        public void TrySelectMaxVersionRelease_AllStable_PicksHighest()
+        {
+            string json = """
+            [
+                { "tag_name": "jupiter-patch-1.60.00010", "prerelease": false },
+                { "tag_name": "jupiter-patch-1.60.00012", "prerelease": false },
+                { "tag_name": "jupiter-patch-1.60.00011", "prerelease": false }
+            ]
+            """;
+            using JsonDocument doc = JsonDocument.Parse(json);
+            bool found = AutoUpdateChecker.TrySelectMaxVersionRelease(
+                doc.RootElement, predicate: null,
+                out _, out Version best);
+            Assert.IsTrue(found);
+            Assert.AreEqual(new Version(1, 60, 12), best);
+        }
+
+        [TestMethod]
+        public void TrySelectMaxVersionRelease_AllPreRelease_ReturnsFalse()
+        {
+            // If every release in the array is flagged pre-release, the scan
+            // returns false and the caller falls back to no-update behavior —
+            // never silently distributes a pre-release.
+            string json = """
+            [
+                { "tag_name": "jupiter-patch-1.60.00011", "prerelease": true },
+                { "tag_name": "jupiter-patch-1.60.00012", "prerelease": true }
+            ]
+            """;
+            using JsonDocument doc = JsonDocument.Parse(json);
+            bool found = AutoUpdateChecker.TrySelectMaxVersionRelease(
+                doc.RootElement, predicate: null,
+                out _, out _);
+            Assert.IsFalse(found);
+        }
+
+        [TestMethod]
+        public void TrySelectMaxVersionRelease_MissingPrereleaseField_TreatsAsStable()
+        {
+            // GitHub API responses always include `prerelease`, but be defensive
+            // — if the field is missing for any reason, treat as stable so a
+            // malformed payload can't silently hide releases.
+            string json = """
+            [
+                { "tag_name": "jupiter-patch-1.60.00009" }
+            ]
+            """;
+            using JsonDocument doc = JsonDocument.Parse(json);
+            bool found = AutoUpdateChecker.TrySelectMaxVersionRelease(
+                doc.RootElement, predicate: null,
+                out _, out Version best);
+            Assert.IsTrue(found);
+            Assert.AreEqual(new Version(1, 60, 9), best);
         }
     }
 }

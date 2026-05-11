@@ -539,13 +539,22 @@ public class AutoUpdateChecker : UIElementContainer
     // wins. The version segment is the dot-richest split-on-'-' part of the
     // tag. Pass a `predicate` to scope to a release line (e.g. major.minor
     // match); pass null to scan all releases.
-    static bool TrySelectMaxVersionRelease(JsonElement releases, Func<Version, bool> predicate,
-                                           out JsonElement best, out Version bestVer)
+    //
+    // Pre-releases are skipped — they're for staging/QA and shouldn't
+    // auto-distribute via the in-line patcher or fire cross-major popups.
+    // Matches GitHub's /releases/latest semantic (which also excludes
+    // pre-releases). To force-rollout a patch to all users, publish it
+    // without the pre-release flag.
+    public static bool TrySelectMaxVersionRelease(JsonElement releases, Func<Version, bool> predicate,
+                                                  out JsonElement best, out Version bestVer)
     {
         best = default;
         bestVer = null;
         foreach (JsonElement release in releases.EnumerateArray())
         {
+            if (release.TryGetProperty("prerelease", out JsonElement prereleaseEl)
+                && prereleaseEl.ValueKind == JsonValueKind.True)
+                continue;
             if (!release.TryGetProperty("tag_name", out JsonElement tagEl))
                 continue;
             string tag = tagEl.GetString();

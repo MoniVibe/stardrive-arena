@@ -15,9 +15,16 @@ namespace Ship_Game.GameScreens.MainMenu;
 // AutoPatcher — applies an in-line file-drop patch from GitHub Releases.
 //
 // Lifecycle:
-//   1. AutoUpdateChecker discovers a newer codename-tagged release (vanilla
-//      filters /releases by VanillaDefaults.ReleaseTagPrefix; mods hit
-//      /releases/latest) and pushes AutoPatcher onto the screen stack.
+//   1. AutoUpdateChecker discovers a newer release and pushes AutoPatcher
+//      onto the screen stack. Vanilla scans /releases (the array) via
+//      TrySelectMaxVersionRelease and picks the highest-version
+//      NON-pre-release tag; same major.minor as current install routes to
+//      this in-line patch flow, a higher major.minor routes to the
+//      MajorUpgradeAvailablePopup instead (cross-major bumps can't be
+//      applied as a file-drop). Pre-releases are deliberately skipped here
+//      so maintainers can stage patches on GitHub without auto-pushing
+//      them to every user — flip the pre-release flag off to roll out.
+//      Mods take a separate path: /releases/latest, no version-line filter.
 //   2. Download phase: pulls the patch zip(s) from Info.ZipUrls into
 //      %APPDATA%\StarDrive\Patches\<version>\. Chunked patches are concatenated
 //      in name order before unzip — see Deploy/MakeInstaller.py for the
