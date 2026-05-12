@@ -147,5 +147,109 @@ namespace UnitTests.UI
             Assert.IsTrue(found);
             Assert.AreEqual(new Version(1, 60, 9), best);
         }
+
+        [TestMethod]
+        public void TrySelectMaxVersionRelease_StripsVPrefixOnModTags()
+        {
+            // Mod tag convention is v<major>.<minor>.NNNN. The `v` must be
+            // stripped before Version.TryParse or the tag is silently
+            // discarded and TrySelectMaxVersionRelease returns false.
+            string json = """
+            [
+                { "tag_name": "v1.60.0010", "prerelease": false },
+                { "tag_name": "v1.60.0014", "prerelease": false },
+                { "tag_name": "v1.60.0012", "prerelease": false }
+            ]
+            """;
+            using JsonDocument doc = JsonDocument.Parse(json);
+            bool found = AutoUpdateChecker.TrySelectMaxVersionRelease(
+                doc.RootElement, predicate: null,
+                out _, out Version best);
+            Assert.IsTrue(found, "v-prefixed mod tags must parse");
+            Assert.AreEqual(new Version(1, 60, 14), best);
+        }
+
+        [TestMethod]
+        public void TrySelectMaxVersionRelease_PredicateFiltersToVanillaLine()
+        {
+            // Mod releases page mixes a higher 1.61 release with the
+            // 1.60 line. With a Jupiter 1.60 install, the major.minor
+            // predicate must skip 1.61 and pick the highest 1.60.NNNN.
+            string json = """
+            [
+                { "tag_name": "v1.61.0001", "prerelease": false },
+                { "tag_name": "v1.60.0014", "prerelease": false },
+                { "tag_name": "v1.60.0009", "prerelease": false },
+                { "tag_name": "v1.51.0042", "prerelease": false }
+            ]
+            """;
+            using JsonDocument doc = JsonDocument.Parse(json);
+            bool ModLinePredicate(Version v) => v.Major == 1 && v.Minor == 60;
+            bool found = AutoUpdateChecker.TrySelectMaxVersionRelease(
+                doc.RootElement, ModLinePredicate,
+                out _, out Version best);
+            Assert.IsTrue(found, "Highest 1.60.NNNN must be picked when predicate filters out 1.61/1.51");
+            Assert.AreEqual(new Version(1, 60, 14), best);
+        }
+
+        [TestMethod]
+        public void IsModLatestNewer_SameLine_PicksByPatch()
+        {
+            // Both parse and share major.minor — direct numeric compare.
+            Assert.IsTrue(AutoUpdateChecker.IsModLatestNewer("v1.60.0014", "v1.60.0009"),
+                "Higher patch on same line should be newer");
+            Assert.IsFalse(AutoUpdateChecker.IsModLatestNewer("v1.60.0009", "v1.60.0009"),
+                "Equal versions should not trigger update");
+            Assert.IsFalse(AutoUpdateChecker.IsModLatestNewer("v1.60.0005", "v1.60.0009"),
+                "Older patch on same line should not be newer");
+        }
+
+        [TestMethod]
+        public void IsModLatestNewer_StripsVPrefixOnBothSides()
+        {
+            // The `v` prefix must be tolerated on either side independently —
+            // mod authors might tag with `v` and ship Version without it, or
+            // vice versa during the transition.
+            Assert.IsTrue(AutoUpdateChecker.IsModLatestNewer("v1.60.0014", "1.60.0009"));
+            Assert.IsTrue(AutoUpdateChecker.IsModLatestNewer("1.60.0014",  "v1.60.0009"));
+            Assert.IsFalse(AutoUpdateChecker.IsModLatestNewer("v1.60.0009", "1.60.0009"));
+        }
+
+        [TestMethod]
+        public void IsModLatestNewer_Fallback_LegacyUnparseableCurrent()
+        {
+            // Installed mod version is the legacy free-form string (e.g. "0.5b"
+            // or "2024-09-rev3") that won't parse to System.Version. The new
+            // aligned release should be promoted as an update so users on
+            // legacy mod versions get a one-click upgrade path.
+            Assert.IsTrue(AutoUpdateChecker.IsModLatestNewer("v1.60.0014", "0.5b"),
+                "Legacy unparseable current must fall back to promoting the candidate");
+            Assert.IsTrue(AutoUpdateChecker.IsModLatestNewer("v1.60.0014", "Combined Arms v3.2"),
+                "Free-form current must fall back to promoting the candidate");
+            Assert.IsTrue(AutoUpdateChecker.IsModLatestNewer("v1.60.0014", ""),
+                "Empty current must fall back to promoting the candidate");
+        }
+
+        [TestMethod]
+        public void IsModLatestNewer_Fallback_DifferentVanillaLine()
+        {
+            // Installed mod version parses cleanly but on a different
+            // major.minor (mod was tracking Mars 1.51, vanilla is now
+            // Jupiter 1.60). Treat the new aligned release as an update.
+            Assert.IsTrue(AutoUpdateChecker.IsModLatestNewer("v1.60.0001", "v1.51.42"),
+                "Mod on a different vanilla line must be promoted to the new aligned release");
+            Assert.IsTrue(AutoUpdateChecker.IsModLatestNewer("1.60.0001", "1.51.42"),
+                "Same case without v-prefix");
+        }
+
+        [TestMethod]
+        public void IsModLatestNewer_UnparseableCandidate_ReturnsFalse()
+        {
+            // Should not happen post-TrySelectMaxVersionRelease (which only
+            // emits parseable tags), but if a malformed candidate slips
+            // through we refuse rather than promoting blindly.
+            Assert.IsFalse(AutoUpdateChecker.IsModLatestNewer("garbage", "v1.60.0009"));
+            Assert.IsFalse(AutoUpdateChecker.IsModLatestNewer("", "v1.60.0009"));
+        }
     }
 }

@@ -275,22 +275,28 @@ public class AutoUpdateChecker : UIElementContainer
                 string teamAndRepo = RegexExtractTeamAndRepo(downloadUrl, "\\/([\\w-]+\\/[\\w-]+)\\/releases");
                 string apiBase = $"https://api.github.com/repos/{teamAndRepo}/releases";
 
-                // Vanilla: hit /releases (array of all published) and pick the
-                // highest-version release. If its major.minor differs from the
-                // current install, route to the cross-major popup
-                // (file-gated by game/upgrade-url.txt). Otherwise treat it as
-                // an in-game patch candidate. This decouples the release line
-                // from GitHub's "Set as latest" flag — a hotfix can be
-                // published not-as-latest without breaking discovery for new
-                // installs, and the latest flag stays free to point at a
-                // legacy line (e.g. mars-1.51 for older binaries that still
-                // hit /releases/latest from pre-Jupiter code).
+                // Both vanilla and mods now hit /releases (array of all
+                // published) and filter by vanilla's current major.minor line.
                 //
-                // Mods: keep the legacy /releases/latest path. Mods don't
-                // follow the same versioning discipline and changing their
-                // behavior would affect every mod author's existing release
-                // setup.
-                Version currentLine = !isMod ? TryParseCurrentVanillaLine() : null;
+                // Vanilla: pick the highest-version release. If its major.minor
+                // differs from the current install, route to the cross-major
+                // popup (file-gated by game/upgrade-url.txt). Otherwise treat
+                // it as an in-game patch candidate. This decouples the release
+                // line from GitHub's "Set as latest" flag — a hotfix can be
+                // published not-as-latest without breaking discovery, and the
+                // latest flag stays free to point at a legacy line.
+                //
+                // Mods: pick the highest-version release whose tag matches
+                // vanilla's major.minor (mods now version-align with vanilla
+                // as v<major>.<minor>.NNNN). Pre-releases skipped via
+                // TrySelectMaxVersionRelease. Fallback: if the installed mod
+                // version doesn't parse to vanilla's line (legacy free-form
+                // version), any matching mod release is promoted as an update
+                // so users on old mod versions get a path forward.
+                //
+                // Dev builds (currentLine == null) fall back to /releases/latest
+                // for both — degraded but functional.
+                Version currentLine = TryParseCurrentVanillaLine();
                 if (currentLine != null)
                     info = GetLatestVersionInfoGitHub(apiBase, isMod, currentLine);
                 else
@@ -328,10 +334,14 @@ public class AutoUpdateChecker : UIElementContainer
         Log.Write($"AutoUpdater: latest  {latestVersion}");
         Log.Write($"AutoUpdater: current {currentVersion}");
 
-        // Mods: keep legacy ordinal compare. Mod authors don't follow a strict
-        // numeric scheme and the major-upgrade popup path is vanilla-only.
+        // Mods are now version-aligned with vanilla (v<major>.<minor>.NNNN).
+        // Strip the optional 'v' prefix and compare numerically. Fallback:
+        // when the installed mod version doesn't parse to vanilla's line
+        // (legacy free-form Version string, or a different major.minor),
+        // promote the candidate as an update so users on old mod versions
+        // get a one-click path to the new aligned line.
         if (isMod)
-            return string.CompareOrdinal(latestVersion, currentVersion) > 0;
+            return IsModLatestNewer(latestVersion, currentVersion);
 
         switch (ClassifyVanillaUpdate(latestVersion, currentVersion))
         {
@@ -349,6 +359,34 @@ public class AutoUpdateChecker : UIElementContainer
             default:
                 return false;
         }
+    }
+
+    // Pure: decide whether a candidate mod release supersedes the installed
+    // mod version. Both sides are stripped of an optional 'v' prefix and
+    // parsed via System.Version. When both parse and share major.minor, do
+    // a direct numeric compare. Otherwise fallback: promote the candidate
+    // (the installed mod is on a legacy free-form Version or a different
+    // major.minor line and should be upgraded to the new aligned release).
+    public static bool IsModLatestNewer(string latestVersion, string currentVersion)
+    {
+        string latest = StripVPrefix(latestVersion);
+        if (!Version.TryParse(latest, out var newV))
+        {
+            // Candidate itself unparseable — should not happen post
+            // TrySelectMaxVersionRelease but keep the bailout for safety.
+            Log.Warning($"AutoUpdater: mod latest version '{latestVersion}' unparseable, skipping");
+            return false;
+        }
+
+        string current = StripVPrefix(currentVersion);
+        if (Version.TryParse(current, out var curV)
+            && curV.Major == newV.Major && curV.Minor == newV.Minor)
+        {
+            return newV > curV;
+        }
+
+        Log.Write($"AutoUpdater: mod fallback — current '{currentVersion}' doesn't align with latest '{latestVersion}', promoting");
+        return true;
     }
 
     public enum UpdateAvailability
@@ -456,6 +494,15 @@ public class AutoUpdateChecker : UIElementContainer
     static string ExtractVersionPartFromTag(string tagName)
         => tagName.Split('-').FindMax(s => s.Count(c => c == '.')); // part-v1.2.4-withmostdots
 
+    // Strip optional leading 'v'/'V' so Version.TryParse can consume tags
+    // like `v1.60.0014` (mod convention: v<major>.<minor>.NNNN).
+    static string StripVPrefix(string s)
+    {
+        if (s.IsEmpty()) return s;
+        char first = s[0];
+        return (first == 'v' || first == 'V') ? s.Substring(1) : s;
+    }
+
     ReleaseInfo? GetLatestVersionInfoGitHub(string url, bool isMod, Version currentLine)
     {
         string jsonText = DownloadWithCancel(url, AsyncTask, timeout: TimeSpan.FromSeconds(30));
@@ -475,31 +522,51 @@ public class AutoUpdateChecker : UIElementContainer
                 Log.Warning("AutoUpdater: /releases array returned but no currentLine — refusing to guess");
                 return null;
             }
-            if (!TrySelectMaxVersionRelease(doc.RootElement, predicate: null, out JsonElement maxOverall, out Version maxOverallVer))
+
+            if (isMod)
             {
-                Log.Write("AutoUpdater: /releases empty or no parseable versions");
-                return null;
-            }
-            // Cross-major: highest published release is on a different line than
-            // current install. Route through the popup (file-gated by
-            // game/upgrade-url.txt) and skip the in-game patcher — major bumps
-            // can't be applied as a file-drop.
-            if (maxOverallVer.Major != currentLine.Major || maxOverallVer.Minor != currentLine.Minor)
-            {
-                string overallTag = maxOverall.GetProperty("tag_name").GetString();
-                string overallVersion = ExtractVersionPartFromTag(overallTag);
-                string overallCodename = ExtractCodenameFromTag(overallTag);
-                string currentVer = GlobalStats.Version.Split(' ').First();
-                if (ClassifyVanillaUpdate(overallVersion, currentVer) == UpdateAvailability.CrossMajor)
+                // Mods filter to vanilla's major.minor line upfront. No
+                // cross-major popup for mods — the popup is vanilla-only,
+                // and a mod release that doesn't match the current vanilla
+                // line just isn't relevant (it's for a different BlackBox
+                // major, the user must upgrade vanilla first).
+                bool ModLinePredicate(Version v) =>
+                    v.Major == currentLine.Major && v.Minor == currentLine.Minor;
+                if (!TrySelectMaxVersionRelease(doc.RootElement, ModLinePredicate, out JsonElement modBest, out _))
                 {
-                    Log.Write($"AutoUpdater: cross-major upgrade detected: {currentVer} -> {overallVersion}");
-                    NotifyMajorUpgradeIfConfigured(overallVersion, overallCodename);
+                    Log.Write($"AutoUpdater: no mod releases match vanilla line {currentLine.Major}.{currentLine.Minor}");
+                    return null;
                 }
-                return null;
+                latestRelease = modBest;
             }
-            // Same line: max-overall is also the max-in-line, use it as the
-            // in-game patch candidate.
-            latestRelease = maxOverall;
+            else
+            {
+                if (!TrySelectMaxVersionRelease(doc.RootElement, predicate: null, out JsonElement maxOverall, out Version maxOverallVer))
+                {
+                    Log.Write("AutoUpdater: /releases empty or no parseable versions");
+                    return null;
+                }
+                // Cross-major: highest published release is on a different
+                // line than current install. Route through the popup
+                // (file-gated by game/upgrade-url.txt) and skip the in-game
+                // patcher — major bumps can't be applied as a file-drop.
+                if (maxOverallVer.Major != currentLine.Major || maxOverallVer.Minor != currentLine.Minor)
+                {
+                    string overallTag = maxOverall.GetProperty("tag_name").GetString();
+                    string overallVersion = ExtractVersionPartFromTag(overallTag);
+                    string overallCodename = ExtractCodenameFromTag(overallTag);
+                    string currentVer = GlobalStats.Version.Split(' ').First();
+                    if (ClassifyVanillaUpdate(overallVersion, currentVer) == UpdateAvailability.CrossMajor)
+                    {
+                        Log.Write($"AutoUpdater: cross-major upgrade detected: {currentVer} -> {overallVersion}");
+                        NotifyMajorUpgradeIfConfigured(overallVersion, overallCodename);
+                    }
+                    return null;
+                }
+                // Same line: max-overall is also the max-in-line, use it as
+                // the in-game patch candidate.
+                latestRelease = maxOverall;
+            }
         }
         else
         {
@@ -560,7 +627,7 @@ public class AutoUpdateChecker : UIElementContainer
             string tag = tagEl.GetString();
             if (tag.IsEmpty())
                 continue;
-            string verPart = ExtractVersionPartFromTag(tag);
+            string verPart = StripVPrefix(ExtractVersionPartFromTag(tag));
             if (verPart.IsEmpty() || !Version.TryParse(verPart, out var v))
                 continue;
             if (predicate != null && !predicate(v))
