@@ -223,13 +223,44 @@ namespace Ship_Game
 
         static StreamWriter OpenLog(string logPath)
         {
-            return new StreamWriter(
-                stream: File.Open(logPath, FileMode.Create, FileAccess.Write, FileShare.Read),
-                encoding: Encoding.ASCII,
-                bufferSize: 32 * 1024)
+            // FileMode.Create truncates an existing log to zero bytes. If a
+            // previous process (typically the parent in a patch-relaunch
+            // handoff) hasn't fully released the handle yet, the open throws
+            // IOException "file is being used by another process". Retry
+            // briefly so a stale lock from a process that's about to exit
+            // doesn't kill the new instance on first boot. Parent-side fixes
+            // (AutoPatcher.RelaunchAsAdminWithMarker / RestartAsync both call
+            // Log.Close before Process.Start) handle the common case; this
+            // child-side retry covers the edge cases — kernel-level
+            // handle-release latency under UAC consent.exe handoff, Sentry
+            // SDK background threads briefly touching the file during
+            // shutdown, antivirus scanners holding the file open after the
+            // process exits, etc.
+            // Only retry on the sharing/lock HRESULTs that mean "another process
+            // still has the file" — retrying on disk-full, perm-denied, or
+            // invalid-path just delays surfacing the real error by ~1s.
+            const int errorSharingViolation = unchecked((int)0x80070020); // ERROR_SHARING_VIOLATION
+            const int errorLockViolation    = unchecked((int)0x80070021); // ERROR_LOCK_VIOLATION
+            const int maxAttempts = 10;
+            const int retryDelayMs = 100;
+            for (int attempt = 1; ; attempt++)
             {
-                AutoFlush = true
-            };
+                try
+                {
+                    return new StreamWriter(
+                        stream: File.Open(logPath, FileMode.Create, FileAccess.Write, FileShare.Read),
+                        encoding: Encoding.ASCII,
+                        bufferSize: 32 * 1024)
+                    {
+                        AutoFlush = true
+                    };
+                }
+                catch (IOException ex) when (attempt < maxAttempts
+                    && (ex.HResult == errorSharingViolation || ex.HResult == errorLockViolation))
+                {
+                    Thread.Sleep(retryDelayMs);
+                }
+            }
         }
 
         static void SetConsoleColor(ConsoleColor color, bool force)

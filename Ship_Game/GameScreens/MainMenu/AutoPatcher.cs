@@ -723,6 +723,13 @@ internal class AutoPatcher : PopupWindow
         DeletePendingPatchMarker();
 
         Thread.Sleep(2900);
+        // RunCleanup releases blackbox.log via Log.Close before we spawn the
+        // replacement process — same race as RelaunchAsAdminWithMarker.
+        // Application.Exit() is async (just queues a quit message), so
+        // Process.Start fires before the old process's message loop has
+        // unwound and released file handles. The new patched instance opens
+        // the same log path with FileMode.Create at startup, which throws
+        // "file is being used by another process" if we still hold it here.
         Program.RunCleanup();
 
         // Strip --apply-patch from the relaunch args. The elevated instance
@@ -731,8 +738,23 @@ internal class AutoPatcher : PopupWindow
         string args = string.Join(" ",
             Environment.GetCommandLineArgs().Skip(1)
                 .Where(a => !a.StartsWith("--apply-patch", StringComparison.OrdinalIgnoreCase)));
+
         Application.Exit();
-        System.Diagnostics.Process.Start(Application.ExecutablePath, args);
+        try
+        {
+            System.Diagnostics.Process.Start(Application.ExecutablePath, args);
+        }
+        catch (Exception ex)
+        {
+            // Log is closed; surface via MessageBox so the user knows the
+            // patch applied but the relaunch failed (AV quarantined the exe,
+            // bad path, etc.) and they need to relaunch manually.
+            System.Windows.Forms.MessageBox.Show(
+                $"Patch was installed, but restarting the game failed:\n{ex.Message}\n\nPlease relaunch StarDrive manually.",
+                "StarDrive — Restart failed",
+                System.Windows.Forms.MessageBoxButtons.OK,
+                System.Windows.Forms.MessageBoxIcon.Warning);
+        }
     }
 
     static bool IsInRole(WindowsBuiltInRole role)
