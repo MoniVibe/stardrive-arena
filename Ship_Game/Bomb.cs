@@ -142,27 +142,31 @@ namespace Ship_Game
                 return;
             }
 
-            // fiery trail radius:
-            bool insideTrailZone = Position.InRadius(planetPos, PlanetRadius + 1000f);
-            if (!insideTrailZone)
+            // Miss detection: dot product of (planet - bomb) with velocity
+            // tells us which side of closest-approach we're on. Positive ⇒
+            // still approaching; negative ⇒ already past. The radius gate
+            // (PlanetRadius + 500) keeps the bomb visible until it's clearly
+            // past the planet, otherwise it would vanish while still
+            // alongside the surface for big planets.
+            if ((planetPos - Position).Dot(Velocity) < 0f &&
+                !Position.InRadius(planetPos, PlanetRadius + 500f))
             {
-                // If TrailEmitter already exists, the bomb was inside the trail
-                // zone on a previous frame and has now exited without hitting —
-                // it missed. Mark it dead so the mesh doesn't keep drawing
-                // forever as the bomb sails off into space.
-                if (TrailEmitter != null)
-                    Dead = true;
+                Dead = true;
                 return;
             }
 
-            if (TrailEmitter == null)
+            // Inside the fiery-trail radius? Start / continue the trail emitters.
+            if (Position.InRadius(planetPos, PlanetRadius + 1000f))
             {
-                Velocity *= 0.65f;
-                TrailEmitter     = Owner.Universe.Screen.Particles.ProjectileTrail.NewEmitter(500f, Position);
-                FireTrailEmitter = Owner.Universe.Screen.Particles.FireTrail.NewEmitter(500f, Position);
+                if (TrailEmitter == null)
+                {
+                    Velocity *= 0.65f;
+                    TrailEmitter     = Owner.Universe.Screen.Particles.ProjectileTrail.NewEmitter(500f, Position);
+                    FireTrailEmitter = Owner.Universe.Screen.Particles.FireTrail.NewEmitter(500f, Position);
+                }
+                TrailEmitter.Update(timeStep.FixedTime, Position);
+                FireTrailEmitter.Update(timeStep.FixedTime, Position);
             }
-            TrailEmitter.Update(timeStep.FixedTime, Position);
-            FireTrailEmitter.Update(timeStep.FixedTime, Position);
         }
     }
 }
