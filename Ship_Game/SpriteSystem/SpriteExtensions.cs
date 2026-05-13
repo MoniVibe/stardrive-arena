@@ -19,6 +19,11 @@ namespace Ship_Game
         None,
         AlphaBlend,
         Additive,
+        // XNA classic AlphaBlend formula (src*srcA + dst*(1-srcA)). Use for
+        // non-premultiplied source textures where you want the gradient
+        // preserved AND no over-brightness on overlap. MonoGame's default
+        // AlphaBlend assumes premul source.
+        NonPremultiplied,
     }
 
     public static class SpriteExtensions
@@ -309,10 +314,11 @@ namespace Ship_Game
         // SpriteBatch implicitly saves/restores GraphicsDevice render state per Begin/End.
         static BlendState ToBlendState(SpriteBlendMode mode) => mode switch
         {
-            SpriteBlendMode.Additive   => BlendState.Additive,
-            SpriteBlendMode.AlphaBlend => BlendState.AlphaBlend,
-            SpriteBlendMode.None       => BlendState.Opaque,
-            _                          => BlendState.AlphaBlend,
+            SpriteBlendMode.Additive         => BlendState.Additive,
+            SpriteBlendMode.AlphaBlend       => BlendState.AlphaBlend,
+            SpriteBlendMode.None             => BlendState.Opaque,
+            SpriteBlendMode.NonPremultiplied => BlendState.NonPremultiplied,
+            _                                => BlendState.AlphaBlend,
         };
 
         public static bool SafeBegin(this SpriteBatch batch, SpriteBlendMode blendMode)

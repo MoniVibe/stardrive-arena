@@ -954,10 +954,18 @@ namespace Ship_Game
             for (int i = bombs.Length - 1; i >= 0; --i)
             {
                 Bomb bomb = bombs[i];
-                if (bomb?.Model != null)
-                {
-                    Projectile.DrawMesh(this, bomb.Model, bomb.World, bomb.Texture.Texture, scale:25f);
-                }
+                // Skip Dead bombs — narrows the SimThread/main-thread race
+                // window between Bomb.Update setting Dead and the sim loop
+                // doing the actual BombList.RemoveAt.
+                if (bomb == null || bomb.Dead || bomb.Model == null)
+                    continue;
+                // Phase 3.5 dropped the *50 multiplier for projectile meshes
+                // (FBX corpus ships at native game-unit scale, not unit-scale
+                // like the old XNB). The bomb path kept its legacy scale:25f,
+                // which is what was rendering the bomb as a huge orange-yellow
+                // cloud. Switch to Weapon.Scale to match Projectile.cs:450
+                // (tune via Weapon xml's Scale).
+                Projectile.DrawMesh(this, bomb.Model, bomb.World, bomb.Texture.Texture, scale: bomb.Weapon.Scale);
             }
         }
         // FB - This cf needs refactor

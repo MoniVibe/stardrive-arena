@@ -106,9 +106,23 @@ namespace Ship_Game
 
             try
             {
+                // UI/node1 is stored non-premultiplied in the §4.6 #7
+                // lossless-alpha cache. The colored Node1 draws here leak
+                // through alpha=0 outer pixels under MonoGame's default
+                // premul AlphaBlend, which makes the nodes appear as
+                // hard-edged blobs instead of soft gradients. NonPremultiplied
+                // is the XNA-classic AlphaBlend formula (src*srcA + dst*(1-srcA))
+                // — alpha=0 contributes 0 (gradient preserved) and overlapping
+                // nodes blend smoothly without the Additive over-brightness.
+                batch.SafeEnd();
+                batch.SafeBegin(SpriteBlendMode.NonPremultiplied);
+
                 DrawMinimapInfluenceNodes(batch);
                 DrawSelected(batch, Player);
                 DrawWarnings(batch);
+
+                batch.SafeEnd();
+                batch.SafeBegin();
             }
             catch (Exception e)
             {
@@ -251,7 +265,11 @@ namespace Ship_Game
 
                 bool combat = false;
                 float intensity = 0.005f;
-                var ec = new Color(empire.EmpireColor, 150);
+                // Halo alpha kept low (~30%) so overlapping nodes stay
+                // readable under NonPremultiplied blend — at higher alpha
+                // the territory layer would saturate the sensor halos
+                // underneath into a single uniform blob.
+                var ec = new Color(empire.EmpireColor, 80);
                 if (empire.isPlayer)
                 {
                     if (node.Source is Ship ship)
@@ -292,8 +310,9 @@ namespace Ship_Game
                 
                 {
                     float radius = Math.Min(0.09f, nodeRad);
-                    // draw a shade to dim the color. 
+                    // Empire-colored gradient halo (alpha 80).
                     batch.Draw(Node1, nodePos, ec, 0f, nodeOrigin, radius, SpriteEffects.None, 1f);
+                    // Black-tinted gradient overlay to dim the surroundings.
                     batch.Draw(Node1, nodePos, transparentBlack, 0f, nodeOrigin, nodeRad, SpriteEffects.None, 1f);
                 }
             }
@@ -321,8 +340,8 @@ namespace Ship_Game
         
         void DrawMinimapEmpireNodes(SpriteBatch batch, Empire e)
         {
+            DrawMinimapNodes(batch, e, e.SensorNodes, excludeProjectors: true);
             DrawMinimapNodes(batch, e, e.BorderNodes, excludeProjectors:false);
-            DrawMinimapNodes(batch, e, e.SensorNodes, excludeProjectors:true);
         }
 
         void ZoomToShip_OnClick(ToggleButton toggleButton)

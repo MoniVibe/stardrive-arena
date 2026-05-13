@@ -32,6 +32,12 @@ namespace Ship_Game
         public readonly SubTexture Texture;
         public readonly StaticMesh Model;
 
+        // Set inside Update when the bomb should be retired (impact or miss).
+        // The sim loop in UniverseScreen.UpdateGame.cs does the actual
+        // BombList.RemoveAt — keeps BombList mutation single-threaded relative
+        // to the main-thread DrawBombs reader.
+        public bool Dead { get; private set; }
+
         public Bomb(Vector3 position, Empire empire, string weaponName, int shipLevel, float shipHealthPercent)
         {
             Owner = empire;
@@ -60,7 +66,7 @@ namespace Ship_Game
         void DoImpact()
         {
             TargetPlanet.DropBomb(this);
-            Owner.Universe.Screen.BombList.Remove(this);
+            Dead = true;
         }
 
         private void SurfaceImpactEffects()
@@ -131,21 +137,36 @@ namespace Ship_Game
             Vector3 planetPos = TargetPlanet.Position3D;
             float impactRadius = TargetPlanet.ShieldStrengthCurrent > 0f ? 100f : 30f;
             if (Position.InRadius(planetPos, PlanetRadius + impactRadius))
-                DoImpact();
-
-
-            // fiery trail radius:
-            if (!Position.InRadius(planetPos, PlanetRadius + 1000f))
-                return;
-
-            if (TrailEmitter == null)
             {
-                Velocity *= 0.65f;
-                TrailEmitter     = Owner.Universe.Screen.Particles.ProjectileTrail.NewEmitter(500f, Position);
-                FireTrailEmitter = Owner.Universe.Screen.Particles.FireTrail.NewEmitter(500f, Position);
+                DoImpact();
+                return;
             }
-            TrailEmitter.Update(timeStep.FixedTime, Position);
-            FireTrailEmitter.Update(timeStep.FixedTime, Position);
+
+            // Miss detection: dot product of (planet - bomb) with velocity
+            // tells us which side of closest-approach we're on. Positive ⇒
+            // still approaching; negative ⇒ already past. The radius gate
+            // (PlanetRadius + 500) keeps the bomb visible until it's clearly
+            // past the planet, otherwise it would vanish while still
+            // alongside the surface for big planets.
+            if ((planetPos - Position).Dot(Velocity) < 0f &&
+                !Position.InRadius(planetPos, PlanetRadius + 500f))
+            {
+                Dead = true;
+                return;
+            }
+
+            // Inside the fiery-trail radius? Start / continue the trail emitters.
+            if (Position.InRadius(planetPos, PlanetRadius + 1000f))
+            {
+                if (TrailEmitter == null)
+                {
+                    Velocity *= 0.65f;
+                    TrailEmitter     = Owner.Universe.Screen.Particles.ProjectileTrail.NewEmitter(500f, Position);
+                    FireTrailEmitter = Owner.Universe.Screen.Particles.FireTrail.NewEmitter(500f, Position);
+                }
+                TrailEmitter.Update(timeStep.FixedTime, Position);
+                FireTrailEmitter.Update(timeStep.FixedTime, Position);
+            }
         }
     }
 }

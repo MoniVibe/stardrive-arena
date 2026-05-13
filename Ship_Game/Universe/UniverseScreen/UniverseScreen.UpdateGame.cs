@@ -251,11 +251,21 @@ namespace Ship_Game
             {
                 ExplosionManager.Update(this, timeStep.FixedTime);
 
+                // Reverse iteration so RemoveAt(i) below doesn't disturb
+                // indices we haven't visited yet. Bomb.Update sets Dead=true
+                // on impact or miss; the actual list mutation happens here so
+                // it's confined to SimThread (DrawBombs reads BombList from
+                // the main thread without locking).
                 Span<Bomb> bombs = BombList.AsSpan();
                 for (int i = bombs.Length - 1; i >= 0; --i)
                 {
                     Bomb bomb = bombs[i];
-                    bomb?.Update(timeStep);
+                    if (bomb != null)
+                    {
+                        bomb.Update(timeStep);
+                        if (bomb.Dead)
+                            BombList.RemoveAt(i);
+                    }
                 }
 
                 Shields?.Update(timeStep);

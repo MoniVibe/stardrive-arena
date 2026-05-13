@@ -141,6 +141,12 @@ namespace Ship_Game.SpriteSystem
                     // the DXT5 fast path below — banding is invisible against
                     // the noisy art content, and PNG encoding is ~20× slower
                     // per nopack texture on full-rebuild.
+                    //
+                    // Stored non-premultiplied. Most consumers of UI/node use
+                    // additive or SourceAlphaSaturation blends which want
+                    // non-premul source; the only AlphaBlend consumers
+                    // (FleetDesign sensor halo, FOW sensor highlights) must
+                    // pre-multiply their tint at the call site.
                     ImageUtils.SaveAsPng(pngPath, Width, Height, color);
                     return pngPath;
                 }

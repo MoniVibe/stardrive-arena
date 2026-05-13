@@ -16,6 +16,9 @@ using System.Linq;
 using Ship_Game.Data.Yaml;
 using System.IO;
 using Ship_Game.GameScreens.FleetDesign;
+using SynapseGaming.LightingSystem.Lights;
+// SunBurn + MonoGame both define DirectionalLight; we want SunBurn's here.
+using DirectionalLight = SynapseGaming.LightingSystem.Lights.DirectionalLight;
 
 // ReSharper disable once CheckNamespace
 namespace Ship_Game
@@ -158,6 +161,50 @@ namespace Ship_Game
         public override void BecameActive()
         {
             AssignLightRig(LightRigIdentity.FleetDesign);
+            SetupFleetDesignLighting();
+        }
+
+        // Post-migration AssignLightRig is a stub — it clears all lights and
+        // submits none (the SunBurn .lightRig content type was discontinued,
+        // see MIGRATION_LIMITATIONS entry #7). Without an explicit rig the
+        // fleet view renders unlit, so ship hulls read dim and flat-spec.
+        // Mirrors the 3-directional Key / Fill / Back rig + ambient that
+        // ShipDesignScreen uses (SetupShipyardLighting).
+        void SetupFleetDesignLighting()
+        {
+            AddLight(new DirectionalLight
+            {
+                Name         = "FleetDesign Key",
+                Direction    = new Vector3(-0.5265408f, -0.5735765f, -0.6275069f),
+                DiffuseColor = new Vector3(1f, 1f, 1f),
+                Intensity    = 1.75f,
+                Enabled      = true,
+            }, dynamic: false);
+
+            AddLight(new DirectionalLight
+            {
+                Name         = "FleetDesign Fill",
+                Direction    = new Vector3(0.7198464f, 0.3420201f, 0.6040227f),
+                DiffuseColor = new Vector3(0.85f, 0.88f, 0.92f),
+                Intensity    = 0.8f,
+                Enabled      = true,
+            }, dynamic: false);
+
+            AddLight(new DirectionalLight
+            {
+                Name         = "FleetDesign Back",
+                Direction    = new Vector3(0.4545195f, -0.7660444f, 0.4545195f),
+                DiffuseColor = new Vector3(0.3231373f, 0.3607844f, 0.3937255f),
+                Intensity    = 0.5f,
+                Enabled      = true,
+            }, dynamic: false);
+
+            AddLight(new AmbientLight
+            {
+                Name         = "FleetDesign Ambient",
+                DiffuseColor = Color.White.ToVector3(),
+                Intensity    = 0.15f,
+            }, dynamic: false);
         }
 
         // We opened another screen like Shipyard, or just exited this screen

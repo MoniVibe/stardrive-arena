@@ -879,6 +879,7 @@
     <Compile Include="Ship_Game\PopupWindow.cs" />
     <Compile Include="Ship_Game\StoryAndEvents\EventPopup.cs" />
     <Compile Include="Ship_Game\GameScreens\MainMenu\MainMenuScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\MainMenu\SupportBlackbox.cs" />
     <Compile Include="Ship_Game\GameScreens\Universe\ShipListScreen.cs" />
     <Compile Include="Ship_Game\NodeState.cs" />
     <Compile Include="Ship_Game\StoryAndEvents\YouLoseScreen.cs" />

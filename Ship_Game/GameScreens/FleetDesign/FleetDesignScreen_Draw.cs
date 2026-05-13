@@ -204,10 +204,38 @@ namespace Ship_Game
                 SubTexture nodeTexture = ResourceManager.Texture("UI/node");
                 FleetDataNode node = SelectedNodeList[0];
 
-                float radius = (node.Ship?.SensorRange ?? 500000) * OperationalRadius.RelativeValue;
+                // The Operational Radius slider's relative/absolute semantic
+                // is currently inconsistent with how OrdersRadius is stored
+                // elsewhere in Fleet.cs (absolute world units). Sidestep that
+                // for now and just visualize the ship's actual SensorRange
+                // until the slider is reworked.
+                //
+                // In the Fleet Design screen, node.Ship is usually null —
+                // designs are templates, not live instances. Fall back to the
+                // ship template (same pattern as DrawFleetNode) so different
+                // designs show different sensor halos.
+                Ship ship = node.Ship;
+                if (ship == null && !ResourceManager.GetShipTemplate(node.ShipName, out ship))
+                    return;
+                float radius = ship.SensorRange;
                 (Vector2 screenPos, float screenRadius) = GetPosAndRadiusOnScreen(node.RelativeFleetOffset, radius);
                 RectF nodeRect = new(screenPos, screenRadius * 2, screenRadius * 2);
+
+                // UI/node is stored non-premultiplied (most consumers use
+                // additive / SourceAlphaSaturation blends). Default
+                // SpriteBatch.AlphaBlend is the premul formula in MonoGame
+                // (dst = src.rgb + dst*(1-srcA)) — so an alpha=0 outer ring
+                // leaks its RGB into the destination. With the rect sized to
+                // ship sensor range projected to screen (often larger than
+                // the viewport) that ring floods the whole screen green.
+                // Switch this single draw to Additive (src*srcA + dst), which
+                // zeroes out alpha=0 pixels naturally and matches how the
+                // FOW / shield / fogmap consumers handle the same texture.
+                batch.SafeEnd();
+                batch.SafeBegin(SpriteBlendMode.Additive);
                 batch.Draw(nodeTexture, nodeRect, NeonGreen, 0f, nodeTexture.CenterF);
+                batch.SafeEnd();
+                batch.SafeBegin();
             }
         }
 
