@@ -569,18 +569,50 @@ internal class AutoPatcher : PopupWindow
         {
             string gameDir = GetGameDirectory();
             string tempDir = GetPatchTempFolder();
-            
+
             FileInfo[] filesToAdd = Dir.GetFiles(patchFilesFolder);
+            var skipped = new Array<string>();
             int currentAction = 0;
             foreach (FileInfo toAdd in filesToAdd)
             {
                 string srcFile = toAdd.FullName;
                 string relPath = srcFile.Replace(patchFilesFolder, "").TrimStart('\\', '/');
                 string dstFile = Path.Combine(gameDir, relPath);
-                
+
+                // Source can vanish between Dir.GetFiles enumeration and now — typically
+                // AV/Defender quarantining a freshly-extracted asset (esp. .png/.exe) or
+                // OneDrive/Dropbox re-syncing the AppData folder. Skip and continue rather
+                // than aborting the entire patch over one cosmetic icon. The user can
+                // re-run the patcher to retry; missing textures fall back to x_red so the
+                // game stays usable in the meantime.
+                if (!File.Exists(srcFile))
+                {
+                    Log.Warning($"CopyFile skipped (source missing — AV or sync interference?): {relPath}");
+                    skipped.Add(relPath);
+                    ap.SetProgress(ProgressBarElement.GetPercent(++currentAction, filesToAdd.Length));
+                    continue;
+                }
+
                 Log.Write($"CopyFile: {relPath}");
-                SafeMove(srcFile, dstFile, relPath, tempDir);
+                SafeCopy(srcFile, dstFile, relPath, tempDir);
                 ap.SetProgress(ProgressBarElement.GetPercent(++currentAction, filesToAdd.Length));
+            }
+
+            // Apply succeeded — now safe to drop the staging cache. Crucially this only
+            // runs on the SUCCESS path: if the loop above threw, the staging dir is
+            // preserved so the user can re-trigger the patch and we resume against an
+            // intact cached download. The old File.Move-based design destroyed sources
+            // as it went, leaving a half-gutted staging dir on any mid-apply failure.
+            TryDeleteFolder(GetPatchOutputFolder());
+
+            if (skipped.Count > 0)
+            {
+                RunOnNextFrame(() =>
+                {
+                    var label = ProgressSteps.AddLabel(
+                        $"Patch applied ({skipped.Count} file(s) skipped — see blackbox.log; usually antivirus interference)");
+                    label.Color = Color.Yellow;
+                });
             }
 
             RunOnNextFrame(() =>
@@ -615,11 +647,17 @@ internal class AutoPatcher : PopupWindow
     }
 
     /// <summary>
-    /// If the file is in use, it must be moved or renamed,
-    /// however, moving between different drives would cause the file to be copied,
-    /// so we always move it into game/PatchTemp folder
+    /// Copies a patch file from the staging cache (%APPDATA%\StarDrive\Patches\&lt;ver&gt;)
+    /// onto the install. If the destination exists, it is first moved aside into
+    /// game/PatchTemp so an in-use file (e.g. StarDrive.exe replacing itself) can
+    /// still be replaced — that move is intra-volume and atomic.
+    ///
+    /// The src→dst transfer is a Copy (not Move) so the staging cache survives a
+    /// mid-apply failure intact and the user can retry. Pre-Jupiter this was a
+    /// Move, which destroyed each source on success and left a half-gutted cache
+    /// on any failure (no recovery without re-downloading).
     /// </summary>
-    static void SafeMove(string srcFile, string dstFile, string relPath, string tempDir)
+    static void SafeCopy(string srcFile, string dstFile, string relPath, string tempDir)
     {
         string tmpFile = null;
         try
@@ -628,13 +666,16 @@ internal class AutoPatcher : PopupWindow
             {
                 tmpFile = MoveToTempPath(tempDir, relPath, dstFile);
             }
-            MoveAndCreateDirs(srcFile, dstFile);
+            CopyAndCreateDirs(srcFile, dstFile);
         }
         catch (Exception e)
         {
             if (tmpFile != null) // restore the file if needed
             {
-                File.Move(tmpFile, dstFile);
+                // Restore best-effort: if even the restore fails we can't fix it,
+                // and chaining the original cause is more useful than a noisy throw
+                // from inside a catch.
+                try { File.Move(tmpFile, dstFile); } catch { }
             }
 
             throw new IOException(relPath, e);
@@ -699,6 +740,10 @@ internal class AutoPatcher : PopupWindow
         return tmpFile;
     }
 
+    // Used only on the destination side (stashing in-use files into PatchTemp) where
+    // Move is genuinely the right primitive — intra-volume, atomic, leaves no copy.
+    // For the src(staging-cache) → dst(install) transfer, use CopyAndCreateDirs so
+    // a mid-apply failure doesn't destroy the staging cache.
     static void MoveAndCreateDirs(string sourceFile, string destinationFile)
     {
         try
@@ -709,6 +754,26 @@ internal class AutoPatcher : PopupWindow
         catch (Exception e)
         {
             throw new IOException($"Move failed: {sourceFile} --> {destinationFile}", e);
+        }
+    }
+
+    static void CopyAndCreateDirs(string sourceFile, string destinationFile)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationFile)!);
+            // overwrite:true — patches semantically OVERWRITE the install. SafeCopy
+            // also moves any existing dst aside into PatchTemp first, but treating
+            // overwrite as the contract (rather than relying on the prior move) is
+            // both clearer and safer: re-running the patcher against an already-
+            // partially-applied install just clobbers, instead of throwing because
+            // some files survived from the previous attempt. Especially relevant
+            // for mod patches where users often re-apply the same version.
+            File.Copy(sourceFile, destinationFile, overwrite: true);
+        }
+        catch (Exception e)
+        {
+            throw new IOException($"Copy failed: {sourceFile} --> {destinationFile}", e);
         }
     }
 
