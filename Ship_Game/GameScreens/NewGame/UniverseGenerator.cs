@@ -615,8 +615,16 @@ namespace Ship_Game.GameScreens.NewGame
 
         void GenerateClusterSystems(ProgressCounter step, Array<Sector> sectors)
         {
+            // Shuffle so the same alphabetically-first SolarSystems/Random/*.xml file
+            // doesn't always land in sectors[0] (h=1,v=1) every game. Without this,
+            // sector-to-system mapping is purely insertion-ordered and reproducible
+            // across unrelated seeds, which gave players a positional bias on the
+            // same corner sector.
+            SystemPlaceHolder[] nonStarting = Systems.Filter(s => !s.IsStartingSystem);
+            Random.Shuffle(nonStarting);
+
             int i = 0;
-            foreach (SystemPlaceHolder sys in Systems.Filter(s => !s.IsStartingSystem))
+            foreach (SystemPlaceHolder sys in nonStarting)
             {
                 Sector currentSector = sectors[i];
                 sys.Position = GenerateSystemInCluster(currentSector, 300000f);

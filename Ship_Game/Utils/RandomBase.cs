@@ -187,6 +187,20 @@ public abstract class RandomBase
     }
 
     /// <summary>
+    /// Fisher-Yates in-place shuffle using the seeded RNG.
+    /// Use this instead of ListExt.Shuffle when the caller already owns a RandomBase
+    /// (e.g. UniverseGenerator) so universe-seed reproducibility is preserved.
+    /// </summary>
+    public void Shuffle<T>(IList<T> list)
+    {
+        for (int n = list.Count - 1; n > 0; --n)
+        {
+            int k = Rand.Next(n + 1);
+            (list[k], list[n]) = (list[n], list[k]);
+        }
+    }
+
+    /// <summary>
     /// Performs a dice-roll, where chance must be between [0..100]
     /// @return TRUE if random chance passed
     /// @example if (RandomMath.RollDice(33)) {..} // 33% chance
