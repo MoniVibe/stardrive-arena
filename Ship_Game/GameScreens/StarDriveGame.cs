@@ -200,7 +200,11 @@ namespace Ship_Game
                     // "Cannot call Present when a render target is active." Restore the back
                     // buffer unconditionally as a safety net. The underlying leak should still
                     // be tracked and fixed; this just stops it from taking the game down.
-                    ScreenManager?.GraphicsDevice?.SetRenderTarget(null);
+                    // Inner try/catch: if the original draw threw because the device was lost or
+                    // disposed, this cleanup call can throw too — swallow it so we don't mask the
+                    // real exception bubbling out of the outer try.
+                    try { ScreenManager?.GraphicsDevice?.SetRenderTarget(null); }
+                    catch { /* device lost/disposed; let the original exception propagate */ }
                 }
                 string topScreen = ScreenManager.NumScreens > 0
                     ? ScreenManager.Current?.GetType().Name ?? ""

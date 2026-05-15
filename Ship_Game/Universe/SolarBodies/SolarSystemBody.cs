@@ -692,6 +692,13 @@ namespace Ship_Game
             return BuildingList.Any(predicate);
         }
 
+        // Allocation-free reference-equality lookup; preferred over HasBuilding(b => b == target)
+        // for hot paths like Combat.Done where the predicate would close over `target` each call.
+        public bool ContainsBuilding(Building b)
+        {
+            return BuildingList.ContainsRef(b);
+        }
+
         public int CountBuildings(Predicate<Building> predicate)
         {
             return BuildingList.Count(predicate);

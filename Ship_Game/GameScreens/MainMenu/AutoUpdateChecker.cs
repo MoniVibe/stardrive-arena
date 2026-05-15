@@ -743,13 +743,29 @@ public class AutoUpdateChecker : UIElementContainer
         var cts = new CancellationTokenSource(timeout);
         if (cancellableTask != null)
         {
-            Task.Run(async () =>
+            // Snapshot the token before the async hop. Caller wraps cts in `using`; once
+            // disposed, cts.Token getter throws ObjectDisposedException — and because this
+            // is fire-and-forget, the exception used to surface as UnobservedTaskException
+            // at finalization. The CancellationToken struct itself is safe post-Dispose.
+            // IsComplete in the loop guard ensures the task exits naturally after a
+            // successful download (Dispose alone doesn't set IsCancellationRequested).
+            CancellationToken token = cts.Token;
+            _ = Task.Run(async () =>
             {
-                while (!cts.IsCancellationRequested)
+                try
                 {
-                    if (cancellableTask.IsCancelRequested) { cts.Cancel(); return; }
-                    await Task.Delay(100, cts.Token).ContinueWith(_ => { });
+                    while (!token.IsCancellationRequested && !cancellableTask.IsComplete)
+                    {
+                        if (cancellableTask.IsCancelRequested)
+                        {
+                            try { cts.Cancel(); } catch (ObjectDisposedException) { }
+                            return;
+                        }
+                        await Task.Delay(100, token);
+                    }
                 }
+                catch (OperationCanceledException) { /* expected on timeout/cancel */ }
+                catch (ObjectDisposedException)    { /* expected if caller disposed cts */ }
             });
         }
         return cts;

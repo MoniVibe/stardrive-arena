@@ -17,7 +17,11 @@ public static class GameAudio
     static bool AudioDisabled;
     static bool EffectsDisabled;
     static bool MusicDisabled;
-    static bool AudioEngineGood;
+    // volatile: published by Initialize on the main thread after Music/RacialMusic/AudioEngine
+    // fields are assigned; read by worker threads (e.g. LoadGame.SetupUniverseScreen) that gate
+    // Music access on it. Without volatile the JIT/CPU could reorder so a reader sees the flag
+    // true while still seeing stale nulls in the dependent fields.
+    static volatile bool AudioEngineGood;
     
     static NAudioPlaybackEngine AudioEngine;
     static string ConfigFile;

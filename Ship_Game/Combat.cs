@@ -116,7 +116,7 @@ namespace Ship_Game
                                        && DefenseTile.Building != DefendingBuilding;
 
         bool AttackingBuildingOrphaned => AttackingBuilding != null
-                                       && !Planet.HasBuilding(b => b == AttackingBuilding);
+                                       && !Planet.ContainsBuilding(AttackingBuilding);
 
         public bool Done => DefendingTroop?.Strength <= 0 || DefendingBuilding?.IsDestroyed == true
                                                           || AttackingBuilding?.IsDestroyed == true

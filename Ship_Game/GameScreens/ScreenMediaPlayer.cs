@@ -155,6 +155,9 @@ namespace Ship_Game.GameScreens
             }
             catch (Exception ex)
             {
+                // Mark failed so callers (e.g. DiplomacyScreen.Update gates PlayVideoAndMusic on
+                // !PlaybackFailed) stop retrying every frame after a definitive load failure.
+                PlaybackFailed = true;
                 Log.Warning($"PlayVideo failed: 'Video/{videoPath}' reason: {ex.Message}");
             }
         }
