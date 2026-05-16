@@ -255,7 +255,15 @@ namespace Ship_Game
                               Empire.InfluenceNode[] nodes, bool excludeProjectors)
         {
             Vector2 nodeOrigin = Node.CenterF;
-            var transparentBlack = new Color(Color.Black, 80);
+            // Halo alpha kept low (~30%) so overlapping nodes stay readable under
+            // NonPremultiplied blend — at higher alpha the territory layer would
+            // saturate the sensor halos underneath into a single uniform blob.
+            // The empire-color halo and black darkening overlay scale with the
+            // border-strength slider, but floored at 0.5 so the minimap never
+            // loses empire-territory readability even when the universe screen
+            // borders are dimmed all the way down.
+            byte haloAlpha = (byte)(80 * GlobalStats.InfluenceNodeAlpha.LowerBound(0.5f));
+            var transparentBlack = new Color(Color.Black, haloAlpha);
 
             for (int i = 0; i < nodes.Length; i++)
             {
@@ -265,11 +273,7 @@ namespace Ship_Game
 
                 bool combat = false;
                 float intensity = 0.005f;
-                // Halo alpha kept low (~30%) so overlapping nodes stay
-                // readable under NonPremultiplied blend — at higher alpha
-                // the territory layer would saturate the sensor halos
-                // underneath into a single uniform blob.
-                var ec = new Color(empire.EmpireColor, 80);
+                var ec = new Color(empire.EmpireColor, haloAlpha);
                 if (empire.isPlayer)
                 {
                     if (node.Source is Ship ship)
@@ -310,9 +314,9 @@ namespace Ship_Game
                 
                 {
                     float radius = Math.Min(0.09f, nodeRad);
-                    // Empire-colored gradient halo (alpha 80).
+                    // Empire-colored gradient halo + black darkening overlay; both
+                    // alphas scaled by the border-color-strength slider above.
                     batch.Draw(Node1, nodePos, ec, 0f, nodeOrigin, radius, SpriteEffects.None, 1f);
-                    // Black-tinted gradient overlay to dim the surroundings.
                     batch.Draw(Node1, nodePos, transparentBlack, 0f, nodeOrigin, nodeRad, SpriteEffects.None, 1f);
                 }
             }

@@ -116,6 +116,12 @@ namespace Ship_Game
                 if (alpha > maxAlpha) alpha = maxAlpha;
                 else if (alpha < 10) alpha = 0;
 
+                // Apply the user's "border color strength" slider as the FINAL multiplier.
+                // Done after the < 10 cutoff so the camera-zoom fade kicks in at the same
+                // distance regardless of slider value — the slider only scales the result,
+                // it doesn't shift the cutoff zoom.
+                alpha = (int)(alpha * GlobalStats.InfluenceNodeAlpha);
+
                 // Phase 3.3 alpha fix: pre-multiply the tint so the (already-premul'd)
                 // BorderRT pixels get scaled by alpha at modulation time. Without
                 // pre-multiplication, MonoGame's premul AlphaBlend formula

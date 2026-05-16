@@ -68,12 +68,28 @@ public class TextureBinding
     (Texture2D texture, SubTexture subTex) LoadTextureUnsafe()
     {
         var file = new FileInfo(UnpackedPath);
+        // Missing or unreadable texture files (AV quarantine, partial install, disk
+        // corruption, modder cleanup) used to surface as a fatal exception bubbling up
+        // through LayoutParser → LoadContent → UpdateGame. Degrade to the established
+        // x_red placeholder via DefaultTexture() so the game keeps running with a
+        // visible "missing texture" marker. Stays a Log.Warning, not Sentry — this is
+        // a user-environment issue we can't act on, and once survivable it would
+        // otherwise spam every frame the texture is referenced.
         if (!file.Exists)
         {
             Log.Warning(ConsoleColor.Red, $"NonPacked Texture does not exist: {UnpackedPath}");
+            return (null, ResourceManager.RootContent.DefaultTexture());
         }
-        var texture = ResourceManager.RootContent.LoadUncachedTexture(file, Atlas.Name);
-        SubTexture subTex = new(Name, texture, SourcePath);
-        return (texture, subTex);
+        try
+        {
+            var texture = ResourceManager.RootContent.LoadUncachedTexture(file, Atlas.Name);
+            SubTexture subTex = new(Name, texture, SourcePath);
+            return (texture, subTex);
+        }
+        catch (Exception e)
+        {
+            Log.Warning(ConsoleColor.Red, $"NonPacked Texture failed to load: {UnpackedPath} reason: {e.Message}");
+            return (null, ResourceManager.RootContent.DefaultTexture());
+        }
     }
 }

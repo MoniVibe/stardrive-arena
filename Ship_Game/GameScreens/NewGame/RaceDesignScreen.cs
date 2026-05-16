@@ -406,6 +406,7 @@ namespace Ship_Game
                 case GameMode.BigClusters:   return GameText.BigClustersGame;
                 case GameMode.SmallClusters: return GameText.SmallClustersGame;
                 case GameMode.Ring:          return GameText.RingGalaxyGame;
+                case GameMode.Spiral:        return GameText.SpiralGalaxyGame;
             }
         }
 
@@ -421,6 +422,7 @@ namespace Ship_Game
                 case GameMode.BigClusters:   return GameText.EachEmpireStartsInA;
                 case GameMode.SmallClusters: return GameText.TheGalaxyWillBeConsisted;
                 case GameMode.Ring:          return GameText.RingGalaxyGameTip;
+                case GameMode.Spiral:        return GameText.SpiralGalaxyGameTip;
             }
         }
 
@@ -696,7 +698,7 @@ namespace Ship_Game
         
         public enum GameMode
         {
-            Sandbox, Random, Ring, SmallClusters, BigClusters, Elimination, Corners
+            Sandbox, Spiral, Random, Ring, SmallClusters, BigClusters, Elimination, Corners
         }
 
         public enum StarsAbundance

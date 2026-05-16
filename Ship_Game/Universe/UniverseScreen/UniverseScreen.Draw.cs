@@ -77,7 +77,10 @@ namespace Ship_Game
             graphics.SetRenderTarget(BorderRT);
             graphics.Clear(Color.Transparent);
 
-            if (GlobalStats.InfluenceNodeAlpha > 0.1f)
+            // Skip the whole pass when the slider is effectively at zero. Threshold is
+            // small enough that any non-zero slider value still produces a render — the
+            // user-visible alpha scaling happens at composite time in DrawColoredBordersRT.
+            if (GlobalStats.InfluenceNodeAlpha > 0.01f)
             {
                 // the node texture has a smooth fade, so we need to scale it by a lot to match the actual SSP radius
                 float nodeScale = 1.8f;

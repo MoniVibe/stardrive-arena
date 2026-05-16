@@ -152,15 +152,32 @@ namespace Ship_Game
             FreighterDropDown.Visible  = !Screen.Player.AutoPickBestFreighter;
             ColonyShipDropDown.Visible = !Screen.Player.AutoPickBestColonizer;
 
+            // Re-populate the Research/Mining dropdowns the first time CanBuild* flips to
+            // true. LoadContent only ran InitDropOptions once at window-open time, so if
+            // the player completes the gating tech while AutomationWindow is still open
+            // the dropdown becomes Visible (below) but stays empty — clicking it then
+            // crashed on Options[0] access via ActiveName. Lazy-init on demand here.
             if (ResearchStationsEnabled)
             {
-                ResearchStationDropDown.Visible = !Screen.Player.AutoPickBestResearchStation
-                                                   && Screen.Player.CanBuildResearchStations;
+                bool canBuild = Screen.Player.CanBuildResearchStations;
+                if (canBuild && ResearchStationDropDown.Count == 0)
+                {
+                    EmpireData pd = Screen.Player.data;
+                    InitDropOptions(ResearchStationDropDown, ref pd.CurrentResearchStation, pd.DefaultResearchStation,
+                        ship => ship.IsShipGoodToBuild(Screen.Player) && ship.IsResearchStation);
+                }
+                ResearchStationDropDown.Visible = !Screen.Player.AutoPickBestResearchStation && canBuild;
             }
             if (MiningOpsEnabled)
             {
-                MiningStationDropDown.Visible = !Screen.Player.AutoPickBestMiningStation
-                                                 && Screen.Player.CanBuildMiningStations;
+                bool canBuild = Screen.Player.CanBuildMiningStations;
+                if (canBuild && MiningStationDropDown.Count == 0)
+                {
+                    EmpireData pd = Screen.Player.data;
+                    InitDropOptions(MiningStationDropDown, ref pd.CurrentMiningStation, pd.DefaultMiningStation,
+                        ship => ship.IsShipGoodToBuild(Screen.Player) && ship.IsMiningStation);
+                }
+                MiningStationDropDown.Visible = !Screen.Player.AutoPickBestMiningStation && canBuild;
             }
             base.Draw(batch, elapsed);
         }

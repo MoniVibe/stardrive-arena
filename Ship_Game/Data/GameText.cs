@@ -4523,6 +4523,10 @@ namespace Ship_Game
         DesignIssueConstructorCostProblem = 4447,
         /// <summary>Add Storage or lower the amount</summary>
         DesignIssueConstructorCostRemidiation = 4448,
+        /// <summary>Spiral Galaxy</summary>
+        SpiralGalaxyGame = 4526,
+        /// <summary>Each empire starts at a random place along the arms of a Spiral Galaxy</summary>
+        SpiralGalaxyGameTip = 4527,
         /// <summary>Processing Per Trun</summary>
         RefinningPerTurnStat = 4449,
         /// <summary>Most Exotic resources are processed at</summary>

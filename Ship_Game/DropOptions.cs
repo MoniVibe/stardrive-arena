@@ -242,6 +242,13 @@ namespace Ship_Game
 
         public override bool HandleInput(InputState input)
         {
+            // An empty dropdown is inert — don't capture input or toggle Open. Reading
+            // ActiveName / Active later would index Options[0] and throw IOOB. The
+            // existing Count==1 auto-close at the title-toggle below doesn't catch
+            // Count==0 because we never reach it.
+            if (Options.Count == 0)
+                return false;
+
             bool overTitle = HitTest(input.CursorPosition);
             bool overExpanded = Open && ClickAbleOpenRect.HitTest(input.CursorPosition);
 
