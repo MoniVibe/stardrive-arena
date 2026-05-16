@@ -42,7 +42,7 @@ namespace Ship_Game.AI.Research
         public IShipDesign FindCheapestShipInList(Empire empire, Array<IShipDesign> ships, HashSet<string> techs)
         {
             PopulateKnownTechs(empire);
-            var buildableShips = empire.ShipsWeCanBuild.ToArr();
+            var buildableShips = empire.ShipsWeCanBuildSnapshot;
             PopulateMostTechs(buildableShips, KnownTechs);
             PopulateMostTechs(ships, KnownTechs);
 

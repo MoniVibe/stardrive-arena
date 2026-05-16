@@ -356,7 +356,7 @@ namespace Ship_Game
 
             if (SubShips.SelectedIndex == 0) // ShipsWeCanBuild
             {
-                IShipDesign[] designs = Player.ShipsWeCanBuild.Filter(CanShowDesign);
+                IShipDesign[] designs = Player.ShipsWeCanBuildSnapshot.Filter(CanShowDesign);
                 ShipSL.Reset();
                 InitShipSL(designs);
             }
@@ -382,7 +382,7 @@ namespace Ship_Game
             {
                 FleetDesignShipListItem header = new(this, role);
                 ShipSL.AddItem(header);
-                foreach (IShipDesign d in Player.ShipsWeCanBuild)
+                foreach (IShipDesign d in Player.ShipsWeCanBuildSnapshot)
                     if (IsCandidateShip(d) && d.GetRole() == header.HeaderText)
                         header.AddSubItem(new FleetDesignShipListItem(this, d));
             }

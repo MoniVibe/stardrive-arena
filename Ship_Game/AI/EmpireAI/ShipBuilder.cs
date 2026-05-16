@@ -48,7 +48,9 @@ namespace Ship_Game.AI
         static Array<IShipDesign> ShipsWeCanBuild(Empire empire, Predicate<IShipDesign> filter)
         {
             var ships = new Array<IShipDesign>();
-            foreach (IShipDesign design in empire.ShipsWeCanBuild)
+            // COW snapshot is lock-free in the common case and stable across iteration
+            // even if another thread mutates ShipsWeCanBuild.
+            foreach (IShipDesign design in empire.ShipsWeCanBuildSnapshot)
             {
                 if (filter(design))
                     ships.Add(design);
@@ -194,7 +196,7 @@ namespace Ship_Game.AI
 
             var potentialResearchStations = new Array<IShipDesign>();
             float maxResearchPerTurn = 0;
-            foreach (IShipDesign design in empire.ShipsWeCanBuild)
+            foreach (IShipDesign design in empire.ShipsWeCanBuildSnapshot)
             {
                 if (design.IsResearchStation)
                 {
@@ -233,7 +235,7 @@ namespace Ship_Game.AI
             var potentialMiningStations = new Array<IShipDesign>();
             float highestScore = 0;
             float minimumRefiningTurns = ShipResupply.NumTurnsForGoodRefiningSupply;
-            foreach (IShipDesign design in empire.ShipsWeCanBuild)
+            foreach (IShipDesign design in empire.ShipsWeCanBuildSnapshot)
             {
                 if (design.IsMiningStation)
                 {
@@ -297,7 +299,7 @@ namespace Ship_Game.AI
             }
 
             var freighters = new Array<IShipDesign>();
-            foreach (IShipDesign design in empire.ShipsWeCanBuild)
+            foreach (IShipDesign design in empire.ShipsWeCanBuildSnapshot)
             {
                 if (!design.IsCandidateForTradingBuild && design.Name != empire.data.DefaultMiningShip)
                     continue;
@@ -358,7 +360,7 @@ namespace Ship_Game.AI
             else
             {
                 var constructors = new Array<IShipDesign>();
-                foreach (IShipDesign design in empire.ShipsWeCanBuild)
+                foreach (IShipDesign design in empire.ShipsWeCanBuildSnapshot)
                     if (design.IsConstructor)
                         constructors.Add(design);
 

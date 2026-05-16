@@ -201,10 +201,10 @@ namespace Ship_Game.Universe
                 }
                 foreach (Empire e in us.EmpireList)
                 {
-                    foreach (IShipDesign s in e.ShipsWeCanBuild)
+                    foreach (IShipDesign s in e.ShipsWeCanBuildSnapshot)
                         if (s.IsValidDesign)
                             designs.Add((ShipDesign)s);
-                    foreach (IShipDesign s in e.SpaceStationsWeCanBuild)
+                    foreach (IShipDesign s in e.SpaceStationsWeCanBuildSnapshot)
                         if (s.IsValidDesign)
                             designs.Add((ShipDesign)s);
                 }

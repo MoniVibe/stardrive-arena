@@ -88,7 +88,7 @@ namespace Ship_Game
             RefitShipList.EnableItemHighlight = true;
             RefitShipList.OnClick = OnRefitShipItemClicked;
 
-            foreach (IShipDesign design in ShipToRefit.Loyalty.ShipsWeCanBuild)
+            foreach (IShipDesign design in ShipToRefit.Loyalty.ShipsWeCanBuildSnapshot)
             {
                 if ((design.Hull == ShipToRefit.ShipData.Hull || ShipToRefit.IsResearchStation || ShipToRefit.IsMiningStation) 
                     && design != ShipToRefit.ShipData 

@@ -43,7 +43,7 @@ namespace Ship_Game
             SL.EnableItemHighlight = true;
 
             //The Doctor: Ensure Projector is always the first entry on the DSBW list so that the player never has to scroll to find it.
-            foreach (IShipDesign s in Player.SpaceStationsWeCanBuild)
+            foreach (IShipDesign s in Player.SpaceStationsWeCanBuildSnapshot)
             {
                 if (s.IsSubspaceProjector)
                 {
@@ -51,7 +51,7 @@ namespace Ship_Game
                     break;
                 }
             }
-            foreach (IShipDesign s in Player.SpaceStationsWeCanBuild)
+            foreach (IShipDesign s in Player.SpaceStationsWeCanBuildSnapshot)
             {
                 if (!s.IsSubspaceProjector && !s.IsDysonSwarmController)
                     SL.AddItem(new(Screen, s));

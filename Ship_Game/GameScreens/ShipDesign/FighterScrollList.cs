@@ -35,7 +35,7 @@ namespace Ship_Game
             AddShip(ResourceManager.Ships.GetDesign(DynamicHangarOptions.DynamicLaunch.ToString()));
             AddShip(ResourceManager.Ships.GetDesign(DynamicHangarOptions.DynamicInterceptor.ToString()));
             AddShip(ResourceManager.Ships.GetDesign(DynamicHangarOptions.DynamicAntiShip.ToString()));
-            foreach (IShipDesign hangarShip in Screen.ParentUniverse.Player.ShipsWeCanBuild)
+            foreach (IShipDesign hangarShip in Screen.ParentUniverse.Player.ShipsWeCanBuildSnapshot)
             {
                 string role = hangarShip.HullRole.ToString();
                 if (!ActiveModule.PermittedHangarRoles.Contains(role))

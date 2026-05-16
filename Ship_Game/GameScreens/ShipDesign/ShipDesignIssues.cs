@@ -61,7 +61,7 @@ namespace Ship_Game.GameScreens.ShipDesign
                 int totalWarpShipsCivilian   = 0;
                 int totalWarpShipsMilitary   = 0;
 
-                foreach (IShipDesign design in empire.ShipsWeCanBuild)
+                foreach (IShipDesign design in empire.ShipsWeCanBuildSnapshot)
                 {
                     float warpSpeed = ShipStats.GetFTLSpeed(design, empire);
                     if (warpSpeed < 2000 || Scout(design.Role))

@@ -209,7 +209,7 @@ namespace Ship_Game
         {
             var sb = new StringBuilder("Player.ShipsWeCanBuild = {\n");
 
-            foreach (IShipDesign ship in Screen.Player.ShipsWeCanBuild)
+            foreach (IShipDesign ship in Screen.Player.ShipsWeCanBuildSnapshot)
                 sb.Append("  '").Append(ship.Name).Append("',\n");
             sb.Append("}");
 
@@ -223,7 +223,7 @@ namespace Ship_Game
             options.Clear();
 
 
-            foreach (IShipDesign ship in Screen.Player.ShipsWeCanBuild)
+            foreach (IShipDesign ship in Screen.Player.ShipsWeCanBuildSnapshot)
             {
                 if (predicate(ship))
                     options.AddOption(ship.Name, 0);

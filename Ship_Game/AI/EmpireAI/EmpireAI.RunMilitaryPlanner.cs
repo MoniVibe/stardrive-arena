@@ -296,7 +296,7 @@ namespace Ship_Game.AI
 
             public void PopulateRoleCountWithBuildableShips(Empire empire, Map<RoleCounts.CombatRole, RoleCounts> buildableShips)
             {
-                foreach (IShipDesign design in empire.ShipsWeCanBuild)
+                foreach (IShipDesign design in empire.ShipsWeCanBuildSnapshot)
                 {
                     var combatRole = RoleCounts.ShipRoleToCombatRole(design.Role);
                     if (buildableShips.TryGetValue(combatRole, out RoleCounts roleCounts))
