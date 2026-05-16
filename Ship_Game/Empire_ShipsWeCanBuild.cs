@@ -29,7 +29,7 @@ public sealed partial class Empire
     volatile IShipDesign[] CachedSpaceStationsWeCanBuildSnapshot;
 
     // For TESTING
-    public string[] ShipsWeCanBuildIds => ShipsWeCanBuild.Select(s => s.Name);
+    public string[] ShipsWeCanBuildIds => ShipsWeCanBuildSnapshot.Select(s => s.Name);
 
     /// <summary>
     /// Stable snapshot of ShipsWeCanBuild for safe iteration. Lock-free in the
@@ -69,19 +69,24 @@ public sealed partial class Empire
     /// </summary>
     public bool CanBuildShip(string shipUID)
     {
-        if (ResourceManager.Ships.GetDesign(shipUID, out IShipDesign design))
+        if (!ResourceManager.Ships.GetDesign(shipUID, out IShipDesign design))
+            return false;
+        lock (ShipsWeCanBuildLock)
             return ShipsWeCanBuild.Contains(design);
-        return false;
     }
 
     public bool CanBuildShip(IShipDesign ship)
     {
-        return ship != null && ShipsWeCanBuild.Contains(ship);
+        if (ship == null) return false;
+        lock (ShipsWeCanBuildLock)
+            return ShipsWeCanBuild.Contains(ship);
     }
 
     public bool CanBuildStation(IShipDesign station)
     {
-        return station != null && SpaceStationsWeCanBuild.Contains(station);
+        if (station == null) return false;
+        lock (ShipsWeCanBuildLock)
+            return SpaceStationsWeCanBuild.Contains(station);
     }
 
     public bool AddBuildableShip(IShipDesign ship)
@@ -207,12 +212,18 @@ public sealed partial class Empire
 
     public void RemoveDuplicateShipDesigns()
     {
-        RemoveDuplicateShipDesigns(ShipsWeCanBuild);
-        RemoveDuplicateShipDesigns(SpaceStationsWeCanBuild);
+        lock (ShipsWeCanBuildLock)
+        {
+            if (RemoveDuplicateShipDesigns(ShipsWeCanBuild))
+                CachedShipsWeCanBuildSnapshot = null;
+            if (RemoveDuplicateShipDesigns(SpaceStationsWeCanBuild))
+                CachedSpaceStationsWeCanBuildSnapshot = null;
+        }
     }
 
-    void RemoveDuplicateShipDesigns(HashSet<IShipDesign> designs)
+    bool RemoveDuplicateShipDesigns(HashSet<IShipDesign> designs)
     {
+        bool anyRemoved = false;
         Map<string, IShipDesign> unique = new();
         foreach (IShipDesign design in designs.ToArr())
         {
@@ -240,7 +251,8 @@ public sealed partial class Empire
                                 $"Remove Cost={toRemove.BaseCost} Warp={toRemove.BaseWarpThrust} Str={toRemove.BaseStrength}.");
                 }
 
-                designs.Remove(toRemove);
+                if (designs.Remove(toRemove))
+                    anyRemoved = true;
                 unique[design.Name] = toKeep;
             }
             else
@@ -248,6 +260,7 @@ public sealed partial class Empire
                 unique.Add(design.Name, design);
             }
         }
+        return anyRemoved;
     }
 
     public bool WeCanShowThisWIP(IShipDesign shipData)

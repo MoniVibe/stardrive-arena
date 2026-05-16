@@ -613,7 +613,11 @@ internal class AutoPatcher : PopupWindow
                     // SafeCopy already restored the previous dst on failure, so the install is
                     // intact for this file. Skip rather than aborting — staging cache survives,
                     // user can re-run the patcher to pick up whatever was locked this round.
-                    Log.Warning($"CopyFile skipped (destination locked — AV or in-use?): {relPath}: {e.Message}");
+                    // SafeCopy wraps as `new IOException(relPath, e)`, so e.Message is just the
+                    // relPath we already log. Walk to the inner exception for the actual cause
+                    // (sharing violation, ACL denied, disk full, etc.).
+                    string cause = e.InnerException?.Message ?? e.Message;
+                    Log.Warning($"CopyFile skipped (destination locked — AV or in-use?): {relPath}: {cause}");
                     skipped.Add(relPath);
                     if (++lockedFiles == systemicLockThreshold && maxRetries > 1)
                     {
