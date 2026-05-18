@@ -550,16 +550,45 @@ namespace Ship_Game.GameScreens.NewGame
                                          float armStartR, float armEndR, float pitch,
                                          float armThicknessFrac, float armFlareFactor, ProgressCounter step)
         {
-            // Empires get random arm positions with a generous min-spacing so they don't
-            // start on top of each other. Spacing relaxes per retry (same pattern as
-            // GenerateSystemInCluster) so we always converge on tiny galaxies.
+            // Deterministic round-robin slotting: assign each starting empire to an arm
+            // (i % numArms) and a position along that arm (i / numArms). Pure random
+            // placement into SampleArmPos relies on a min-spacing retry that decays
+            // 0.97x per attempt -- on the narrow spiral arm bands (especially Barred at
+            // armStartR=0.72) the constraint degrades into nothing and empires cluster.
+            // Round-robin guarantees angular + radial separation regardless of arm shape.
             SystemPlaceHolder[] starting = Systems.Filter(s => s.IsStartingSystem);
-            float spacing = (uSize * 0.6f / starting.Length.LowerBound(2)).LowerBound(350000f);
+            Random.Shuffle(starting); // randomize which empire gets which slot
 
-            foreach (SystemPlaceHolder sys in starting)
+            int slotsPerArm = (starting.Length + numArms - 1) / numArms; // ceiling division
+            float maxT        = (float)Math.Log(armEndR / armStartR) / pitch;
+            float jitterScale = uSize * armThicknessFrac;
+            float armSep      = RadMath.TwoPI / numArms;
+
+            for (int i = 0; i < starting.Length; i++)
             {
-                sys.Position = SampleArmPos(numArms, phase, uSize, armStartR, armEndR, pitch,
-                                             armThicknessFrac, armFlareFactor, spacing);
+                int arm  = i % numArms;
+                int slot = i / numArms;
+
+                // Center the empire in its arm slot, then add a small wiggle so the
+                // same slot doesn't land at the exact same t across replays.
+                float tFrac = (slot + 0.5f) / slotsPerArm;
+                tFrac += Random.Float(-0.15f, 0.15f) / slotsPerArm;
+                float t = tFrac.Clamped(0.05f, 0.95f) * maxT;
+
+                float r     = armStartR * uSize * (float)Math.Exp(pitch * t);
+                float theta = t + arm * armSep + phase;
+
+                // Same flare-aware perpendicular jitter SampleArmPos uses, so starting
+                // systems visually blend with the background arm stars.
+                float taperMult = 1f + armFlareFactor * (1f - t / maxT);
+                float jitterMag = (Random.Float(-1f, 1f) + Random.Float(-1f, 1f)) * 0.5f * jitterScale * taperMult;
+                float perpAngle = theta + RadMath.HalfPI;
+
+                Vector2 sysPos = new Vector2(r * RadMath.Cos(theta) + jitterMag * RadMath.Cos(perpAngle),
+                                              r * RadMath.Sin(theta) + jitterMag * RadMath.Sin(perpAngle));
+
+                starting[i].Position = sysPos;
+                ClaimedSpots.Add(sysPos);
                 step.Advance();
             }
         }
