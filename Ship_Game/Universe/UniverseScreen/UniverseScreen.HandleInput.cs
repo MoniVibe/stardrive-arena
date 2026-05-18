@@ -525,20 +525,29 @@ namespace Ship_Game
             // We instead project each candidate ship forward to screen and compare in pixel
             // space — Project alone is fine, only the invert step loses precision. Cheap
             // world-distance prefilter keeps 5000-ship epic maps well under a millisecond.
+            //
+            // Per-ship click radius: take whichever is larger — the ship's actual on-screen
+            // radius (close zoom: many pixels) or the icon-mode floor (far zoom: ~12 px).
+            // Without this the click box is fixed at 12 px and you can only select close-up
+            // ships by clicking near their geometric center.
             float iconHalfPx = (16f + GlobalStats.IconSize) * 0.5f;
             const float MarginPx = 4f;
-            float clickRadiusPx = iconHalfPx + MarginPx;
+            float iconClickRadiusPx = iconHalfPx + MarginPx;
 
             Vector2 cursor = input.CursorPosition;
             Vector2 cursorWorld = UnprojectToWorldPosition(cursor);
-            // Generous world-radius prefilter: 4x the screen click radius unprojected. Loose
-            // enough to absorb perspective skew at screen edges, tight enough to drop the
-            // overwhelming majority of off-screen ships before we project anything.
-            float prefilterWorldRadius = UnprojectToWorldSize(clickRadiusPx * 4f);
+            // Loose world-radius prefilter. At close zoom UnprojectToWorldSize(iconClick*4)
+            // is small but the largest ship's world radius dwarfs it — pad by a safe upper
+            // bound so we don't filter out a capital ship the cursor is on top of. Not a
+            // true cap; a future modded 5000-radius ship would silently lose clicks at
+            // extreme zoom — increase or derive from UState if that happens.
+            const float PrefilterPadWorldRadius = 4_000f;
+            float prefilterWorldRadius = UnprojectToWorldSize(iconClickRadiusPx * 4f)
+                                       + PrefilterPadWorldRadius;
             float prefilterWorldRadiusSq = prefilterWorldRadius * prefilterWorldRadius;
 
             Ship best = null;
-            float bestDistPx = clickRadiusPx;
+            float bestDistPx = float.MaxValue;
 
             foreach (Ship ship in UState.Ships)
             {
@@ -549,9 +558,11 @@ namespace Ship_Game
                 if (ship.Position.SqDist(cursorWorld) > prefilterWorldRadiusSq)
                     continue;
 
-                Vector2 shipScreen = ProjectToScreenPosition(ship.Position).ToVec2f();
-                float distPx = cursor.Distance(shipScreen);
-                if (distPx <= bestDistPx)
+                ProjectToScreenCoords(ship.Position, ship.Radius,
+                                      out Vector2d shipScreen, out double shipScreenRadius);
+                float threshold = Math.Max(iconClickRadiusPx, (float)shipScreenRadius + MarginPx);
+                float distPx = cursor.Distance(shipScreen.ToVec2f());
+                if (distPx <= threshold && distPx < bestDistPx)
                 {
                     best = ship;
                     bestDistPx = distPx;
