@@ -275,7 +275,11 @@ namespace Ship_Game.Universe
                 return;
 
             Vector2 corrected = HelperFunctions.GetCorrectedMovePosWithAudio(fleet.Ships, enemyShips, movePosition);
-            fleet.MoveTo(corrected, facingDir, GetMoveOrderType());
+            // ForceReassembly so AssembleFleet rotates every ship's FleetOffset to the
+            // new facingDir even for ships already moving; without it, AssembleFleet
+            // only touches AwaitingOrders ships and the fleet keeps its old formation
+            // orientation after a right-drag rotate.
+            fleet.MoveTo(corrected, facingDir, GetMoveOrderType() | AI.MoveOrder.ForceReassembly);
         }
 
         void ResetShipsTargetAndPriorityOrders(Ship ship)
