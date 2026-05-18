@@ -40,7 +40,15 @@ namespace Ship_Game
         {
             Error = e;
             IsComplete = true;
-            Finished.Set();
+            try
+            {
+                Finished.Set();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Race with Dispose(): a polling caller already observed IsComplete
+                // and disposed us before we got here. Signaling is moot.
+            }
         }
 
         // Wait until task has finished
@@ -101,7 +109,15 @@ namespace Ship_Game
             Error = e;
             Result = value != null ? (T)value : default;
             IsComplete = true;
-            Finished.Set();
+            try
+            {
+                Finished.Set();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Race with Dispose(): a polling caller already observed IsComplete
+                // and disposed us before we got here. Signaling is moot.
+            }
         }
 
         // Wait until task has finished
