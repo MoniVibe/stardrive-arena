@@ -519,16 +519,25 @@ namespace Ship_Game
             Projectile[] projs = Empty<Projectile>.Array;
             Beam[] beams = Empty<Beam>.Array;
 
+            // No cap on visibility queries: the spatial system used to return at most
+            // 1024 ships / 2048 projs / 2048 beams per visible-rect query, which was
+            // fine for old battle sizes but Combined Arms megabattles routinely
+            // exceed 1024 ships in frame. Capped queries drop the far ones, flag
+            // them InFrustum=false even when they're geometrically on screen, and
+            // their SOs flip to Visibility.None — players see ships intermittently
+            // disappear while their projectiles keep firing. 32768 here just
+            // means "return whatever's actually in the rect"; the qtree walk cost
+            // is bounded by rect size, not by this number.
             if (UState.IsPlanetViewOrCloser)
             {
-                projs = Spatial.FindNearby(GameObjectType.Proj, visibleWorld, 2048)
+                projs = Spatial.FindNearby(GameObjectType.Proj, visibleWorld, 32768)
                                .FastCast<SpatialObjectBase, Projectile>();
 
-                beams = Spatial.FindNearby(GameObjectType.Beam, visibleWorld, 2048)
+                beams = Spatial.FindNearby(GameObjectType.Beam, visibleWorld, 32768)
                                .FastCast<SpatialObjectBase, Beam>();
             }
 
-            Ship[] ships = Spatial.FindNearby(GameObjectType.Ship, visibleWorld, 1024)
+            Ship[] ships = Spatial.FindNearby(GameObjectType.Ship, visibleWorld, 32768)
                                   .FastCast<SpatialObjectBase, Ship>();
 
             // Reset frustum value for ship visible in previous frame

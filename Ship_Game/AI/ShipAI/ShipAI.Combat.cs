@@ -144,6 +144,11 @@ namespace Ship_Game.AI
             ScannedFriendlies.Clear();
         }
 
+        // Per-scan cap on PotentialTargets — the AI's combat target list. Keeps
+        // SelectCombatTarget iteration bounded even when the wider visibility
+        // scan (MaxResults below) returns more.
+        const int MaxScannedTargets = 128;
+
         public void ScanForEnemies(Ship sensorShip, float sensorRadius)
         {
             if (sensorRadius <= 0f) // sensors can be disabled, we use radius 0 to signal this
@@ -156,9 +161,17 @@ namespace Ship_Game.AI
             BadGuysNear = false;
 
             Empire us = sensorShip.Loyalty;
+            // MaxResults raised from 64 to 512 so ScanForEnemies covers the full
+            // sensor radius in dense battles. Below 512, megabattles silently
+            // dropped far-but-in-radius enemies from the scan, missed their
+            // SetSeen calls, and their KnownContactTimer (1.0s) expired —
+            // players saw distant enemy ships flicker in and out as adjacent
+            // scan ticks returned slightly different subsets. PotentialTargets
+            // is still capped via MaxScannedTargets below so the AI's combat
+            // target list stays bounded.
             var findEnemies = new SearchOptions(sensorShip.Position, sensorRadius, GameObjectType.Ship)
             {
-                MaxResults = 64,
+                MaxResults = 512,
                 Exclude = sensorShip,
                 ExcludeLoyalty = us,
             };
@@ -187,7 +200,8 @@ namespace Ship_Game.AI
                 if (us.IsEmpireAttackable(other, enemy, scanOnly:true))
                 {
                     BadGuysNear = true;
-                    ScannedTargets.Add(enemy);
+                    if (ScannedTargets.Count < MaxScannedTargets)
+                        ScannedTargets.Add(enemy);
                 }
             }
 
