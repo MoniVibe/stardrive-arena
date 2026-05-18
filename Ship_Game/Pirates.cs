@@ -914,7 +914,7 @@ namespace Ship_Game
             if (currentAssaultGoals >= maxAssaultGoals || victim.data.TaxRate > 0.8f) 
                 return;
 
-            if (FoundClosestKnownPirateBase(victim, out Ship pirateBase) || Random.RollDice(PirateBaseDetectionChance))
+            if (FoundClosestKnownUntargetedPirateBase(victim, out Ship pirateBase) || Random.RollDice(PirateBaseDetectionChance))
             {
                 Goal goal = new AssaultPirateBase(victim, Owner, pirateBase);
                 victim.AI.AddGoal(goal);
@@ -936,17 +936,28 @@ namespace Ship_Game
                 Owner.Universe.Notifications.AddDestroyedPirateBase(killedShip, reward);
         }
 
-        bool FoundClosestKnownPirateBase(Empire victim, out Ship pirateBase)
+        bool FoundClosestKnownUntargetedPirateBase(Empire victim, out Ship pirateBase)
         {
             pirateBase = null;
-            if (GetBases(out Array<Ship> bases))
+            if (!GetBases(out Array<Ship> bases))
+                return false;
+
+            var potentialClusters = victim.AI.ThreatMatrix.GetPirateBases(Owner);
+            if (potentialClusters.Length == 0)
+                return false;
+
+            Vector2 center = victim.WeightedCenter;
+            var sortedClusters = potentialClusters.Sorted(c => c.Position.SqDist(center));
+            foreach (var cluster in sortedClusters)
             {
-                var potentialClusters = victim.AI.ThreatMatrix.GetPirateBases(Owner);
-                if (potentialClusters.Length > 0)
+                for (int i = 0; i < cluster.Ships.Length; i++)
                 {
-                    var closestCluster = potentialClusters.FindMin(c => c.Position.SqDist(victim.WeightedCenter));
-                    pirateBase = closestCluster.Ships.Find(s => bases.Any(b => b == s));
-                    return pirateBase != null;
+                    Ship ship = cluster.Ships[i];
+                    if (bases.Any(b => b == ship) && !victim.AI.HasAssaultPirateBaseTask(ship, out _))
+                    {
+                        pirateBase = ship;
+                        return true;
+                    }
                 }
             }
 
