@@ -4689,6 +4689,10 @@ namespace Ship_Game
         SpiralBarredGalaxyGame = 4530,
         /// <summary>Each empire starts at a random place along the arms of a barred spiral galaxy</summary>
         SpiralBarredGalaxyGameTip = 4531,
+        /// <summary>Magellanic Spiral Galaxy</summary>
+        SpiralMagellanicGalaxyGame = 4532,
+        /// <summary>Each empire starts in a single fat asymmetric arm wrapped around an off-center bulge</summary>
+        SpiralMagellanicGalaxyGameTip = 4533,
 
 
 

@@ -289,9 +289,10 @@ namespace Ship_Game.GameScreens.NewGame
                 case RaceDesignScreen.GameMode.BigClusters:   GenerateBigClusters(step);      break;
                 case RaceDesignScreen.GameMode.SmallClusters: GenerateSmallClusters(step);    break;
                 case RaceDesignScreen.GameMode.Ring:          GenerateRingMap(step);          break;
-                case RaceDesignScreen.GameMode.SpiralTwoArm:  GenerateSpiralMap(step, SpiralVariant.TwoArm);  break;
-                case RaceDesignScreen.GameMode.SpiralFourArm: GenerateSpiralMap(step, SpiralVariant.FourArm); break;
-                case RaceDesignScreen.GameMode.SpiralBarred:  GenerateSpiralMap(step, SpiralVariant.Barred);  break;
+                case RaceDesignScreen.GameMode.SpiralTwoArm:     GenerateSpiralMap(step, SpiralVariant.TwoArm);     break;
+                case RaceDesignScreen.GameMode.SpiralFourArm:    GenerateSpiralMap(step, SpiralVariant.FourArm);    break;
+                case RaceDesignScreen.GameMode.SpiralBarred:     GenerateSpiralMap(step, SpiralVariant.Barred);     break;
+                case RaceDesignScreen.GameMode.SpiralMagellanic: GenerateSpiralMap(step, SpiralVariant.Magellanic); break;
                 case RaceDesignScreen.GameMode.Sandbox:       GenerateRandomMap(step, false); break;
                 default:                                      GenerateRandomMap(step, true);  break;
             }
@@ -496,8 +497,8 @@ namespace Ship_Game.GameScreens.NewGame
             SolarSystemSpacingRing(step);
         }
 
-        // Three flavors of spiral galaxy, each picked explicitly via GameMode.
-        enum SpiralVariant { TwoArm, FourArm, Barred }
+        // Four flavors of spiral galaxy, each picked explicitly via GameMode.
+        enum SpiralVariant { TwoArm, FourArm, Barred, Magellanic }
 
         void GenerateSpiralMap(ProgressCounter step, SpiralVariant variant)
         {
@@ -527,6 +528,15 @@ namespace Ship_Game.GameScreens.NewGame
                     // the bar-tip end further.
                     numArms = 2; bulgeFraction = 0.30f; bulgeRadius = 0.18f; armThicknessFrac = 0.06f;
                     armStartR = 0.72f; armEndR = 0.95f; pitch = 0.088f; armFlareFactor = 4.0f; hasBar = true;  break;
+                case SpiralVariant.Magellanic:
+                    // Single fat arm wrapping ~250 around an off-center bulge. No bar.
+                    // originOffset (computed below) shifts the whole galaxy sideways so the
+                    // map looks lopsided -- the Magellanic Clouds signature. Sized to fill
+                    // the universe: bulge to 0.45 uSize, arm reaches to 0.95 uSize
+                    // (+0.10 offset = ~1.05 from world center on the offset axis; OOB
+                    // stars are rejected by SystemPosOK and respawned).
+                    numArms = 1; bulgeFraction = 0.30f; bulgeRadius = 0.55f; armThicknessFrac = 0.11f;
+                    armStartR = 0.50f; armEndR = 0.95f; pitch = 0.147f; armFlareFactor = 1.0f; hasBar = false; break;
                 default: // TwoArm -- tighter winding (more curves) than the other variants
                     numArms = 2; bulgeFraction = 0.18f; bulgeRadius = 0.22f; armThicknessFrac = 0.075f;
                     armStartR = 0.20f; armEndR = 0.92f; pitch = 0.25f; armFlareFactor = 0f; hasBar = false; break;
@@ -538,36 +548,80 @@ namespace Ship_Game.GameScreens.NewGame
             float uSize  = UState.Size;
             float phase  = Random.Float(0f, RadMath.TwoPI); // randomize galactic orientation
 
+            // Magellanic-only: shift the whole galaxy off-center perpendicular to the arm
+            // origin direction so the map looks visibly lopsided. Magnitude (0.10 * uSize)
+            // tuned so the bulk of the arm stays in-bounds even with armEndR=0.92;
+            // outliers are rejected by SystemPosOK and respawned.
+            Vector2 originOffset = Vector2.Zero;
+            if (variant == SpiralVariant.Magellanic)
+                originOffset = new Vector2(-RadMath.Sin(phase), RadMath.Cos(phase)) * (uSize * 0.10f);
+
             Log.Info($"Spiral galaxy variant: {variant} (numArms={numArms}, bulge={bulgeFraction:P0})");
 
-            PlaceSpiralStartingSystems(numArms, phase, uSize, armStartR, armEndR, pitch, armThicknessFrac, armFlareFactor, step);
+            // Magellanic puts most starting empires inside the bulge (it's huge and
+            // anchors the galaxy); the rest spread along the single arm. Other variants
+            // place all empires on arms via round-robin -- no bulge starts.
+            float bulgeStartFraction = variant == SpiralVariant.Magellanic ? 0.75f : 0f;
+
+            PlaceSpiralStartingSystems(numArms, phase, uSize, armStartR, armEndR, pitch, armThicknessFrac, armFlareFactor,
+                                        bulgeRadius, bulgeStartFraction, originOffset, step);
             PlaceSpiralBackgroundSystems(numArms, phase, uSize, armStartR, armEndR, pitch,
                                           armThicknessFrac, armFlareFactor, bulgeFraction, bulgeRadius,
-                                          hasBar, barHalfLen, barHalfWid, step);
+                                          hasBar, barHalfLen, barHalfWid, originOffset, step);
         }
 
         void PlaceSpiralStartingSystems(int numArms, float phase, float uSize,
                                          float armStartR, float armEndR, float pitch,
-                                         float armThicknessFrac, float armFlareFactor, ProgressCounter step)
+                                         float armThicknessFrac, float armFlareFactor,
+                                         float bulgeRadius, float bulgeStartFraction,
+                                         Vector2 originOffset, ProgressCounter step)
         {
-            // Deterministic round-robin slotting: assign each starting empire to an arm
-            // (i % numArms) and a position along that arm (i / numArms). Pure random
-            // placement into SampleArmPos relies on a min-spacing retry that decays
-            // 0.97x per attempt -- on the narrow spiral arm bands (especially Barred at
-            // armStartR=0.72) the constraint degrades into nothing and empires cluster.
-            // Round-robin guarantees angular + radial separation regardless of arm shape.
+            // Two-phase placement so that bulge-anchored variants (Magellanic) can put
+            // some empires in the central blob and the rest on arms.
+            //
+            // Phase 1: bulgeStartFraction of starts get sampled inside the bulge with
+            //          decaying min-spacing -- empires spread inside the central blob
+            //          but not too close to each other.
+            // Phase 2: remaining starts are slotted onto arms via deterministic
+            //          round-robin (arm = i % numArms, slot = i / numArms). Pure
+            //          random placement into SampleArmPos uses a min-spacing retry
+            //          that decays 0.97x per attempt -- on narrow arm bands the
+            //          constraint degrades into nothing and empires cluster. Slotting
+            //          guarantees angular + radial separation regardless of arm shape.
             SystemPlaceHolder[] starting = Systems.Filter(s => s.IsStartingSystem);
-            Random.Shuffle(starting); // randomize which empire gets which slot
+            Random.Shuffle(starting); // randomize which empire gets bulge vs arm
 
-            int slotsPerArm = (starting.Length + numArms - 1) / numArms; // ceiling division
+            int inBulgeCount = (int)Math.Round(starting.Length * bulgeStartFraction);
+            int onArmCount   = starting.Length - inBulgeCount;
+
+            // Phase 1: bulge placements
+            float bulgeMaxR    = uSize * bulgeRadius;
+            float bulgeSpacing = bulgeMaxR * 0.5f;
+            for (int i = 0; i < inBulgeCount; i++)
+            {
+                Vector2 sysPos = default;
+                int attempts = 0;
+                do
+                {
+                    sysPos = Random.RandomPointInRing(0f, bulgeMaxR) + originOffset;
+                    bulgeSpacing *= 0.97f;
+                } while (!SystemPosOK(sysPos, bulgeSpacing) && ++attempts < 200);
+
+                starting[i].Position = sysPos;
+                ClaimedSpots.Add(sysPos);
+                step.Advance();
+            }
+
+            // Phase 2: arm placements via round-robin slotting
+            int slotsPerArm   = onArmCount > 0 ? (onArmCount + numArms - 1) / numArms : 1;
             float maxT        = (float)Math.Log(armEndR / armStartR) / pitch;
             float jitterScale = uSize * armThicknessFrac;
             float armSep      = RadMath.TwoPI / numArms;
 
-            for (int i = 0; i < starting.Length; i++)
+            for (int armIndex = 0; armIndex < onArmCount; armIndex++)
             {
-                int arm  = i % numArms;
-                int slot = i / numArms;
+                int arm  = armIndex % numArms;
+                int slot = armIndex / numArms;
 
                 // Center the empire in its arm slot, then add a small wiggle so the
                 // same slot doesn't land at the exact same t across replays.
@@ -586,8 +640,9 @@ namespace Ship_Game.GameScreens.NewGame
 
                 Vector2 sysPos = new Vector2(r * RadMath.Cos(theta) + jitterMag * RadMath.Cos(perpAngle),
                                               r * RadMath.Sin(theta) + jitterMag * RadMath.Sin(perpAngle));
+                sysPos += originOffset;
 
-                starting[i].Position = sysPos;
+                starting[inBulgeCount + armIndex].Position = sysPos;
                 ClaimedSpots.Add(sysPos);
                 step.Advance();
             }
@@ -598,7 +653,7 @@ namespace Ship_Game.GameScreens.NewGame
                                            float armThicknessFrac, float armFlareFactor,
                                            float bulgeFraction, float bulgeRadius,
                                            bool hasBar, float barHalfLen, float barHalfWid,
-                                           ProgressCounter step)
+                                           Vector2 originOffset, ProgressCounter step)
         {
             // Shuffle so file-order doesn't determine arm position (same reasoning as
             // GenerateClusterSystems: predefined systems should not always land in the
@@ -612,17 +667,18 @@ namespace Ship_Game.GameScreens.NewGame
                 if (inBulge && hasBar)
                     sys.Position = SampleBarPos(phase, uSize, barHalfLen, barHalfWid);
                 else if (inBulge)
-                    sys.Position = SampleBulgePos(uSize, bulgeRadius);
+                    sys.Position = SampleBulgePos(uSize, bulgeRadius, originOffset);
                 else
                     sys.Position = SampleArmPos(numArms, phase, uSize, armStartR, armEndR, pitch,
-                                                 armThicknessFrac, armFlareFactor, 250000f);
+                                                 armThicknessFrac, armFlareFactor, originOffset, 250000f);
                 step.Advance();
             }
         }
 
         Vector2 SampleArmPos(int numArms, float phase, float uSize,
                               float armStartR, float armEndR, float pitch,
-                              float armThicknessFrac, float armFlareFactor, float spacing)
+                              float armThicknessFrac, float armFlareFactor,
+                              Vector2 originOffset, float spacing)
         {
             float maxT = (float)Math.Log(armEndR / armStartR) / pitch; // angular extent of one arm
             float jitterScale = uSize * armThicknessFrac;
@@ -658,6 +714,7 @@ namespace Ship_Game.GameScreens.NewGame
                 float perpAngle = theta + RadMath.HalfPI;
                 sysPos = new Vector2(r * RadMath.Cos(theta) + jitterMag * RadMath.Cos(perpAngle),
                                      r * RadMath.Sin(theta) + jitterMag * RadMath.Sin(perpAngle));
+                sysPos += originOffset;
 
                 spacing *= 0.97f;
             } while (!SystemPosOK(sysPos, spacing) && ++attempts < 200);
@@ -666,7 +723,7 @@ namespace Ship_Game.GameScreens.NewGame
             return sysPos;
         }
 
-        Vector2 SampleBulgePos(float uSize, float bulgeRadiusFrac)
+        Vector2 SampleBulgePos(float uSize, float bulgeRadiusFrac, Vector2 originOffset)
         {
             float maxR = uSize * bulgeRadiusFrac;
             float spacing = 200000f;
@@ -674,7 +731,7 @@ namespace Ship_Game.GameScreens.NewGame
             int attempts = 0;
             do
             {
-                sysPos = Random.RandomPointInRing(0f, maxR);
+                sysPos = Random.RandomPointInRing(0f, maxR) + originOffset;
                 spacing *= 0.95f;
             } while (!SystemPosOK(sysPos, spacing) && ++attempts < 200);
 

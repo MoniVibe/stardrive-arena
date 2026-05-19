@@ -412,9 +412,10 @@ namespace Ship_Game
                 case GameMode.BigClusters:   return GameText.BigClustersGame;
                 case GameMode.SmallClusters: return GameText.SmallClustersGame;
                 case GameMode.Ring:           return GameText.RingGalaxyGame;
-                case GameMode.SpiralTwoArm:   return GameText.SpiralTwoArmGalaxyGame;
-                case GameMode.SpiralFourArm:  return GameText.SpiralFourArmGalaxyGame;
-                case GameMode.SpiralBarred:   return GameText.SpiralBarredGalaxyGame;
+                case GameMode.SpiralTwoArm:     return GameText.SpiralTwoArmGalaxyGame;
+                case GameMode.SpiralFourArm:    return GameText.SpiralFourArmGalaxyGame;
+                case GameMode.SpiralBarred:     return GameText.SpiralBarredGalaxyGame;
+                case GameMode.SpiralMagellanic: return GameText.SpiralMagellanicGalaxyGame;
             }
         }
 
@@ -430,9 +431,10 @@ namespace Ship_Game
                 case GameMode.BigClusters:    return GameText.EachEmpireStartsInA;
                 case GameMode.SmallClusters:  return GameText.TheGalaxyWillBeConsisted;
                 case GameMode.Ring:           return GameText.RingGalaxyGameTip;
-                case GameMode.SpiralTwoArm:   return GameText.SpiralTwoArmGalaxyGameTip;
-                case GameMode.SpiralFourArm:  return GameText.SpiralFourArmGalaxyGameTip;
-                case GameMode.SpiralBarred:   return GameText.SpiralBarredGalaxyGameTip;
+                case GameMode.SpiralTwoArm:     return GameText.SpiralTwoArmGalaxyGameTip;
+                case GameMode.SpiralFourArm:    return GameText.SpiralFourArmGalaxyGameTip;
+                case GameMode.SpiralBarred:     return GameText.SpiralBarredGalaxyGameTip;
+                case GameMode.SpiralMagellanic: return GameText.SpiralMagellanicGalaxyGameTip;
             }
         }
 
@@ -708,7 +710,7 @@ namespace Ship_Game
         
         public enum GameMode
         {
-            Sandbox, SpiralTwoArm, SpiralFourArm, SpiralBarred, Random, Ring, SmallClusters, BigClusters, Elimination, Corners
+            Sandbox, SpiralTwoArm, SpiralFourArm, SpiralBarred, SpiralMagellanic, Random, Ring, SmallClusters, BigClusters, Elimination, Corners
         }
 
         public enum StarsAbundance

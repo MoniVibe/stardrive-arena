@@ -12455,6 +12455,12 @@ SpiralBarredGalaxyGame:
 SpiralBarredGalaxyGameTip:
  Id: 4531
  ENG: "Each empire starts at a random place along the arms of a barred spiral galaxy, where a central elongated bar of stars feeds two trailing arms."
+SpiralMagellanicGalaxyGame:
+ Id: 4532
+ ENG: "Magellanic Spiral Galaxy"
+SpiralMagellanicGalaxyGameTip:
+ Id: 4533
+ ENG: "Each empire starts along a single fat asymmetric arm wrapping around an off-center bulge. The galaxy is visibly lopsided and one arm carries every starting system."
 FlatIncomePerTurn:
  Id: 4384
  ENG: "Flat Income Per Turn" 
