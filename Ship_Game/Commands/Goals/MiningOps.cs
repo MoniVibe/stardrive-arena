@@ -19,6 +19,7 @@ namespace Ship_Game.Commands.Goals
         [StarData] int NumSupplyGoals = 1;
         [StarData] float SupplyDificit;
         Ship MiningStation => TargetShip;
+        public override IShipDesign ToBuild => StationToBuild;
         string ResourceCargoName => TargetPlanet.Mining.CargoId;
         float RemainingConsumables => Owner.NonCybernetic ? MiningStation.GetFood() : MiningStation.GetProduction();
         float ActualRefiningRatio => (TargetPlanet.Mining.RefiningRatio * Owner.data.RefiningRatioMultiplier).UpperBound(1);

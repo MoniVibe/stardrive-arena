@@ -21,8 +21,9 @@ namespace Ship_Game.Commands.Goals
         [StarData] int NumSupplyGoals = 1;
         [StarData] float SupplyDificit;
         Ship ResearchStation => TargetShip;
+        public override IShipDesign ToBuild => StationToBuild;
 
-        public override bool IsResearchStationGoal(ExplorableGameObject body) 
+        public override bool IsResearchStationGoal(ExplorableGameObject body)
             => body != null && (TargetPlanet == body || TargetSystem == body);
 
         [StarDataConstructor]
