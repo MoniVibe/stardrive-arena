@@ -259,9 +259,8 @@ namespace Ship_Game.Graphics.Particles
 
         bool ReloadAfterDisposed()
         {
-            ParticleEffect template = Data.Manager.GetEffectTemplate(Data.Name);
-            if (template == null) // effect was removed
-                return false;
+            if (!Data.Manager.TryGetEffectTemplate(Data.Name, out ParticleEffect template))
+                return false; // mid-reload race or genuinely removed; skip this frame silently
 
             // set latest metadata and reset all emitters
             Data = template.Data;
