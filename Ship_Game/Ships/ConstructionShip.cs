@@ -100,7 +100,7 @@ namespace Ship_Game.Ships
                 Owner.Universe.Screen.ResetConstructionParts(Owner.Id);
         }
 
-        public void AddConstructionEffects()
+        public void AddConstructionEffects(Planet tetherPlanet)
         {
             if (Owner == null || !ConstructionStarted)
                 return;
@@ -137,7 +137,7 @@ namespace Ship_Game.Ships
                 if (percentCompleted > 5 && universe.Random.RollDice(percentCompleted*1.2f))
                 {
                     center = RandomPoint();
-                    SpaceJunk.ConstructionPart(universe, center.ToVec2(), Owner.Velocity, Owner, percentCompleted);
+                    SpaceJunk.ConstructionPart(universe, center.ToVec2(), Owner.Velocity, Owner, percentCompleted, tetherPlanet);
                 }
             }
 

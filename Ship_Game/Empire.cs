@@ -2234,6 +2234,9 @@ namespace Ship_Game
                     troop.ChangeLoyalty(this);
             }
 
+            for (int i = 0; i < planets.Count; i++)
+                planets[i].LaunchNonOwnerTroops();
+
             target.ClearAllPlanets();
             var ships = target.OwnedShips;
             for (int i = ships.Count - 1; i >= 0; i--)

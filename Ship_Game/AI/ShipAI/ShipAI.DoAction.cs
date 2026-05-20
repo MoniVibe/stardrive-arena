@@ -278,7 +278,7 @@ namespace Ship_Game.AI
             }
 
             ReverseThrustUntilStopped(timeStep);
-            Owner.Construction.AddConstructionEffects();
+            Owner.Construction.AddConstructionEffects(bg.TetherPlanet);
             if (!Owner.Construction.ConsturctionCompleted)
                 return;
 
@@ -354,7 +354,7 @@ namespace Ship_Game.AI
             }
 
             ReverseThrustUntilStopped(timeStep);
-            Owner.Construction.AddConstructionEffects();
+            Owner.Construction.AddConstructionEffects(bg.TetherPlanet);
             if (!Owner.Construction.ConsturctionCompleted)
                 return;
 
@@ -385,7 +385,10 @@ namespace Ship_Game.AI
             if (!orbital.IsResearchStation)
                 return;
 
-            Goal goal = Owner.Loyalty.AI.FindGoal(g => g.IsResearchStationGoal(target));
+            Goal goal = Owner.Loyalty.AI.FindGoal(g => g.IsResearchStationGoal(target)
+                                                   && g.StepName == "WaitForConstructor"
+                                                   && g.TargetShip == null
+                                                   && g.ToBuild?.Name == orbital.Name);
             if (goal != null)
             {
                 goal.TargetShip = orbital;
@@ -398,9 +401,12 @@ namespace Ship_Game.AI
             if (!orbital.IsMiningStation)
                 return;
 
-            Goal goal = Owner.Loyalty.AI.FindGoal(g => g.IsMiningOpsGoal(planet) 
-                                                  && (oldShipToRefit == null ? g.StepName == "WaitForConstructor"
-                                                                             : g.TargetShip == oldShipToRefit));
+            Goal goal = Owner.Loyalty.AI.FindGoal(g => g.IsMiningOpsGoal(planet)
+                                                  && (oldShipToRefit == null
+                                                      ? g.StepName == "WaitForConstructor" 
+                                                            && g.TargetShip == null 
+                                                            && g.ToBuild?.Name == orbital.Name
+                                                      : g.TargetShip == oldShipToRefit));
 
             if (goal != null)
                 goal.TargetShip = orbital;
