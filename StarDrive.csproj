@@ -97,7 +97,9 @@
     <Compile Include="Ship_Game\AI\ThreatMatrix_ClustersGenerator.cs" />
     <Compile Include="Ship_Game\AI\ThreatMatrix_Update.cs" />
     <Compile Include="Ship_Game\ChoosePatrolPlanWindow.cs" />
+    <Compile Include="Ship_Game\Codex\CodexCategoryListItem.cs" />
     <Compile Include="Ship_Game\Codex\CodexEntry.cs" />
+    <Compile Include="Ship_Game\Codex\CodexScreen.cs" />
     <Compile Include="Ship_Game\Commands\Goals\RemnantHelpEmpire.cs" />
     <Compile Include="Ship_Game\Debug\Page\EspionageDebug.cs" />
     <Compile Include="Ship_Game\Debug\Page\MiningOpsDebug.cs" />
@@ -637,7 +639,6 @@
     <Compile Include="Ship_Game\StoryAndEvents\ArtifactItemListItem.cs" />
     <Compile Include="Ship_Game\StoryAndEvents\EncounterInstance.cs" />
     <Compile Include="Ship_Game\StoryAndEvents\ResponseListItem.cs" />
-    <Compile Include="Ship_Game\StoryAndEvents\WikiHelpCategoryListItem.cs" />
     <Compile Include="Ship_Game\UI\Effects\UIBasicAnimEffect.cs" />
     <Compile Include="Ship_Game\SpriteSystem\SpriteAnimation.cs" />
     <Compile Include="Ship_Game\SpriteSystem\SpriteExtensions.cs" />
@@ -863,7 +864,6 @@
     <Compile Include="Ship_Game\Direction.cs" />
     <Compile Include="Ship_Game\Transition.cs" />
     <Compile Include="Ship_Game\SpaceJunk.cs" />
-    <Compile Include="Ship_Game\StoryAndEvents\InGameWiki.cs" />
     <Compile Include="Ship_Game\Universe\MiniMap.cs" />
     <Compile Include="Ship_Game\StoryAndEvents\Agents\Mole.cs" />
     <Compile Include="Ship_Game\AI\StrategyAI\WarType.cs" />

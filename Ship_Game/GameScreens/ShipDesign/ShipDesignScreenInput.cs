@@ -527,7 +527,7 @@ namespace Ship_Game
                         break;
                     case "?":
                         GameAudio.TacticalPause();
-                        ScreenManager.AddScreen(new InGameWiki(this));
+                        ScreenManager.AddScreen(new Codex.CodexScreen(this));
                         break;
                 }
             }

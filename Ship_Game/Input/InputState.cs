@@ -134,8 +134,8 @@ namespace Ship_Game
         public bool QueueAction          => IsShiftKeyDown;
         public bool ShipPieMenu          => KeyPressed(Keys.Q);
         
-        // IngameWiki
-        public bool InGameWiki => KeyPressed(Keys.Back);
+        // CodexScreen — open/close binding
+        public bool Codex => KeyPressed(Keys.Back);
 
         // FleetDesignScreen
         public bool FleetRemoveSquad => KeyPressed(Keys.Back) || KeyPressed(Keys.Delete);

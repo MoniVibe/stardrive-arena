@@ -1,15 +1,14 @@
 using Microsoft.Xna.Framework.Graphics;
-using Ship_Game.Codex;
 using Color = Microsoft.Xna.Framework.Color;
 using Vector2 = SDGraphics.Vector2;
 
-namespace Ship_Game
+namespace Ship_Game.Codex
 {
-    public class WikiHelpCategoryListItem : ScrollListItem<WikiHelpCategoryListItem>
+    public class CodexCategoryListItem : ScrollListItem<CodexCategoryListItem>
     {
         public CodexEntry Entry;
 
-        public WikiHelpCategoryListItem(CodexEntry entry)
+        public CodexCategoryListItem(CodexEntry entry)
         {
             Entry = entry;
             // Categories (entries with children) act as expandable headers; the base

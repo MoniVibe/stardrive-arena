@@ -328,10 +328,10 @@ namespace Ship_Game
                         Universe.ScreenManager.AddScreen(new InfiltrationScreen(Universe));
                     return true;
                 }
-                if (input.InGameWiki)
+                if (input.Codex)
                 {
                     GameAudio.TacticalPause();
-                    Universe.ScreenManager.AddScreen(new InGameWiki(Universe));
+                    Universe.ScreenManager.AddScreen(new Codex.CodexScreen(Universe));
                     return true;
                 }
                 if (input.KeyPressed(Keys.Home))
@@ -482,7 +482,7 @@ namespace Ship_Game
                         else if (b.launches == "?")
                         {
                             GameAudio.TacticalPause();
-                            Universe.ScreenManager.AddScreen(new InGameWiki(Universe));
+                            Universe.ScreenManager.AddScreen(new Codex.CodexScreen(Universe));
                         }
                         return true;
                     }
@@ -588,7 +588,7 @@ namespace Ship_Game
                         else if (b.launches == "?")
                         {
                             GameAudio.TacticalPause();
-                            Universe.ScreenManager.AddScreen(new InGameWiki(Universe));
+                            Universe.ScreenManager.AddScreen(new Codex.CodexScreen(Universe));
                         }
                         return true; // input captured
                     }

@@ -1,0 +1,250 @@
+using Microsoft.Xna.Framework.Graphics;
+using Color = Microsoft.Xna.Framework.Color;
+using SDGraphics;
+using SDUtils;
+using Ship_Game.Audio;
+using Ship_Game.Data.Yaml;
+using Ship_Game.GameScreens;
+using Vector2 = SDGraphics.Vector2;
+
+namespace Ship_Game.Codex
+{
+    public sealed class CodexScreen : PopupWindow
+    {
+        readonly Array<CodexEntry> Roots;
+        ScrollList<CodexCategoryListItem> CategoryList;
+        // UID → ScrollList item, populated as the tree is built; powers OpenAt(uid).
+        readonly Map<string, CodexCategoryListItem> ItemByUid = new();
+        RectF TextRect;
+        Vector2 TitlePosition;
+        UITextBox EntryBody;
+
+        ScreenMediaPlayer Player;
+        RectF SmallViewer;
+        RectF BigViewer;
+        CodexEntry ActiveEntry;
+        string ActiveTitle = "";
+        string ActiveText = "";
+
+        public CodexScreen(GameScreen parent) : base(parent, 1100, 750)
+        {
+            IsPopup           = true;
+            TransitionOnTime  = 0.25f;
+            TransitionOffTime = 0.25f;
+
+            var file = ResourceManager.GetModOrVanillaFile("Codex.yaml");
+            Roots = file != null && file.Exists
+                ? YamlParser.DeserializeArray<CodexEntry>(file)
+                : new Array<CodexEntry>();
+            // YamlParser doesn't fire [StarDataDeserialized] hooks, so trigger
+            // the UID-driven NameId derivation here explicitly.
+            foreach (CodexEntry root in Roots)
+                root.ResolveDefaults();
+
+            TitleText  = Localizer.Token("CodexTitle");
+            MiddleText = Localizer.Token(GameText.ThisHelpMenuContainsInformation);
+        }
+
+        public override void LoadContent()
+        {
+            base.LoadContent();
+
+            TitleText += $" {GlobalStats.ExtendedVersion}";
+            if (GlobalStats.HasMod)
+            {
+                MiddleText = $"Mod Loaded: {GlobalStats.ModName} Ver: {GlobalStats.ActiveMod.Mod.Version}";
+            }
+
+            ActiveEntry = null;
+            ActiveTitle = Localizer.Token("CodexTitle");
+            ActiveText  = Localizer.Token(GameText.SelectATopicOnThe);
+
+            // Lay out two columns of content between MidSepBot and the bottom chrome
+            // (PopupWindow draws bottom border + close-button strip in the last ~30px).
+            float top = MidSepBot.Y + 10;
+            float usableH = Rect.Bottom - 30 - top;
+            float catW = 480f;
+            float gap = 10f;
+            float bodyW = Rect.Right - 25 - catW - gap - 25; // 25px right margin
+
+            RectF categoriesRect = new(Rect.X + 25, top, catW, usableH);
+            CategoryList = Add(new ScrollList<CodexCategoryListItem>(categoriesRect));
+
+            TextRect = new(categoriesRect.X + catW + gap, top, bodyW, usableH);
+            EntryBody = Add(new UITextBox(TextRect, useBorder: false));
+
+            ResetActiveTopic();
+
+            SmallViewer = new(TextRect.X + 20, TextRect.Y + 40, 480, 270);
+            BigViewer = new(ScreenWidth / 2 - 640, ScreenHeight / 2 - 360, 1280, 720);
+            Player = new(ContentManager)
+            {
+                EnableInteraction = true,
+                MuteGameAudioWhilePlaying = true,
+                OnPlayStatusChange = OnPlayerStatusChanged
+            };
+
+            // LoadContent can re-run (resolution change, hot-reload). Rebuild the
+            // UID map alongside the ScrollList so stale references can't leak in.
+            ItemByUid.Clear();
+            foreach (CodexEntry root in Roots)
+                AddCategoryRecursive(parent: null, root);
+
+            CategoryList.OnClick = OnCategoryClicked;
+        }
+
+        // Build the ScrollList tree from CodexEntry.Children. Arbitrary depth: each
+        // entry with children becomes an expandable header; leaves render Title +
+        // ShortDesc directly.
+        void AddCategoryRecursive(CodexCategoryListItem parent, CodexEntry entry)
+        {
+            var item = new CodexCategoryListItem(entry);
+            if (parent == null)
+                CategoryList.AddItem(item);
+            else
+                parent.AddSubItem(item);
+
+            if (!string.IsNullOrEmpty(entry.UID))
+                ItemByUid[entry.UID] = item;
+
+            if (entry.Children != null)
+            {
+                foreach (CodexEntry child in entry.Children)
+                    AddCategoryRecursive(item, child);
+            }
+        }
+
+        void ResetActiveTopic()
+        {
+            EntryBody.SetLines(ActiveText, Fonts.Arial12Bold, Color.White);
+            float titleW = Fonts.Arial20Bold.TextWidth(ActiveTitle);
+            TitlePosition = new(TextRect.CenterX - titleW / 2f - 15f, TextRect.Y + 10);
+        }
+
+        void OnCategoryClicked(CodexCategoryListItem item)
+        {
+            // A bare category header has children but no body of its own — clear video
+            // and leave the previous selection intact.
+            if (item.IsHeader)
+            {
+                Player?.Stop();
+                if (Player != null) Player.Visible = false;
+                return;
+            }
+
+            SelectEntry(item.Entry);
+        }
+
+        void SelectEntry(CodexEntry entry)
+        {
+            EntryBody.Clear();
+            ActiveEntry = entry;
+            ActiveTitle = entry != null && !string.IsNullOrEmpty(entry.TitleId)
+                ? Localizer.Token(entry.TitleId)
+                : "";
+            ActiveText  = entry != null && !string.IsNullOrEmpty(entry.TextId)
+                ? Localizer.Token(entry.TextId)
+                : "";
+
+            if (!string.IsNullOrEmpty(ActiveText))
+                ResetActiveTopic();
+
+            if (entry != null && !string.IsNullOrEmpty(entry.Link))
+                Log.OpenURL(entry.Link);
+
+            if (entry == null || string.IsNullOrEmpty(entry.VideoPath))
+            {
+                Player?.Stop();
+                if (Player != null) Player.Visible = false;
+            }
+            else
+            {
+                EntryBody.Clear();
+                Player.PlayVideo(entry.VideoPath, looping: false, startPaused: true);
+                Player.Visible = true;
+            }
+        }
+
+        // Public deep-link API for tooltip hooks. Locate the entry by UID, expand
+        // every ancestor in the source tree so the leaf is visible, then select it.
+        // No-op + warn if the UID is not found — stale callsites mustn't hard-fail.
+        public void OpenAt(string uid)
+        {
+            if (string.IsNullOrEmpty(uid) || !ItemByUid.TryGetValue(uid, out CodexCategoryListItem target))
+            {
+                Log.Warning($"CodexScreen.OpenAt: UID '{uid}' not found in Codex.yaml");
+                return;
+            }
+
+            ExpandAncestors(Roots, uid);
+            SelectEntry(target.Entry);
+        }
+
+        bool ExpandAncestors(Array<CodexEntry> branch, string targetUid)
+        {
+            foreach (CodexEntry e in branch)
+            {
+                if (e.UID == targetUid)
+                    return true;
+                if (e.Children != null && ExpandAncestors(e.Children, targetUid))
+                {
+                    if (ItemByUid.TryGetValue(e.UID, out CodexCategoryListItem item))
+                        item.Expand(true);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        void OnPlayerStatusChanged()
+        {
+            Player.Rect = Player.IsPlaying ? BigViewer : SmallViewer;
+        }
+
+        public override bool HandleInput(InputState input)
+        {
+            if (Player != null && Player.HandleInput(input))
+                return true;
+
+            if (!GlobalStats.TakingInput && input.Codex)
+            {
+                GameAudio.EchoAffirmative();
+                ExitScreen();
+                return true;
+            }
+
+            return base.HandleInput(input);
+        }
+
+        public override void Draw(SpriteBatch batch, DrawTimes elapsed)
+        {
+            ScreenManager.FadeBackBufferToBlack(TransitionAlpha * 2 / 3);
+            base.Draw(batch, elapsed);
+
+            batch.SafeBegin();
+
+            Player?.Draw(batch);
+            if (Player != null && Player.IsPaused)
+            {
+                batch.DrawRectangleGlow(Player.Rect);
+                batch.DrawString(Fonts.Arial20Bold, ActiveTitle, TitlePosition, Color.Orange);
+            }
+
+            batch.SafeEnd();
+        }
+
+        public override void ExitScreen()
+        {
+            Player?.Stop();
+            base.ExitScreen();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (IsDisposed)
+                return;
+            Player?.Dispose();
+            base.Dispose(disposing);
+        }
+    }
+}
