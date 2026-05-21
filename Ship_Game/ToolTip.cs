@@ -56,8 +56,9 @@ namespace Ship_Game
         /// <param name="position">Position hint, otherwise cursor will be used</param>
         /// <param name="minShowTime">Minimum time to show this Tooltip, regardless of being hovered</param>
         /// <param name="maxWidth">Maximum width for the tooltip</param>
+        /// <param name="codexUid">Optional Codex UID; if set, the tooltip shows a "Press F1 for details" hint and F1 deep-links to that entry.</param>
         public static void CreateTooltip(in LocalizedText tip, string hotKey, Vector2? position,
-                                         float minShowTime = 0, float maxWidth = 0)
+                                         float minShowTime = 0, float maxWidth = 0, string codexUid = null)
         {
             string rawText = tip.Text;
             if (rawText.IsEmpty())
@@ -70,6 +71,9 @@ namespace Ship_Game
             if (tipItem != null)
             {
                 tipItem.HoveredThisFrame = true;
+                // Update the codex hook on every hover frame — the hovered
+                // UI element decides the current target, not the cached tip.
+                tipItem.CodexUid = codexUid;
                 return;
             }
 
@@ -83,11 +87,14 @@ namespace Ship_Game
             tipItem.RawText = rawText;
             tipItem.Text = font.ParseText(rawText, maxWidth);
             tipItem.HotKey = hotKey;
+            tipItem.CodexUid = codexUid;
 
             Vector2 size = font.MeasureString(tipItem.Text);
             if (hotKey.NotEmpty()) // Reserve space for HotKey as well:
                 size.Y += font.LineSpacing * 2;
-            
+            if (codexUid != null) // Reserve space for the codex hint line.
+                size.Y += font.LineSpacing;
+
             Vector2 pos = position ?? GameBase.ScreenManager.input.CursorPosition;
             var tipRect = new Rectangle((int)pos.X  + 10, (int)pos.Y  + 10,
                                         (int)size.X + 20, (int)size.Y + 10);
@@ -101,8 +108,20 @@ namespace Ship_Game
             tipItem.Rect = tipRect;
         }
 
-        public static void CreateTooltip(in LocalizedText tip, string hotKey, float maxWidth = 0) => CreateTooltip(tip, hotKey, null, maxWidth: maxWidth);
-        public static void CreateTooltip(in LocalizedText tip, float maxWidth = 0) => CreateTooltip(tip, "", null, maxWidth: maxWidth);
+        public static void CreateTooltip(in LocalizedText tip, string hotKey, float maxWidth = 0, string codexUid = null)
+            => CreateTooltip(tip, hotKey, null, maxWidth: maxWidth, codexUid: codexUid);
+        public static void CreateTooltip(in LocalizedText tip, float maxWidth = 0, string codexUid = null)
+            => CreateTooltip(tip, "", null, maxWidth: maxWidth, codexUid: codexUid);
+
+        // Returns the codex UID of the currently-hovered tooltip, if any has one.
+        // Used by the F1 hotkey handler to deep-link into CodexScreen.
+        public static string GetActiveCodexUid()
+        {
+            foreach (TipItem t in ActiveTips)
+                if (t.HoveredThisFrame && t.CodexUid != null)
+                    return t.CodexUid;
+            return null;
+        }
         
         // Clears the current tooltip (if any)
         public static void Clear()
@@ -115,6 +134,7 @@ namespace Ship_Game
             public string RawText;
             public string Text;
             public string HotKey;
+            public string CodexUid;
             public Rectangle Rect;
             public bool HoveredThisFrame = true;
             float MinShowTime; // Let the tip show regardless of being hovered on
@@ -194,6 +214,15 @@ namespace Ship_Game
                 }
 
                 batch.DrawString(TipFont, Text, textPos, textColor);
+
+                if (CodexUid != null)
+                {
+                    Vector2 textSize = TipFont.MeasureString(Text);
+                    var hintPos = textPos;
+                    hintPos.Y += textSize.Y + 2;
+                    batch.DrawString(TipFont, Localizer.Token("CodexPressF1ForDetails"),
+                        hintPos, new Color(Color.Gold, (byte)alpha));
+                }
             }
         }
 

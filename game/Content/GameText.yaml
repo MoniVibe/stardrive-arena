@@ -18361,6 +18361,10 @@ CodexTitle:
  Id: 100200
  ENG: "Codex"
  RUS: "Кодекс"
+CodexPressF1ForDetails:
+ Id: 100201
+ ENG: "Press F1 for details"
+ RUS: "Нажмите F1 для подробностей"
 CodexBlackbox:
  Id: 100000
  ENG: "BlackBox"

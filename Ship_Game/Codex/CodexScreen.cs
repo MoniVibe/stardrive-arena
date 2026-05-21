@@ -25,6 +25,10 @@ namespace Ship_Game.Codex
         CodexEntry ActiveEntry;
         string ActiveTitle = "";
         string ActiveText = "";
+        // OpenAt may be invoked before LoadContent (ScreenManager.AddScreen
+        // queues the screen for the next tick). Stash the UID and apply it
+        // after the tree is built.
+        string PendingUid;
 
         public CodexScreen(GameScreen parent) : base(parent, 1100, 750)
         {
@@ -95,6 +99,13 @@ namespace Ship_Game.Codex
                 AddCategoryRecursive(parent: null, root);
 
             CategoryList.OnClick = OnCategoryClicked;
+
+            if (PendingUid != null)
+            {
+                string uid = PendingUid;
+                PendingUid = null;
+                OpenAt(uid);
+            }
         }
 
         // Build the ScrollList tree from CodexEntry.Children. Arbitrary depth: each
@@ -173,7 +184,17 @@ namespace Ship_Game.Codex
         // No-op + warn if the UID is not found — stale callsites mustn't hard-fail.
         public void OpenAt(string uid)
         {
-            if (string.IsNullOrEmpty(uid) || !ItemByUid.TryGetValue(uid, out CodexCategoryListItem target))
+            if (string.IsNullOrEmpty(uid))
+                return;
+
+            // Pre-LoadContent: CategoryList isn't built yet, defer.
+            if (CategoryList == null)
+            {
+                PendingUid = uid;
+                return;
+            }
+
+            if (!ItemByUid.TryGetValue(uid, out CodexCategoryListItem target))
             {
                 Log.Warning($"CodexScreen.OpenAt: UID '{uid}' not found in Codex.yaml");
                 return;
@@ -219,7 +240,7 @@ namespace Ship_Game.Codex
                 if (input.ScrollOut) { EntryBody.Scroll(+30f); return true; }
             }
 
-            if (!GlobalStats.TakingInput && input.Codex)
+            if (!GlobalStats.TakingInput && (input.Codex || input.CodexHelp))
             {
                 GameAudio.EchoAffirmative();
                 ExitScreen();

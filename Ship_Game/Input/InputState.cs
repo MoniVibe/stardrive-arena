@@ -103,8 +103,8 @@ namespace Ship_Game
         public bool ExoticBonusesWindow  => KeyPressed(Keys.M);
         public bool FreighterUtilWindow  => KeyPressed(Keys.N);
         public bool EmpirePatrolsScreen  => KeyPressed(Keys.P);
-        public bool FTLOverlay           => KeyPressed(Keys.F1);
-        public bool RangeOverlay         => KeyPressed(Keys.F2);
+        public bool FTLOverlay           => KeyPressed(Keys.F2);
+        public bool RangeOverlay         => KeyPressed(Keys.F3);
         public bool ShipListScreen       => KeyPressed(Keys.K);
         public bool FleetDesignScreen    => KeyPressed(Keys.J);
         public bool AutomationWindow     => KeyPressed(Keys.H);
@@ -134,8 +134,11 @@ namespace Ship_Game
         public bool QueueAction          => IsShiftKeyDown;
         public bool ShipPieMenu          => KeyPressed(Keys.Q);
         
-        // CodexScreen — open/close binding
-        public bool Codex => KeyPressed(Keys.Back);
+        // CodexScreen — close binding (Back) and deep-link open (F1 via tooltip hook).
+        // CodexHelp gates !Ctrl so it doesn't double-fire with the Ctrl+F1 debug
+        // "Reset All Techs" binding in ResearchDebugUnlocks.
+        public bool Codex     => KeyPressed(Keys.Back);
+        public bool CodexHelp => KeyPressed(Keys.F1) && !IsCtrlKeyDown;
 
         // FleetDesignScreen
         public bool FleetRemoveSquad => KeyPressed(Keys.Back) || KeyPressed(Keys.Delete);
