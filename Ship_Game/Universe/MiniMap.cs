@@ -453,10 +453,8 @@ namespace Ship_Game
                 ToolTip.CreateTooltip(GameText.OpensExoticPlanetsPanel, "G");
 
             if (GravityWells.Rect.HitTest(input.CursorPosition))
-                // TODO: phase 5 — author a dedicated FTL-overlay codex entry;
-                // for now F1 piggybacks on the Current Version page so the deep-link is live.
-                ToolTip.CreateTooltip(GameText.FtlOverlayVisualisesSubspaceProjection, "F2",
-                    codexUid: "blackbox_current_version");
+                // TODO: phase 5 — wire up a dedicated FTL-overlay codex entry, then re-add codexUid here.
+                ToolTip.CreateTooltip(GameText.FtlOverlayVisualisesSubspaceProjection, "F2");
 
             if (RangeOverley.Rect.HitTest(input.CursorPosition))
                 ToolTip.CreateTooltip(GameText.WeaponsRangeOverlayVisualisesShips, "F3");
