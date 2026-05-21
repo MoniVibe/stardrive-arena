@@ -164,6 +164,9 @@ namespace Ship_Game.Universe.SolarBodies // Fat Bastard - Refactored March 21, 2
 
         public void AffectNearbyShips() // Refactored by Fat Bastard - 23, July 2018
         {
+            if (Owner == null) 
+                return;
+
             RepairRatePerSecond = GetPlanetRepairRatePerSecond();
             ChanceToLaunchTroopsVsBombers = 0; // Reset
             AssignPlanetarySupply();

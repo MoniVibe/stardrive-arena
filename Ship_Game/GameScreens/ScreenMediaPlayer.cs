@@ -361,7 +361,7 @@ namespace Ship_Game.GameScreens
                          && currentState == MediaState.Stopped)
                 {
                     // Playing→Stopped transition = natural end of stream. Reached only when a
-                    // MuteGameAudioWhilePlaying caller also drives Update() (InGameWiki today
+                    // MuteGameAudioWhilePlaying caller also drives Update() (CodexScreen
                     // does not — left in place for future opt-in callers like DiplomacyScreen).
                     // LastSeenPlayerState gate avoids false-firing during the transient Stopped
                     // state right after Resume()'s Stop+Play sequence.

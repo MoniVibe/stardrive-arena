@@ -8,7 +8,7 @@ using Vector2 = SDGraphics.Vector2;
 namespace Ship_Game.GameScreens.MainMenu
 {
     // Main-menu popup that explains BlackBox and links to Ko-fi.
-    // Uses the standard PopupWindow chrome (same as InGameWiki) — title bar
+    // Uses the standard PopupWindow chrome (same as CodexScreen) — title bar
     // with built-in Close X, middle blurb, body paragraph, and a single
     // affirmative button that opens the URL in the default browser via
     // shell-exec.

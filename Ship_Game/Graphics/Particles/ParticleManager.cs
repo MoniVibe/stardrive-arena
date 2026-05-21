@@ -216,14 +216,21 @@ public sealed class ParticleManager : IDisposable
     // Get a ParticleEffect Template
     public ParticleEffect GetEffectTemplate(string effectName)
     {
-        // lock because this might be called from a background thread in Ship.Update()
-        lock (Effects)
-        {
-            if (Effects.TryGetValue(effectName, out ParticleEffect effect))
-                return effect;
-        }
+        if (TryGetEffectTemplate(effectName, out ParticleEffect effect))
+            return effect;
         Log.Error($"ParticleEffect '{effectName}' not found!");
         return null;
+    }
+
+    // Silent variant: used by ReloadAfterDisposed to avoid log spam during the
+    // Reload() race window where Effects is cleared before being repopulated.
+    // CreateEffect (new projectiles) still goes through GetEffectTemplate so
+    // genuine content removals remain visible.
+    internal bool TryGetEffectTemplate(string effectName, out ParticleEffect template)
+    {
+        // lock because this might be called from a background thread in Ship.Update()
+        lock (Effects)
+            return Effects.TryGetValue(effectName, out template);
     }
 
     // Gets a new or reused vertex buffer

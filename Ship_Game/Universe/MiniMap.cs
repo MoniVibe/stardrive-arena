@@ -453,10 +453,11 @@ namespace Ship_Game
                 ToolTip.CreateTooltip(GameText.OpensExoticPlanetsPanel, "G");
 
             if (GravityWells.Rect.HitTest(input.CursorPosition))
-                ToolTip.CreateTooltip(GameText.FtlOverlayVisualisesSubspaceProjection, "F1");
+                // TODO: phase 5 — wire up a dedicated FTL-overlay codex entry, then re-add codexUid here.
+                ToolTip.CreateTooltip(GameText.FtlOverlayVisualisesSubspaceProjection, "F2");
 
             if (RangeOverley.Rect.HitTest(input.CursorPosition))
-                ToolTip.CreateTooltip(GameText.WeaponsRangeOverlayVisualisesShips, "F2");
+                ToolTip.CreateTooltip(GameText.WeaponsRangeOverlayVisualisesShips, "F3");
             if (AIScreen.Rect.HitTest(input.CursorPosition))
                 ToolTip.CreateTooltip(GameText.OpensTheAutomationPanelWhich, "H");
 

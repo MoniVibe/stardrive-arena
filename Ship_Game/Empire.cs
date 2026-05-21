@@ -1414,7 +1414,7 @@ namespace Ship_Game
             TotalProdExportSlots = OwnedPlanets.Sum(p => p.FreeProdExportSlots); // Done before UpdateOwnedPlanet
             for (int i = 0; i < planetsToUpdate.Length; i++)
             {
-                Planet planet = OwnedPlanets[i];
+                Planet planet = planetsToUpdate[i];
                 planet.UpdateOwnedPlanet(random);
             }
         }
