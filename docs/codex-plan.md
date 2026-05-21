@@ -212,10 +212,10 @@ Tradeoffs:
 
 | Tag | Effect | Example |
 |-----|--------|---------|
-| `<color=Name>...</color>` | Color span. `Name` is a public field on `CodexStyles`. | `<color=Caption>Range</color>: weapon falloff distance.` |
+| `<color=Name>...</color>` | Color span. `Name` is a public field on `CodexStyles`. The `Caption` name is special — it also bumps the span to `CodexStyles.CaptionFont` (heading size) and emits a double line break after the close, so caption text reads as a heading above the body that follows. | `<color=Caption>Range</color>: weapon falloff distance.` |
 | `<b>...</b>` | Bold span (renders with bold font variant). | `<b>Warning:</b> overcharge depletes power.` |
-| `<url=https://...>display text</url>` | Clickable hyperlink. Renders in `CodexStyles.Url` color, underlined. Click → `Log.OpenURL`. | `See <url=https://wiki.example.com>Game Wiki</url> for full table.` |
-| `<img>path/to/texture</img>` | Inline image; tag body is a `ResourceManager.Texture` path (no extension). Auto-wraps to a new line **after the last image of a contiguous img group** — see flow rules below. | `Press <img>UI/icon_research</img> to open the research screen.` |
+| `<url=https://...>display text</url>` | Clickable hyperlink. Renders in `CodexStyles.Url` color (forced — overrides any outer `<color>` for the span and restores on close), underlined. Click → `Log.OpenURL`. | `See <url=https://wiki.example.com>Game Wiki</url> for full table.` |
+| `<img>path/to/texture</img>` | Inline image; tag body is a `ResourceManager.Texture` path (no extension). Auto-wraps to a new line **after the last image of a contiguous img group** — see flow rules below. Missing texture renders the global error texture (`ResourceManager.ErrorTexture`, the red X) inline so authors notice the typo at a glance. | `Press <img>UI/icon_research</img> to open the research screen.` |
 
 Tags **must not nest** in v1 (parser bails on the second open before any close). Pre-existing line breaks (`\n`) and Localizer placeholder syntax (`{0}`, etc.) pass through unchanged.
 
@@ -224,7 +224,7 @@ Tags **must not nest** in v1 (parser bails on the second open before any close).
 - Consecutive `<img>` tags (with only whitespace between them) flow horizontally on the same line, left-to-right, until they exhaust the line's remaining width. Overflow wraps the next image to a new line and the group continues there.
 - The renderer inserts a **forced line break after the last image of the contiguous group** so subsequent text starts on a fresh line. No break is inserted before the group — if you want text above the image, end the preceding text run with `\n`.
 - If an image's natural width exceeds `bounds.Width`, it still renders (clipped to the right edge) on its own line. Authors should size source textures to fit.
-- Missing texture (not resolvable via `ResourceManager.Texture`) → render the literal path string in `CodexStyles.Warning` color; log once at parse time. Non-fatal.
+- Missing texture (not resolvable via `ResourceManager.Texture`) → renders `ResourceManager.ErrorTexture` (`NewUI/x_red`) inline at the broken position; logs the missing path once per run. Non-fatal.
 
 ### CodexStyles class
 

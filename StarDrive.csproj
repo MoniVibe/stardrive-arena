@@ -100,6 +100,9 @@
     <Compile Include="Ship_Game\Codex\CodexCategoryListItem.cs" />
     <Compile Include="Ship_Game\Codex\CodexEntry.cs" />
     <Compile Include="Ship_Game\Codex\CodexScreen.cs" />
+    <Compile Include="Ship_Game\Codex\CodexStyles.cs" />
+    <Compile Include="Ship_Game\Codex\StyledText.cs" />
+    <Compile Include="Ship_Game\Codex\StyledTextRenderer.cs" />
     <Compile Include="Ship_Game\Commands\Goals\RemnantHelpEmpire.cs" />
     <Compile Include="Ship_Game\Debug\Page\EspionageDebug.cs" />
     <Compile Include="Ship_Game\Debug\Page\MiningOpsDebug.cs" />

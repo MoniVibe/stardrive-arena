@@ -18372,7 +18372,7 @@ CodexBlackboxUpdatesShort:
  ENG: "How to Check For Updates"
 CodexBlackboxUpdatesText:
  Id: 100003
- ENG: "Black Version can be seen in the bottom left corner of the main screen or from the top of this wiki. Then click the downloads link to check for updates"
+ ENG: "<color=Caption>Checking for Updates</color>Black Version can be seen in the bottom left corner of the main screen, or from the <b>top</b> of this wiki. Long body text should wrap at the right edge of the body region rather than running off the panel — this paragraph is intentionally long so the wrap behavior is visible. \n \n Click the <url=https://github.com/TeamStarDrive/CombinedArms/releases>downloads page</url> for the latest build. \n \n <color=Caption>Markup demo</color>Image flow: <img>NewUI/Checkmark10x</img><img>NewUI/Checkmark10x</img><img>NewUI/Checkmark10x</img> three images, single break, then more text. \n \n Missing texture: <img>does_not_exist</img> renders as the red X."
 CodexBlackboxTestDownloadLink:
  Id: 100004
  ENG: "Test DownLoad Link"

@@ -17,7 +17,7 @@ namespace Ship_Game.Codex
         readonly Map<string, CodexCategoryListItem> ItemByUid = new();
         RectF TextRect;
         Vector2 TitlePosition;
-        UITextBox EntryBody;
+        StyledTextRenderer EntryBody;
 
         ScreenMediaPlayer Player;
         RectF SmallViewer;
@@ -65,13 +65,17 @@ namespace Ship_Game.Codex
             float usableH = Rect.Bottom - 30 - top;
             float catW = 480f;
             float gap = 10f;
-            float bodyW = Rect.Right - 25 - catW - gap - 25; // 25px right margin
+            // Right margin = 25 from Rect.Right. Body width is the remaining
+            // horizontal space between the category list's right edge and the margin.
+            float bodyW = Rect.Width - 25 - catW - gap - 25;
 
             RectF categoriesRect = new(Rect.X + 25, top, catW, usableH);
             CategoryList = Add(new ScrollList<CodexCategoryListItem>(categoriesRect));
 
             TextRect = new(categoriesRect.X + catW + gap, top, bodyW, usableH);
-            EntryBody = Add(new UITextBox(TextRect, useBorder: false));
+            // Body text region: small top margin so the centered title doesn't overlap
+            // the first line of body content.
+            EntryBody = new StyledTextRenderer(new RectF(TextRect.X, TextRect.Y + 40, TextRect.W, TextRect.H - 40));
 
             ResetActiveTopic();
 
@@ -116,7 +120,7 @@ namespace Ship_Game.Codex
 
         void ResetActiveTopic()
         {
-            EntryBody.SetLines(ActiveText, Fonts.Arial12Bold, Color.White);
+            EntryBody.SetText(StyledTextParser.Parse(ActiveText));
             float titleW = Fonts.Arial20Bold.TextWidth(ActiveTitle);
             TitlePosition = new(TextRect.CenterX - titleW / 2f - 15f, TextRect.Y + 10);
         }
@@ -137,7 +141,6 @@ namespace Ship_Game.Codex
 
         void SelectEntry(CodexEntry entry)
         {
-            EntryBody.Clear();
             ActiveEntry = entry;
             ActiveTitle = entry != null && !string.IsNullOrEmpty(entry.TitleId)
                 ? Localizer.Token(entry.TitleId)
@@ -146,8 +149,9 @@ namespace Ship_Game.Codex
                 ? Localizer.Token(entry.TextId)
                 : "";
 
-            if (!string.IsNullOrEmpty(ActiveText))
-                ResetActiveTopic();
+            // Always re-layout the body, even when the entry has no text — clears
+            // the previous selection's content out of the renderer.
+            ResetActiveTopic();
 
             if (entry != null && !string.IsNullOrEmpty(entry.Link))
                 Log.OpenURL(entry.Link);
@@ -159,7 +163,6 @@ namespace Ship_Game.Codex
             }
             else
             {
-                EntryBody.Clear();
                 Player.PlayVideo(entry.VideoPath, looping: false, startPaused: true);
                 Player.Visible = true;
             }
@@ -206,6 +209,16 @@ namespace Ship_Game.Codex
             if (Player != null && Player.HandleInput(input))
                 return true;
 
+            // Forward clicks and mouse-wheel scroll inside the body region.
+            // Click → <url> spans. Wheel → scroll the styled-text content.
+            if (EntryBody != null && TextRect.HitTest(input.CursorPosition))
+            {
+                if (input.LeftMouseClick && EntryBody.HandleClick(input.CursorPosition))
+                    return true;
+                if (input.ScrollIn)  { EntryBody.Scroll(-30f); return true; }
+                if (input.ScrollOut) { EntryBody.Scroll(+30f); return true; }
+            }
+
             if (!GlobalStats.TakingInput && input.Codex)
             {
                 GameAudio.EchoAffirmative();
@@ -223,12 +236,16 @@ namespace Ship_Game.Codex
 
             batch.SafeBegin();
 
+            EntryBody?.Draw(batch);
+
+            // Title is drawn above the body text for every entry; the original
+            // wiki only showed it during paused video, which hid the topic name
+            // for plain-text entries.
+            batch.DrawString(Fonts.Arial20Bold, ActiveTitle, TitlePosition, Color.Orange);
+
             Player?.Draw(batch);
             if (Player != null && Player.IsPaused)
-            {
                 batch.DrawRectangleGlow(Player.Rect);
-                batch.DrawString(Fonts.Arial20Bold, ActiveTitle, TitlePosition, Color.Orange);
-            }
 
             batch.SafeEnd();
         }
