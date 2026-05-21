@@ -18376,7 +18376,7 @@ CodexBlackboxWhatIsShort:
  ENG: "History and origin"
 CodexBlackboxWhatIsText:
  Id: 100003
- ENG: "<color=Caption>What is BlackBox</color>StarDrive BlackBox is a community-driven revival of <b>StarDrive</b> (2013), the 4X space strategy game by Zero Sum Games.\n\nAfter the original game's commercial run wound down, a small team of community modders continued building on the codebase with permission from the original developer. Over the years the project grew from a content mod into a near-total overhaul — touching simulation, AI, performance, and content alike.\n\nPermission from the original developer:\n<url=http://steamcommunity.com/app/252450/discussions/0/385428458177062745/#c365163686048069513>View the original Steam discussion thread</url>"
+ ENG: "StarDrive BlackBox is a community-driven revival of <b>StarDrive</b> (2013), the 4X space strategy game by Zero Sum Games.\n\nAfter the original game's commercial run wound down, a small team of community modders continued building on the codebase with permission from the original developer. Over the years the project grew from a content mod into a near-total overhaul — touching simulation, AI, performance, and content alike.\n\nPermission from the original developer:\n<url=http://steamcommunity.com/app/252450/discussions/0/385428458177062745/#c365163686048069513>View the original Steam discussion thread</url>"
 CodexBlackboxCurrentVersion:
  Id: 100004
  ENG: "Current Version"
@@ -18385,7 +18385,7 @@ CodexBlackboxCurrentVersionShort:
  ENG: "Jupiter 1.60 — 64-bit edition"
 CodexBlackboxCurrentVersionText:
  Id: 100006
- ENG: "<color=Caption>Jupiter 1.60</color>The current major release is <b>Jupiter</b>, the first fully 64-bit edition of StarDrive BlackBox.\n\nHighlights:\n<b>•</b> Native 64-bit runtime — no more 4 GB address-space ceiling on large galaxies.\n<b>•</b> .NET 8 + MonoGame 3.8 — modern runtime with faster startup and lower memory pressure.\n<b>•</b> Offline FBX content pipeline — every ship and asteroid re-exported through a deterministic toolchain.\n<b>•</b> Hundreds of simulation, AI, and UX fixes accumulated across the migration.\n\nDownloads:\n<url=https://stardriveteam.itch.io/jupiter-160>Get the latest Jupiter build on itch.io</url>"
+ ENG: "The current major release is <b>Jupiter</b>, the first fully 64-bit edition of StarDrive BlackBox.\n\nHighlights:\n<b>•</b> Native 64-bit runtime — no more 4 GB address-space ceiling on large galaxies.\n<b>•</b> .NET 8 + MonoGame 3.8 — modern runtime with faster startup and lower memory pressure.\n<b>•</b> Offline FBX content pipeline — every ship and asteroid re-exported through a deterministic toolchain.\n<b>•</b> Hundreds of simulation, AI, and UX fixes accumulated across the migration.\n\nDownloads:\n<url=https://stardriveteam.itch.io/jupiter-160>Get the latest Jupiter build on itch.io</url>"
 CodexBlackboxLinks:
  Id: 100007
  ENG: "Links"
@@ -18394,7 +18394,7 @@ CodexBlackboxLinksShort:
  ENG: "GitHub, Discord, Facebook"
 CodexBlackboxLinksText:
  Id: 100009
- ENG: "<color=Caption>Community Links</color>Source code:\n<url=https://github.com/TeamStarDrive/StarDrive>github.com/TeamStarDrive/StarDrive</url>\n\nChat with the team:\n<url=https://discord.gg/dfvnfH4>discord.gg/dfvnfH4</url>\n\nFollow on social:\n<url=https://www.facebook.com/SDBlackBox>facebook.com/SDBlackBox</url>"
+ ENG: "Source code:\n<url=https://github.com/TeamStarDrive/StarDrive>github.com/TeamStarDrive/StarDrive</url>\n\nChat with the team:\n<url=https://discord.gg/dfvnfH4>discord.gg/dfvnfH4</url>\n\nFollow on social:\n<url=https://www.facebook.com/SDBlackBox>facebook.com/SDBlackBox</url>"
 CodexBlackboxSupport:
  Id: 100010
  ENG: "Support BlackBox"
@@ -18403,7 +18403,7 @@ CodexBlackboxSupportShort:
  ENG: "Help keep the lights on"
 CodexBlackboxSupportText:
  Id: 100012
- ENG: "<color=Caption>Support BlackBox</color>StarDrive BlackBox is built and maintained by a small volunteer team in their spare time.\n\nIf you've enjoyed playing and want to support continued development, you can contribute via Ko-fi. Every bit helps keep the lights on.\n\nDonate via Ko-fi:\n<url=https://ko-fi.com/teamstardrive>ko-fi.com/teamstardrive</url>"
+ ENG: "StarDrive BlackBox is built and maintained by a small volunteer team in their spare time.\n\nIf you've enjoyed playing and want to support continued development, you can contribute via Ko-fi. Every bit helps keep the lights on.\n\nDonate via Ko-fi:\n<url=https://ko-fi.com/teamstardrive>ko-fi.com/teamstardrive</url>"
 CodexTutorials:
  Id: 100031
  ENG: "Tutorials"
