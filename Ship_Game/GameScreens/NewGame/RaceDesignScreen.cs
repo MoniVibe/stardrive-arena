@@ -30,6 +30,7 @@ namespace Ship_Game
         EnvPreferencesPanel EnvMenu;
         SubmenuScrollList<TraitsListItem> Traits;
         ScrollList<TraitsListItem> TraitsList;
+        Menu1 TraitsBg;
         UIColorPicker Picker;
 
         UIButton ModeBtn;
@@ -141,8 +142,10 @@ namespace Ship_Game
             // Anchor at abs pos: SetBackground sets a wrong-sign LocalPos that
             // would re-position the Menu1 on the next PerformLayout (triggered by
             // SetItems when a trait tab is clicked). Pinning here makes
-            // UpdatePosAndSize no-op so the bg stays put.
+            // UpdatePosAndSize no-op so the bg stays put. The slide-in/out is
+            // run as a separate animation below to keep the bg in sync with Traits.
             traitsBg.SetAbsPos(traitsListBg.X, traitsListBg.Y);
+            TraitsBg = traitsBg;
 
             RectF chooseRace = new(5, (int)traitsList.Y, (int)traitsList.X - 10, (int)traitsList.H);
             ChooseRaceList = Add(new ScrollList<RaceArchetypeListItem>(chooseRace, 135));
@@ -251,6 +254,9 @@ namespace Ship_Game
             DescriptionTextList.SlideInFromOffset(offset:new(DescriptionTextList.Width, 0), TransitionOnTime);
             EnvMenu.SlideInFromOffset(offset:new(-EnvMenu.Width, 0), TransitionOnTime);
             Traits.SlideInFromOffset(offset: new(0, Traits.Height), TransitionOnTime);
+            // TraitsBg is pinned via SetAbsPos so it can't ride Traits' slide via the
+            // layout cascade — run a parallel animation on the bg directly.
+            TraitsBg.SlideInFromOffset(offset: new(0, Traits.Height), TransitionOnTime);
 
             OnExit += () =>
             {
@@ -258,6 +264,7 @@ namespace Ship_Game
                 DescriptionTextList.SlideOutToOffset(offset:new(DescriptionTextList.Width, 0), TransitionOffTime);
                 EnvMenu.SlideOutToOffset(offset:new(-EnvMenu.Width, 0), TransitionOffTime);
                 Traits.SlideOutToOffset(offset: new(0, Traits.Height), TransitionOffTime);
+                TraitsBg.SlideOutToOffset(offset: new(0, Traits.Height), TransitionOffTime);
             };
 
             base.LoadContent();
