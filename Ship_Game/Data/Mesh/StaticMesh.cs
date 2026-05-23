@@ -35,6 +35,10 @@ public sealed class StaticMesh : IDisposable
     public AnimationClipData[] AnimationClips;
     public bool IsSkinned => SkinnedBones != null && SkinnedBones.Length > 0;
 
+    // Object-space, concatenated across groups; consumed by ShipHull
+    // to build a per-module surface-Z map for damage-VFX placement.
+    public XnaVector3[] VertexPositions;
+
     public StaticMesh(string name, in BoundingBox bounds)
     {
         Name = name;
