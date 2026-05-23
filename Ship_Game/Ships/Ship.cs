@@ -1228,10 +1228,13 @@ namespace Ship_Game.Ships
                         m.UpdateEveryFrame(a);
                         if (enableVisualizeDamage && m.CanVisualizeDamage)
                             m.UpdateDamageVisualization(timeStep, a.ParentScale, visibleForVisuals);
-
-                        if (visibleForVisuals && IsMiningStation)
-                            Carrier.MiningBays.UpdateMiningVisuals(timeStep);
                     }
+
+                    // Mining visuals are per-ship, not per-module — UpdateMiningVisuals
+                    // iterates every bay internally, so calling it inside the module loop
+                    // made it O(modules × bays).
+                    if (visibleForVisuals && IsMiningStation)
+                        Carrier.MiningBays.UpdateMiningVisuals(timeStep);
                 }
                 else
                 {
