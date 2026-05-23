@@ -29,7 +29,7 @@ namespace Ship_Game
 
         public override void CompleteOperation()
         {
-            var result = RollMissionResult(Owner, Them, Owner.IsAlliedWith(Them) ? SuccessTargetNumber / 2 : SuccessTargetNumber);
+            var result = RollMissionResult(Owner, Them, Owner.IsAlliedWith(Them) ? (int)(SuccessTargetNumber * 0.5f) : SuccessTargetNumber);
             InfiltrationOpsResolve aftermath = new InfiltrationOpsResolve(Owner, Them, result);
             switch (result)
             {

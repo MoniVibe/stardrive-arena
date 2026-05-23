@@ -98,11 +98,11 @@ namespace Ship_Game
             int defense = (int)(them.EspionageDefenseRatio * 25) + (int)them.data.DefensiveSpyBonus;
             int modifiedResult = (int)(baseResult - defense + owner.data.OffensiveSpyBonus + owner.data.SpyModifier);
 
-            if (modifiedResult >= targetNumber*2) return InfiltrationOpsResult.GreatSuccess;
-            if (modifiedResult < targetNumber/20) return InfiltrationOpsResult.CriticalFail;
-            if (modifiedResult < targetNumber/10) return InfiltrationOpsResult.MiserableFail;
-            if (modifiedResult < targetNumber)    return InfiltrationOpsResult.Fail;
-            else                                  return InfiltrationOpsResult.Success;
+            if (modifiedResult >= targetNumber*2)    return InfiltrationOpsResult.GreatSuccess;
+            if (modifiedResult < targetNumber*0.05f) return InfiltrationOpsResult.CriticalFail;
+            if (modifiedResult < targetNumber*0.1f)  return InfiltrationOpsResult.MiserableFail;
+            if (modifiedResult < targetNumber)       return InfiltrationOpsResult.Fail;
+            else                                     return InfiltrationOpsResult.Success;
         }
 
         protected float CalcRelationDamage(float baseDamage, Espionage espionage, bool withLevelMultiplier = false)
