@@ -136,7 +136,7 @@ namespace Ship_Game
                 completeTitleColor = new Color(163, 198, 236);
             }
 
-            batch.FillRectangle(UnlocksRect, new Color(26, 26, 28));
+            batch.FillRectangle((Rectangle)UnlocksRect, new Color(26, 26, 28));
             batch.DrawRectangle(UnlocksRect, unlocksRectBorderColor);
 
             if (Entry.MaxLevel > 1)

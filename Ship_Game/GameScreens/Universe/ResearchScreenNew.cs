@@ -266,7 +266,7 @@ namespace Ship_Game
 
             // fill a small rectangle at the beginning of the research line
             // to cover up some stupid artifacts caused by XNA transparent sprite renderer
-            batch.FillRectangle(new(left.X, left.Y, 5, 1), (complete ? new(110, 171, 227) : new(194, 194, 194)));
+            batch.FillRectangle(new Rectangle((int)left.X, (int)left.Y, 5, 1), (complete ? new(110, 171, 227) : new(194, 194, 194)));
         }
 
         static void DrawResearchLineVertical(SpriteBatch batch, Vector2 top, Vector2 bottom, bool complete)
