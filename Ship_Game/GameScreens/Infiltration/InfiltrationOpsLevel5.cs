@@ -44,6 +44,7 @@ namespace Ship_Game.GameScreens.EspionageNew
             RebellionTurnsRemaining  = Add(new UILabel("", Font, Color.White));
             ProjectionTurnsRemaining = Add(new UILabel("", Font, Color.White));
             MoneyLeeched = Add(new UILabel("", Font, Color.White));
+            MoneyLeeched.Tooltip = GameText.EspionageTotalMoneyLeechedTip;
         }
 
         public override void PerformLayout()

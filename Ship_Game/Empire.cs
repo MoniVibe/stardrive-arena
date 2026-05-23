@@ -1348,8 +1348,9 @@ namespace Ship_Game
             UpdateShipMaintenance();
             UpdatePlanetStorageStats();
             EspionageCostLastTurn = LegacyEspionageEnabled ? 0 : GetEspionageCost();
-            float remainingMoney = MoneyAfterLeech(NetIncome);
-            AddMoney(remainingMoney - EspionageCostLastTurn);
+            // AllSpending already includes EspionageCostLastTurn, so NetIncome
+            // has it subtracted. Don't subtract again here.
+            AddMoney(MoneyAfterLeech(NetIncome));
         }
 
         float MoneyAfterLeech(float money)

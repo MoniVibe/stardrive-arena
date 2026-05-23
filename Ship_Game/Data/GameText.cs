@@ -4693,6 +4693,8 @@ namespace Ship_Game
         SpiralMagellanicGalaxyGame = 4532,
         /// <summary>Most empires start in the off-center bulge; the rest along the single asymmetric arm</summary>
         SpiralMagellanicGalaxyGameTip = 4533,
+        /// <summary>Total credits leeched lifetime; per-turn amount is on the Budget screen.</summary>
+        EspionageTotalMoneyLeechedTip = 4534,
 
 
 

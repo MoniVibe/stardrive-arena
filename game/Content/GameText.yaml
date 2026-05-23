@@ -12464,6 +12464,9 @@ SpiralMagellanicGalaxyGame:
 SpiralMagellanicGalaxyGameTip:
  Id: 4533
  ENG: "A visibly lopsided galaxy with a single fat asymmetric arm wrapping around an off-center bulge. Most empires start inside the dense central bulge; the rest spread along the arm."
+EspionageTotalMoneyLeechedTip:
+ Id: 4534
+ ENG: "Total credits leeched from this empire since infiltration reached Level 5. The per-turn amount is shown under 'Money Leeched' on the Budget screen."
 FlatIncomePerTurn:
  Id: 4384
  ENG: "Flat Income Per Turn" 
@@ -15285,7 +15288,7 @@ CounterEspioangeOpsFailedDetected:
  ENG: "Our Counter-Espioange effort has badly failed and our agents were detected.\nThey might have expanded their Spy Network on us."        
 CounterEspioangeOpsFailedAgentCaught:
  Id: 6270
- ENG: "A foreign Counter-Espioange effort has badly failed.\nTheir spy networked suffered a setback."         
+ ENG: "A foreign Counter-Espioange effort has badly failed."
 CounterEspioangeOpsFailedWipeout:
  Id: 6271
  ENG: "Our Counter-Espioange was a disaster.\n Our agents were detected our Infiltration Level was reduced.\Moreover, it is possible they gained Infiltration Level."         
