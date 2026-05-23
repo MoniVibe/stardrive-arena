@@ -43,9 +43,10 @@ namespace Ship_Game
         {
             if (elapsedTime > 0f)
             {
-                Vector3 velocity = newPosition - PreviousPosition;
+                // zVelocity is in units/sec — assign AFTER the divide so it isn't
+                // scaled by 1/dt (was a framerate-dependent ~60x speed-up at 60fps).
+                Vector3 velocity = (newPosition - PreviousPosition) / elapsedTime;
                 velocity.Z = zVelocity;
-                velocity /= elapsedTime;
                 float timeToSpend = TimeLeftOver + elapsedTime;
                 float currentTime = -TimeLeftOver;
                 while (timeToSpend > TimeBetweenParticles)

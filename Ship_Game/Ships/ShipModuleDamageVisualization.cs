@@ -27,15 +27,15 @@ namespace Ship_Game.Ships
 
             switch (type) // FB: other special effects based on some module types, use main moduletypes for performance sake
             {
-                case ShipModuleType.Shield: Lightning = p.Lightning.NewEmitter(4, center, 0.1f*area); break;
-                case ShipModuleType.PowerPlant: Lightning = p.PhotonExplosion.NewEmitter(area, center, 0.25f); break;
-                case ShipModuleType.PowerConduit: Lightning = p.Sparks.NewEmitter(12, center); return; // no other effects!
+                case ShipModuleType.Shield: Lightning = p.Lightning.NewEmitter(40, center, 0.1f*area); break;
+                case ShipModuleType.PowerPlant: Lightning = p.PhotonExplosion.NewEmitter(area * 6f, center, 0.25f); break;
+                case ShipModuleType.PowerConduit: Lightning = p.Sparks.NewEmitter(25, center); return; // no other effects!
             }
 
-            Dust = p.SmokePlume.NewEmitter(0.5f, center);
+            Dust = p.SmokePlume.NewEmitter(area * 0.7f, center);
 
             bool smokeOnly = p.Random.Int(0, 1) == 1;
-            Smoke = p.ExplosionSmoke.NewEmitter(0.5f, center);
+            Smoke = p.ExplosionSmoke.NewEmitter(area * 3f, center);
 
             // armor doesnt produce flames
             if (!smokeOnly && type != ShipModuleType.Armor)
@@ -46,17 +46,18 @@ namespace Ship_Game.Ships
             }
         }
 
-        // This is called when module is OnFire /or/ completely dead
+        // This is called when module is OnFire /or/ completely dead.
+        // zVelocity is in units/sec; small values keep VFX anchored to the hull.
         public void Update(FixedSimTime timeStep, in Vector3 center, float scale, bool isAlive)
         {
-            Lightning?.Update(timeStep.FixedTime, center, zVelocity: -4f, scale: scale);
-            Flame?.Update(timeStep.FixedTime, center, zVelocity: -4f, scale: scale);
+            Lightning?.Update(timeStep.FixedTime, center, zVelocity: -5f, scale: scale);
+            Flame?.Update(timeStep.FixedTime, center, zVelocity: -5f, scale: scale);
 
             // only spawn smoke from dead modules
             if (!isAlive)
             {
-                Dust?.Update(timeStep.FixedTime, center, zVelocity: -0.1f, scale: scale);
-                Smoke?.Update(timeStep.FixedTime, center, zVelocity: -2f, scale: scale);
+                Dust?.Update(timeStep.FixedTime, center, zVelocity: -0.5f, scale: scale);
+                Smoke?.Update(timeStep.FixedTime, center, zVelocity: -3f, scale: scale);
             }
         }
     }
