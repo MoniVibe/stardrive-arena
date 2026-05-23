@@ -229,7 +229,7 @@ namespace Ship_Game
         }
 
         // Gets a more human readable number string that also supports large numbers.
-        // Examples: 0.25, 95.75, 950.7, 9500, 57.75k, 950.7k, 1.5M, 950.7M, 1000M
+        // Examples: 0.25, 95.75, 950.7, 9500, 57.8k, 950.7k, 1.5M, 950.7M, 1000M
         public static string GetNumberString(this float stat)
         {
             CultureInfo invariant = CultureInfo.InvariantCulture;
@@ -239,14 +239,10 @@ namespace Ship_Game
             if (abs < 10000f) return stat.ToString("#", invariant);
 
             float k = stat / 1000f;
-            float absK = Math.Abs(k);
-            if (absK < 100f)  return k.ToString("0.##", invariant) + "k";
-            if (absK < 1000f) return k.ToString("0.#", invariant) + "k";
+            if (Math.Abs(k) < 1000f) return k.ToString("0.#", invariant) + "k";
 
             float m = stat / 1_000_000f;
-            float absM = Math.Abs(m);
-            if (absM < 100f)  return m.ToString("0.##", invariant) + "M";
-            if (absM < 1000f) return m.ToString("0.#", invariant) + "M";
+            if (Math.Abs(m) < 1000f) return m.ToString("0.#", invariant) + "M";
             return m.ToString("#", invariant) + "M";
         }
 

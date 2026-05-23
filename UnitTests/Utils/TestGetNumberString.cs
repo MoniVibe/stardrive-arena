@@ -18,7 +18,7 @@ public class TestGetNumberString
     [DataRow(1000f, "1000")]
     [DataRow(9500f, "9500")]
     [DataRow(10000f, "10k")]
-    [DataRow(57750f, "57.75k")]
+    [DataRow(57750f, "57.8k")]
     [DataRow(950700f, "950.7k")]
     [DataRow(1_000_000f, "1M")]
     [DataRow(1_500_000f, "1.5M")]
@@ -33,7 +33,7 @@ public class TestGetNumberString
     [TestMethod]
     [DataRow(-0.25f, "-0.25")]
     [DataRow(-9500f, "-9500")]
-    [DataRow(-57750f, "-57.75k")]
+    [DataRow(-57750f, "-57.8k")]
     [DataRow(-1_500_000f, "-1.5M")]
     public void FormatsNegativeValues(float value, string expected)
     {
