@@ -4695,6 +4695,8 @@ namespace Ship_Game
         SpiralMagellanicGalaxyGameTip = 4533,
         /// <summary>Total credits leeched lifetime; per-turn amount is on the Budget screen.</summary>
         EspionageTotalMoneyLeechedTip = 4534,
+        /// <summary>Research output is being slowed by enemy infiltration this turn.</summary>
+        ResearchDisruptedByInfiltrationTip = 4535,
 
 
 

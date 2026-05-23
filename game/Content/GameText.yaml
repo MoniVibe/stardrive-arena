@@ -12467,6 +12467,9 @@ SpiralMagellanicGalaxyGameTip:
 EspionageTotalMoneyLeechedTip:
  Id: 4534
  ENG: "Total credits leeched from this empire since infiltration reached Level 5. The per-turn amount is shown under 'Money Leeched' on the Budget screen."
+ResearchDisruptedByInfiltrationTip:
+ Id: 4535
+ ENG: "Research output is being slowed by enemy infiltration this turn. The percentage shows how much research is getting through. Each successful disruption mission cuts research by 10%."
 FlatIncomePerTurn:
  Id: 4384
  ENG: "Flat Income Per Turn" 
