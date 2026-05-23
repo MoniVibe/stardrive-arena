@@ -60,10 +60,20 @@ namespace Ship_Game.Data.Texture
         Texture2D ImageUtilsPNG_XnaDDS(string fullPath)
         {
             if (fullPath.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
-                return ImageUtils.LoadPng(Device, fullPath);
+            {
+                // ParticleEffect.fx uses straight-alpha blend per system (Particles.yaml);
+                // premul-at-load would square the alpha at composite and crush tinted RGB.
+                bool premultiply = !IsParticleTexturePath(fullPath);
+                return ImageUtils.LoadPng(Device, fullPath, premultiplyAlpha: premultiply);
+            }
             if (fullPath.EndsWith(".dds", StringComparison.OrdinalIgnoreCase))
                 return ImageUtils.LoadDds(Device, fullPath);
             return LoadXna(fullPath);
+        }
+
+        static bool IsParticleTexturePath(string fullPath)
+        {
+            return fullPath.IndexOf("3DParticles", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         // Converts a AlphaOnly byte[] into a 1:1 aspect ratio RGBA texture
