@@ -232,7 +232,7 @@ namespace Ship_Game
                 }
             }
 
-            string money = Player.Money.GetNumberString();
+            string money = Player.Money.GetNumberString(compact: true);
             float damoney = Player.EstimateNetIncomeAtTaxRate(Player.data.TaxRate);
             string sign = damoney > 0f ? "+" : "";
             string moneyText = $"{money} ({sign}{damoney.String(1)})";
@@ -257,8 +257,8 @@ namespace Ship_Game
                 gradientSourceRect.X = 159 - xOffset;
                 Universe.ScreenManager.SpriteBatch.Draw(ResourceManager.Texture("EmpireTopBar/empiretopbar_res2_gradient"), new Rectangle(res2.X, res2.Y, res2.Width, res2.Height), gradientSourceRect, Color.White);
                 Universe.ScreenManager.SpriteBatch.Draw(ResourceManager.Texture("EmpireTopBar/empiretopbar_res2_over"), res2, Color.White);
-                string research = Player.Research.Current.Progress.GetNumberString();
-                string resCost = Player.Research.Current.TechCost.GetNumberString();
+                string research = Player.Research.Current.Progress.GetNumberString(compact: true);
+                string resCost = Player.Research.Current.TechCost.GetNumberString(compact: true);
                 float plusRes = Player.Research.NetResearch;
                 float x = res2.X + res2.Width - 30;
                 Graphics.Font arial12Bold = Fonts.Arial12Bold;
