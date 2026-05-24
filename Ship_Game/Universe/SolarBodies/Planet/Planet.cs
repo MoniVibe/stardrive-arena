@@ -806,6 +806,13 @@ namespace Ship_Game
         // this is done once per turn
         public void UpdateOwnedPlanet(RandomBase random)
         {
+            if (Owner == null)
+            {
+                Log.Warning($"UpdateOwnedPlanet called on {Name} with null Owner; " +
+                            "likely lost mid-iteration in UpdateEmpirePlanets snapshot. Skipping.");
+                return;
+            }
+
             TurnsSinceTurnover += 1;
             CrippledTurns = (CrippledTurns - 1).LowerBound(0);
             UpdateDevelopmentLevel();
