@@ -53,6 +53,8 @@ namespace Ship_Game
         RectF SelectedStuffRect;
         RectF OperationsRect;
         RectF PrioritiesRect;
+        RectF FleetOverviewRect;
+        UITextBox FleetOverviewText;
         WeightSlider SliderAssist;
         WeightSlider SliderVulture;
         WeightSlider SliderDefend;
@@ -244,7 +246,7 @@ namespace Ship_Game
 
             LocalizedText[] subShipsTabs = { "Designs", "Owned" };
             SubShips = Add(new SubmenuScrollList<FleetDesignShipListItem>(shipDesignsRect, subShipsTabs));
-            SubShips.Color = new(0, 0, 0, 130);
+            SubShips.SetBackground(Colors.TransparentBlackFill);
             SubShips.SelectedIndex = 0;
             SubShips.OnTabChange = OnSubShipsTabChanged;
 
@@ -302,6 +304,19 @@ namespace Ship_Game
             SliderDps    = NewSlider(slidersX2, slidersY+100, "Target DPS Weight", GameText.TheWeightGivenToTargeting3);
 
             PrioritiesRect = new(SelectedStuffRect.X - OperationsRect.W - 2, OperationsRect.Y, OperationsRect.Size);
+
+            // Fleet Design Overview panel: same vertical span as the First Fleet panel,
+            // at PrioritiesRect's X so it sits left of First Fleet. Hidden when a node is selected.
+            FleetOverviewRect = new RectF(PrioritiesRect.X, SelectedStuffRect.Y, PrioritiesRect.W, SelectedStuffRect.H);
+            float headerH = Fonts.Pirulen12.LineSpacing + 15;
+            RectF overviewTextRect = new(FleetOverviewRect.X + 10,
+                                          FleetOverviewRect.Y + headerH,
+                                          FleetOverviewRect.W - 20,
+                                          FleetOverviewRect.H - headerH - 10);
+            FleetOverviewText = Add(new UITextBox(overviewTextRect, useBorder: false));
+            FleetOverviewText.ItemsList.ItemPadding = Vector2.Zero;
+            FleetOverviewText.SetLines(Localizer.Token(GameText.AddShipDesignsToThis));
+
             RectF oprect = new(PrioritiesRect.X + 15, PrioritiesRect.Y + arial12.LineSpacing + 20, 300, 40);
             OperationalRadius = new FloatSlider(oprect, "Operational Radius", max: 500000, value: 10000)
             {
