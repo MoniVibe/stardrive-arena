@@ -232,20 +232,13 @@ namespace Ship_Game
                 }
             }
 
-            int money = (int)Player.Money;
+            string money = Player.Money.GetNumberString();
             float damoney = Player.EstimateNetIncomeAtTaxRate(Player.data.TaxRate);
-            if (damoney <= 0f)
-            {
-                textCursor.X = res4.X + res2.Width - 30 - Fonts.Arial12Bold.MeasureString(string.Concat(money.ToString(), " (", damoney.ToString("#.0"), ")")).X;
-                textCursor.Y = res2.Height / 2 - Fonts.Arial12Bold.LineSpacing / 2;
-                batch.DrawString(Fonts.Arial12Bold, string.Concat(money.ToString(), " (", damoney.String(), ")"), textCursor, new Color(255, 240, 189));
-            }
-            else
-            {
-                textCursor.X = res4.X + res2.Width - 30 - Fonts.Arial12Bold.MeasureString(string.Concat(money.ToString(), " (+", damoney.ToString("#.0"), ")")).X;
-                textCursor.Y = res2.Height / 2 - Fonts.Arial12Bold.LineSpacing / 2;
-                batch.DrawString(Fonts.Arial12Bold, string.Concat(money.ToString(), " (+", damoney.String(), ")"), textCursor, new Color(255, 240, 189));
-            }
+            string sign = damoney > 0f ? "+" : "";
+            string moneyText = $"{money} ({sign}{damoney.String(1)})";
+            textCursor.X = res4.X + res2.Width - 30 - Fonts.Arial12Bold.MeasureString(moneyText).X;
+            textCursor.Y = res2.Height / 2 - Fonts.Arial12Bold.LineSpacing / 2;
+            batch.DrawString(Fonts.Arial12Bold, moneyText, textCursor, new Color(255, 240, 189));
 
             var starDatePos = new Vector2(res5.X + 75, textCursor.Y);
             string starDateText = LowRes ? Universe.StarDateString : "StarDate: " + Universe.StarDateString;
@@ -264,17 +257,37 @@ namespace Ship_Game
                 gradientSourceRect.X = 159 - xOffset;
                 Universe.ScreenManager.SpriteBatch.Draw(ResourceManager.Texture("EmpireTopBar/empiretopbar_res2_gradient"), new Rectangle(res2.X, res2.Y, res2.Width, res2.Height), gradientSourceRect, Color.White);
                 Universe.ScreenManager.SpriteBatch.Draw(ResourceManager.Texture("EmpireTopBar/empiretopbar_res2_over"), res2, Color.White);
-                int research = (int)Player.Research.Current.Progress;
-                int resCost = (int)Player.Research.Current.TechCost;
+                string research = Player.Research.Current.Progress.GetNumberString();
+                string resCost = Player.Research.Current.TechCost.GetNumberString();
                 float plusRes = Player.Research.NetResearch;
                 float x = res2.X + res2.Width - 30;
                 Graphics.Font arial12Bold = Fonts.Arial12Bold;
-                object[] str = { research, "/", resCost, " (+", plusRes.String(1), ")" };
-                textCursor.X = x - arial12Bold.MeasureString(string.Concat(str)).X;
+                bool disrupted = Player.Research.DisruptionMultiplier < 1f;
+                Color baseColor = new Color(255, 240, 189);
                 textCursor.Y = res2.Height / 2 - Fonts.Arial12Bold.LineSpacing / 2;
-                Graphics.Font spriteFont = Fonts.Arial12Bold;
-                object[] objArray = { research, "/", resCost, " (+", plusRes.String(1), ")" };
-                batch.DrawString(spriteFont, string.Concat(objArray), textCursor, new Color(255, 240, 189));
+                if (disrupted)
+                {
+                    string baseText = $"{research}/{resCost} ";
+                    string netText = $"(+{plusRes.String(1)})";
+                    int iconSize = (int)((res2.Height - 6) * 0.6f);
+                    const int iconPad = 4;
+                    Color netColor = new Color(255, 96, 96);
+                    float baseW = arial12Bold.MeasureString(baseText).X;
+                    float netW  = arial12Bold.MeasureString(netText).X;
+                    textCursor.X = x - (baseW + netW + iconPad + iconSize);
+                    batch.DrawString(arial12Bold, baseText, textCursor, baseColor);
+                    float netX = textCursor.X + baseW;
+                    batch.DrawString(arial12Bold, netText, new Vector2(netX, textCursor.Y), netColor);
+                    float iconX = netX + netW + iconPad;
+                    var iconRect = new Rectangle((int)iconX, res2.Y -3 + (res2.Height - iconSize) / 2, iconSize, iconSize);
+                    batch.Draw(ResourceManager.Texture("UI/icon_spy_small"), iconRect, netColor);
+                }
+                else
+                {
+                    string text = $"{research}/{resCost} (+{plusRes.String(1)})";
+                    textCursor.X = x - arial12Bold.MeasureString(text).X;
+                    batch.DrawString(arial12Bold, text, textCursor, baseColor);
+                }
             }
         }
 

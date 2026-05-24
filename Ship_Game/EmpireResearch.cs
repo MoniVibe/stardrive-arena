@@ -124,8 +124,15 @@ namespace Ship_Game
 
 
 
+        // 1f when this turn took no disruption hits, else the product of
+        // (1 - SlowResearchBy) for each enemy whose roll landed. Surfaces to
+        // the universe top-bar as a spy icon + percentage so the player can
+        // see when their research is being slowed.
+        public float DisruptionMultiplier { get; private set; } = 1f;
+
         void UpdateNetResearchDisruption()
         {
+            DisruptionMultiplier = 1f;
             if (Empire.LegacyEspionageEnabled)
                 return;
 
@@ -135,7 +142,10 @@ namespace Ship_Game
                 Empire empire = empires[i];
                 Espionage espionage = empire.GetEspionage(Empire);
                 if (espionage.CanSlowResearch && empire.Random.RollDice(espionage.SlowResearchChance))
+                {
                     NetResearch *= 1 - Espionage.SlowResearchBy;
+                    DisruptionMultiplier *= 1 - Espionage.SlowResearchBy;
+                }
             }
         }
 

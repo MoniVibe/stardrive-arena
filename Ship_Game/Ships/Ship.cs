@@ -1221,7 +1221,7 @@ namespace Ship_Game.Ships
                 if (Active)
                 {
                     bool enableVisualizeDamage = PlanetCrash == null;
-                    bool visibleForVisuals = visible && Universe.IsPlanetViewOrCloser;
+                    bool visibleForVisuals = visible && Universe.IsPlanetViewOrCloser && !IsInWarp;
                     for (int i = 0; i < ModuleSlotList.Length; ++i)
                     {
                         ShipModule m = ModuleSlotList[i];

@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
+[assembly: InternalsVisibleTo("UnitTests")]
 [assembly: AssemblyCompany("Zero Sum Games")]
 [assembly: AssemblyCopyright("Copyright � Zero Sum Games 2022")]
 [assembly: AssemblyDescription("")]

@@ -90,6 +90,7 @@
     <Compile Include="Graphics\PostProcessChainTests.cs" />
     <Compile Include="Graphics\ShadowMapTests.cs" />
     <Compile Include="Graphics\SkinnedLightingEffectTests.cs" />
+    <Compile Include="Graphics\ExplosionLightIntensityTests.cs" />
     <Compile Include="ImpactSimulation.cs" />
     <Compile Include="Collections\ArrayT_Tests.cs" />
     <Compile Include="Collections\TestCollectionExt.cs" />
@@ -98,6 +99,7 @@
     <Compile Include="Planets\CapitalTransfer.cs" />
     <Compile Include="Planets\LandOnTiles.cs" />
     <Compile Include="Planets\TestOrbitalBomb.cs" />
+    <Compile Include="Planets\TestSabotageWorkDistribution.cs" />
     <Compile Include="Serialization\BinaryReadWriteTests.cs" />
     <Compile Include="Serialization\ObjectScannerTests.cs" />
     <Compile Include="Serialization\SerializationRegressionTests.cs" />
@@ -175,6 +177,7 @@
     <Compile Include="Utils\BitArrayTests.cs" />
     <Compile Include="Utils\PerfTimerTests.cs" />
     <Compile Include="Utils\SmallBitSetTests.cs" />
+    <Compile Include="Utils\TestGetNumberString.cs" />
     <Compile Include="Utils\TypesTests.cs" />
   </ItemGroup>
   <ItemGroup>

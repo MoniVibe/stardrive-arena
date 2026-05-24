@@ -117,6 +117,13 @@ namespace Ship_Game
             return deviceChanged;
         }
 
+        // Last graphics settings successfully applied via ApplyGraphics.
+        // Captured so OnActivated can re-apply them when the WindowsDX
+        // OnClientSizeChanged handler shrinks the backbuffer during an
+        // alt-tab minimize from exclusive fullscreen.
+        GraphicsSettings LastAppliedSettings;
+        bool Restoring; // re-entrancy guard for OnActivated → ApplyGraphics → ApplyChanges
+
         // @return TRUE if graphics device changed
         public bool ApplyGraphics(GraphicsSettings settings)
         {
@@ -223,7 +230,36 @@ namespace Ship_Game
             PresentationParameters pp = GraphicsDevice.PresentationParameters;
             Log.Write(ConsoleColor.Cyan, $"ApplyGraphics: backbuffer={pp.BackBufferWidth}x{pp.BackBufferHeight} form={form.ClientSize.Width}x{form.ClientSize.Height}");
 
+            LastAppliedSettings = settings;
             return deviceChanged;
+        }
+
+        // After an alt-tab cycle out of exclusive fullscreen, MonoGame's
+        // WindowsDX OnClientSizeChanged handler auto-calls Graphics.ApplyChanges
+        // with the form's transient (minimized/restored) ClientSize, shrinking
+        // the backbuffer. On alt-tab back the backbuffer stays small, the form
+        // is again at fullscreen extents but only the top-left ClientSize-sized
+        // region renders. Detect the drift here and re-apply the last user
+        // settings to restore the proper backbuffer.
+        protected override void OnActivated(object sender, EventArgs args)
+        {
+            base.OnActivated(sender, args);
+
+            if (Restoring) return;
+            if (LastAppliedSettings == null || Graphics == null || GraphicsDevice == null)
+                return;
+            if (LastAppliedSettings.Mode != WindowMode.Fullscreen)
+                return;
+
+            PresentationParameters p = GraphicsDevice.PresentationParameters;
+            if (p.BackBufferWidth == LastAppliedSettings.Width
+                && p.BackBufferHeight == LastAppliedSettings.Height)
+                return;
+
+            Log.Warning($"Alt-tab restore: backbuffer drifted to {p.BackBufferWidth}x{p.BackBufferHeight}, restoring to {LastAppliedSettings.Width}x{LastAppliedSettings.Height}");
+            Restoring = true;
+            try { ApplyGraphics(LastAppliedSettings); }
+            finally { Restoring = false; }
         }
 
         // DXGI_ERROR_NOT_CURRENTLY_AVAILABLE — SetFullscreenState rejected the

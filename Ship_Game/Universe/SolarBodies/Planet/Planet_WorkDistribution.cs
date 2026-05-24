@@ -62,14 +62,13 @@ namespace Ship_Game
 
 
         // Core world aims to balance everything, without maximizing food/prod/res
-        void AssignCoreWorldWorkers()
+        internal void AssignCoreWorldWorkers()
         {
             float remainingWork;
             if (IsCybernetic) // Filthy Opteris
             {
                 AssignCoreWorldProduction(1f);
-                //WorkToPercentage(1);
-                remainingWork = 1;
+                remainingWork = 1 - Prod.Percent;
             }
             else // Strategy for Flesh-bags:
             {
@@ -79,16 +78,21 @@ namespace Ship_Game
 
             if (NonCybernetic)
             {
-                if (ConstructionQueue.Count > 0)
+                // Sabotage freezes the queue, so the queue-biased over-investment
+                // path would just pile prod into storage and get taxed away. Route
+                // to the storage-driven sizing instead — modest production keeps
+                // exports/Dyson/scrap-refund paths working without over-spending.
+                if (ConstructionQueue.Count > 0 && !IsSabotaged)
                     Prod.Percent = (remainingWork * EvaluateProductionQueue()).UpperBound(remainingWork);
                 else
                     AssignCoreWorldProduction(remainingWork - MinimumResearchNoQueue(remainingWork, 0.5f));
             }
+
             Res.AutoBalanceWorkers(); // rest goes to research
         }
 
         // Work for Anything that is not a Core World or Trade Hub is dealt here
-        void AssignOtherWorldsWorkers(float percentFood, float percentProd, float wantedFoodIncome, float wantedProdIncome)
+        internal void AssignOtherWorldsWorkers(float percentFood, float percentProd, float wantedFoodIncome, float wantedProdIncome)
         {
             Food.Percent        = FarmToPercentage(percentFood, wantedFoodIncome);
             Food.CalculateAveragePercentage();
@@ -96,10 +100,11 @@ namespace Ship_Game
             Prod.Percent        = WorkToPercentage(percentProd, wantedProdIncome).UpperBound(remainingWork);
             if (NonCybernetic)
             {
-                if (ConstructionQueue.Count > 0)
+                if (ConstructionQueue.Count > 0 && !IsSabotaged)
                 {
-                    Prod.Percent = CType is ColonyType.Agricultural && Storage.FoodRatio < percentFood * 0.9f 
-                        ? remainingWork 
+                    // Same freezes queue as AssignCoreWorldWorkers
+                    Prod.Percent = CType is ColonyType.Agricultural && Storage.FoodRatio < percentFood * 0.9f
+                        ? remainingWork
                         : (remainingWork * EvaluateProductionQueue()).UpperBound(remainingWork);
                 }
                 else
@@ -183,7 +188,7 @@ namespace Ship_Game
             float workers    = Prod.EstPercentForNetIncome(minPerTurn);
 
             workers = workers.Clamped(0.1f, 1.0f);
-            if (IsCybernetic & ConstructionQueue.Count > 0)
+            if (IsCybernetic && ConstructionQueue.Count > 0 && !IsSabotaged)
                  workers *= 1.2f;
 
             Prod.Percent = workers * labor;

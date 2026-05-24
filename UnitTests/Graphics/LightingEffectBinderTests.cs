@@ -4,6 +4,7 @@ using Ship_Game.Data.Mesh;
 using SunBurnLights = SynapseGaming.LightingSystem.Lights;
 using SynapseGaming.LightingSystem.Core;
 using SynapseGaming.LightingSystem.Effects.Forward;
+using SynapseGaming.LightingSystem.Rendering;
 
 namespace UnitTests.Graphics;
 
@@ -76,5 +77,52 @@ public class LightingEffectBinderTests : StarDriveTest
         Assert.IsFalse(fx.DirectionalLight0.Enabled);
         Assert.IsFalse(fx.DirectionalLight1.Enabled);
         Assert.IsFalse(fx.DirectionalLight2.Enabled);
+    }
+
+    // Big-battle regression: warp/station explosion lights can carry
+    // Radius >= 1000 and sit at the camera's XY. Without the ObjectType.Static
+    // filter on sun candidacy they win bestSun, displace the actual system
+    // sun from the 3 PointLight slots, and ships beyond the explosion radius
+    // render with only ambient — i.e. nearly black.
+    [TestMethod]
+    public void DynamicPointLight_DoesNotDisplaceSystemSun()
+    {
+        var lightManager = new SunBurnLights.LightManager();
+
+        // Real system sun far away in XY (camera is focused on the battle).
+        var sun = new SunBurnLights.PointLight
+        {
+            Name = "Key",
+            Position = new Vector3(100000f, 100000f, -50000f),
+            Radius = 150000f,
+            DiffuseColor = new Vector3(1f, 0.95f, 0.9f),
+            Intensity = 1f,
+            Enabled = true,
+            ObjectType = ObjectType.Static,
+        };
+        lightManager.Submit(sun);
+
+        // Warp explosion sitting right at the camera — Radius > 1000 means
+        // it qualifies as a sun candidate by radius alone, and it's much
+        // closer in XY than the real sun.
+        var explosionSun = new SunBurnLights.PointLight
+        {
+            Name = "Warp Explosion",
+            Position = new Vector3(0f, 0f, -100f),
+            Radius = 1500f,
+            DiffuseColor = new Vector3(0.9f, 0.8f, 0.7f),
+            Intensity = 8f,
+            Enabled = true,
+            ObjectType = ObjectType.Dynamic,
+        };
+        lightManager.Submit(explosionSun);
+
+        using var fx = new LightingEffect(Game.GraphicsDevice);
+        LightingEffectBinder.Apply(fx, lightManager.ActiveLights, new SceneEnvironment(), Vector3.Zero);
+
+        Assert.IsTrue(fx.PointLight0.Enabled, "System sun should fill PointLight0.");
+        Assert.AreEqual(sun.Position.X, fx.PointLight0.Position.X, 0.01f,
+            "PointLight0 should be the Static system sun, not the Dynamic explosion.");
+        Assert.AreEqual(sun.Position.Y, fx.PointLight0.Position.Y, 0.01f);
     }
 }

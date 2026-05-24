@@ -17,6 +17,8 @@ namespace Ship_Game
         readonly Submenu CurrentResearchPanel;
         readonly UIPanel TimeLeft;
         readonly UILabel TimeLeftLabel;
+        readonly UIPanel SpyDisruption;
+        readonly UILabel SpyDisruptionLabel;
 
         ResearchQItem CurrentResearch;
         readonly ScrollList<ResearchQItem> ResearchQueueList;
@@ -38,6 +40,23 @@ namespace Ship_Game
             TimeLeftLabel = TimeLeft.Label(labelPos, "", Fonts.Verdana14Bold, new Color(205, 229, 255));
 
             CurrentResearchPanel = Add(new Submenu(current, GameText.CurrentResearch, SubmenuStyle.Blue));
+
+            // Disruption indicator inline with the "Current Research" tab
+            // title. 80% of the 25px tab height. Added AFTER the Submenu so
+            // it draws on top of the tab bar.
+            const int spyIconSize = 20;
+            float titleW = Fonts.Pirulen12.MeasureString(Localizer.Token(GameText.CurrentResearch)).X;
+            var spyIconRect = new Rectangle((int)(current.X + titleW + 50),
+                                            (int)current.Y -3 + (25 - spyIconSize) / 2,
+                                            spyIconSize, spyIconSize);
+            SpyDisruption = Add(new UIPanel(spyIconRect, ResourceManager.Texture("UI/icon_spy")));
+            SpyDisruption.Tooltip = GameText.ResearchDisruptedByInfiltrationTip;
+            var spyLabelPos = new Vector2(spyIconRect.X + spyIconRect.Width + 4,
+                                          spyIconRect.Y + 3 + spyIconRect.Height / 2 - Fonts.Arial12Bold.LineSpacing / 2);
+            SpyDisruptionLabel = Add(new UILabel(spyLabelPos, "", Fonts.Arial12Bold, new Color(255, 96, 96),
+                                                 GameText.ResearchDisruptedByInfiltrationTip));
+            SpyDisruption.Visible = false;
+            SpyDisruptionLabel.Visible = false;
             
             RectF queue = new(current.X, current.Y + 165, container.Width, container.Height - 165);
             var queueSub = Add(new SubmenuScrollList<ResearchQItem>(queue, GameText.ResearchQueue, 125, ListStyle.Blue));
@@ -76,6 +95,11 @@ namespace Ship_Game
             ResearchQueueList.Visible = visible;
             ResearchQueueList.Parent.Visible = visible;
             CurrentResearchPanel.Visible = visible;
+            if (!visible)
+            {
+                SpyDisruption.Visible = false;
+                SpyDisruptionLabel.Visible = false;
+            }
             BtnShowQueue.Text = ResearchQueueList.Visible ? GameText.HideQueue : GameText.ShowQueue;
         }
 
@@ -107,6 +131,13 @@ namespace Ship_Game
                 float remaining = CurrentResearch.Tech.TechCost - CurrentResearch.Tech.Progress;
                 float numTurns = (float)Math.Ceiling(remaining / (0.01f + Screen.Player.Research.NetResearch));
                 TimeLeftLabel.Text = (numTurns > 999f) ? ">999 turns" : numTurns.String(0)+" turns";
+
+                float multiplier = Screen.Player.Research.DisruptionMultiplier;
+                bool disrupted = multiplier < 1f;
+                SpyDisruption.Visible = disrupted;
+                SpyDisruptionLabel.Visible = disrupted;
+                if (disrupted)
+                    SpyDisruptionLabel.Text = $"({(int)Math.Round(multiplier * 100f)}%)";
             }
         }
 

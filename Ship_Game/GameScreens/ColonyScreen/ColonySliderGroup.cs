@@ -117,7 +117,7 @@ namespace Ship_Game
                     && (P.CType is Planet.ColonyType.Colony or Planet.ColonyType.TradeHub);
             }
 
-            Prod.IsCrippled = P.CrippledTurns > 0;
+            Prod.IsCrippled = P.IsSabotaged;
             Prod.IsInvasion = P.RecentCombat;
 
             // prioritize currently dragging slider for input events

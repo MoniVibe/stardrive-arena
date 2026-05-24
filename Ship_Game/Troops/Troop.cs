@@ -238,7 +238,9 @@ namespace Ship_Game
 
         public void Draw(UniverseState us, SpriteBatch sb, Rectangle drawRect)
         {
-            if (TroopAnim == null)
+            // TransientContent.Unload() (load-from-in-game) disposes the cached atlas;
+            // without the IsDisposed check the stale ref serves x_red forever.
+            if (TroopAnim == null || TroopAnim.IsDisposed)
                 InitializeAtlas(us.Screen);
 
             if (!animated)

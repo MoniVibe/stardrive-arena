@@ -4,6 +4,7 @@ using Microsoft.Xna.Framework.Graphics;
 using SDUtils;
 using SynapseGaming.LightingSystem.Core;
 using SynapseGaming.LightingSystem.Effects.Forward;
+using SynapseGaming.LightingSystem.Rendering;
 using SunBurnLights = SynapseGaming.LightingSystem.Lights;
 using XnaDirectionalLight = Microsoft.Xna.Framework.Graphics.DirectionalLight;
 
@@ -105,7 +106,16 @@ public static class LightingEffectBinder
                         ambient += a.DiffuseColor * a.Intensity;
                         break;
 
-                    case SunBurnLights.PointLight p when p.Enabled && p.Radius >= 1000f && p.Radius < 1_000_000f:
+                    // ObjectType.Static filter: warp/station explosions can have
+                    // Radius >= 1000 and sit at the camera XY, which would
+                    // otherwise displace the actual system sun (far in XY)
+                    // from `bestSun`. Sun-rig lights are tagged Static in
+                    // UniverseScreen.AddLight; explosion/projectile lights
+                    // are tagged Dynamic. Big-battle regression: hulls beyond
+                    // the explosion radius rendered nearly black because the
+                    // sun PointLight slots stayed empty for ~2s.
+                    case SunBurnLights.PointLight p when p.Enabled && p.Radius >= 1000f && p.Radius < 1_000_000f
+                                                         && p.ObjectType == ObjectType.Static:
                         float dx = p.Position.X - cameraPos.X;
                         float dy = p.Position.Y - cameraPos.Y;
                         float dist2 = dx*dx + dy*dy;

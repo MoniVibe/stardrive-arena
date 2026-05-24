@@ -242,7 +242,7 @@ namespace Ship_Game.Universe.SolarBodies
         {
             // surplus will be reset every turn and consumed at first opportunity
             SurplusThisTurn = surplusFromPlanet;
-            if (ConstructionQueue.IsEmpty || P.CrippledTurns > 0)
+            if (ConstructionQueue.IsEmpty || P.IsSabotaged)
                 return; // Massive sabotage to planetary facilities or no items
 
             float percentToApply = P.RecentCombat ? 0.1f : 1f; // Ongoing combat is hindering logistics
@@ -253,7 +253,7 @@ namespace Ship_Game.Universe.SolarBodies
 
         void TryPlayerRush() // Apply rush if player marked items as continuous rush
         {
-            if (!P.OwnerIsPlayer || Count == 0 || P.CrippledTurns > 0 || P.RecentCombat)
+            if (!P.OwnerIsPlayer || Count == 0 || P.IsCrippled)
                 return;
 
             QueueItem item = ConstructionQueue[0];

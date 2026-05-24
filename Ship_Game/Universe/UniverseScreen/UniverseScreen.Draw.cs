@@ -214,6 +214,50 @@ namespace Ship_Game
             }
         }
 
+        // Re-create backbuffer-sized RTs when the backbuffer has been resized
+        // (e.g., after the alt-tab restore path in GameBase.OnActivated). The
+        // RTs are allocated to backbuffer dimensions at LoadContent time and
+        // MonoGame's DXGI ResizeBuffers path doesn't dispose them, so a stale
+        // size or IsContentLost flag will silently render at the wrong scale.
+        void EnsureBackbufferSizedRTs(GraphicsDevice device)
+        {
+            PresentationParameters pp = device.PresentationParameters;
+            int w = pp.BackBufferWidth;
+            int h = pp.BackBufferHeight;
+
+            if (RtNeedsRebuild(MainTarget, w, h))
+            {
+                MainTarget?.Dispose();
+                MainTarget = RenderTargets.Create(device, RenderTargetUsage.PreserveContents);
+            }
+            if (RtNeedsRebuild(LightsTarget, w, h))
+            {
+                LightsTarget?.Dispose();
+                LightsTarget = RenderTargets.Create(device);
+            }
+            if (RtNeedsRebuild(BorderRT, w, h))
+            {
+                BorderRT?.Dispose();
+                BorderRT = RenderTargets.Create(device);
+            }
+            if (GlobalStats.RenderBloom && RtNeedsRebuild(PostBloomTarget, w, h))
+            {
+                PostBloomTarget?.Dispose();
+                PostBloomTarget = RenderTargets.Create(device);
+            }
+            if (GlobalStats.RenderShieldDistortion && RtNeedsRebuild(PostDistortTarget, w, h))
+            {
+                PostDistortTarget?.Dispose();
+                PostDistortTarget = RenderTargets.Create(device);
+            }
+        }
+
+        static bool RtNeedsRebuild(RenderTarget2D rt, int w, int h)
+        {
+            return rt == null || rt.IsDisposed || rt.IsContentLost
+                || rt.Width != w || rt.Height != h;
+        }
+
         void UpdateFogMap(SpriteBatch batch, GraphicsDevice device)
         {
             EnsureFogMapRenderTargets(device);
@@ -308,6 +352,7 @@ namespace Ship_Game
             SpriteRenderer sr = ScreenManager.SpriteRenderer;
 
             GraphicsDevice graphics = ScreenManager.GraphicsDevice;
+            EnsureBackbufferSizedRTs(graphics);
             graphics.SetRenderTarget(MainTarget);
             // §4.6 #1.b regression follow-up: MainTarget is now PreserveContents
             // so the shadow pre-pass's RT swap in SunBurnStubs.RenderScene doesn't

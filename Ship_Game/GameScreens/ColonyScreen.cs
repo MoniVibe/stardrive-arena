@@ -1839,7 +1839,7 @@ namespace Ship_Game
                     }
                 }
 
-                if (e.WasApplyHovered(input) && !P.RecentCombat && P.CrippledTurns <= 0)
+                if (e.WasApplyHovered(input) && !P.IsCrippled)
                 {
                     if (!input.IsCtrlKeyDown || input.LeftMouseDown || input.LeftMouseReleased) // @todo WTF??
                     {

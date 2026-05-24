@@ -117,6 +117,10 @@ namespace Ship_Game
         public bool HasCommodities => HasBuilding(b => b.IsCommodity || b.IsVolcano || b.IsCrater);
         public bool Governor => CType != ColonyType.Colony;
         public bool IsCrippled => CrippledTurns > 0 || RecentCombat;
+        // Narrower form: sabotage only. Build queue is fully frozen; combat
+        // alone still allows 10% queue progress, so callers that care about
+        // the full freeze (worker assignment, prod export gating) use this.
+        public bool IsSabotaged => CrippledTurns > 0;
         public bool CanLaunchBuilderShips => !SpaceCombatNearPlanet && NumBuildShipsLaunched < NumBuildShipsCanLaunch;
         public int NumBuildShipsCanLaunchperTurn => NumBuildShipsCanLaunch / 4;
         public bool IsMineable => Mining != null;

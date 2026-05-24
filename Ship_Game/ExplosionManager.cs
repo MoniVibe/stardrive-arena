@@ -153,6 +153,19 @@ namespace Ship_Game
                 ActiveExplosions.Add(exp);
         }
 
+        internal const float IntensityDecayPerSecond = 10f;
+
+        // Decay the explosion's light intensity towards 0. Clamping at 0 is
+        // load-bearing: without it DiffuseColor*Intensity goes negative in
+        // LightingEffectBinder and the dynamic slot subtracts light in
+        // MeshLighting.fx, turning hulls inside the explosion radius black
+        // for the tail of the lifetime (~1s for ship explosions).
+        internal static void TickLightIntensity(PointLight light, float elapsedTime)
+        {
+            if (light == null) return;
+            light.Intensity = (light.Intensity - IntensityDecayPerSecond * elapsedTime).LowerBound(0f);
+        }
+
         public static void Update(UniverseScreen us, float elapsedTime)
         {
             using (Lock.AcquireWriteLock())
@@ -167,10 +180,7 @@ namespace Ship_Game
                         continue;
                     }
 
-                    if (e.Light != null)
-                    {
-                        e.Light.Intensity -= 10f * elapsedTime;
-                    }
+                    TickLightIntensity(e.Light, elapsedTime);
 
                     // cheap and inaccurate integration
                     e.Pos.X += e.Vel.X * elapsedTime;

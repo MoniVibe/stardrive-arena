@@ -228,18 +228,22 @@ namespace Ship_Game
             GC.Collect();
         }
 
-        // Gets a more human readable number string that also supports large numbers
-        // ex: 950.7k 
+        // Gets a more human readable number string that also supports large numbers.
+        // Examples: 0.25, 95.75, 950.7, 9500, 57.8k, 950.7k, 1.5M, 950.7M, 1000M
         public static string GetNumberString(this float stat)
         {
             CultureInfo invariant = CultureInfo.InvariantCulture;
-            if (Math.Abs(stat) < 100f)   return stat.ToString("0.##", invariant); // 95.75  or 0.25
-            if (Math.Abs(stat) < 1000f)  return stat.ToString("0.#", invariant);  // 950.7  or 0.5
-            if (Math.Abs(stat) < 10000f) return stat.ToString("#", invariant);    // 9500
-            float single = stat / 1000f;
-            if (Math.Abs(single) < 100f)  return single.ToString("0.##", invariant) + "k"; // 57.75k or 0.5k
-            if (Math.Abs(single) < 1000f) return single.ToString("0.#", invariant) + "k";  // 950.7k
-            return single.ToString("#", invariant) + "k"; // 1000k
+            float abs = Math.Abs(stat);
+            if (abs < 100f)   return stat.ToString("0.##", invariant);
+            if (abs < 1000f)  return stat.ToString("0.#", invariant);
+            if (abs < 10000f) return stat.ToString("#", invariant);
+
+            float k = stat / 1000f;
+            if (Math.Abs(k) < 1000f) return k.ToString("0.#", invariant) + "k";
+
+            float m = stat / 1_000_000f;
+            if (Math.Abs(m) < 1000f) return m.ToString("0.#", invariant) + "M";
+            return m.ToString("#", invariant) + "M";
         }
 
         public static bool DataVisibleToPlayer(Empire empire)
