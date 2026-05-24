@@ -32,7 +32,7 @@ namespace Ship_Game.Ships
 
         public InhibitionType InhibitionSource { get; protected set; }
         public bool Inhibited { get; protected set; }
-        public MoveState engineState;
+        [StarData] public MoveState engineState;
 
          // [0.0 to 1.0], current Warp thrust percentage
         public float WarpPercent { get; private set; } = 1f;
