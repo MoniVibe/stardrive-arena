@@ -95,6 +95,24 @@ namespace Ship_Game.AI
         void OnDeserialized()
         {
             InitializeManagers(OwnerEmpire);
+            ScrubNullGoalSlots();
+        }
+
+        void ScrubNullGoalSlots()
+        {
+            if (GoalsList == null) return;
+            int removed = 0;
+            for (int i = GoalsList.Count - 1; i >= 0; i--)
+            {
+                if (GoalsList[i] == null)
+                {
+                    GoalsList.RemoveAt(i);
+                    removed++;
+                }
+            }
+            if (removed > 0)
+                Log.Warning($"{OwnerEmpire?.Name ?? "<unknown>"}: dropped {removed} null Goal slot(s) " +
+                            "from GoalsList after deserialize (likely a Goal type removed/renamed since the save was written).");
         }
 
         public void Update()
