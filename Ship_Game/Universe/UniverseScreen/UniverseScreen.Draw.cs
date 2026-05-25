@@ -638,18 +638,17 @@ namespace Ship_Game
                 {
                     if (ship is { WeaponsMaxRange: > 0f, IsVisibleToPlayer: true })
                     {
-                        Color color = ship.Loyalty == Player
-                                        ? new Color(0, 200, 0, 30)
-                                        : new Color(200, 0, 0, 30);
+                        Color baseTint = ship.Loyalty == Player ? new Color(0, 200, 0) : new Color(200, 0, 0);
+                        Color color = new Color(baseTint, (byte)30).Premultiplied();
 
                         byte edgeAlpha = 70;
-                        DrawCircleProjected(ship.Position, ship.WeaponsMaxRange, new Color(color, edgeAlpha));
+                        DrawCircleProjected(ship.Position, ship.WeaponsMaxRange, new Color(baseTint, edgeAlpha).Premultiplied());
                         if (SelectedShip == ship)
                         {
                             edgeAlpha = 70;
                             DrawTextureProjected(shipRangeTex, ship.Position, ship.WeaponsMaxRange, color);
-                            DrawCircleProjected(ship.Position, ship.WeaponsAvgRange, new Color(Color.Orange, edgeAlpha));
-                            DrawCircleProjected(ship.Position, ship.WeaponsMinRange, new Color(Color.Yellow, edgeAlpha));
+                            DrawCircleProjected(ship.Position, ship.WeaponsAvgRange, new Color(Color.Orange, edgeAlpha).Premultiplied());
+                            DrawCircleProjected(ship.Position, ship.WeaponsMinRange, new Color(Color.Yellow, edgeAlpha).Premultiplied());
                         }
                     }
 
@@ -658,11 +657,11 @@ namespace Ship_Game
                         if (SelectedShip == ship)
                         {
                             Color color = (ship.Loyalty.isPlayer)
-                                ? new Color(0, 100, 200, 20)
-                                : new Color(200, 0, 0, 10);
+                                ? new Color(0, 100, 200, 20).Premultiplied()
+                                : new Color(200, 0, 0, 10).Premultiplied();
                             float sensorRange = ship.AI.GetSensorRadius();
                             DrawTextureProjected(shipRangeTex, ship.Position, sensorRange, color);
-                            DrawCircleProjected(ship.Position, sensorRange, new Color(Color.Blue, 85));
+                            DrawCircleProjected(ship.Position, sensorRange, new Color(Color.Blue, 85).Premultiplied());
                         }
                     }
                 }
@@ -682,7 +681,7 @@ namespace Ship_Game
                     if (planet.System.IsExploredBy(Player))
                     {
                         DrawCircleProjected(planet.Position, planet.GravityWellRadius,
-                                            new Color(255, 50, 0, 150), 1f, inhibit, new Color(200, 0, 0, 50));
+                                            new Color(255, 50, 0, 150).Premultiplied(), 1f, inhibit, new Color(200, 0, 0, 50).Premultiplied());
                     }
                 }
 
@@ -690,16 +689,16 @@ namespace Ship_Game
                 {
                     if (ship is { InhibitionRadius: > 0f, IsVisibleToPlayer: true })
                     {
-                        DrawCircleProjected(ship.Position, ship.InhibitionRadius, 
-                                            new Color(255, 50, 0, 150), 1f, inhibit, new Color(200, 0, 0, 40));
+                        DrawCircleProjected(ship.Position, ship.InhibitionRadius,
+                                            new Color(255, 50, 0, 150).Premultiplied(), 1f, inhibit, new Color(200, 0, 0, 40).Premultiplied());
                     }
                 }
 
                 // draw blue positive influence nodes from bordernodes
                 if (viewState >= UnivScreenState.SectorView)
                 {
-                    var transparentBlue = new Color(30, 30, 150, 150);
-                    var transparentGreen = new Color(0, 200, 0, 20);
+                    var transparentBlue = new Color(30, 30, 150, 150).Premultiplied();
+                    var transparentGreen = new Color(0, 200, 0, 20).Premultiplied();
                     var frustum = VisibleWorldRect;
 
                     foreach (ref Empire.InfluenceNode n in Player.BorderNodes.AsSpan())
