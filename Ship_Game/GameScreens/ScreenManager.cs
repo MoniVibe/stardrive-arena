@@ -717,7 +717,7 @@ namespace Ship_Game
                         lastWrite = info.LastWriteTimeUtc;
                         name = info.Name;
                     }
-                    catch (IOException ex)
+                    catch (Exception ex) // IOException, UnauthorizedAccessException, SecurityException, etc.
                     {
                         Log.WarningVerbose($"HotLoad stat failed for {hot.File}: {ex.Message}");
                         continue; // retry on next hot-load interval
