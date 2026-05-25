@@ -1,5 +1,6 @@
 using Microsoft.Xna.Framework.Graphics;
 using Color = Microsoft.Xna.Framework.Color;
+using SDGraphics;
 using SDUtils;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
@@ -67,7 +68,7 @@ namespace Ship_Game
 			bool hover = r.HitTest(GameBase.Base.Manager.input.CursorPosition);
 			if (hover)
 			{
-				batch.FillRectangle(r, new Color(128, 87, 43, 50));
+				batch.FillRectangle(r, new Color(128, 87, 43, 50).Premultiplied());
 			}
 			foreach (RecTexPair r in container)
 			{

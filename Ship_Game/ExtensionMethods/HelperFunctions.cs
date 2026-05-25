@@ -178,7 +178,7 @@ namespace Ship_Game
         {
             int xsize = xGridSize / numberXs;
             int ysize = yGridSize / numberYs;
-            var color  = new Color(211, 211, 211, 70);
+            var color  = new Color(211, 211, 211, 70).Premultiplied();
             var origin = new Vector2(xpos + 1, ypos);
             var end    = new Vector2(xpos, ypos + yGridSize - 1);
             for (int x = 0; x < numberXs; ++x)

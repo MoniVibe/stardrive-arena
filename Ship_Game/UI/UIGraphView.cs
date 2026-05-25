@@ -131,8 +131,8 @@ namespace Ship_Game
 
             Rectangle inner = Rect.Bevel(-15);
 
-            var brown = new Color(Color.SaddleBrown, 150);
-            var backBrown = new Color(Color.SaddleBrown, 75);
+            var brown = new Color(Color.SaddleBrown, 150).Premultiplied();
+            var backBrown = new Color(Color.SaddleBrown, 75).Premultiplied();
             batch.DrawRectangle(Rect, brown);  // outer
             batch.DrawRectangle(inner, brown); // inner
 

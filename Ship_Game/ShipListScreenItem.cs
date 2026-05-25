@@ -172,7 +172,7 @@ namespace Ship_Game
             RefitButton.Draw(batch);
             ScrapButton.Draw(batch);
 
-            batch.DrawRectangle(TotalEntrySize, new Color(118, 102, 67, 50));
+            batch.DrawRectangle(TotalEntrySize, new Color(118, 102, 67, 50).Premultiplied());
         }
 
         public static string GetStatusText(Ship ship)
