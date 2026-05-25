@@ -22,7 +22,7 @@ namespace Ship_Game
 {
     public partial class UniverseScreen
     {
-        static readonly Color FleetLineColor    = new Color(255, 255, 255, 20);
+        static readonly Color FleetLineColor    = new Color(255, 255, 255, 20).Premultiplied();
         static readonly Vector2 FleetNameOffset = new Vector2(10f, -6f);
         public static float PulseTimer { get; private set; }
 
@@ -957,7 +957,7 @@ namespace Ship_Game
             if (!Project.Started || CurrentGroup == null)
                 return;
 
-            var projectedColor = new Color(0, 255, 0, 100);
+            var projectedColor = new Color(0, 255, 0, 100).Premultiplied();
             foreach (Ship ship in CurrentGroup.Ships)
             {
                 if (ship.Active)

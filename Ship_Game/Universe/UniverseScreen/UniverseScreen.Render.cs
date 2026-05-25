@@ -87,7 +87,7 @@ namespace Ship_Game
 
                 if (viewState > UnivScreenState.ShipView && !IsCinematicModeEnabled)
                 {
-                    var transparentDarkGray = new Color(50, 50, 50, 90);
+                    var transparentDarkGray = new Color(50, 50, 50, 90).Premultiplied();
                     DrawCircle(sysScreenPos, planetOrbitRadius, transparentDarkGray, 3f);
 
                     if (planet.Owner == null)
@@ -96,7 +96,7 @@ namespace Ship_Game
                     }
                     else
                     {
-                        var empireColor = new Color(planet.Owner.EmpireColor, 100);
+                        var empireColor = new Color(planet.Owner.EmpireColor, 100).Premultiplied();
                         DrawCircle(sysScreenPos, planetOrbitRadius, empireColor, 3f);
                     }
                 }
@@ -185,9 +185,9 @@ namespace Ship_Game
 
         void DrawSystemThreatCirclesAnimation(SpriteBatch batch)
         {
-            var red = new Color(Color.Red, 80);
-            var orange = new Color(Color.Orange, 80);
-            var black = new Color(Color.Black, 40);
+            var red = new Color(Color.Red, 80).Premultiplied();
+            var orange = new Color(Color.Orange, 80).Premultiplied();
+            var black = new Color(Color.Black, 40); // black premul is a no-op
 
             foreach (IncomingThreat threat in Player.SystemsWithThreat)
             {
@@ -402,7 +402,7 @@ namespace Ship_Game
                     DrawZones(Fonts.Pirulen16, $"Current list of planets in trade route: {numRoutes}", ref cursorY, Color.White);
 
                 foreach (Rectangle ao in SelectedShip.AreaOfOperation)
-                    DrawRectangleProjected(new RectF(ao), Color.Red, new Color(Color.Red, 50));
+                    DrawRectangleProjected(new RectF(ao), Color.Red, new Color(Color.Red, 50).Premultiplied());
 
                 // Draw Specific Trade Routes to planets
                 if (SelectedShip.IsFreighter)

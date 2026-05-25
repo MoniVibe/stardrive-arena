@@ -158,7 +158,7 @@ namespace Ship_Game
             lookingAt.X = (int)lookingAt.X.LowerBound(ActualMap.X);
             lookingAt.Y = (int)lookingAt.Y.LowerBound(ActualMap.Y);
 
-            batch.FillRectangle(lookingAt, new Color(255, 255, 255, 30));
+            batch.FillRectangle(lookingAt, new Color(255, 255, 255, 30).Premultiplied());
             batch.DrawRectangle(lookingAt, Color.White);
             var topMiddleView   = new Vector2(lookingAt.X +  lookingAt.Width / 2, lookingAt.Y);
             var botMiddleView   = new Vector2(topMiddleView.X - 1f, lookingAt.Y + lookingAt.Height);
@@ -208,7 +208,7 @@ namespace Ship_Game
             {
                 var point = WorldToMiniPos(c.Position);
                 radius = 0.025f * Universe.SlowFlashTimer;
-                var warningColor = new Color(Color.Yellow, 200);
+                var warningColor = new Color(Color.Yellow, 200).Premultiplied();
                 batch.Draw(Node1, point, warningColor, 0f, Node.CenterF, radius, SpriteEffects.None, 1f);
                 batch.Draw(Node1, point, Color.Black, 0f, Node.CenterF, radius - 0.005f, SpriteEffects.None, 1f);
                 batch.Draw(Node1, point, c.Loyalty.EmpireColor, 0f, Node.CenterF, 0.012f, SpriteEffects.None, 1f);

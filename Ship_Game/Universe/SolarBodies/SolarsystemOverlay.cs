@@ -121,7 +121,7 @@ namespace Ship_Game
                     Vector2d planetPos = pPos.PointFromAngle(p.OrbitalAngle, 40 + 40 * i);
                     planetPos -= ((planetPos - pPos).Normalized() * (40 + 40 * i) * transitionOffset);
 
-                    Color color = p.Owner == null ? new Color(50, 50, 50, 90) : new Color(p.Owner.EmpireColor, 100);
+                    Color color = p.Owner == null ? new Color(50, 50, 50, 90).Premultiplied() : new Color(p.Owner.EmpireColor, 100).Premultiplied();
                     batch.DrawCircle(pPos, pPos.Distance(planetPos), color, 2f);
                 }
 
