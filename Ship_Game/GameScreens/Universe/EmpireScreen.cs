@@ -213,7 +213,7 @@ namespace Ship_Game
                 {
                     batch.FillRectangle(pgs.ClickRect, new Color(0, 0, 0, 200));
                 }
-                batch.DrawRectangle(pgs.ClickRect, new Color(211, 211, 211, 70), 2f);
+                batch.DrawRectangle(pgs.ClickRect, new Color(211, 211, 211, 70).Premultiplied(), 2f);
                 if (pgs.building != null)
                 {
                     Rectangle bRect = new Rectangle(pgs.ClickRect.X + pgs.ClickRect.Width / 2 - 24, pgs.ClickRect.Y + pgs.ClickRect.Height / 2 - 24, 48, 48);
@@ -369,11 +369,11 @@ namespace Ship_Game
                 var entry = (EmpireScreenEntry)e.item;
                 if (i % 2 == 0)
                 {
-                    batch.FillRectangle(entry.TotalEntrySize, smallHighlight);
+                    batch.FillRectangle(entry.TotalEntrySize, smallHighlight.Premultiplied());
                 }
                 if (entry.p == SelectedPlanet)
                 {
-                    batch.FillRectangle(entry.TotalEntrySize, TextColor);
+                    batch.FillRectangle(entry.TotalEntrySize, TextColor.Premultiplied());
                 }
                 entry.SetNewPos(eRect.X + 22, e.Y);
                 entry.Draw(batch);
@@ -392,16 +392,16 @@ namespace Ship_Game
             batch.DrawLine(topLeftSL, botSL, lineColor);
             topLeftSL = new Vector2(e1.FoodRect.X, eRect.Y + 35);
             botSL = new Vector2(topLeftSL.X, PlanetInfoRect.Y);
-            batch.DrawLine(topLeftSL, botSL, new Color(lineColor, 100));
+            batch.DrawLine(topLeftSL, botSL, new Color(lineColor, 100).Premultiplied());
             topLeftSL = new Vector2(e1.ProdRect.X, eRect.Y + 35);
             botSL = new Vector2(topLeftSL.X, PlanetInfoRect.Y);
-            batch.DrawLine(topLeftSL, botSL, new Color(lineColor, 100));
+            batch.DrawLine(topLeftSL, botSL, new Color(lineColor, 100).Premultiplied());
             topLeftSL = new Vector2(e1.ResRect.X, eRect.Y + 35);
             botSL = new Vector2(topLeftSL.X, PlanetInfoRect.Y);
-            batch.DrawLine(topLeftSL, botSL, new Color(lineColor, 100));
+            batch.DrawLine(topLeftSL, botSL, new Color(lineColor, 100).Premultiplied());
             topLeftSL = new Vector2(e1.MoneyRect.X, eRect.Y + 35);
             botSL = new Vector2(topLeftSL.X, PlanetInfoRect.Y);
-            batch.DrawLine(topLeftSL, botSL, new Color(lineColor, 100));
+            batch.DrawLine(topLeftSL, botSL, new Color(lineColor, 100).Premultiplied());
             topLeftSL = new Vector2(e1.SliderRect.X, eRect.Y + 35);
             botSL = new Vector2(topLeftSL.X, PlanetInfoRect.Y);
             batch.DrawLine(topLeftSL, botSL, lineColor);

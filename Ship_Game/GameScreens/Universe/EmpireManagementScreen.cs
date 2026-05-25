@@ -172,7 +172,7 @@ namespace Ship_Game
                 {
                     batch.FillRectangle(rect, new Color(0, 0, 0, 200));
                 }
-                batch.DrawRectangle(rect, new Color(211, 211, 211, 100), 0.5f);
+                batch.DrawRectangle(rect, new Color(211, 211, 211, 100).Premultiplied(), 0.5f);
 
                 if (tile.Building != null)
                 {
@@ -231,16 +231,16 @@ namespace Ship_Game
             batch.DrawLine(topLeftSL, botSL, lineColor);
             topLeftSL = new Vector2(e1.FoodRect.X, columnTop);
             botSL     = new Vector2(topLeftSL.X, columnBot);
-            batch.DrawLine(topLeftSL, botSL, new Color(lineColor, 100));
+            batch.DrawLine(topLeftSL, botSL, new Color(lineColor, 100).Premultiplied());
             topLeftSL = new Vector2(e1.ProdRect.X, columnTop);
             botSL     = new Vector2(topLeftSL.X, columnBot);
-            batch.DrawLine(topLeftSL, botSL, new Color(lineColor, 100));
+            batch.DrawLine(topLeftSL, botSL, new Color(lineColor, 100).Premultiplied());
             topLeftSL = new Vector2(e1.ResRect.X, columnTop);
             botSL     = new Vector2(topLeftSL.X, columnBot);
-            batch.DrawLine(topLeftSL, botSL, new Color(lineColor, 100));
+            batch.DrawLine(topLeftSL, botSL, new Color(lineColor, 100).Premultiplied());
             topLeftSL = new Vector2(e1.MoneyRect.X, columnTop);
             botSL     = new Vector2(topLeftSL.X, columnBot);
-            batch.DrawLine(topLeftSL, botSL, new Color(lineColor, 100));
+            batch.DrawLine(topLeftSL, botSL, new Color(lineColor, 100).Premultiplied());
             topLeftSL = new Vector2(e1.SliderRect.X, columnTop);
             botSL     = new Vector2(topLeftSL.X, columnBot);
             batch.DrawLine(topLeftSL, botSL, lineColor);

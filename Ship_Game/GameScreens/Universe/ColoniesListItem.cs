@@ -210,8 +210,8 @@ namespace Ship_Game
         {
             ProdStorage.Progress = P.ProdHere;
             FoodStorage.Progress = P.FoodHere;
-            var TextColor2 = new Color(118, 102, 67, 50);
-            var smallHighlight = new Color(118, 102, 67, 25);
+            var TextColor2 = new Color(118, 102, 67, 50).Premultiplied();
+            var smallHighlight = new Color(118, 102, 67, 25).Premultiplied();
             if (ItemIndex % 2 == 0)
             {
                 batch.FillRectangle(Rect, smallHighlight);

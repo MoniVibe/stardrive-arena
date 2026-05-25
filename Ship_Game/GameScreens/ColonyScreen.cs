@@ -241,7 +241,7 @@ namespace Ship_Game
             {
                 if (!pgs.Habitable)
                     batch.FillRectangle(pgs.ClickRect, new Color(0, 0, 0, 200));
-                batch.DrawRectangle(pgs.ClickRect, new Color(211, 211, 211, 70), 2f);
+                batch.DrawRectangle(pgs.ClickRect, new Color(211, 211, 211, 70).Premultiplied(), 2f);
                 if (pgs.building != null)
                 {
                     Rectangle destinationRectangle2 = new Rectangle(pgs.ClickRect.X + pgs.ClickRect.Width / 2 - 32, pgs.ClickRect.Y + pgs.ClickRect.Height / 2 - 32, 64, 64);
