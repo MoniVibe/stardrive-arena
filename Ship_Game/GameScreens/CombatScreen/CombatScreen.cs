@@ -343,7 +343,7 @@ namespace Ship_Game
                         {
                             foreach (PlanetGridSquare moveTile in MovementTiles)
                             {
-                                batch.FillRectangle(moveTile.ClickRect, new Color(255, 255, 255, 30));
+                                batch.FillRectangle(moveTile.ClickRect, new Color(255, 255, 255, 30).Premultiplied());
                                 Vector2 center = moveTile.ClickRect.CenterF;
                                 DrawCircle(center, 5f, Color.White, 5f);
                                 DrawCircle(center, 5f, Color.Black);

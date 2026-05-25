@@ -1,6 +1,7 @@
 using System;
 using Microsoft.Xna.Framework.Graphics;
 using Color = Microsoft.Xna.Framework.Color;
+using SDGraphics;
 namespace Ship_Game.GameScreens.ShipDesign
 {
     public class ShipDesignStat : ScrollListItem<ShipDesignStat>
@@ -43,8 +44,8 @@ namespace Ship_Game.GameScreens.ShipDesign
             if (IsHeader)
             {
                 // dark blueish transparent background for Headers
-                var edgeColor = new Color(75, 99, 125, 100);
-                Color bkgColor = Hovered ? edgeColor : new Color(35, 59, 85, 50);
+                var edgeColor = new Color(75, 99, 125, 100).Premultiplied();
+                Color bkgColor = Hovered ? edgeColor : new Color(35, 59, 85, 50).Premultiplied();
                 new Selector(Rect, bkgColor, edgeColor).Draw(batch, elapsed);
             }
             base.Draw(batch, elapsed);

@@ -162,7 +162,7 @@ namespace Ship_Game
 
                     if (!HullEditMode && DesignedShip.PwrGrid.IsPowered(slot.Pos))
                     {
-                        Color yellow = ActiveModule != null ? new Color(Color.Yellow, 150) : Color.Yellow;
+                        Color yellow = ActiveModule != null ? new Color(Color.Yellow, 150).Premultiplied() : Color.Yellow;
                         batch.Draw(concreteGlass, rect, yellow);
                     }
 
