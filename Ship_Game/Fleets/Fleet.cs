@@ -399,7 +399,7 @@ namespace Ship_Game.Fleets
                 Ship s = Ships[x];
                 AssignExistingOrCreateNewNode(s);
             }
-            
+
             var centerSize = ArrangeSquad(CenterFlank, Vector2.Zero, FlankType.Center);
             ArrangeSquad(ScreenFlank, centerSize * -1, FlankType.Screen);
             var screenSize = ArrangeSquad(RearFlank, centerSize, FlankType.Rear);
@@ -552,50 +552,61 @@ namespace Ship_Game.Fleets
         {
             int upOrDown = flank == FlankType.Screen ? -1 : 1;
             float spacer = 1000 * upOrDown;
-            Vector2 squadOffset = new(0,spacer);
+            Vector2 squadOffset = new(0, spacer);
             int row = 0;
             int columns = flank == FlankType.Screen ? 9 : 5;
-            int rowMax = 1 +(squads.Count / columns).LowerBound(columns);
+            int rowMax = columns - 1; // wrap to a new row after `columns` squads
             float tallestSquad = 0;
-            Vector2 previousSizeLeft = Vector2.Zero;
-            Vector2 previousSizeRight = Vector2.Zero;
+
+            // Cumulative outer edges of squads placed on each side this row.
+            // Each squad's center is placed past the prior squad's edge by its
+            // own half-width so the bounding boxes touch but don't overlap.
+            float rightEdge = 0f; // running right-most X of odd-index squads
+            float leftEdge  = 0f; // running left-most X of even-index squads (row > 0)
 
             for (int index = 0; index < squads.Count; ++index)
             {
                 var squad = squads[index];
+                Vector2 sz = squad.GetSquadSize();
+                float halfX = sz.X * 0.5f;
+
                 if (row == 0)
                 {
                     int dir = upOrDown == 1 ? 1 : -1;
                     int wantedIndex = dir == 1 ? 0 : 3;
-                    int wantedShip = squad.Ships.Count >= wantedIndex + 1? wantedIndex  : -1;
+                    int wantedShip = squad.Ships.Count >= wantedIndex + 1 ? wantedIndex : -1;
                     float height = dir == -1 ? 0 : squad.Ships[wantedShip].GridHeight * 16 * dir;
-                    squad.SetOffSets(new(previousSizeLeft.X, squadOffset.Y + height));
-                    previousSizeLeft = squad.GetSquadSize();
-                    previousSizeRight = -squad.GetSquadSize();
+                    squad.SetOffSets(new(0, squadOffset.Y + height));
+                    rightEdge = halfX;
+                    leftEdge = -halfX;
                 }
                 else if (index % 2 == 1)
                 {
                     int dir = squad.Ships.Count >= 3 ? 2 : -1;
                     float width = dir == -1 ? 0 : squad.Ships[dir].GridWidth * 16;
-                    squad.SetOffSets(new(previousSizeLeft.X + width, squadOffset.Y));
-                    previousSizeLeft = squad.GetSquadSize();
+                    squad.SetOffSets(new(rightEdge + halfX + width, squadOffset.Y));
+                    rightEdge += sz.X + width;
                 }
                 else
                 {
                     int dir = squad.Ships.Count >= 2 ? 1 : -1;
                     float width = dir == -1 ? 0 : squad.Ships[dir].GridWidth * 16;
-                    squad.SetOffSets(new(previousSizeRight.X - width, squadOffset.Y));
-                    previousSizeRight = -squad.GetSquadSize();
+                    squad.SetOffSets(new(leftEdge - halfX - width, squadOffset.Y));
+                    leftEdge -= sz.X + width;
                 }
 
-                tallestSquad = Math.Max(tallestSquad, squad.GetSquadSize().Y);
+                tallestSquad = Math.Max(tallestSquad, sz.Y);
                 row++;
-                
+
                 if (row > rowMax)
                 {
                     row = 0;
-                    squadOffset.Y = (flank == FlankType.Screen ? -1 : 1) * tallestSquad;
-                    previousSizeLeft = previousSizeRight = Vector2.Zero;
+                    // accumulate Y instead of reassigning so subsequent rows
+                    // stack outward from the fleet center instead of snapping
+                    // back to a fixed offset.
+                    squadOffset.Y += upOrDown * tallestSquad;
+                    rightEdge = 0f;
+                    leftEdge = 0f;
                     tallestSquad = 0;
                 }
             }
