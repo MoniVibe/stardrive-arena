@@ -236,7 +236,7 @@ namespace Ship_Game
                                 (int) (nro.Radius * scale * 2f),
                                 (int) (nro.Radius * scale * 2f));
                             var empire = UState.Empires[entry.Key];
-                            batch.Draw(ResourceManager.Texture("UI/node"), starRect, new Color(empire.EmpireColor, 128));
+                            batch.Draw(ResourceManager.Texture("UI/node"), starRect, new Color(empire.EmpireColor, 128).Premultiplied());
                         }
                     }
                 }

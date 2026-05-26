@@ -241,7 +241,7 @@ namespace Ship_Game
                 if (OkToBuild(planet, null))
                 {
                     float radius = 2500f * planet.Scale;
-                    Screen.DrawCircleProjected(planet.Position, radius, new Color(255, 165, 0, 100), 2f,
+                    Screen.DrawCircleProjected(planet.Position, radius, new Color(255, 165, 0, 100).Premultiplied(), 2f,
                                                nodeTex, new Color(0, 0, 255, 100).Premultiplied());
                 }
             }
@@ -252,13 +252,13 @@ namespace Ship_Game
                 {
                     if (ShipToBuild?.IsResearchStation == true)
                     {
-                        Screen.DrawCircleProjected(system.Position, system.Radius * 0.3f, new Color(255, 165, 0, 100), 2f,
+                        Screen.DrawCircleProjected(system.Position, system.Radius * 0.3f, new Color(255, 165, 0, 100).Premultiplied(), 2f,
                             nodeTex, new Color(0, 0, 255, 100).Premultiplied());
                     }
                 }
 
                 Screen.DrawCircleProjected(system.Position, system.SunDangerRadius.LowerBound(MinimumBuildDistanceFromSun),
-                    new Color(255, 0, 0, 100), 2f, nodeTex, new Color(255, 0, 0, 50).Premultiplied());
+                    new Color(255, 0, 0, 100).Premultiplied(), 2f, nodeTex, new Color(255, 0, 0, 50).Premultiplied());
             }
 
             base.Draw(batch, elapsed);
@@ -298,7 +298,7 @@ namespace Ship_Game
                             TargetPlanet = planet;
 
                             Vector2 planetScreenPos = Screen.ProjectToScreenPosition(planet.Position).ToVec2f();
-                            batch.DrawLine(planetScreenPos, cursorPos, new Color(255, 165, 0, 150), 3f);
+                            batch.DrawLine(planetScreenPos, cursorPos, new Color(255, 165, 0, 150).Premultiplied(), 3f);
                             batch.DrawString(Fonts.Arial20Bold, "Will Orbit " + planet.Name, cursorPos + new Vector2(0, 34f), Color.White);
                             break;
                         }
@@ -316,7 +316,7 @@ namespace Ship_Game
                     TargetSystem = null;
                 }
 
-                Color shipColor = OkToBuild(TargetPlanet, TargetSystem) ? new Color(0, 255, 0, 100) : Color.Red.Alpha(100);
+                Color shipColor = OkToBuild(TargetPlanet, TargetSystem) ? new Color(0, 255, 0, 100).Premultiplied() : Color.Red.Alpha(100);
                 batch.Draw(platform, cursorPos, shipColor, 0f, IconOrigin, (float)scale, SpriteEffects.None, 1f);
             }
         }

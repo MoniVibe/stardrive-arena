@@ -413,7 +413,7 @@ namespace Ship_Game
                 color = Color.Gray;
 
             if (enroute == 0)
-                color = new Color(color, 128);
+                color = new Color(color, 128).Premultiplied();
 
             string puncText = punctuation ? ": " : "";
             batch.DrawString(TextFont, $"{goodsType.Text}{puncText}{enroute}/{openSlots} {amount}", pos, color);

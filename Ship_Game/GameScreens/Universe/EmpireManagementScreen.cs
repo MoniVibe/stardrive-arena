@@ -176,7 +176,7 @@ namespace Ship_Game
 
                 if (tile.Building != null)
                 {
-                    Color c = tile.QItem != null ? White : new Color(White, 128);
+                    Color c = tile.QItem != null ? White : new Color(White, 128).Premultiplied();
                     batch.Draw(tile.Building.IconTex, rect.CenterF - new Vector2(18), new Vector2(36), c);
                 }
 

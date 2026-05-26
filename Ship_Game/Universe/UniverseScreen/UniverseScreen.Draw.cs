@@ -1296,7 +1296,7 @@ namespace Ship_Game
                     if (troopCount > 0)
                     {
                         posOffSet.X += (18 * drawLocationOffset);
-                        DrawTextureWithToolTip(icon_troop, new Color((byte)255, (byte)255, (byte)255, (byte)0), $"Troops {troopCount}", mousePos,
+                        DrawTextureWithToolTip(icon_troop, new Color((byte)255, (byte)255, (byte)255, (byte)0).Premultiplied(), $"Troops {troopCount}", mousePos,
                                                (int)posOffSet.X, (int)posOffSet.Y, 14, 14);
                         ++drawLocationOffset;
                     }
