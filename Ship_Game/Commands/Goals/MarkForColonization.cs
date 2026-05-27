@@ -46,7 +46,7 @@ namespace Ship_Game.Commands.Goals
                 CheckNewOwnersInSystem = true;
             }
 
-            if (AIControlsColonization && PositiveEnemyPresence(out _)) 
+            if (AIControlsColonization && PositiveEnemyPresence(out _))
                 return;
 
             // Fast track to colonize if planet is safe and we have a ready Colony Ship
@@ -64,6 +64,11 @@ namespace Ship_Game.Commands.Goals
             TargetPlanet = toColonize;
             FinishedShip = colonyShip;
             IsManualColonizationOrder = true;
+
+            Goal prior = owner.AI.FindGoal(g => g.Type == GoalType.MarkForColonization
+                                             && g.FinishedShip == colonyShip);
+            if (prior != null)
+                owner.AI.RemoveGoal(prior);
 
             colonyShip.AI.OrderColonization(toColonize);
             ChangeToStep(WaitForColonizationComplete);
@@ -249,6 +254,13 @@ namespace Ship_Game.Commands.Goals
 
         GoalStep WaitForColonizationComplete()
         {
+            if (TargetPlanet.Owner == Owner)
+            {
+                Owner.DecreaseFleetStrEmpireMultiplier(TargetEmpire);
+                ReleaseColonyShipAndTask();
+                return GoalStep.GoalComplete;
+            }
+
             if (!PlanetCanBeColonized())
             {
                 ReleaseColonyShipAndTask();
@@ -263,14 +275,7 @@ namespace Ship_Game.Commands.Goals
                 return GoalStep.GoalFailed;
             }
 
-            if (TargetPlanet.Owner == Owner)
-            {
-                Owner.DecreaseFleetStrEmpireMultiplier(TargetEmpire);
-                ReleaseColonyShipAndTask();
-                return GoalStep.GoalComplete;
-            }
-
-            if (FinishedShip == null 
+            if (FinishedShip == null
                 || !FinishedShip.AI.FindGoal(ShipAI.Plan.Colonize, out ShipAI.ShipGoal goal)
                 || goal.TargetPlanet != TargetPlanet)
             {
@@ -283,6 +288,9 @@ namespace Ship_Game.Commands.Goals
 
         bool PlanetCanBeColonized()
         {
+            if (TargetPlanet.Owner == Owner)
+                return false;
+
             if (!Owner.isPlayer && (PlanetRanker.IsColonizeBlockedByMorals(TargetPlanet.System, Owner)
                                    || TargetPlanet.Owner?.ParentEmpire != null && !Owner.IsAtWarWith(TargetPlanet.Owner.ParentEmpire)))
             {
