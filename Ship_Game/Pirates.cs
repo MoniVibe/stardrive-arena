@@ -689,6 +689,16 @@ namespace Ship_Game
             if (targets.Count == 0)
                 return false;
 
+            if (type == TargetType.FreighterAtWarp)
+            {
+                var colonyShips = targets.Filter(t => t.ShipData.IsColonyShip);
+                if (colonyShips.Length > 0 && Random.RollDice(30 + Level * 3))
+                {
+                    target = Random.Item(colonyShips);
+                    return target != null;
+                }
+            }
+
             target = Random.Item(targets);
             return target != null;
 
