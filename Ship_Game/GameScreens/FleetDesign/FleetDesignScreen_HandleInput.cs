@@ -175,65 +175,6 @@ namespace Ship_Game
                 ActiveShipDesign = null;
             }
             // else: otherwise we will just have a data node
-
-            AssignNodeToSquad(node);
-        }
-
-        // Make sure the new node lives in a Squad so the squad rect/drag works
-        // (matches Ctrl+# fleet creation, which goes through AutoArrange). Prefer
-        // the nearest existing squad in any flank; if none are close enough,
-        // create a fresh single-node squad in the CenterFlank at the drop point.
-        void AssignNodeToSquad(FleetDataNode node)
-        {
-            if (SelectedFleet == null)
-                return;
-
-            // AllFlanks must contain refs to the individual flank arrays so
-            // that AllSquads enumeration sees squads we add via CenterFlank.
-            // On a fresh fleet (no AutoArrange) it's empty; on a save-loaded
-            // fleet the entries may not be identity-equal to the individual
-            // flank fields after StarData round-trip. Rebuild defensively.
-            SelectedFleet.AllFlanks.Clear();
-            SelectedFleet.AllFlanks.Add(SelectedFleet.CenterFlank);
-            SelectedFleet.AllFlanks.Add(SelectedFleet.LeftFlank);
-            SelectedFleet.AllFlanks.Add(SelectedFleet.RightFlank);
-            SelectedFleet.AllFlanks.Add(SelectedFleet.ScreenFlank);
-            SelectedFleet.AllFlanks.Add(SelectedFleet.RearFlank);
-
-            // already a member of some squad? nothing to do
-            foreach (Squad existing in AllSquads)
-                if (existing.DataNodes.ContainsRef(node))
-                    return;
-
-            const float JoinDistance = Squad.SquadSpacing * 2f;
-            Squad nearest = null;
-            float bestDist = float.MaxValue;
-            foreach (Squad candidate in AllSquads)
-            {
-                float d = candidate.Offset.Distance(node.RelativeFleetOffset);
-                if (d < bestDist)
-                {
-                    bestDist = d;
-                    nearest = candidate;
-                }
-            }
-
-            if (nearest != null && bestDist <= JoinDistance)
-            {
-                nearest.DataNodes.Add(node);
-                if (node.Ship != null) nearest.Ships.AddUnique(node.Ship);
-                return;
-            }
-
-            // No nearby squad — spin up a new one in the Center flank at the drop point.
-            var fresh = new Squad
-            {
-                Fleet = SelectedFleet,
-                Offset = node.RelativeFleetOffset,
-            };
-            fresh.DataNodes.Add(node);
-            if (node.Ship != null) fresh.Ships.Add(node.Ship);
-            SelectedFleet.CenterFlank.Add(fresh);
         }
 
         // delete all selected ships

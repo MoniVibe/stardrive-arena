@@ -273,11 +273,22 @@ namespace Ship_Game
             // the light direction was nearly grazing — half-vector specular
             // peaks barely landed on top hull faces. Moving the sun far above
             // gives a more uniform overhead-light direction across the active
-            // system. Sun radius is ~150k so the new distance still falls in
-            // the ~89% intensity band of the smooth-quadratic falloff.
-            var light1 = AddLight("Key",               system, intensity,         radius,         color, -50000);
-            var light2 = AddLight("OverSaturationKey", system, intensity * 5.00f, radius * 0.05f, color, -1500);
-            var light3 = AddLight("LocalFill",         system, intensity * 0.55f, radius,         Color.White, 0);
+            // system.
+            //
+            // Scene-light radius decoupled from sun.Radius (the sprite size):
+            // SolarSystem.MinRadius is 150k, but most suns set Radius in the
+            // 40k–100k range — at d=150k, the shader's `1 - (d/R)^2` falloff
+            // clamps to zero and ships on the far side of the system get no
+            // sun light at all (only MinAmbient). 215k gives ~51% sun
+            // intensity at the system edge (1 - (150/215)^2) while still
+            // tapering toward the rim, and treats binaries (R=40k–50k
+            // sprite) the same as normal stars (R=100k). The
+            // OverSaturationKey stays tied to sun.Radius intentionally —
+            // it's a small near-sun overbright, not a system-wide light.
+            const float SystemLightRadius = 215_000f;
+            var light1 = AddLight("Key",               system, intensity,         SystemLightRadius, color, -50000);
+            var light2 = AddLight("OverSaturationKey", system, intensity * 5.00f, radius * 0.05f,    color, -1500);
+            var light3 = AddLight("LocalFill",         system, intensity * 0.55f, SystemLightRadius, Color.White, 0);
             //AddLight("Back", system, intensity * 0.5f , radius, color, 2500, fallOff: 0, fillLight: true);
             system.Lights.Add(light1);
             system.Lights.Add(light2);

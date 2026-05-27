@@ -40,7 +40,9 @@ public static class LightingEffectBinder
         // OverSaturationKey) all bind into the slots so per-pixel parallax +
         // each light's native radius falloff replicate SunBurn's deferred
         // multi-light scene.
-        Vector3 ambient = env?.AmbientLightColor ?? new Vector3(0.2f, 0.2f, 0.2f);
+        // Fallback for null SceneEnvironment — matches the MinAmbient floor applied
+        // below, so a missing env yields the same baseline as one with zero ambient.
+        Vector3 ambient = env?.AmbientLightColor ?? new Vector3(0.3f, 0.3f, 0.3f);
         XnaDirectionalLight[] slots = { fx.DirectionalLight0, fx.DirectionalLight1, fx.DirectionalLight2 };
         int dirIndex = 0;
 
@@ -259,10 +261,10 @@ public static class LightingEffectBinder
         // visible against pure black hull. Component-wise max preserves
         // any stronger authored ambient (MainMenu's violet, etc.) and
         // only lifts channels that fall below the floor. User-tuned to
-        // 0.20 against pre-migration footage; raise for more lift in
+        // 0.30 against pre-migration footage; raise for more lift in
         // shadow-side hull, lower if the floor visibly washes out the
         // dark texture detail.
-        const float MinAmbient = 0.2f;
+        const float MinAmbient = 0.3f;
         ambient = Vector3.Max(ambient, new Vector3(MinAmbient, MinAmbient, MinAmbient));
 
         // LightingEnabled gates the per-pixel lighting math entirely. Enable

@@ -34,7 +34,8 @@ public class LightingEffectBinderTests : StarDriveTest
 
         var env = new SceneEnvironment
         {
-            AmbientLightColor = new Vector3(0.2f, 0.2f, 0.25f),
+            // Above MinAmbient floor so passthrough isn't masked by the lift.
+            AmbientLightColor = new Vector3(0.4f, 0.4f, 0.45f),
         };
 
         using var fx = new LightingEffect(Game.GraphicsDevice);
@@ -67,12 +68,12 @@ public class LightingEffectBinderTests : StarDriveTest
         using var fx = new LightingEffect(Game.GraphicsDevice);
         LightingEffectBinder.Apply(fx, lightManager.ActiveLights, env, Vector3.Zero);
 
-        // §4.6 #12: MinAmbient floor (0.2) lifts zero ambient so hulls
+        // §4.6 #12: MinAmbient floor (0.3) lifts zero ambient so hulls
         // never go fully black. LightingEnabled stays true as a result.
         Assert.IsTrue(fx.LightingEnabled, "Ambient floor should keep lighting enabled.");
-        Assert.AreEqual(0.2f, fx.AmbientLightColor.X, 0.001f, "Ambient.X should be lifted to MinAmbient.");
-        Assert.AreEqual(0.2f, fx.AmbientLightColor.Y, 0.001f, "Ambient.Y should be lifted to MinAmbient.");
-        Assert.AreEqual(0.2f, fx.AmbientLightColor.Z, 0.001f, "Ambient.Z should be lifted to MinAmbient.");
+        Assert.AreEqual(0.3f, fx.AmbientLightColor.X, 0.001f, "Ambient.X should be lifted to MinAmbient.");
+        Assert.AreEqual(0.3f, fx.AmbientLightColor.Y, 0.001f, "Ambient.Y should be lifted to MinAmbient.");
+        Assert.AreEqual(0.3f, fx.AmbientLightColor.Z, 0.001f, "Ambient.Z should be lifted to MinAmbient.");
 
         Assert.IsFalse(fx.DirectionalLight0.Enabled);
         Assert.IsFalse(fx.DirectionalLight1.Enabled);

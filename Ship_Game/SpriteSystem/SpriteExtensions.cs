@@ -28,8 +28,6 @@ namespace Ship_Game
 
     public static class SpriteExtensions
     {
-        static readonly XnaRect? NullRectangle = new();
-
         // Phase 2: XNA 3.1's internal SpriteBatch.InternalDraw took a Vector4 destination
         // (X, Y, W, H) for sub-pixel-precise quad drawing. MonoGame doesn't expose that
         // method, but its public Draw(Texture2D, Vector2 position, ..., Vector2 scale, ...)
@@ -40,6 +38,15 @@ namespace Ship_Game
         static void InternalDraw(SpriteBatch batch, Texture2D tex, in RectF dstRect, bool scaleDst, XnaRect? srcRect,
                                  Color color, float rotation, XnaVector2 origin, SpriteEffects effects, float depth)
         {
+            // Trap: C# target-typed `new()` on Nullable<Rectangle> produces
+            // HasValue=true wrapping a (0,0,0,0) Rectangle, NOT a HasValue=false
+            // null. A zeroed srcRect makes MonoGame sample a 0×0 source region
+            // (texture renders invisible) and the ??-fallback below returns 0
+            // (divide-by-zero in the scale math). Normalize to null so callers
+            // that meant "use whole texture" actually get it.
+            if (srcRect is { Width: 0, Height: 0 })
+                srcRect = null;
+
             XnaVector2 position = new(dstRect.X, dstRect.Y);
             int srcW = srcRect?.Width  ?? tex.Width;
             int srcH = srcRect?.Height ?? tex.Height;
@@ -130,7 +137,7 @@ namespace Ship_Game
                                 in RectF r)
         {
             CheckTextureDisposed(texture);
-            InternalDraw(batch, texture, r, false, NullRectangle, Color.White,
+            InternalDraw(batch, texture, r, false, null, Color.White,
                          0f, Vector2.Zero, SpriteEffects.None, 0f);
         }
 
@@ -138,7 +145,7 @@ namespace Ship_Game
                                 in RectF r, Color color)
         {
             CheckTextureDisposed(texture);
-            InternalDraw(batch, texture, r, false, NullRectangle, color,
+            InternalDraw(batch, texture, r, false, null, color,
                          0f, Vector2.Zero, SpriteEffects.None, 0f);
         }
 
@@ -146,7 +153,7 @@ namespace Ship_Game
                                 in RectF r, Color color, float angle)
         {
             CheckTextureDisposed(texture);
-            InternalDraw(batch, texture, r, false, NullRectangle, color,
+            InternalDraw(batch, texture, r, false, null, color,
                          angle, Vector2.Zero, SpriteEffects.None, 0f);
         }
 

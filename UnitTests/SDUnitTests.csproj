@@ -81,6 +81,7 @@
     <Compile Include="Fleets\FleetTests.cs" />
     <Compile Include="Graphics\BloomFilterTests.cs" />
     <Compile Include="Graphics\DistortionComponentTests.cs" />
+    <Compile Include="Graphics\FillRectangleRectFTests.cs" />
     <Compile Include="Graphics\FogOfWarTests.cs" />
     <Compile Include="Graphics\FbxMaterialSurveyTests.cs" />
     <Compile Include="Graphics\ForwardRendererTests.cs" />
