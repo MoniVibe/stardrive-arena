@@ -22,7 +22,7 @@ namespace Ship_Game.Commands.Goals
         public override bool IsRemnantEngageAtPlanet(Planet p) => TargetPlanet == p;
 
         [StarDataConstructor]
-        public RemnantHelpEmpire(Empire owner) : base(GoalType.RemnantEngageEmpire, owner)
+        public RemnantHelpEmpire(Empire owner) : base(GoalType.RemnantHelpEmpire, owner)
         {
             Steps = new Func<GoalStep>[]
             {

@@ -106,12 +106,14 @@ game/PatchTemp/
 Deploy/GeneratedFilesList.nsh
 Deploy/GeneratedFilesList.txt
 SDGraphics/bin/
+SDAnalyzers/bin/
 x64Migration/Tools/*/bin/
 x64Migration/Tools/*/obj/
 
-# Per-user Claude Code permission cache. The non-.local sibling
-# (.claude/settings.json) holds shared project config and stays tracked.
-.claude/settings.local.json
+# Per-user Claude Code state: permission caches, scheduled-task locks,
+# session metadata. All entries are user-machine-specific (absolute
+# paths, NuGet caches, Downloads folders); nothing here is portable.
+.claude/
 game/SDGraphics.pdb
 game/SDGraphics.dll
 game/SDUtils.dll
@@ -184,4 +186,3 @@ game/SharpDX.XInput.dll
 # See Deploy/prereq/README.md for fetch instructions.
 Deploy/prereq/*.exe
 TestResults/
-.claude/scheduled_tasks.lock

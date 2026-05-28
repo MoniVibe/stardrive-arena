@@ -114,7 +114,7 @@ namespace Ship_Game
             // assign it to the fleet on Left click
             if (input.LeftMouseClick && !ShipSL.HitTest(input.CursorPosition))
             {
-                Vector2 pickedPosition = CursorWorldPosition2D;
+                Vector2 pickedPosition = SnapToGrid(CursorWorldPosition2D);
                 if (WouldOverlap(pickedPosition, ActiveShipDesign.Radius))
                     return false;
                 AddDesignToFleet(ActiveShipDesign, pickedPosition);
@@ -355,13 +355,23 @@ namespace Ship_Game
             }
         }
 
+        // Fleet positions snap to a fine grid. DrawGrid renders 1000-world-unit
+        // squares; snapping at 50 yields 20 snap points per square.
+        const float GridSnap = 50f;
+
+        static Vector2 SnapToGrid(Vector2 worldPos)
+        {
+            worldPos.X = (float)System.Math.Round(worldPos.X / GridSnap) * GridSnap;
+            worldPos.Y = (float)System.Math.Round(worldPos.Y / GridSnap) * GridSnap;
+            return worldPos;
+        }
+
         bool GetRoundedNodeMove(Vector2 newSpot, Vector2 oldPos, out Vector2 difference)
         {
             difference = newSpot - oldPos;
             if (difference.Length() > 30f)
             {
-                newSpot.X = (float)System.Math.Round(newSpot.X / 250) * 250;
-                newSpot.Y = (float)System.Math.Round(newSpot.Y / 250) * 250;
+                newSpot = SnapToGrid(newSpot);
                 difference = (newSpot - oldPos);
                 return true;
             }

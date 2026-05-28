@@ -59,14 +59,13 @@ namespace Ship_Game
         public Pirates(Empire owner, EmpireAI ai)
         {
             Owner = owner;
+            Owner.ApplyFactionShipCostMod();
             ai.AddGoal(new PirateAI(Owner));
         }
 
         public int MinimumColoniesForPayment   => Owner.data.MinimumColoniesForStartPayment;
         int PaymentPeriodTurns                 => (int)(Owner.data.PiratePaymentPeriodTurns * Owner.Universe.ProductionPace);
         public bool PaidBy(Empire victim)      => !Owner.IsAtWarWith(victim);
-
-        float PirateBaseDetectionChance => Level * 4 + ((Owner.Universe.StarDate - 1000) * 0.025f);
 
         public void AddGoalDirectorPayment(Empire victim) => 
             AddGoal(victim, GoalType.PirateDirectorPayment, null);
@@ -93,7 +92,7 @@ namespace Ship_Game
             AddGoal(victim, GoalType.PirateDefendBase, baseToDefend);
 
         public void AddGoalProtection(Empire victim, Ship shipToDefend) =>
-            AddGoal(victim, GoalType.PirateDefendBase, shipToDefend);
+            AddGoal(victim, GoalType.PirateProtection, shipToDefend);
 
         void AddGoal(Empire victim, GoalType type, Ship ship, string systemName = "")
         {
@@ -691,6 +690,16 @@ namespace Ship_Game
             if (targets.Count == 0)
                 return false;
 
+            if (type == TargetType.FreighterAtWarp)
+            {
+                var colonyShips = targets.Filter(t => t.ShipData.IsColonyShip);
+                if (colonyShips.Length > 0 && Random.RollDice(30 + Level * 3))
+                {
+                    target = Random.Item(colonyShips);
+                    return target != null;
+                }
+            }
+
             target = Random.Item(targets);
             return target != null;
 
@@ -833,9 +842,9 @@ namespace Ship_Game
             {
                 if (ShipsWeCanSpawn.Contains(ship.Name))
                     ship.QueueTotalRemoval();
-                else if (ship.AI.State != AIState.Orbit 
-                         || ship.AI.State != AIState.Escort 
-                         || ship.AI.State != AIState.Resupply)
+                else if (ship.AI.State != AIState.Orbit
+                         && ship.AI.State != AIState.Escort
+                         && ship.AI.State != AIState.Resupply)
                 {
                     // We might use this ship for defense or future attacks
                     ship.AI.AddEscortGoal(pirateBase);
@@ -854,8 +863,8 @@ namespace Ship_Game
                 return false;
 
             return ship.ShipData.HullRole != RoleName.capital
-                   || ship.ShipData.HullRole != RoleName.battleship
-                   || ship.ShipData.HullRole != RoleName.cruiser;
+                   && ship.ShipData.HullRole != RoleName.battleship
+                   && ship.ShipData.HullRole != RoleName.cruiser;
         }
 
         void PopulateDefaultBasicShips(bool fromSave)
@@ -897,7 +906,7 @@ namespace Ship_Game
                     int executeChance = faction.Pirates.Level * 3;
                     if (Random.RollDice(executeChance))
                     {
-                        AddGoalProtection(victim, shipToDefend);
+                        faction.Pirates.AddGoalProtection(victim, shipToDefend);
                         return;
                     }
                 }
@@ -914,7 +923,7 @@ namespace Ship_Game
             if (currentAssaultGoals >= maxAssaultGoals || victim.data.TaxRate > 0.8f) 
                 return;
 
-            if (FoundClosestKnownUntargetedPirateBase(victim, out Ship pirateBase) || Random.RollDice(PirateBaseDetectionChance))
+            if (FoundClosestKnownUntargetedPirateBase(victim, out Ship pirateBase) || Random.RollDice(Level))
             {
                 Goal goal = new AssaultPirateBase(victim, Owner, pirateBase);
                 victim.AI.AddGoal(goal);

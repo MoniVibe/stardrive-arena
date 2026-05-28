@@ -475,7 +475,11 @@ namespace Ship_Game
             }
 
             float range = ModifiedWeaponStat(w, WeaponStat.Range);
-            float delay = ModifiedWeaponStat(w, WeaponStat.FireDelay) * GetHullFireRateBonus() + w.DelayedIgnition;
+            // DelayedIgnition is the missile's float-then-ignite phase; it does
+            // NOT extend the launcher's cooldown (Weapon.cs sets CooldownTimer =
+            // NetFireDelay). Adding it here would inflate "Delay" and deflate
+            // DPS — and it's already shown separately below as "Ignition".
+            float delay = ModifiedWeaponStat(w, WeaponStat.FireDelay) * GetHullFireRateBonus();
             float speed = ModifiedWeaponStat(w, WeaponStat.Speed);
             
             bool repair = w.IsRepairBeam;

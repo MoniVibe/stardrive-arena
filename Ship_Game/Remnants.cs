@@ -40,6 +40,7 @@ namespace Ship_Game
         [StarData] public int HibernationTurns { get; private set; } // Remnants will not attack and gain 20% of normal production if above 0
         [StarData] public float ActivationXpNeeded { get; private set; } // xp of killed Remnant ships needed to for story activation
         [StarData] public Empire FocusOnEmpire { get; private set; }
+        [StarData] int FocusOnEmpireSetLevel { get; set; }
 
         // whether to display verbose state logs
         public bool Verbose;
@@ -54,6 +55,8 @@ namespace Ship_Game
             Owner.data.FTLPowerDrainModifier = 0.8f;
             Owner.data.FTLModifier           = 50;
             Owner.data.MassModifier          = 0.9f;
+            // Before CalculateShipCosts so the difficulty discount bakes into ShipCosts.
+            Owner.ApplyFactionShipCostMod();
 
             Story = InitAndPickStory(ai);
             CalculateShipCosts();
@@ -156,8 +159,21 @@ namespace Ship_Game
 
         public void SetFocusOnEmpire(Empire e)
         {
-            if (!e.WeArePirates)
+            if (e != null && !e.WeArePirates)
+            {
                 FocusOnEmpire = e;
+                FocusOnEmpireSetLevel = Level;
+            }
+        }
+
+        // Remnants hold a grudge against an empire that damaged a portal, but release it
+        // after enough level-ups so story targeting can resume. Grudge scales with difficulty.
+        int LevelsToReleaseFocus => (int)Universe.P.Difficulty + 1;
+
+        void TryReleaseFocusOnEmpire()
+        {
+            if (FocusOnEmpire != null && Level - FocusOnEmpireSetLevel >= LevelsToReleaseFocus)
+                FocusOnEmpire = null;
         }
 
         void NotifyPlayerOnLevelUp()
@@ -180,6 +196,7 @@ namespace Ship_Game
                 HibernationTurns = 0;
                 NextLevelUpDate += turnsLevelUp / 10f;
                 SetLevel(Level + 1);
+                TryReleaseFocusOnEmpire();
                 UpgradeAfterLevelUp();
                 Log.Info(ConsoleColor.Green, $"---- Remnants: Level up to level {Level+1}. Next level up in Stardate {NextLevelUpDate} ----");
                 if (Universe.StarDate.Less(NextLevelUpDate)) // do not notify on multiple initial level ups
@@ -352,8 +369,13 @@ namespace Ship_Game
         {
             if (FocusOnEmpire != null)
             {
-                target= FocusOnEmpire;
-                return true;
+                if (!FocusOnEmpire.IsDefeated)
+                {
+                    target = FocusOnEmpire;
+                    return true;
+                }
+
+                FocusOnEmpire = null; // defeated focus, resume normal story targeting
             }
 
             var empiresList = GlobalStats.RestrictAIPlayerInteraction 
@@ -611,12 +633,13 @@ namespace Ship_Game
 
         public float RequiredAttackFleetStr(Empire targetEmpire)
         {
-            float strMultiplier = !targetEmpire.isPlayer ? 1 : 1 + (int)Owner.Universe.P.Difficulty*0.334f; // 1, 1.33, 1.66, ~2
-            float str = targetEmpire.OffensiveStrength * strMultiplier 
+            float str = targetEmpire.OffensiveStrength
                 * Owner.GetFleetStrEmpireMultiplier(targetEmpire) / GlobalStats.Defaults.RemnantDesignStrMultiplier.LowerBound(0.1f);
-            float effectiveLevel = Level * strMultiplier;
-            return str.Clamped(min: Level * Level * 1000 * strMultiplier,
-                               max: str * effectiveLevel / MaxLevel);
+            // Cap at the level-fraction ceiling, then floor at the level-appropriate
+            // minimum. Ordered this way because the floor can exceed the ceiling for
+            // non-huge targets; a min-first Clamp would dip the requirement below the floor.
+            return str.UpperBound(str * Level / MaxLevel)
+                      .LowerBound(Level * Level * 1000);
         }
 
         public bool HostileTargetingSystem(SolarSystem solarSystem)
@@ -798,7 +821,7 @@ namespace Ship_Game
                 return;
             }
 
-            ShipCosts.Add(type, ship.ShipData.BaseCost);
+            ShipCosts.Add(type, ship.GetCost(Owner));
         }
 
         RemnantShipType SelectShipForCreation(int level, int shipsInFleet) // Note Bombers are created exclusively 
@@ -945,7 +968,7 @@ namespace Ship_Game
                 amount *= 0.05f;
 
             if (Owner.AI.CountGoals(g => g.Type == GoalType.RemnantPortal) > 1)
-                amount = amount * 0.75f;
+                amount *= 0.75f + 0.05f * (int)Universe.P.Difficulty;
 
             if (DefenseProduction < MaxDefenseProduction)
             {
@@ -966,11 +989,6 @@ namespace Ship_Game
             DefenseProduction = (DefenseProduction + amount).Clamped(0, MaxDefenseProduction);
         }
 
-        public int NumPortals()
-        {
-            return Owner.OwnedShips.Count(s => s.Name == Owner.data.RemnantPortal && s.Active);
-        }
-
         public bool RerouteGoalPortals(out Ship newPortal)
         {
             newPortal = null;
@@ -983,7 +1001,23 @@ namespace Ship_Game
 
         public bool GetPortals(out Ship[] portals)
         {
-            portals = Owner.OwnedShips.Filter(s => s.Name == Owner.data.RemnantPortal && s.Active);
+            // Portals are created 1:1 with a RemnantPortal goal that holds the portal as
+            // TargetShip, so derive live portals from that small goal list instead of
+            // scanning all OwnedShips by name.
+            var found = new Array<Ship>();
+            var goals = Owner.AI.Goals;
+            for (int i = 0; i < goals.Count; i++)
+            {
+                var g = goals[i];
+                if (g.Type == GoalType.RemnantPortal
+                    && g.TargetShip is { Active: true } portal
+                    && portal.Loyalty == Owner)
+                {
+                    found.Add(portal);
+                }
+            }
+
+            portals = found.ToArray();
             return portals.Length > 0;
         }
 
