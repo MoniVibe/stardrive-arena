@@ -319,6 +319,15 @@ namespace Ship_Game
             Remnants = new Remnants(this, ai);
         }
 
+        // Factions skip the major-opponent setup in UniverseGenerator that copies
+        // DifficultyModifiers.ShipCostMod onto Traits.ShipCostMod (the field GetCost reads),
+        // so without this their ship costs would ignore the difficulty modifier. Call from
+        // faction setup so faction ship pricing tracks the rest of the game.
+        public void ApplyFactionShipCostMod()
+        {
+            data.Traits.ShipCostMod += DifficultyModifiers.ShipCostMod;
+        }
+
         public void AddMoney(float moneyDiff)
         {
             Money += moneyDiff;

@@ -55,6 +55,8 @@ namespace Ship_Game
             Owner.data.FTLPowerDrainModifier = 0.8f;
             Owner.data.FTLModifier           = 50;
             Owner.data.MassModifier          = 0.9f;
+            // Before CalculateShipCosts so the difficulty discount bakes into ShipCosts.
+            Owner.ApplyFactionShipCostMod();
 
             Story = InitAndPickStory(ai);
             CalculateShipCosts();
@@ -631,15 +633,13 @@ namespace Ship_Game
 
         public float RequiredAttackFleetStr(Empire targetEmpire)
         {
-            float strMultiplier = !targetEmpire.isPlayer ? 1 : 1 + (int)Owner.Universe.P.Difficulty*0.334f; // 1, 1.33, 1.66, ~2
-            float str = targetEmpire.OffensiveStrength * strMultiplier 
+            float str = targetEmpire.OffensiveStrength
                 * Owner.GetFleetStrEmpireMultiplier(targetEmpire) / GlobalStats.Defaults.RemnantDesignStrMultiplier.LowerBound(0.1f);
-            float effectiveLevel = Level * strMultiplier;
             // Cap at the level-fraction ceiling, then floor at the level-appropriate
             // minimum. Ordered this way because the floor can exceed the ceiling for
             // non-huge targets; a min-first Clamp would dip the requirement below the floor.
-            return str.UpperBound(str * effectiveLevel / MaxLevel)
-                      .LowerBound(Level * Level * 1000 * strMultiplier);
+            return str.UpperBound(str * Level / MaxLevel)
+                      .LowerBound(Level * Level * 1000);
         }
 
         public bool HostileTargetingSystem(SolarSystem solarSystem)

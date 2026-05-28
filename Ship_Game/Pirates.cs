@@ -59,6 +59,7 @@ namespace Ship_Game
         public Pirates(Empire owner, EmpireAI ai)
         {
             Owner = owner;
+            Owner.ApplyFactionShipCostMod();
             ai.AddGoal(new PirateAI(Owner));
         }
 
