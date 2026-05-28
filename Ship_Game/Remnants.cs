@@ -40,6 +40,7 @@ namespace Ship_Game
         [StarData] public int HibernationTurns { get; private set; } // Remnants will not attack and gain 20% of normal production if above 0
         [StarData] public float ActivationXpNeeded { get; private set; } // xp of killed Remnant ships needed to for story activation
         [StarData] public Empire FocusOnEmpire { get; private set; }
+        [StarData] int FocusOnEmpireSetLevel { get; set; }
 
         // whether to display verbose state logs
         public bool Verbose;
@@ -156,8 +157,21 @@ namespace Ship_Game
 
         public void SetFocusOnEmpire(Empire e)
         {
-            if (!e.WeArePirates)
+            if (e != null && !e.WeArePirates)
+            {
                 FocusOnEmpire = e;
+                FocusOnEmpireSetLevel = Level;
+            }
+        }
+
+        // Remnants hold a grudge against an empire that damaged a portal, but release it
+        // after enough level-ups so story targeting can resume. Grudge scales with difficulty.
+        int LevelsToReleaseFocus => (int)Universe.P.Difficulty + 1;
+
+        void TryReleaseFocusOnEmpire()
+        {
+            if (FocusOnEmpire != null && Level - FocusOnEmpireSetLevel >= LevelsToReleaseFocus)
+                FocusOnEmpire = null;
         }
 
         void NotifyPlayerOnLevelUp()
@@ -180,6 +194,7 @@ namespace Ship_Game
                 HibernationTurns = 0;
                 NextLevelUpDate += turnsLevelUp / 10f;
                 SetLevel(Level + 1);
+                TryReleaseFocusOnEmpire();
                 UpgradeAfterLevelUp();
                 Log.Info(ConsoleColor.Green, $"---- Remnants: Level up to level {Level+1}. Next level up in Stardate {NextLevelUpDate} ----");
                 if (Universe.StarDate.Less(NextLevelUpDate)) // do not notify on multiple initial level ups
@@ -352,8 +367,13 @@ namespace Ship_Game
         {
             if (FocusOnEmpire != null)
             {
-                target= FocusOnEmpire;
-                return true;
+                if (!FocusOnEmpire.IsDefeated)
+                {
+                    target = FocusOnEmpire;
+                    return true;
+                }
+
+                FocusOnEmpire = null; // defeated focus, resume normal story targeting
             }
 
             var empiresList = GlobalStats.RestrictAIPlayerInteraction 
