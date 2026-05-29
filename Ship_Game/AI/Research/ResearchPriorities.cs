@@ -152,7 +152,7 @@ namespace Ship_Game.AI.Research
 
         float CalcPlanetFoodNeeds(Planet p)
         {
-            float ratio = p.NonCybernetic ? p.Storage.FoodRatio : p.Storage.Prod;
+            float ratio = p.NonCybernetic ? p.Storage.FoodRatio : p.Storage.ProdRatio;
             float needs = 1 - ratio;
             needs       = (needs * p.Level).LowerBound(0);
             if (p.IsStarving)

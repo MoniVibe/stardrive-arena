@@ -342,17 +342,15 @@ namespace Ship_Game
             return modulesUnlocked;
         }
 
-        public Array<Technology.UnlockedHull> GetUnlockableHulls(Empire empire)
+        // True if this tech unlocks at least one hull this empire is eligible for (CheckSource).
+        public bool UnlocksHullsFor(Empire empire)
         {
-            var modulesUnlocked = new Array<Technology.UnlockedHull>();
-            //Added by McShooterz: Race Specific modules
             foreach (Technology.UnlockedHull unlockedHull in Tech.HullsUnlocked)
             {
-                if (!CheckSource(unlockedHull.ShipType, empire))
-                    continue;
-                modulesUnlocked.Add(unlockedHull);
+                if (CheckSource(unlockedHull.ShipType, empire))
+                    return true;
             }
-            return modulesUnlocked;
+            return false;
         }
 
         public void UnlockModules(Empire us, Empire them)

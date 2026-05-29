@@ -51,7 +51,7 @@ namespace Ship_Game.AI.Research
             foreach (string techName in techsNames)
             {
                 if (OwnerEmpire.TryGetTechEntry(techName, out TechEntry tech)
-                    && tech.GetUnLockableHulls(OwnerEmpire).Count > 0
+                    && tech.UnlocksHullsFor(OwnerEmpire)
                     && CanResearchHullInTimelyManner(tech))
                 {
                     return true;
@@ -111,7 +111,7 @@ namespace Ship_Game.AI.Research
                 TechEntry tech = shipTechs[i];
                 if (tech.Locked)
                 {
-                    if (tech.GetUnlockableHulls(OwnerEmpire).Count > 0)
+                    if (tech.UnlocksHullsFor(OwnerEmpire))
                     {
                         if (hullTech.IsEmpty())
                             hullTech = tech.UID;

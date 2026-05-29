@@ -363,16 +363,11 @@ namespace Ship_Game.AI.Research
 
         public static TechnologyType ConvertTechStringTechType(string typeName)
         {
-            TechnologyType techType = TechnologyType.General;
-            try
-            {
-                techType = (TechnologyType)Enum.Parse(typeof(TechnologyType), typeName);
-            }
-            catch
-            {
-                Log.Error("techType not found : ");
-            }
-            return techType;
+            if (Enum.TryParse(typeName, out TechnologyType techType))
+                return techType;
+
+            Log.Error($"ConvertTechStringTechType: unknown TechnologyType '{typeName}', defaulting to General");
+            return TechnologyType.General;
         }
 
         private TechEntry GetScriptedTech(string command1, TechnologyType techType, Array<TechEntry> availableTechs)

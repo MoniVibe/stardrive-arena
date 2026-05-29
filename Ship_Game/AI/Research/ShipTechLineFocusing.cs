@@ -72,7 +72,10 @@ namespace Ship_Game.AI.Research
                 case RoleName.capital: break;
 
                 default:
-                    throw new ArgumentOutOfRangeException();
+                    // An unhandled role (e.g. a newly added or modded RoleName) must not crash the
+                    // research planner, which evaluates every ship design. Treat it as not researchable.
+                    Log.Warning($"IsRoleValid: unhandled RoleName {role}; excluding ship from research focusing");
+                    return false;
             }
             return true;
         }
@@ -255,7 +258,7 @@ namespace Ship_Game.AI.Research
             var shipTechs = ConvertStringToTech(bestShip.TechsNeeded);
             foreach (TechEntry tech in shipTechs)
             {
-                if (tech.GetUnlockableHulls(OwnerEmpire).Count > 0)
+                if (tech.UnlocksHullsFor(OwnerEmpire))
                     return tech;
             }
             return null;
