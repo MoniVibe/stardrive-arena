@@ -52,10 +52,11 @@ namespace UnitTests
             // Tests must always run against vanilla content. The net8 testhost
             // ignores UnitTests/app.config (where ActiveMod=""), so LoadConfig can
             // pick up the developer's active mod from the user config and load its
-            // roster instead of the base ships the tests expect. Clear the path so
-            // content loads vanilla. This only touches the in-memory field (no
-            // SaveActiveMod), so the developer's real mod selection is untouched.
-            GlobalStats.ModPath = "";
+            // roster instead of the base ships the tests expect. Fully reset to
+            // vanilla: this clears ActiveMod (so HasMod is false and InitContentDir
+            // won't reject the empty ModPath), ModPath, and Defaults. It does NOT
+            // SaveActiveMod, so the developer's real mod selection is untouched.
+            GlobalStats.SetActiveModNoSave(null);
             Log.Initialize(enableSentry: false, showHeader: false);
             Log.VerboseLogging = true;
 
