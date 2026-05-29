@@ -110,11 +110,22 @@ public partial class Planet
         for (int i = 0; i < modifiedQueue.Count; i++)
         {
             QueueItem qi = modifiedQueue[i];
-            // How much production will be created for this item (since some will be diverted to research)
-            float productionOutputForItem = Prod.FlatBonus + workPercentage * EvaluateProductionQueue(qi) * PopulationBillion;
-            // How much net production will be applied to the queue item after checking planet's trade state
-            float netProdPerTurn = LimitedProductionExpenditure(turnsWithInfra <= 0 ? productionOutputForItem 
-                : productionOutputForItem + InfraStructure);
+            // Manual (no-governor) colonies apply their full production income to the queue each turn, with the
+            // stockpile refilling every turn. The governor worker-model and LimitedProductionExpenditure's import
+            // branch (which caps to the current stockpile snapshot) badly underestimate a multi-turn build, so use
+            // the real per-turn throughput directly.
+            float netProdPerTurn;
+            if (GovernorOff)
+            {
+                netProdPerTurn = CurrentProductionToQueue;
+            }
+            else
+            {
+                // some production will be diverted to research via the governor's worker-allocation model
+                float productionOutputForItem = Prod.FlatBonus + workPercentage * EvaluateProductionQueue(qi) * PopulationBillion;
+                netProdPerTurn = LimitedProductionExpenditure(turnsWithInfra <= 0 ? productionOutputForItem
+                    : productionOutputForItem + InfraStructure);
+            }
 
             float turnsToCompleteItem = qi.ProductionNeeded / netProdPerTurn.LowerBound(0.01f);
             // Reduce the turns with infra by the turns needed to complete the item so it can be better evaluated next qi
