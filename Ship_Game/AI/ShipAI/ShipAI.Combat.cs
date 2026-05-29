@@ -411,9 +411,14 @@ namespace Ship_Game.AI
             if (tgt.IsInWarp || tgt.TroopsAreBoardingShip)
                 return 0;
 
-            float value = tgt.TotalDps / tgt.SurfaceArea + 100;
-            value *= 1f + tgt.Carrier.AllFighterHangars.Length*0.75f;
-            value *= 1 + tgt.TroopCapacity*0.5f;
+            // Base = firepower density (+20 keeps a lone unarmed ship pickable).
+            // Invasion threat (troops) and carrier-denial value are ADDED, not
+            // multiplied, so they read as high-value kills without exploding the
+            // priority; both capped, and distance-attenuated below. Keys on loaded
+            // troops, not capacity.
+            float value = (20 + tgt.TotalDps) / tgt.SurfaceArea
+                        + (tgt.TroopCount * 0.5f).UpperBound(5f)
+                        + (tgt.Carrier.AllFighterHangars.Length * 0.3f).UpperBound(5f);
             value *= 1 + (tgt.HasBombs ? tgt.BombBays.Count : tgt.BombBays.Count*0.25f);
 
             bool debug = EnableTargetPriorityDebug && (Owner.Loyalty.isPlayer);
@@ -442,46 +447,33 @@ namespace Ship_Game.AI
             if (tgt.Resupplying) // lower priority to enemies that are retreating
                 value *= 0.5f;
 
-            float distanceDivisor = distance*0.001f;
-            value /= distanceDivisor * distanceDivisor; // prefer targets that are closer
-            if (debug) Debug($"dv={distanceDivisor.String(2),-4}");
+            // Prefer closer targets: gently (linear) inside weapon range so the
+            // ship commits to the single nearest in-range target, steeply (cubed)
+            // outside it so it doesn't reach past in-range enemies for a far one.
+            float distanceNorm = distance / Owner.DesiredCombatRange;
+            value /= distanceNorm <= 1f ? distanceNorm : distanceNorm * distanceNorm * distanceNorm;
+            if (debug) Debug($"dn={distanceNorm.String(2),-4}");
 
-            // make ships prefer targets which are closer to their own size
-            // this ensures fighters prefer fighters and frigates prefer frigates
+            // prefer targets near our own size; the size multiplier is floored at
+            // 0.05 so nothing is ever fully ignored on size alone.
             float relSize = (float)tgt.SurfaceArea / Owner.SurfaceArea;
             if (relSize < 1f)
             {
-                // if we are interceptors - we want to get these smaller ships.
-                // value = 100 * (1/0.25) = 400
+                // interceptors chase the smallest; everyone else de-prioritizes smaller ships
                 if (Owner.ShipData.HangarDesignation == HangarOptions.Interceptor)
-                {
                     value *= (1 / relSize);
-                }
-                // if target is smaller then 0.5^2 = 0.25, smaller ships are
-                // almost always weaker than us so they're not a huge priority.
-                // other ships of same size are more important
-                // value = 100 * 0.25 = 25
                 else
-                {
-                    value *= (relSize * relSize);
-                }
+                    value *= (relSize * relSize).LowerBound(0.05f);
             }
             else if (relSize > 1f)
             {
-                // if we are anti-ship, always prefer to target big ships:
-                // value = 100 * (1.25*1.25) = 156.25 (stronger? prefer it)
+                // anti-ship prefers bigger; everyone else treats bigger as a juicy
+                // target, ramping from 1x at equal size up to a peak at ~2x then
+                // tapering (continuous at 1x, unlike the old 4/relSize jump to 4x)
                 if (Owner.ShipData.HangarDesignation == HangarOptions.AntiShip)
-                {
                     value *= (relSize * relSize);
-                }
-                // if target is bigger than us, use division to make us less afraid of it
-                // value = 100 / (2.0 * 0.25) = 200 (2x stronger? good target)
-                // value = 100 / (4.0 * 0.25) = 100 (4x stronger? not afraid at all)
-                // value = 100 / (4.47 * 0.25) = 89.4 (a bit afraid)
                 else
-                {
-                    value /= (relSize * 0.25f);
-                }
+                    value *= (relSize <= 2f ? relSize : 4f / relSize).LowerBound(0.05f);
             }
 
             // keep reserach and mining stations as very low priority targets
