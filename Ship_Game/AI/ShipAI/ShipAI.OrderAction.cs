@@ -165,6 +165,7 @@ namespace Ship_Game.AI
             Vector2 pos = bg.BuildPosition;
             Vector2 dir = Owner.Position.DirectionToTarget(pos);
             Owner.Construction = ConstructionShip.Create(Owner, constructionNeeded, buildRadius);
+            bg.Detours = GravityWellRouter.BuildDetours(Owner, Owner.Position, pos, MoveOrder.Regular);
             if (bg.IsBuildingOrbitalFor(bg.TargetPlanet)) // orbitals for planet defense or research stations
                 AddShipGoal(Plan.DeployOrbital, pos, dir, bg, bg.ToBuild.Name, 0f, AIState.MoveTo);
             else // deep space structures

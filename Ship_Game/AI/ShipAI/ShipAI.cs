@@ -514,7 +514,6 @@ namespace Ship_Game.AI
                 case Plan.MoveToWithin1000:         MoveToWithin1000(timeStep, goal);         break;
                 case Plan.MakeFinalApproach:        MakeFinalApproach(timeStep, goal);        break;
                 case Plan.RotateInlineWithVelocity: RotateInLineWithVelocity(timeStep);       break;
-                case Plan.Orbit:                    Orbit.Orbit(goal.TargetPlanet, timeStep); break;
                 case Plan.Colonize:                 DoColonize(goal);                         break;
                 case Plan.StandByColonize:          DoStandByColonize(timeStep);              break;
                 case Plan.Explore:                  DoExplore(timeStep);                      break;
@@ -543,6 +542,7 @@ namespace Ship_Game.AI
                 case Plan.Meteor:                   DoMeteor(goal);                           break;
                 case Plan.BuilderReturnHome:        DoBuilderReturnHome(timeStep, goal);      break;
                 case Plan.MinePlanet:               DoMinePlanet(timeStep, goal);             break;
+                case Plan.Orbit:                    DoOrbit(timeStep, goal);                  break;
             }
         }
 

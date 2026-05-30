@@ -56,10 +56,34 @@ public static class GravityWellRouter
     // Once the chain hits this, recursion bails out; reactive logic handles the rest.
     const int MaxTotalWaypoints = 8;
 
+    // Distance at which a ship is considered to have "passed" a detour waypoint
+    // and should switch to aiming at the next one. Chosen larger than the warp-drop
+    // threshold (~1500) so the ship keeps warp engaged through the swing-by instead
+    // of dropping out at every intermediate waypoint.
+    public const float DetourReachDistance = 7500f;
+
     static readonly Vector2[] Empty = Array.Empty<Vector2>();
 
     // Diagnostic; flip to true to trace router decisions in the log. Off in release.
     public static bool LogVerbose = false;
+
+    // Walks the detour chain — returns the next point the ship should thrust toward,
+    // advancing past any detours already reached or that lie farther from the ship
+    // than the final target itself (the swing-by is no longer useful).
+    public static Vector2 GetThrustTarget(Vector2[] detours, ref int detourIndex, Vector2 finalTarget, Vector2 shipPosition)
+    {
+        if (detours == null) return finalTarget;
+        float distToFinal = shipPosition.Distance(finalTarget);
+        while (detourIndex < detours.Length)
+        {
+            float distToDetour = shipPosition.Distance(detours[detourIndex]);
+            if (distToDetour < DetourReachDistance || distToDetour >= distToFinal)
+                ++detourIndex;
+            else
+                break;
+        }
+        return detourIndex < detours.Length ? detours[detourIndex] : finalTarget;
+    }
 
     // Returns intermediate detour waypoints, in travel order (does NOT include the
     // final destination). Empty when straight-line is clear or routing is disabled.

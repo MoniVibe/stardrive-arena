@@ -14,6 +14,13 @@ namespace Ship_Game.Commands.Goals
         [StarData] public Vector2 TetherOffset;
         [StarData] public SolarSystem TargetSystem;
 
+        // Pathfinder detour chain for the construction ship's dispatch to BuildPosition,
+        // pre-computed when OrderDeepSpaceBuild dispatches the ship. Empty when the
+        // straight line is clear or routing is disabled. DetourIndex advances as the
+        // constructor passes each detour during execution.
+        [StarData] public Vector2[] Detours;
+        [StarData] public int DetourIndex;
+
         public override IShipDesign ToBuild => Build.Template;
         public override bool IsBuildingOrbitalFor(Planet planet) => TetherPlanet != null && TetherPlanet == planet;
         public override bool IsBuildingOrbitalFor(SolarSystem system) => TargetSystem == system;
@@ -61,5 +68,8 @@ namespace Ship_Game.Commands.Goals
                 return BuildPosition;
             }
         }
+
+        public Vector2 GetThrustTarget(Vector2 shipPosition)
+            => GravityWellRouter.GetThrustTarget(Detours, ref DetourIndex, BuildPosition, shipPosition);
     }
 }

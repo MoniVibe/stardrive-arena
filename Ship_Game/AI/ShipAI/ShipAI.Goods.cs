@@ -1,5 +1,6 @@
 ﻿using SDGraphics;
 using Ship_Game.Ships;
+using Vector2 = SDGraphics.Vector2;
 
 namespace Ship_Game.AI
 {
@@ -26,7 +27,10 @@ namespace Ship_Game.AI
             if (AI.WaitForBlockadeRemoval(g, exportPlanet, timeStep))
                 return;
 
-            AI.ThrustOrWarpToPos(exportPlanet.Position, timeStep);
+            // Follow the pre-computed detour chain around hostile/unknown gravity wells,
+            // then thrust to the export planet once the chain is exhausted.
+            Vector2 thrustTarget = g.Trade.GetThrustTarget(exportPlanet.Position, Owner.Position);
+            AI.ThrustOrWarpToPos(thrustTarget, timeStep);
             if (!Owner.Position.InRadius(exportPlanet.Position, exportPlanet.Radius + 300f))
                 return;
 
@@ -123,7 +127,8 @@ namespace Ship_Game.AI
             if (AI.WaitForBlockadeRemoval(g, importPlanet, timeStep))
                 return;
 
-            AI.ThrustOrWarpToPos(importPlanet.Position, timeStep);
+            Vector2 thrustTarget = g.Trade.GetThrustTarget(importPlanet.Position, Owner.Position);
+            AI.ThrustOrWarpToPos(thrustTarget, timeStep);
             if (!Owner.Position.InRadius(importPlanet.Position, importPlanet.Radius + 300f))
                 return;
 

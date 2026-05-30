@@ -148,7 +148,10 @@ namespace Ship_Game.AI
 
         void AddShipGoal(Plan plan, AIState wantedState, Vector2 pos, Planet planet, bool pushToFront = false)
         {
-            var goal = new ShipGoal(plan, pos, Vectors.Up, planet, null, 0f, "", 0f, wantedState, null);
+            var goal = new ShipGoal(plan, pos, Vectors.Up, planet, null, 0f, "", 0f, wantedState, null)
+            {
+                Detours = GravityWellRouter.BuildDetours(Owner, Owner.Position, pos, MoveOrder.Regular),
+            };
             EnqueueOrPush(goal, pushToFront);
         }
 
@@ -193,7 +196,10 @@ namespace Ship_Game.AI
                 return false;
             }
 
-            var goal = new ShipGoal(plan, target.Position, Vectors.Up, target, theGoal, 0f, "", 0f, wantedState, null);
+            var goal = new ShipGoal(plan, target.Position, Vectors.Up, target, theGoal, 0f, "", 0f, wantedState, null)
+            {
+                Detours = GravityWellRouter.BuildDetours(Owner, Owner.Position, target.Position, MoveOrder.Regular),
+            };
             EnqueueOrPush(goal, pushToFront);
             return true;
         }
@@ -379,6 +385,16 @@ namespace Ship_Game.AI
             [StarData] public TradePlan Trade;
             [StarData] public readonly MoveOrder MoveOrder = MoveOrder.Regular;
 
+            // Pathfinder detour chain pre-computed when this goal is queued (from the ship's
+            // position at order time to the goal's target). Per-tick handlers route their
+            // long-haul thrust through GetThrustTarget so warps skirt hostile/unknown wells.
+            // Empty when straight line is clear or routing is disabled.
+            [StarData] public Vector2[] Detours;
+            [StarData] public int DetourIndex;
+
+            public Vector2 GetThrustTarget(Vector2 finalTarget, Vector2 shipPosition)
+                => GravityWellRouter.GetThrustTarget(Detours, ref DetourIndex, finalTarget, shipPosition);
+
             // If this is a Move Order, is it an Aggressive move?
             public bool HasAggressiveMoveOrder => (MoveOrder & MoveOrder.Aggressive) != 0;
 
@@ -421,11 +437,12 @@ namespace Ship_Game.AI
                 TargetShip   = targetShip;
             }
 
-            public ShipGoal(Plan plan, Planet exportPlanet, Planet importPlanet, Goods goods, 
+            public ShipGoal(Plan plan, Planet exportPlanet, Planet importPlanet, Goods goods,
                             Ship freighter, float blockadeTimer, AIState wantedState)
             {
                 Plan        = plan;
-                Trade       = new TradePlan(exportPlanet, importPlanet, goods, freighter, blockadeTimer);
+                Vector2 legTarget = plan == Plan.DropOffGoods ? importPlanet.Position : exportPlanet.Position;
+                Trade       = new TradePlan(exportPlanet, importPlanet, goods, freighter, blockadeTimer, legTarget);
                 WantedState = wantedState;
             }
 
@@ -433,7 +450,8 @@ namespace Ship_Game.AI
                             Ship freighter, float blockadeTimer, AIState wantedState)
             {
                 Plan        = plan;
-                Trade       = new TradePlan(exportPlanet, targetStation, goods, freighter, blockadeTimer);
+                Vector2 legTarget = plan == Plan.DropOffGoodsForStation ? targetStation.Position : exportPlanet.Position;
+                Trade       = new TradePlan(exportPlanet, targetStation, goods, freighter, blockadeTimer, legTarget);
                 WantedState = wantedState;
             }
 
@@ -483,11 +501,19 @@ namespace Ship_Game.AI
             [StarData] public readonly Ship TargetStation;
             [StarData] public float BlockadeTimer; // Indicates how much time to wait with freight when trade is blocked
 
+            // Pathfinder detour chain for the current trade leg only — pickup phase routes
+            // freighter.Position -> exportPlanet, dropoff phase routes exportPlanet -> import
+            // target. Pre-computed at construction; a fresh TradePlan is built when the plan
+            // transitions, so each leg gets its own routing. Empty when the straight line is
+            // clear or routing is disabled. DetourIndex advances as the freighter passes each.
+            [StarData] public Vector2[] Detours;
+            [StarData] public int DetourIndex;
+
             bool SupplyingPlanet => ImportTo != null;
 
             TradePlan() { }
 
-            public TradePlan(Planet exportPlanet, Ship targetStation, Goods goodsType, Ship freighter, float blockadeTimer)
+            public TradePlan(Planet exportPlanet, Ship targetStation, Goods goodsType, Ship freighter, float blockadeTimer, Vector2 legTarget)
             {
                 ExportFrom    = exportPlanet;
                 Goods         = goodsType;
@@ -497,9 +523,10 @@ namespace Ship_Game.AI
                 TargetStation = targetStation;
 
                 ExportFrom.AddToOutgoingFreighterList(freighter, goodsType);
+                Detours = GravityWellRouter.BuildDetours(freighter, freighter.Position, legTarget, MoveOrder.Regular);
             }
 
-            public TradePlan(Planet exportPlanet, Planet importPlanet, Goods goodsType, Ship freighter, float blockadeTimer)
+            public TradePlan(Planet exportPlanet, Planet importPlanet, Goods goodsType, Ship freighter, float blockadeTimer, Vector2 legTarget)
             {
                 ExportFrom    = exportPlanet;
                 ImportTo      = importPlanet;
@@ -510,7 +537,11 @@ namespace Ship_Game.AI
 
                 ExportFrom.AddToOutgoingFreighterList(freighter, goodsType);
                 ImportTo.AddToIncomingFreighterList(freighter);
+                Detours = GravityWellRouter.BuildDetours(freighter, freighter.Position, legTarget, MoveOrder.Regular);
             }
+
+            public Vector2 GetThrustTarget(Vector2 finalTarget, Vector2 shipPosition)
+                => GravityWellRouter.GetThrustTarget(Detours, ref DetourIndex, finalTarget, shipPosition);
 
             public void UnRegisterTrade(Ship freighter)
             {

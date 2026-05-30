@@ -17,6 +17,30 @@ namespace Ship_Game.AI
     {
         StanceType CombatRangeType => ToStanceType(CombatState);
 
+        // For per-tick handlers that orbit/thrust to a planet (Bombard / Exterminate / Orbit /
+        // Flee-to-safe-planet / Resupply): if the goal still has unconsumed detours and we're
+        // far from the target, head to the next detour instead of straight at the planet.
+        // Returns true when we short-circuited; caller should skip its orbit/bomb step this tick.
+        bool TryRouteToOrbitTarget(ShipGoal goal, FixedSimTime timeStep)
+        {
+            if (goal.Detours == null || goal.Detours.Length == 0 || goal.TargetPlanet == null)
+                return false;
+
+            Vector2 target = goal.TargetPlanet.Position;
+            Vector2 thrust = goal.GetThrustTarget(target, Owner.Position);
+            if (thrust == target)
+                return false; // all detours consumed, fall through to normal orbit/thrust
+
+            ThrustOrWarpToPos(thrust, timeStep);
+            return true;
+        }
+
+        void DoOrbit(FixedSimTime timeStep, ShipGoal goal)
+        {
+            if (!TryRouteToOrbitTarget(goal, timeStep))
+                Orbit.Orbit(goal.TargetPlanet, timeStep);
+        }
+
         void DoBoardShip(FixedSimTime timeStep)
         {
             HasPriorityTarget = true;
@@ -273,7 +297,7 @@ namespace Ship_Game.AI
 
             if (goal.BuildPosition.OutsideRadius(Owner.Position, (Owner.CurrentVelocity *2).UpperBound(500)))
             {
-                ThrustOrWarpToPos(goal.BuildPosition, timeStep);
+                ThrustOrWarpToPos(bg.GetThrustTarget(Owner.Position), timeStep);
                 return;
             }
 
@@ -349,7 +373,7 @@ namespace Ship_Game.AI
 
             if (goal.BuildPosition.OutsideRadius(Owner.Position, (Owner.CurrentVelocity * 2).UpperBound(500)))
             {
-                ThrustOrWarpToPos(goal.BuildPosition, timeStep);
+                ThrustOrWarpToPos(bg.GetThrustTarget(Owner.Position), timeStep);
                 return;
             }
 
@@ -542,12 +566,12 @@ namespace Ship_Game.AI
             {
                 // force the ship out of warp if we get too close
                 // this is a balance feature
-                ThrustOrWarpToPos(landingSpot, timeStep, warpExitDistance: Owner.WarpOutDistance);
+                ThrustOrWarpToPos(goal.GetThrustTarget(landingSpot, Owner.Position), timeStep, warpExitDistance: Owner.WarpOutDistance);
                 LandTroopsViaSingleTransport(planet, landingSpot, timeStep);
             }
             else
             {
-                LaunchShuttlesFromTroopShip(timeStep, planet, landingSpot);
+                LaunchShuttlesFromTroopShip(timeStep, planet, landingSpot, goal);
             }
         }
 
@@ -568,12 +592,12 @@ namespace Ship_Game.AI
         }
 
         // Big Troop Ships will launch their own Assault Shuttles to land them on the planet
-        void LaunchShuttlesFromTroopShip(FixedSimTime timeStep, Planet planet, Vector2 launchPos)
+        void LaunchShuttlesFromTroopShip(FixedSimTime timeStep, Planet planet, Vector2 launchPos, ShipGoal goal)
         {
             if (!Orbit.InOrbit && Owner.Position.InRadius(planet.Position, planet.Radius *1.4f))
                 ThrustOrWarpToPos(launchPos, timeStep, warpExitDistance: Owner.WarpOutDistance);
-            else // Doing orbit with AssaultPlanet state to continue landing troops if possible
-                Orbit.Orbit(planet, timeStep); 
+            else if (!TryRouteToOrbitTarget(goal, timeStep)) // Doing orbit with AssaultPlanet state to continue landing troops if possible
+                Orbit.Orbit(planet, timeStep);
 
             if (Orbit.InOrbit)
             {
@@ -791,7 +815,7 @@ namespace Ship_Game.AI
                 // find another friendly planet to land at
             }
 
-            ThrustOrWarpToPos(goal.MovePosition, timeStep);
+            ThrustOrWarpToPos(goal.GetThrustTarget(goal.MovePosition, Owner.Position), timeStep);
             if (Owner.Position.InRadius(goal.MovePosition, 200f))
             {
                 goal.TargetPlanet.LandBuilderShip();
@@ -978,6 +1002,9 @@ namespace Ship_Game.AI
                 AddOrbitPlanetGoal(planet); // Stay in Orbit
             }
 
+            if (TryRouteToOrbitTarget(goal, timeStep))
+                return false; // still routing around wells, no bombing yet
+
             Orbit.Orbit(planet, timeStep);
             if (planet.Owner == Owner.Loyalty)
             {
@@ -997,6 +1024,9 @@ namespace Ship_Game.AI
                 DoFindExterminationTarget(timeStep, goal);
                 return;
             }
+
+            if (TryRouteToOrbitTarget(goal, timeStep))
+                return; // still routing around wells, no bombing yet
 
             Orbit.Orbit(planet, timeStep);
 
