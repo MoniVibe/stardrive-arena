@@ -158,7 +158,7 @@ namespace Ship_Game
                     }
 
                     AutoAdjustSimulationFrameRate();
-                    if (GlobalStats.RestrictAIPlayerInteraction)
+                    if (GlobalStats.AutoRampGameSpeed)
                     {
                         if (TurnTimePerf.MeasuredSamples > 0 && TurnTimePerf.AvgTime * UState.GameSpeed < 0.05f)
                         {

@@ -238,6 +238,12 @@ public static class GlobalStats
     // Dev Option for AUTOPERF
     public static bool RestrictAIPlayerInteraction;
 
+    // When TRUE, UniverseScreen.UpdateGame auto-ramps UState.GameSpeed up to whatever
+    // the simulation can sustain — used by AUTOFAST soak runs. The 'Auto' build
+    // config locks player input the same way but leaves this OFF so the game runs
+    // at the rate the player selected. Set from the AUTOFAST #if block at startup.
+    public static bool AutoRampGameSpeed;
+
     // DEV APP CONFIG OPTION
     // Debug log options
     public static bool VerboseLogging;
@@ -366,6 +372,11 @@ public static class GlobalStats
             VerboseLogging = true;
         #endif
         #if AUTOFAST
+            RestrictAIPlayerInteraction = true;
+            AutoRampGameSpeed = true;
+        #endif
+        #if AUTO
+            // Same input lockout as AUTOFAST, but no simulation-speed ramping.
             RestrictAIPlayerInteraction = true;
         #endif
 

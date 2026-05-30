@@ -9,7 +9,7 @@
          AutoFast variants and Deploy don't need their own PropertyGroup since
          they fall back to base settings (plus the Deploy AfterTargets hook
          further down). -->
-    <Configurations>Debug;Release;Debug - Auto Fast;Release - Auto Fast;Deploy</Configurations>
+    <Configurations>Debug;Release;Debug - Auto Fast;Release - Auto Fast;Debug - Auto;Release - Auto;Deploy</Configurations>
     <OutputType>WinExe</OutputType>
     <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>Ship_Game</RootNamespace>
@@ -71,6 +71,23 @@
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release - Auto Fast'">
     <DefineConstants>AUTOFAST</DefineConstants>
+    <Optimize>true</Optimize>
+    <DebugType>portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+
+  <!-- AUTO: same as Auto Fast except the simulation-speed auto-ramp is OFF.
+       Player input is still locked out (AI plays for the player), but the game
+       runs at the normal speed the player picks instead of being shoved to max.
+       Useful for observing AI behavior at human-readable pace. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug - Auto'">
+    <DefineConstants>DEBUG;TRACE;AUTO</DefineConstants>
+    <DebugType>portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release - Auto'">
+    <DefineConstants>AUTO</DefineConstants>
     <Optimize>true</Optimize>
     <DebugType>portable</DebugType>
     <DebugSymbols>true</DebugSymbols>
