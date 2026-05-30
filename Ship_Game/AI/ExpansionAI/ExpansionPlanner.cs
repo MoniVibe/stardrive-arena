@@ -136,8 +136,8 @@ namespace Ship_Game.AI.ExpansionAI
             Planet[] currentColonizationGoals = GetColonizationGoalPlanets();
             int desiredGoals = DesiredColonyGoals();
 
-            // we are going to ignore some of the blocked colony goals based on difficulty. 
-            // at brutal no blocked colony goals will be counted. 
+            // we are going to ignore some of the blocked colony goals based on difficulty.
+            // at brutal no blocked colony goals will be counted.
             int blockedColonyGoals = GetNumOfBlockedColonyGoals();
             blockedColonyGoals = (int)(blockedColonyGoals * Owner.DifficultyModifiers.ColonyGoalMultiplier);
 
@@ -146,7 +146,7 @@ namespace Ship_Game.AI.ExpansionAI
 
             Log.Info(ConsoleColor.Magenta, $"Running Expansion for {Owner.Name}, PopRatio: {popRatio.String(2)}");
 
-            // We are going to keep a list of wanted planets. 
+            // We are going to keep a list of wanted planets.
             // We are limiting the number of foreign systems to check based on galaxy size and race traits
             var allSystems = Owner.Universe.Systems;
             int maxCheckedSystems = (allSystems.Count / MaxSystemsToCheckedDiv).LowerBound(3);
