@@ -232,7 +232,7 @@ namespace Ship_Game
             }
             else
             {
-                ShowSelectedFleetInfo(selectedFleet);
+                ShowSelectedFleetInfo(selectedFleet, b.FleetKey);
             }
         }
 
@@ -456,19 +456,36 @@ namespace Ship_Game
             fleet.Update(FixedSimTime.Zero /*paused during init*/);
         }
 
-        void ShowSelectedFleetInfo(Fleet selectedFleet)
+        // Fleet hotkey double-tap detection: a single press of the fleet key just
+        // selects (no camera jump); a second press of the SAME key within the
+        // window snaps the camera to the fleet.
+        int LastFleetKeyPressed = -1;
+        int LastFleetKeyPressTickMs;
+        const int FleetKeyDoubleTapWindowMs = 500;
+
+        void ShowSelectedFleetInfo(Fleet selectedFleet, int fleetKey)
         {
             // nothing selected
             if (selectedFleet == null || selectedFleet.Ships.IsEmpty)
                 return;
 
-            bool snapToFleet = SelectedFleet == selectedFleet; // user pressed fleet Number twice
+            int nowMs = Environment.TickCount;
+            bool isDoubleTap = LastFleetKeyPressed == fleetKey
+                            && (nowMs - LastFleetKeyPressTickMs) < FleetKeyDoubleTapWindowMs
+                            && SelectedFleet == selectedFleet;
+
             SetSelectedFleet(selectedFleet);
             GameAudio.FleetClicked();
 
-            if (snapToFleet && SelectedFleet != null)
+            if (isDoubleTap && SelectedFleet != null)
             {
                 SnapViewFleet(SelectedFleet);
+                LastFleetKeyPressed = -1; // require a fresh pair for the next zoom
+            }
+            else
+            {
+                LastFleetKeyPressed = fleetKey;
+                LastFleetKeyPressTickMs = nowMs;
             }
         }
 
