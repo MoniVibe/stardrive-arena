@@ -33,6 +33,7 @@ namespace Ship_Game.AI
         public Array<Ship> OurShips = new Array<Ship>();
 
         public Map<Planet, PlanetTracker> PlanetValues = new Map<Planet, PlanetTracker>();
+        Planet[] CachedOurPlanets = Empty<Planet>.Array;
         readonly int GameDifficultyModifier;
 
         float PlanetToSystemDevelopmentRatio(Planet p) => p.Level / SystemDevelopmentlevel;
@@ -209,7 +210,7 @@ namespace Ship_Game.AI
             return CurrentShipStr;
         }
 
-        public Planet[] OurPlanets => System.PlanetList.Filter(p => p.Owner == Us);
+        public Planet[] OurPlanets => CachedOurPlanets;
 
         int MinPlanetTroopLevel => (int)(RankImportance * GameDifficultyModifier);
 
@@ -252,6 +253,7 @@ namespace Ship_Game.AI
         public void UpdatePlanetTracker()
         {
             Planet[] ourPlanets = System.PlanetList.Filter(planet => planet.Owner == Us);
+            CachedOurPlanets = ourPlanets;
             foreach(Planet planet in  ourPlanets)
             {
                 if (!PlanetValues.TryGetValue(planet, out PlanetTracker currentValue))
