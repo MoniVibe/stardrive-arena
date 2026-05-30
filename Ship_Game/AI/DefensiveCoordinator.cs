@@ -124,13 +124,14 @@ namespace Ship_Game.AI
 
         public SolarSystem GetNearestSystemNeedingTroops(Vector2 fromPos, Empire empire)
         {
-            float width = empire.Universe.Size;
+            float maxDist = empire.Universe.Size * 2f;
             return DefenseDict.FindMaxKeyByValuesFiltered(
                 com => com.TroopStrengthNeeded > 0
                        && com.System.PlanetList.Count > 0
                        && com.System.PlanetList.Sum(p => p.GetFreeTiles(empire)) > 0,
-                com => (1f - ((float)com.TroopCount / com.IdealTroopCount ))
-                       * com.TotalValueToUs * ((width - com.System.Position.SqDist(fromPos)) / width)
+                com => (1f - ((float)com.TroopCount / com.IdealTroopCount))
+                       * com.TotalValueToUs
+                       * ((maxDist - com.System.Position.Distance(fromPos)).LowerBound(0f) / maxDist)
             );
         }
 
@@ -226,9 +227,11 @@ namespace Ship_Game.AI
                     }
 
                     kv.Value.TroopCount = currentTroops;
-                    TotalCurrentTroops += currentTroops+ troopsInFleets;
+                    TotalCurrentTroops += currentTroops;
                     TotalTroopWanted += kv.Value.IdealTroopCount;
                 }
+
+                TotalCurrentTroops += troopsInFleets;
             }
         }
 
