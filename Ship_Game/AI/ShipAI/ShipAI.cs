@@ -425,6 +425,19 @@ namespace Ship_Game.AI
 
         void DecideWhereToResupply(Planet nearestRallyPoint, bool cancelOrders = false)
         {
+            if (Owner.Loyalty.WeArePirates)
+            {
+                // Pirates have no colonies — resupply at the nearest base.
+                // No base reachable → do nothing (don't fall to OrderFlee).
+                if (!Owner.IsPlatformOrStation
+                    && Owner.Loyalty.Pirates.GetBases(out Array<Ship> bases))
+                {
+                    Ship nearestBase = bases.FindClosestTo(Owner);
+                    OrderMoveToPirateBase(Owner.Loyalty.Pirates, nearestBase);
+                }
+                return;
+            }
+
             if (nearestRallyPoint != null)
                 OrderResupply(nearestRallyPoint, cancelOrders);
             else
@@ -432,7 +445,6 @@ namespace Ship_Game.AI
                 nearestRallyPoint = Owner.Loyalty.FindNearestRallyPoint(Owner.Position);
 
                 if      (nearestRallyPoint != null)   OrderResupply(nearestRallyPoint, cancelOrders);
-                else if (Owner.Loyalty.WeArePirates)  OrderPirateFleeHome();
                 else if (Owner.Loyalty.WeAreRemnants) OrderRemnantFlee(Owner.Loyalty.Remnants);
                 else                                  OrderFlee();
             }
