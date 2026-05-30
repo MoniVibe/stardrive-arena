@@ -180,8 +180,11 @@ namespace Ship_Game.AI
         // touches nothing) if no viable landing planet exists.
         public bool AbsorbIdleTroop(Ship troopShip)
         {
+            // Match OrderRebase's capacity check so a planet whose free tiles are
+            // already reserved by other in-flight rebases isn't picked here, then
+            // silently rejected downstream with bookkeeping mutations stranded.
             Planet target = OurPlanets.FindMinFiltered(
-                p => !p.MightBeAWarZone(p.Owner) && p.GetFreeTiles(p.Owner) > 0,
+                p => !p.MightBeAWarZone(p.Owner) && p.FreeTilesWithRebaseOnTheWay(p.Owner) > 0,
                 p => p.CountEmpireTroops(p.Owner) / PlanetTroopMin(p));
 
             if (target == null)

@@ -128,7 +128,7 @@ namespace Ship_Game.AI
                 com => com.TroopStrengthNeeded > 0
                        && com.System.PlanetList.Any(p => p.Owner == empire
                                                         && !p.MightBeAWarZone(empire)
-                                                        && p.GetFreeTiles(empire) > 0),
+                                                        && p.FreeTilesWithRebaseOnTheWay(empire) > 0),
                 com => (1f - ((float)com.TroopCount / com.IdealTroopCount))
                        * com.TotalValueToUs
                        * ((maxDist - com.System.Position.Distance(fromPos)).LowerBound(0f) / maxDist)

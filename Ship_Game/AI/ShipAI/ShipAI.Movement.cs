@@ -36,18 +36,22 @@ namespace Ship_Game.AI
         // Snapshot of the most recent move-order params. Set by AddWayPoint, used by
         // OnSystemNewlyExplored to re-issue the same destination with fresh detour
         // calculation when a previously-unknown system on the route becomes visible.
-        Vector2 LastMoveFinalPos;
-        Vector2 LastMoveFinalDir;
-        AIState LastMoveWantedState;
-        MoveOrder LastMoveOrder;
+        // Serialized so a save+load preserves the snapshot — without it, an in-flight
+        // ship that explores a new system after load would re-issue against zero/default
+        // values instead of its real destination.
+        [StarData] Vector2 LastMoveFinalPos;
+        [StarData] Vector2 LastMoveFinalDir;
+        [StarData] AIState LastMoveWantedState;
+        [StarData] MoveOrder LastMoveOrder;
 
         // Called by Ship_Update.ExploreCurrentSystem the frame a system is first
         // discovered by this ship. If the ship has an active move order, re-issue it
         // so the router can now see the system's planet wells. No-op when the ship
-        // has no queued waypoints (idle / arrived).
+        // has no queued waypoints (idle / arrived) or when the snapshot is missing
+        // (legacy save predating snapshot serialization).
         public void OnSystemNewlyExplored(SolarSystem _)
         {
-            if (WayPoints.Count == 0) return;
+            if (WayPoints.Count == 0 || LastMoveFinalPos == Vector2.Zero) return;
             // Re-issue from current position; AddWayPoint will rebuild detours.
             AddWayPoint(LastMoveFinalPos, LastMoveFinalDir, LastMoveWantedState, LastMoveOrder, 0f, null);
         }
