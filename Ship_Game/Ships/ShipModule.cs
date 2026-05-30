@@ -899,7 +899,7 @@ namespace Ship_Game.Ships
                     // Shield-deflected shots still flash the bubble — without this the
                     // shield silently absorbs sub-threshold hits with no visual feedback.
                     if (damagingShields && proj != null && Parent.IsVisibleToPlayer)
-                        Shield.HitShield(Parent.Universe.Screen, this, proj);
+                        Shield.HitShield(Parent.Universe.Screen, this, proj, withMoreEffects: false);
                     return false; // no damage could be done, the projectile was deflected.
                 }
             }

@@ -152,23 +152,25 @@ namespace Ship_Game
             }
         }
 
-        static void CreateShieldHitParticles(ParticleManager particles, Vector2 projectilePos, Vector3 moduleCenter, bool beamFlash)
+        static void CreateShieldHitParticles(ParticleManager particles, Vector2 projectilePos,
+            Vector3 moduleCenter, bool beamFlash, bool withMoreEffects)
         {
             Vector3 pos = projectilePos.ToVec3(moduleCenter.Z);
             Vector2 impactNormal = moduleCenter.ToVec2().DirectionToTarget(projectilePos);
-
-            if (!beamFlash || particles.Random.Float(0f, 100f) > 30f)
-                particles.Flash.AddParticle(pos);
-
-
-            for (int i = 0; i < 20; ++i)
+            if (withMoreEffects)
             {
-                var randVel = new Vector3(impactNormal * particles.Random.Float(40f, 80f), particles.Random.Float(-25f, 25f));
-                particles.Sparks.AddParticle(pos, randVel);
+                if (!beamFlash || particles.Random.Float(0f, 100f) > 30f)
+                    particles.Flash.AddParticle(pos);
+
+                for (int i = 0; i < 20; ++i)
+                {
+                    var randVel = new Vector3(impactNormal * particles.Random.Float(40f, 80f), particles.Random.Float(-25f, 25f));
+                    particles.Sparks.AddParticle(pos, randVel);
+                }
             }
         }
 
-        public void HitShield(UniverseScreen universe, ShipModule module, Projectile proj)
+        public void HitShield(UniverseScreen universe, ShipModule module, Projectile proj, bool withMoreEffects = true)
         {
             GameAudio.PlaySfxAsync("sd_impact_shield_01", module.GetParent().SoundEmitter);
 
@@ -192,7 +194,8 @@ namespace Ship_Game
 
             DistortionTimeLeft = DistortionDuration;
 
-            CreateShieldHitParticles(universe.Particles, proj.Position, module.Center3D, beamFlash: false);
+            CreateShieldHitParticles(universe.Particles, proj.Position, module.Center3D, 
+                beamFlash: false, withMoreEffects: withMoreEffects);
         }
 
         public static Color GetBubbleColor(float shieldRate, string colorName = "Green")
