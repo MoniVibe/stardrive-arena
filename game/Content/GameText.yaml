@@ -1038,12 +1038,6 @@ EnRouteToColonize:
  RUS: "Колонизирует"
  SPA: "Rumbo a colonizar"
  UKR: "Колонізує"
-SystemDefenseDuty:
- Id: 170
- ENG: "System Defense Duty"
- RUS: "Оборона системы"
- SPA: "Servicio de defensa de sistema"
- UKR: "На захисті системи"
 UnderDirectPlayerControl:
  Id: 171
  ENG: "Under direct player control"

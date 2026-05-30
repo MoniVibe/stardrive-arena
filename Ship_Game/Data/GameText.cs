@@ -360,8 +360,6 @@ namespace Ship_Game
         ColonistTransport = 168,
         /// <summary>En route to colonize</summary>
         EnRouteToColonize = 169,
-        /// <summary>System Defense Duty</summary>
-        SystemDefenseDuty = 170,
         /// <summary>Under direct player control</summary>
         UnderDirectPlayerControl = 171,
         /// <summary>Resupplying at</summary>

@@ -21,7 +21,6 @@ namespace Ship_Game.AI
         MoveTo = 12,
         PirateRaiderCarrier = 13,
         Explore = 14,
-        SystemDefender = 15,
         Resupply = 17,
         Rebase = 18,
         RebaseToShip = 19,

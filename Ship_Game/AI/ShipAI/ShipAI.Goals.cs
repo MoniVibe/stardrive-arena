@@ -566,7 +566,6 @@ namespace Ship_Game.AI
             Rebase = 13,
             DoCombat = 14,
             Trade = 15,
-            DefendSystem = 16,
             DeployStructure = 17,
             PickupGoods = 18,
             DropOffGoods = 19,
