@@ -63,6 +63,17 @@ namespace Ship_Game
         public int Thickness { get; private set; }
         public float PowerCost;
         public static Effect BeamEffect;
+
+        // Beam render mode. The pre-Phase-3.7 two-pass alpha-test technique
+        // can't work under MonoGame (alpha-test is fixed-function and
+        // RenderStates.EnableAlphaTest is a no-op stub), so both passes drew
+        // the entire quad and the second pass corrupted the result with
+        // non-premul SrcAlpha/InvSrcAlpha math on premultiplied DDS source —
+        // the visible "edges" / halos around beams. Single-pass additive gives
+        // a clean emissive look that brightens over background without halos.
+        // Flip via debugger immediate window (`Beam.UseAdditiveBlend = false`)
+        // to compare against the faithful premul (One/InvSrcAlpha) variant.
+        public static bool UseAdditiveBlend = true;
         public VertexPositionNormalTexture[] Vertices = new VertexPositionNormalTexture[4];
         public int[] Indexes = new int[6];
         float BeamZ;
@@ -205,25 +216,24 @@ namespace Ship_Game
                 Displacement = 1f;
 
             BeamEffect.Parameters["displacement"].SetValue(new Vector2(0f, Displacement));
-            RenderStates.EnableAlphaTest(device, CompareFunction.GreaterEqual, 200);
 
-            foreach (EffectPass pass in BeamEffect.CurrentTechnique.Passes)
-            {
-                pass.Apply();
-                device.DrawUserIndexedPrimitives(PrimitiveType.TriangleList, Vertices, 0, 4, Indexes, 0, 2);
-            }
-
+            // Single-pass draw. The original two-pass alpha-test technique relied
+            // on fixed-function alpha-test that MonoGame removed; both passes
+            // drew the full quad and the second pass corrupted the result with
+            // non-premul blend math on premultiplied DDS source. See
+            // UseAdditiveBlend comment above.
             RenderStates.DisableDepthWrite(device);
-            RenderStates.EnableAlphaBlend(device, Blend.SourceAlpha, Blend.InverseSourceAlpha);
-            RenderStates.EnableAlphaTest(device, CompareFunction.Less, 200);
+            if (UseAdditiveBlend)
+                RenderStates.EnableAdditiveAlphaBlend(device);
+            else
+                RenderStates.EnableAlphaBlend(device, Blend.One, Blend.InverseSourceAlpha);
 
             foreach (EffectPass pass in BeamEffect.CurrentTechnique.Passes)
             {
                 pass.Apply();
                 device.DrawUserIndexedPrimitives(PrimitiveType.TriangleList, Vertices, 0, 4, Indexes, 0, 2);
             }
-            
-            RenderStates.DisableAlphaTest(device);
+
             RenderStates.EnableClassicAlphaBlend(device); // restore default
             RenderStates.EnableDepthWrite(device);
         }
