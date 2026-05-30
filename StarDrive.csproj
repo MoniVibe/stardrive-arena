@@ -84,6 +84,9 @@
     <DefineConstants>DEBUG;TRACE;AUTO</DefineConstants>
     <DebugType>portable</DebugType>
     <DebugSymbols>true</DebugSymbols>
+    <!-- Match Debug: restore the console subsystem so dev logs are visible during
+         observed soak runs. AutoFast intentionally keeps WinExe for unattended runs. -->
+    <OutputType>Exe</OutputType>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release - Auto'">
