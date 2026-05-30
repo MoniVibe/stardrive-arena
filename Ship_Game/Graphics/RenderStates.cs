@@ -116,7 +116,33 @@ namespace Ship_Game.Graphics
             else            DisableDepthWrite(device);
         }
 
-        public static void EnableSeparateAlphaBlend(GraphicsDevice device, Blend srcBlend, Blend dstBlend) { }
-        public static void DisableSeparateAlphaChannelBlend(GraphicsDevice device) { }
+        // Cache for BlendStates that keep the RGB channel on premul AlphaBlend
+        // (One/InverseSourceAlpha) but override the alpha channel's src/dst blend.
+        // Used by influence-border rendering to merge same-empire overlapping
+        // node-gradient textures into smooth blobs: SourceAlphaSaturation/One
+        // makes the alpha channel grow additively until it saturates at 1.0,
+        // while RGB continues to blend normally so colors don't oversaturate.
+        // SolarDebug.cs scrubs BorderBlendSrc/BorderBlendDest live via this path.
+        static readonly ConcurrentDictionary<(Blend, Blend), BlendState> SeparateAlphaCache = new();
+
+        public static void EnableSeparateAlphaBlend(GraphicsDevice device, Blend srcAlphaBlend, Blend dstAlphaBlend)
+        {
+            BlendState bs = SeparateAlphaCache.GetOrAdd((srcAlphaBlend, dstAlphaBlend), key => new BlendState
+            {
+                Name = $"SeparateAlpha-{key.Item1}-{key.Item2}",
+                ColorSourceBlend      = Blend.One,
+                ColorDestinationBlend = Blend.InverseSourceAlpha,
+                ColorBlendFunction    = BlendFunction.Add,
+                AlphaSourceBlend      = key.Item1,
+                AlphaDestinationBlend = key.Item2,
+                AlphaBlendFunction    = BlendFunction.Add,
+            });
+            device.BlendState = bs;
+        }
+
+        public static void DisableSeparateAlphaChannelBlend(GraphicsDevice device)
+        {
+            device.BlendState = BlendState.AlphaBlend;
+        }
     }
 }
