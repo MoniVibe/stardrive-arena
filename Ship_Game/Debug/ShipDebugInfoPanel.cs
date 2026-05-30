@@ -140,12 +140,6 @@ public class ShipDebugInfoPanel : Submenu
             Text.String($"DPS: {s.TotalDps}");
             Text.String($"Sensor: {s.AI.GetSensorRadius().GetNumberString()} "+
                         $"BadGuys:{s.AI.BadGuysNear}[{s.AI.PotentialTargets.Length}] CanRepair:{s.CanRepair}");
-            Text.SetCursor(Pos.X + 250, 600f, Color.White);
-            foreach (SystemCommander sc in s.Loyalty.AI.DefensiveCoordinator.DefenseDict.Values)
-            {
-                if (sc.ContainsShip(s))
-                    Text.String(sc.System.Name);
-            }
         }
         else if (Screen.SelectedShips.Count > 0)
         {

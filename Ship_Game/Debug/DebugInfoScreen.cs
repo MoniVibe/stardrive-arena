@@ -152,35 +152,6 @@ public sealed partial class DebugInfoScreen : GameScreen
         };
     }
 
-    public void DefenseCoLogsNull(bool found, Ship ship, SolarSystem systemToDefend)
-    {
-        if (Mode != DebugModes.DefenseCo)
-            return;
-        if (!found && ship.Active)
-        {
-            Log.Info(ConsoleColor.Yellow, systemToDefend == null
-                ? "SystemCommander: Remove : SystemToDefend Was Null"
-                : "SystemCommander: Remove : Ship Not Found in Any");
-        }
-    }
-
-    public void DefenseCoLogsMultipleSystems(Ship ship)
-    {
-        if (Mode != DebugModes.DefenseCo) return;
-        Log.Info(color: ConsoleColor.Yellow, text: $"SystemCommander: Remove : Ship Was in Multiple SystemCommanders: {ship}");
-    }
-
-    public void DefenseCoLogsNotInPool()
-    {
-        if (Mode != DebugModes.DefenseCo) return;
-        Log.Info(color: ConsoleColor.Yellow, text: "DefensiveCoordinator: Remove : Not in DefensePool");
-    }
-    public void DefenseCoLogsSystemNull()
-    {
-        if (Mode != DebugModes.DefenseCo) return;
-        Log.Info(color: ConsoleColor.Yellow, text: "DefensiveCoordinator: Remove : SystemToDefend Was Null");
-    }
-        
     public bool DebugLogText(string text, DebugModes mode)
     {
         if (IsOpen && Mode == mode && GlobalStats.VerboseLogging)

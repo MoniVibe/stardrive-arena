@@ -1,14 +1,15 @@
 using Ship_Game.Gameplay;
-using Ship_Game.Ships;
 using System;
-using System.Collections.Generic;
 using SDGraphics;
 using SDUtils;
 
 namespace Ship_Game.AI
 {
-    // This is a helper commander of tracking
-    // defense ships and assigning targets
+    // Per-system tracker of troop counts and planet values.
+    // Once held an inert ship-defense roster; that responsibility migrated to
+    // Fleets + MilitaryTask. What remains is the troop/value bookkeeping read
+    // by DefensiveCoordinator.ManageForcePool, MilitaryTask_Requistions,
+    // RunDiplomaticPlanner, and Planet_WeCanAffordThis.
     public sealed class SystemCommander
     {
         public readonly DefensiveCoordinator Owner;
@@ -18,19 +19,14 @@ namespace Ship_Game.AI
         public float TotalValueToUs;
         public float OurPlanetsTotalValue { get; private set; }
         public float OurPlanetsMaxValue { get; private set; }
-        public float MaxValueToUs;
         public int IdealTroopCount = 1;
         public float TroopStrengthNeeded;
-        public int IdealShipStrength;
-        public bool IsEnoughShipStrength => GetOurStrength() >= IdealShipStrength;
         public bool IsEnoughTroopStrength => IdealTroopCount <= TroopCount;
         public float PercentageOfValue;
-        public int CurrentShipStr;
         public float SystemDevelopmentlevel;
         public float RankImportance;
         public int TroopCount;
         public int TroopsWanted => IdealTroopCount - TroopCount;
-        public Array<Ship> OurShips = new Array<Ship>();
 
         public Map<Planet, PlanetTracker> PlanetValues = new Map<Planet, PlanetTracker>();
         Planet[] CachedOurPlanets = Empty<Planet>.Array;
@@ -48,7 +44,6 @@ namespace Ship_Game.AI
 
         public float UpdateSystemValue()
         {
-            IdealShipStrength = 0;
             PercentageOfValue = 0f;
             OurPlanetsTotalValue = 0;
             OurPlanetsMaxValue = 0;
@@ -78,7 +73,6 @@ namespace Ship_Game.AI
 
         private void CreatePlanetRatio()
         {
-
             foreach (var kv in PlanetValues)
             {
                 kv.Value.CalculateRankInSystem(OurPlanetsMaxValue);
@@ -95,121 +89,6 @@ namespace Ship_Game.AI
                             TotalValueToUs += Us.IsEmpireAttackable(e) ? 5 : 0;
         }
 
-        // @return Ships that were removed or empty array
-        public Array<Ship> RemoveExtraShips()
-        {
-            var removed = new Array<Ship>();
-            if (CurrentShipStr < IdealShipStrength)
-                return removed;
-            
-            for (int i = OurShips.Count - 1; i >= 0; --i)
-            {
-                Ship ship = OurShips[i];
-                if ((CurrentShipStr - ship.BaseStrength) > IdealShipStrength)
-                {
-                    RemoveShip(ship);
-                    removed.Add(ship);
-                }
-            }
-            return removed;
-        }
-
-        public bool ContainsShip(Ship ship)
-        {
-            return OurShips.ContainsRef(ship);
-        }
-
-        public bool RemoveShip(Ship shipToRemove)
-        {
-            if (OurShips.Remove(shipToRemove))
-            {
-                CurrentShipStr -= (int)shipToRemove.BaseStrength;
-                shipToRemove.AI.ClearOrders();
-                return true;
-            }
-            return false;
-        }
-
-        public bool AddShip(Ship ship)
-        {
-            if (CurrentShipStr > IdealShipStrength)
-                return false;
-
-            if (OurShips.AddUniqueRef(ship))
-            {
-                CurrentShipStr += (int)ship.BaseStrength;
-            }
-
-            if (ship.AI.SystemToDefend != System)
-                ship.AI.OrderSystemDefense(System);
-            return true;
-        }
-
-        private void Clear()
-        {
-            foreach (Ship ship in OurShips)
-                if (ship.Active && ship.AI != null) // AI is null if we exit during initialization
-                    ship.AI.SystemToDefend = null;
-            OurShips.Clear();
-            CurrentShipStr = 0;
-        }
-
-        public Planet AssignIdleDuties(Ship ship)
-        {
-            PlanetTracker best = PlanetValues.FindMinValue(p => p.Value);
-            return best.Planet;
-        }
-
-        void AssignAllShipsToSystemDefense()
-        {
-            foreach (Ship ship in OurShips)
-            {
-                if (ship.AI.State != AIState.Resupply)
-                    ship.AI.OrderSystemDefense(System);
-            }
-        }
-
-        public void AssignTargets()
-        {
-            ThreatCluster[] hostiles = Us.AI.ThreatMatrix.FindHostileClustersByDist(System.Position, System.Radius);
-            if (hostiles.Length == 0)
-            {
-                // nothing to do, take defensive positions inside the system
-                AssignAllShipsToSystemDefense();
-                return;
-            }
-
-            // these are the ships we are sending to face this threat
-            var ourAssignedShips = new HashSet<Ship>();
-
-            foreach (ThreatCluster cluster in hostiles)
-            {
-                float assignedStr = 0f;
-                foreach (Ship ship in OurShips)
-                {
-                    if (ourAssignedShips.Contains(ship))
-                        continue;
-
-                    if (!ship.InCombat && ship.System == System && ship.AI.State != AIState.Resupply)
-                    {
-                        assignedStr += ship.GetStrength();
-                        ourAssignedShips.Add(ship);
-
-                        // do aggressive move towards threat
-                        ship.AI.OrderAttackMoveTo(cluster.Position);
-                    }
-
-                    if (assignedStr >= cluster.Strength)
-                        break; // done assigning ships
-                }
-            }
-        }
-
-        public float GetOurStrength()
-        {
-            return CurrentShipStr;
-        }
-
         public Planet[] OurPlanets => CachedOurPlanets;
 
         int MinPlanetTroopLevel => (int)(RankImportance * GameDifficultyModifier);
@@ -219,13 +98,6 @@ namespace Ship_Game.AI
             float troopMultiplier = !Us.IsAtWarWithMajorEmpire && Us.ActiveWarPreparations == 0 ? 0.5f : 1;
             float troopMin        = MinPlanetTroopLevel * PlanetToSystemDevelopmentRatio(planet) * troopMultiplier;
             return troopMin.LowerBound(1);
-        }
-
-        public float TroopStrengthMin(Planet planet)
-        {
-            float troopMin = MinPlanetTroopLevel * PlanetToSystemDevelopmentRatio(planet);
-
-            return Math.Max(1, troopMin) * 10f;
         }
 
         public void CalculateTroopNeeds()
@@ -241,13 +113,6 @@ namespace Ship_Game.AI
             TroopCount         += currentTroops;
             IdealTroopCount     = idealTroopCount;
             TroopStrengthNeeded = idealTroopCount - currentTroops;
-        }
-
-        public void CalculateShipNeeds()
-        {
-            int min = (int)(10f / RankImportance) * (Us.data.DiplomaticPersonality?.Territorialism ?? 50);
-            min /= 4;
-            IdealShipStrength = min;
         }
 
         public void UpdatePlanetTracker()
@@ -274,16 +139,9 @@ namespace Ship_Game.AI
             PlanetValues.TryGetValue(planet, out PlanetTracker planetTracker);
             return planetTracker;
         }
+
         public void Dispose()
         {
-            Destroy();
-            GC.SuppressFinalize(this);
-        }
-        ~SystemCommander() { Destroy(); }
-
-        void Destroy()
-        {
-            Clear();
             PlanetValues.Clear();
             System = null;
         }

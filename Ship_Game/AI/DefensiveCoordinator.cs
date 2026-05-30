@@ -117,7 +117,6 @@ namespace Ship_Game.AI
             foreach (SystemCommander com in commanders)
             {
                 com.RankImportance = (int) (10 * (com.RankImportance / ranker));
-                com.CalculateShipNeeds();
                 com.CalculateTroopNeeds();
             }
         }
