@@ -39,14 +39,19 @@ namespace Ship_Game.AI.ExpansionAI
             float rawValue        = planet.ColonyPotentialValue(empire);
 
             bool moralityBlock = IsColonizeBlockedByMorals(Planet.System, empire);
+            bool inOwnedSystem = Planet.System.HasPlanetsOwnedBy(empire);
+
             CanColonize = !moralityBlock;
             Value = rawValue;
-            if (!Planet.System.HasPlanetsOwnedBy(empire))
+            if (!inOwnedSystem)
             {
-                DistanceMod = (planet.Position.Distance(empireCenter) / longestDistance * 10).Clamped(1, 10);
-                EnemyStrMod = ((empire.KnownEnemyStrengthIn(planet.System) / (empire.OffensiveStrength+10)) * 10).Clamped(1, 10);
-                CanColonize = !moralityBlock && (rawValue > 20 || empire.IsCybernetic && planet.MineralRichness > 1.5f);
-                Value = rawValue / DistanceMod / EnemyStrMod;
+                float distanceRaw = planet.Position.Distance(empireCenter);
+                float enemyStrRaw = empire.KnownEnemyStrengthIn(planet.System);
+                bool valueOk      = rawValue > 20 || empire.IsCybernetic && planet.MineralRichness > 1.5f;
+                DistanceMod = (distanceRaw / longestDistance * 10).Clamped(1, 10);
+                EnemyStrMod = ((enemyStrRaw / (empire.OffensiveStrength+10)) * 10).Clamped(1, 10);
+                CanColonize = !moralityBlock && valueOk;
+                Value       = rawValue / DistanceMod / EnemyStrMod;
             }
         }
 
