@@ -766,8 +766,10 @@ namespace Ship_Game.AI
             // Empire.UpdateRallyPoints() handles the logic for setting up rally points
             closest = e.FindNearestRallyPoint(Owner.Position);
 
-            // this should never be null! if this happens, then UpdateRallyPoints() has a regression
-            if (closest == null)
+            // A colony-less empire (being eliminated, or a bare test setup) legitimately has no
+            // rally point, so don't flood the log every frame. Only when the empire still owns
+            // colonies is a null a real regression in UpdateRallyPoints().
+            if (closest == null && e.NumPlanets > 0)
                 Log.Error($"GetAwaitClosest returned null, Empire={e.Name}");
 
             return closest;
