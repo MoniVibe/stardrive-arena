@@ -10,13 +10,15 @@ namespace Ship_Game.AI;
 // hostile/unknown space. Replaces the dead A* graph (PathFinder/Astar.cs).
 //
 // Two-tier obstacle model:
-//   - FAR systems (origin >= 1.1 system diameters from system center) that aren't
-//     covered by friendly projector influence are treated as a SINGLE blob — the
-//     whole system disc becomes the obstacle. Skips:
+//   - FAR systems (both origin AND destination >= 1.1 system diameters from system
+//     center) that aren't covered by friendly projector influence are treated as a
+//     SINGLE blob — the whole system disc becomes the obstacle. Skips:
 //       · friendly influence covers the system center (in our territory)
 //       · system is KNOWN to be empty (no planets → no wells, safe transit)
-//   - NEAR systems (origin within 1.1 diameters of the system center) fall back
-//     to per-planet gravity-well detection. Skips:
+//   - NEAR systems (origin OR destination within 1.1 diameters of the system center)
+//     fall back to per-planet gravity-well detection — too close to swing around the
+//     whole disc, and near the destination the disc contains the endpoint so it would
+//     otherwise be skipped entirely (and its wells clipped on approach). Skips:
 //       · system is NOT known to our empire (can't see wells; reactive warp-drop
 //         logic handles whatever the ship hits — we can't strategically route
 //         around obstacles we don't know exist).
@@ -42,9 +44,9 @@ public static class GravityWellRouter
     // and isn't mis-detected as tangent-touching the same obstacle on the next pass.
     const float BracketPlacementMul = 1.02f;
 
-    // Per-system "near" threshold: if origin is within (system diameter * 1.1) of
-    // the system center, fall back to per-planet checks (too close to swing around).
-    // Bigger systems get a wider near-band naturally.
+    // Per-system "near" threshold: if origin OR destination is within (system diameter
+    // * 1.1) of the system center, fall back to per-planet checks (too close to swing
+    // around). Bigger systems get a wider near-band naturally.
     const float NearSystemDiameterScale = 1.1f;
 
     // Recursion cap. Each detour inserts 2 waypoints (bracketing the disc), so cap
@@ -64,7 +66,7 @@ public static class GravityWellRouter
 
     static readonly Vector2[] Empty = Array.Empty<Vector2>();
 
-    // Diagnostic; flip to true to trace router decisions in the log. Off in release.
+    // Diagnostic; flip to true to trace router decisions in the log. Off by default.
     public static bool LogVerbose = false;
 
     // Walks the detour chain — returns the next point the ship should thrust toward,
@@ -308,10 +310,16 @@ public static class GravityWellRouter
             sysCandidates++;
 
             float nearThreshold = sys.Radius * 2f * NearSystemDiameterScale;
-            bool isNearOrigin = sys.Position.SqDist(origin) < nearThreshold * nearThreshold;
+            // Per-planet routing kicks in when the ship can't swing around the whole system
+            // disc — true near BOTH the origin and the destination. Near the destination this
+            // lets us avoid individual wells on approach: the arrival system's disc contains
+            // finalDest, so the coarse system-disc path skips the whole system and clips its
+            // wells. Per-planet still skips the destination planet's own well (we're going there).
+            float nt2 = nearThreshold * nearThreshold;
+            bool isNear = sys.Position.SqDist(origin) < nt2 || sys.Position.SqDist(finalDest) < nt2;
             bool isKnown = sys.IsExploredBy(ship.Loyalty);
 
-            if (!isNearOrigin)
+            if (!isNear)
             {
                 if (ship.Universe.Influence.IsInInfluenceOf(ship.Loyalty, sys.Position))
                 {
@@ -410,8 +418,16 @@ public static class GravityWellRouter
         // not the sub-segment's a/b — those are internally-computed waypoints,
         // and if they land inside a well that's a routing bug we WANT to flag
         // so the safety-merge can pull that well into the cluster.
-        if (origin.SqDist(center) <= r2) return false;
-        if (finalDest.SqDist(center) <= r2) return false;
+        if (origin.SqDist(center) <= r2)
+        {
+            if (LogVerbose) Log.Info($"[GWRouter]   skip {name}: origin inside disc (r={r:0})");
+            return false;
+        }
+        if (finalDest.SqDist(center) <= r2)
+        {
+            if (LogVerbose) Log.Info($"[GWRouter]   skip {name}: finalDest inside disc (r={r:0}) — destination system, not routed around");
+            return false;
+        }
 
         // Closest-point t can be outside (0, 1) — clamp to capture wells that contain
         // an endpoint of the segment too. Otherwise wells right at a/b silently slip

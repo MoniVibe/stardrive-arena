@@ -121,6 +121,15 @@ namespace Ship_Game.AI.ExpansionAI
             if (Owner.isPlayer && !Owner.AutoColonize)
                 return;
 
+            if (ExpandSearchTimer > 0)
+                --ExpandSearchTimer;
+
+            if (ExpandSearchTimer <= 0 && MaxSystemsToCheckedDiv > 1)
+            {
+                ResetExpandSearchTimer();
+                MaxSystemsToCheckedDiv = (MaxSystemsToCheckedDiv - 1).LowerBound(1);
+            }
+
             int ourPlanetsNum = Owner.GetPlanets().Count;
             if (!Owner.isPlayer)
             {
@@ -164,12 +173,8 @@ namespace Ship_Game.AI.ExpansionAI
             // Rank all known planets near the empire
             if (!GatherAllPlanetRanks(potentialPlanets, currentColonizationGoals, empireCenter, out Array<PlanetRanker> allPlanetsRanker))
             {
-                // Nothing found in current search area
-                if (--ExpandSearchTimer <= 0 && MaxSystemsToCheckedDiv > 1) // increase search area if timer is done
-                {
-                    ResetExpandSearchTimer();
-                    MaxSystemsToCheckedDiv = (MaxSystemsToCheckedDiv - 1).LowerBound(1);
-                }
+                // Nothing found this tick. Widening is handled at the top of the function
+                // based solely on ExpandSearchTimer, so there's nothing else to do here.
                 return;
             }
 
@@ -177,7 +182,7 @@ namespace Ship_Game.AI.ExpansionAI
             if (allPlanetsRanker.Count > 0)
             {
                 PlanetRanker bestValuePlanet = allPlanetsRanker.FindMax(pr => pr.Value);
-                    CreateColonyGoals(bestValuePlanet.Planet, currentColonizationGoals.Length);
+                CreateColonyGoals(bestValuePlanet.Planet, currentColonizationGoals.Length);
             }
         }
 
@@ -251,17 +256,17 @@ namespace Ship_Game.AI.ExpansionAI
                 return false;
 
             float longestDistance  = planetList.Last().Position.Distance(empireCenter);
-        
+
             for (int i = 0; i < planetList.Count; i++)
             {
                 Planet p = planetList[i];
                 // The planet ranker does the ranking
-                if (!markedPlanets.Contains(p)) // Don't include planets we are already trying to colonize
-                {
-                    var pr = new PlanetRanker(Owner, p, longestDistance, empireCenter);
-                    if (pr.CanColonize)
-                        planetRanker.Add(pr);
-                }
+                if (markedPlanets.Contains(p)) // Don't include planets we are already trying to colonize
+                    continue;
+
+                var pr = new PlanetRanker(Owner, p, longestDistance, empireCenter);
+                if (pr.CanColonize)
+                    planetRanker.Add(pr);
             }
 
             return planetRanker.Count > 0;

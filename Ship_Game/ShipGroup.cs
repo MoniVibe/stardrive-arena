@@ -456,6 +456,17 @@ namespace Ship_Game
                 return null;
             }
 
+            // Queued waypoints (shift-click) start at the previous fleet waypoint, not the
+            // current average position. A shared avg-anchored route would be wrong for the
+            // queued leg, so skip clustering and let each ship route its own leg in
+            // AddWayPoint (which anchors at that ship's previous queued waypoint).
+            if (order.IsSet(MoveOrder.AddWayPoint))
+            {
+                if (GravityWellRouter.LogVerbose)
+                    Log.Info($"[GWRouter] FLEET ({Ships.Count} ships) queued waypoint — per-ship routing");
+                return null;
+            }
+
             Vector2 avg = AveragePosition();
             float cohesion = GetRelativeSize().Length();
             float cohesionSq = cohesion * cohesion;

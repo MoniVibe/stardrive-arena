@@ -10,10 +10,15 @@ public readonly struct WayPoint
 {
     [StarData] public readonly Vector2 Position;
     [StarData] public readonly Vector2 Direction; // direction we should be facing at the way point
-    public WayPoint(Vector2 pos, Vector2 dir)
+    // True for pathfinder detour waypoints (gravity-well swing-bys). Fleets reform and
+    // drop out of warp at user waypoints, but pass straight through detours to keep warp
+    // engaged — matching single-ship behavior. Defaults false (old saves => user waypoint).
+    [StarData] public readonly bool IsDetour;
+    public WayPoint(Vector2 pos, Vector2 dir, bool isDetour = false)
     {
         Position = pos;
         Direction = dir;
+        IsDetour = isDetour;
     }
 }
 
@@ -56,7 +61,7 @@ public sealed class WayPoints : IDisposable
                 {
                     Vector2 next = i + 1 < detourPositions.Length ? detourPositions[i + 1] : final.Position;
                     Vector2 dir = (next - detourPositions[i]).Normalized();
-                    ActiveWayPoints.Enqueue(new WayPoint(detourPositions[i], dir));
+                    ActiveWayPoints.Enqueue(new WayPoint(detourPositions[i], dir, isDetour: true));
                 }
             }
             ActiveWayPoints.Enqueue(final);

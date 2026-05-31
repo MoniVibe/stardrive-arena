@@ -1,5 +1,6 @@
 ﻿using Ship_Game.Ships;
 using System;
+using System.Collections.Generic;
 using SDGraphics;
 using SDUtils;
 
@@ -275,19 +276,34 @@ namespace Ship_Game.AI.Research
                 case "TECH":
                     {
                         string[] script = modifier.Split(':');
+                        bool isCheaper = command1 == "CHEAPEST";
+                        HashSet<string> seenCandidates = new();
                         for (int i = 1; i < script.Length; i++)
                         {
                             var techTypeName    = script[i];
                             var techType             = ConvertTechStringTechType(techTypeName);
                             TechEntry researchTech   = GetScriptedTech(command1, techType, availableTechs);
-                            bool isCheaper           = command1 == "CHEAPEST";
-                            string testResearchTopic = DoesCostCompare(ref previousCost, researchTech, techType, isCheaper);
 
-                            if (testResearchTopic.NotEmpty())
-                                researchTopic = testResearchTopic;
-                            float priority = 0;
-                            // bump priority but consider ship tech categories as more of a unit.
-                            if (techTypeName.Contains("ship"))
+                            // Progression frequently collapses many ship designs to a single ship tech, and
+                            // ship techs can pass several sub-category filters at once (especially with mods
+                            // that multi-type techs via building/bonus unlocks -- e.g. Combined Arms tagging
+                            // weapon techs as GroundCombat through planetary weapon buildings). A repeat
+                            // candidate can never displace itself (later CostNormalizer is monotonically higher,
+                            // so the normalized cost is strictly worse), so skip the redundant compare + log.
+                            // CostNormalizer still advances to keep per-slot pacing intact.
+                            if (researchTech == null || seenCandidates.Add(researchTech.UID))
+                            {
+                                string testResearchTopic = DoesCostCompare(ref previousCost, researchTech, techType, isCheaper);
+                                if (testResearchTopic.NotEmpty())
+                                    researchTopic = testResearchTopic;
+                            }
+
+                            float priority;
+                            // Bump CostNormalizer but treat ship sub-categories (ShipHull/Weapons/Defense/General)
+                            // as one unit: their 4 slots should collectively add ~one non-ship slot's worth,
+                            // otherwise ship techs get penalized 4x for being split. Categories arrive PascalCase
+                            // from GetShipTechString, so the match must be case-insensitive.
+                            if (techTypeName.Contains("Ship", StringComparison.OrdinalIgnoreCase))
                                 priority = 0.0002f;
                             else
                                 priority = 0.005f;

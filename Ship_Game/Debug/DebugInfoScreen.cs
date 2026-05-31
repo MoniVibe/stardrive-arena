@@ -166,8 +166,15 @@ public sealed partial class DebugInfoScreen : GameScreen
 
     public void ResearchLog(string text, Empire empire)
     {
-        if (!DebugLogText(text, DebugModes.Tech))
+        // Always route to the log file (when VerboseLogging is on), tagged with the
+        // empire name so per-empire research decisions can be grepped after a session.
+        // The Tech debug overlay accumulates lines independently below.
+        if (GlobalStats.VerboseLogging)
+            Log.Info($"[Research:{empire.Name}] {text}");
+
+        if (!IsOpen || Mode != DebugModes.Tech)
             return;
+
         if (GetResearchLog(empire, out Array<string> empireTechs))
         {
             empireTechs.Add(text);
