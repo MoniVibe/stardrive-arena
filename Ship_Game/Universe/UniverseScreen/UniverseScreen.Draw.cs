@@ -675,22 +675,26 @@ namespace Ship_Game
             {
                 var inhibit = ResourceManager.Texture("UI/node_inhibit");
 
-                Planet[] visiblePlanets = UState.GetVisiblePlanets();
-                foreach (Planet planet in visiblePlanets)
+                // Gravity wells are only legible up to sector view; skip them in galaxy view
+                if (viewState <= UnivScreenState.SectorView)
                 {
-                    if (planet.System.IsExploredBy(Player))
+                    Planet[] visiblePlanets = UState.GetVisiblePlanets();
+                    foreach (Planet planet in visiblePlanets)
                     {
-                        DrawCircleProjected(planet.Position, planet.GravityWellRadius,
-                                            new Color(255, 50, 0, 150).Premultiplied(), 1f, inhibit, new Color(200, 0, 0, 50).Premultiplied());
+                        if (planet.System.IsExploredBy(Player))
+                        {
+                            DrawCircleProjected(planet.Position, planet.GravityWellRadius,
+                                                new Color(255, 50, 0, 150).Premultiplied(), 1f, inhibit, new Color(200, 0, 0, 50).Premultiplied());
+                        }
                     }
-                }
 
-                foreach (Ship ship in UState.Objects.VisibleShips)
-                {
-                    if (ship is { InhibitionRadius: > 0f, IsVisibleToPlayer: true })
+                    foreach (Ship ship in UState.Objects.VisibleShips)
                     {
-                        DrawCircleProjected(ship.Position, ship.InhibitionRadius,
-                                            new Color(255, 50, 0, 150).Premultiplied(), 1f, inhibit, new Color(200, 0, 0, 40).Premultiplied());
+                        if (ship is { InhibitionRadius: > 0f, IsVisibleToPlayer: true })
+                        {
+                            DrawCircleProjected(ship.Position, ship.InhibitionRadius,
+                                                new Color(255, 50, 0, 150).Premultiplied(), 1f, inhibit, new Color(200, 0, 0, 40).Premultiplied());
+                        }
                     }
                 }
 

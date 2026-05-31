@@ -66,8 +66,8 @@ public static class GravityWellRouter
 
     static readonly Vector2[] Empty = Array.Empty<Vector2>();
 
-    // Diagnostic; flip to true to trace router decisions in the log. Off in release.
-    public static bool LogVerbose = true;
+    // Diagnostic; flip to true to trace router decisions in the log. Off by default.
+    public static bool LogVerbose = false;
 
     // Walks the detour chain — returns the next point the ship should thrust toward,
     // advancing past any detours already reached or that lie farther from the ship
