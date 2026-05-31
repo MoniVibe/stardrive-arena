@@ -361,7 +361,10 @@ namespace Ship_Game.AI
             for (int i = 0; i < wayPoints.Length - 1; ++i)
             {
                 wp = wayPoints[i];
-                if (assembleBetweenWayPoints)
+                // Pathfinder detour waypoints are pass-through swing-bys: even fleets keep
+                // warp engaged through them (no reform / MakeFinalApproach), matching single
+                // ship behavior. Reform only at real user waypoints.
+                if (assembleBetweenWayPoints && !wp.IsDetour)
                 {
                     AddMoveOrder(Plan.MoveToWithin1000, wp, wantedState, speedLimit, o|MoveOrder.DequeueWayPoint);
                     AddMoveOrder(Plan.MakeFinalApproach, wp, wantedState, speedLimit, o, goal);

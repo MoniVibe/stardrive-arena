@@ -206,7 +206,7 @@ namespace Ship_Game.AI
             // FB - we are also setting speed limit for group formation movement
             float speedLimit = Owner.Carrier.RecallingShipsBeforeWarp ? Owner.STLSpeedLimit : 0;
             Vector2 movePos = goal.MovePosition; // dynamic move position
-            ThrustOrWarpToPos(movePos, timeStep, speedLimit);
+            ThrustOrWarpToPos(movePos, timeStep, speedLimit, isDetourLeg: goal.IsDetourWaypoint);
 
             float distance = Owner.Position.Distance(movePos);
 
@@ -404,7 +404,7 @@ namespace Ship_Game.AI
          * @param warpExitDistance [0] If set to nonzero, ships will exit warp at this distance
          *                   but only if this is the last WayPoint
          */
-        internal void ThrustOrWarpToPos(Vector2 pos, FixedSimTime timeStep, float speedLimit = 0f, float warpExitDistance = 0f)
+        internal void ThrustOrWarpToPos(Vector2 pos, FixedSimTime timeStep, float speedLimit = 0f, float warpExitDistance = 0f, bool isDetourLeg = false)
         {
             if (Owner.EnginesKnockedOut)
                 return;
@@ -466,7 +466,10 @@ namespace Ship_Game.AI
                 }
                 else
                 {
-                    if (distance > 7500f) // Not near destination
+                    // A pathfinder detour is a pass-through swing-by: keep formation warp
+                    // engaged so the fleet doesn't drop out of warp at every detour (matching
+                    // single-ship behavior). Only disengage near a real user/final waypoint.
+                    if (distance > 7500f || isDetourLeg) // Not near destination, or just a detour
                     {
                         EngageFormationWarp();
                     }

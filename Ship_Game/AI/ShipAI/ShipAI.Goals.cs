@@ -205,7 +205,7 @@ namespace Ship_Game.AI
 
         void AddMoveOrder(Plan plan, WayPoint wayPoint, AIState state, float speedLimit, MoveOrder order, Goal goal = null)
         {
-            EnqueueOrPush(new ShipGoal(plan, wayPoint.Position, wayPoint.Direction, state, order, speedLimit, goal));
+            EnqueueOrPush(new ShipGoal(plan, wayPoint.Position, wayPoint.Direction, state, order, speedLimit, goal, wayPoint.IsDetour));
         }
 
         void EnqueueOrPush(ShipGoal goal, bool pushToFront = false)
@@ -378,6 +378,11 @@ namespace Ship_Game.AI
             [StarData] public TradePlan Trade;
             [StarData] public readonly MoveOrder MoveOrder = MoveOrder.Regular;
 
+            // True when this move goal targets a pathfinder detour waypoint (a pass-through
+            // swing-by). Fleets keep formation warp engaged through detours instead of
+            // dropping out of warp near them. See ShipAI.Movement.ThrustOrWarpToPos.
+            [StarData] public readonly bool IsDetourWaypoint;
+
             // Pathfinder detour chain pre-computed when this goal is queued (from the ship's
             // position at order time to the goal's target). Per-tick handlers route their
             // long-haul thrust through GetThrustTarget so warps skirt hostile/unknown wells.
@@ -448,8 +453,8 @@ namespace Ship_Game.AI
                 WantedState = wantedState;
             }
 
-            public ShipGoal(Plan plan, Vector2 waypoint, Vector2 direction, AIState state, 
-                            MoveOrder order, float speedLimit, Goal goal)
+            public ShipGoal(Plan plan, Vector2 waypoint, Vector2 direction, AIState state,
+                            MoveOrder order, float speedLimit, Goal goal, bool isDetourWaypoint = false)
             {
                 Plan         = plan;
                 MovePosition = waypoint;
@@ -458,6 +463,7 @@ namespace Ship_Game.AI
                 Goal         = goal;
                 MoveOrder    = order;
                 SpeedLimit   = speedLimit;
+                IsDetourWaypoint = isDetourWaypoint;
             }
 
             // restore from SaveGame
