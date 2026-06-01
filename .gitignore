@@ -113,7 +113,9 @@ x64Migration/Tools/*/obj/
 # Per-user Claude Code state: permission caches, scheduled-task locks,
 # session metadata. All entries are user-machine-specific (absolute
 # paths, NuGet caches, Downloads folders); nothing here is portable.
-.claude/
+# Exception: .claude/skills/ holds shared, portable team workflow skills.
+.claude/*
+!.claude/skills/
 game/SDGraphics.pdb
 game/SDGraphics.dll
 game/SDUtils.dll
