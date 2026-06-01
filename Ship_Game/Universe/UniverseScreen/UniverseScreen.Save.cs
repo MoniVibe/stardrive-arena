@@ -33,7 +33,7 @@ public partial class UniverseScreen
         return null;
     }
 
-    public void SaveAsync(string saveName)
+    public void SaveAsync(string saveName, bool resetLogOnComplete = false)
     {
         IsSaving = true;
         var savedGame = new SavedGame(this);
@@ -43,6 +43,13 @@ public partial class UniverseScreen
             if (error != null)
             {
                 Log.Error(error, $"Universe.SaveAsync('{saveName}') failed");
+            }
+            else if (resetLogOnComplete)
+            {
+                // Bound blackbox.log growth (and the tail attached to Sentry reports)
+                // by truncating it after each successful autosave. Startup rotation to
+                // blackbox.old is unchanged.
+                Log.ResetCurrentLog();
             }
         });
     }
@@ -76,7 +83,7 @@ public partial class UniverseScreen
                 LastAutosaveTime = game.TotalElapsed;
                 string saveName = "Autosave" + Auto;
                 if (++Auto > 3) Auto = 1;
-                SaveAsync(saveName);
+                SaveAsync(saveName, resetLogOnComplete: true);
             }
         }
     }

@@ -65,6 +65,16 @@ namespace Ship_Game
         /// </summary>
         public static bool IncludeSaveGameInReports = false;
 
+        // Max bytes of the blackbox.log TAIL attached to Sentry error reports.
+        // The whole file is no longer attached, and nothing is attached to the
+        // frequent Info/stats events — that scope-level whole-file attachment was
+        // the main Sentry storage cost. See ConfigureStatsReporter / CaptureEvent.
+        const int SentryLogTailBytes = 128 * 1024;
+
+        // Last save path, cached by ConfigureStatsReporter so error events can
+        // optionally attach the save (only when IncludeSaveGameInReports is true).
+        static string LastAutoSavePath;
+
         // prevent flooding Sentry with 2000 error messages if we fall into an exception loop
         // instead, we count identical exceptions and resend them only over a certain threshold
         static readonly Map<ulong, int> ReportedErrors = new();
@@ -477,25 +487,88 @@ namespace Ship_Game
             if (!IsStatsReportEnabled)
                 return;
 
+            LastAutoSavePath = autoSavePath ?? LastAutoSavePath;
             SentrySdk.ConfigureScope(scope =>
             {
                 if (!scope.HasUser())
                 {
                     scope.User.Username = Environment.UserName;
                 }
+
+                // NOTE: blackbox.log is intentionally NOT attached on the scope.
+                // A scope attachment rides EVERY captured event — including the
+                // frequent Info/stats events (LogEventStats) — and uploaded the
+                // whole, ever-growing log each time, which was the dominant Sentry
+                // storage cost (exceeded the 1GB quota in ~3 days). Error/Fatal
+                // events now attach only a bounded log TAIL, added per-event in
+                // CaptureEvent; stats events carry no attachment at all.
                 scope.ClearAttachments();
-                scope.AddAttachment(LogFilePath);
-                
+
                 if (GlobalStats.HasMod)
                 {
                     scope.SetTag("Mod", GlobalStats.ModName);
                     scope.SetTag("ModVersion", GlobalStats.ModVersion);
                 }
-                if (IncludeSaveGameInReports && !string.IsNullOrEmpty(autoSavePath))
-                {
-                    scope.AddAttachment(autoSavePath);
-                }
             });
+        }
+
+        // Reads up to maxBytes from the END of blackbox.log so error reports can
+        // attach a bounded tail instead of the whole (unbounded) session log.
+        static byte[] ReadLogTail(int maxBytes)
+        {
+            try
+            {
+                using var fs = new FileStream(LogFilePath, FileMode.Open,
+                                              FileAccess.Read, FileShare.ReadWrite);
+                long start = Math.Max(0, fs.Length - maxBytes);
+                fs.Seek(start, SeekOrigin.Begin);
+                int count = (int)(fs.Length - start);
+                var buf = new byte[count];
+                int read = 0;
+                while (read < count)
+                {
+                    int n = fs.Read(buf, read, count - read);
+                    if (n <= 0) break;
+                    read += n;
+                }
+                return read == count ? buf : buf[..read];
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Truncates the live blackbox.log to zero bytes mid-session (called after
+        /// each autosave) to bound log growth and the tail attached to Sentry error
+        /// reports. Full rotation to blackbox.old still happens once at startup; this
+        /// is an in-session reset only. Best-effort — never throws.
+        /// </summary>
+        public static void ResetCurrentLog()
+        {
+            lock (Sync) // synchronize with LogAsyncWriter()
+            {
+                if (LogFile == null)
+                    return;
+                try
+                {
+                    // AutoFlush keeps the writer buffer empty, and holding Sync blocks
+                    // the async writer, so the stream is quiescent here. Truncate it.
+                    // Any entries still queued (the newest lines) are left in the queue
+                    // and get written fresh at the top of the reset log afterwards.
+                    Stream bs = LogFile.BaseStream;
+                    LogFile.Flush();
+                    bs.SetLength(0);
+                    bs.Seek(0, SeekOrigin.Begin);
+                    LogFile.Write($" ==== blackbox.log reset after autosave  UTC: {DateTime.UtcNow}  {GlobalStats.ExtendedVersion} ====\r\n");
+                    LogFile.Flush();
+                }
+                catch
+                {
+                    // logging cleanup must never crash the game
+                }
+            }
         }
 
         // just echo info to console, don't write to logfile
@@ -667,7 +740,18 @@ namespace Ship_Game
                 Level   = level
             };
 
-            SentryId eventId = SentrySdk.CaptureEvent(evt);
+            // Attach a bounded log tail per-event (only on error/fatal captures),
+            // read fresh here so it reflects the real pre-error context. This replaces
+            // the old scope-level whole-file attachment that rode every event.
+            SentryId eventId = SentrySdk.CaptureEvent(evt, scope =>
+            {
+                byte[] tail = ReadLogTail(SentryLogTailBytes);
+                if (tail != null)
+                    scope.AddAttachment(tail, "blackbox.tail.log");
+
+                if (IncludeSaveGameInReports && !string.IsNullOrEmpty(LastAutoSavePath))
+                    scope.AddAttachment(LastAutoSavePath);
+            });
 
             if (level == SentryLevel.Fatal) // for fatal errors, we can't do ASYNC reports
             {
