@@ -1009,10 +1009,19 @@ namespace Ship_Game
         // advice is temporary and only sticks around while loading
         public static string LoadRandomAdvice(RandomBase random)
         {
-            string adviceFile = "Advice/" + GlobalStats.Language + "/Advice.xml";
+            // Fall back to English when the active language has no (or an empty) Advice.xml,
+            // so loading screens never show the raw "Advice.xml missing" placeholder.
+            Array<string> adviceList = LoadAdviceFor(GlobalStats.Language.ToString());
+            if (adviceList == null && !GlobalStats.IsEnglish)
+                adviceList = LoadAdviceFor(Language.English.ToString());
 
-            var adviceList = TryDeserialize<Array<string>>(adviceFile);
-            return adviceList?[random.InRange(adviceList.Count)] ?? "Advice.xml missing";
+            return adviceList != null ? adviceList[random.InRange(adviceList.Count)] : "Advice.xml missing";
+
+            static Array<string> LoadAdviceFor(string language)
+            {
+                var list = TryDeserialize<Array<string>>($"Advice/{language}/Advice.xml");
+                return list is { Count: > 0 } ? list : null;
+            }
         }
 
         static void LoadArtifacts() // Refactored by RedFox
