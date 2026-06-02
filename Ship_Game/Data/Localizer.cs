@@ -34,6 +34,7 @@ namespace Ship_Game
         [StarData] public string UKR;
         [StarData] public string GER;
         [StarData] public string PTB; // Brazilian Portuguese
+        [StarData] public string POL; // Polish
     }
 
     public static class Localizer
@@ -160,6 +161,7 @@ namespace Ship_Game
                     case Language.Ukrainian: text = t.UKR.NotEmpty() ? t.UKR : t.ENG; break;
                     case Language.German:    text = t.GER.NotEmpty() ? t.GER : t.ENG; break;
                     case Language.Portuguese: text = t.PTB.NotEmpty() ? t.PTB : t.ENG; break;
+                    case Language.Polish:     text = t.POL.NotEmpty() ? t.POL : t.ENG; break;
                 }
                 
                 // when replacing an existing token, reuse its Index

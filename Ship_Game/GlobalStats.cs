@@ -17,6 +17,7 @@ public enum Language
     Ukrainian,
     German,
     Portuguese, // Brazilian Portuguese (PTB column in GameText.yaml)
+    Polish,     // POL column in GameText.yaml
 }
 
 public enum WindowMode

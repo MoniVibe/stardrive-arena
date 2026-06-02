@@ -38,6 +38,7 @@ namespace Ship_Game.Tools.Localization
                     db.AddFromYaml($"{gameContent}\\GameText.Missing.UKR.yaml", logMerge:true);
                     db.AddFromYaml($"{gameContent}\\GameText.Missing.GER.yaml", logMerge:true);
                     db.AddFromYaml($"{gameContent}\\GameText.Missing.PTB.yaml", logMerge:true);
+                    db.AddFromYaml($"{gameContent}\\GameText.Missing.POL.yaml", logMerge:true);
                 }
             }
             if (db.NumLocalizations == 0)
@@ -62,6 +63,7 @@ namespace Ship_Game.Tools.Localization
             db.ExportMissingTranslationsYaml("UKR", $"{gameContent}\\GameText.Missing.UKR.yaml");
             db.ExportMissingTranslationsYaml("GER", $"{gameContent}\\GameText.Missing.GER.yaml");
             db.ExportMissingTranslationsYaml("PTB", $"{gameContent}\\GameText.Missing.PTB.yaml");
+            db.ExportMissingTranslationsYaml("POL", $"{gameContent}\\GameText.Missing.POL.yaml");
 
             if (Directory.Exists(modContent))
             {
@@ -74,6 +76,7 @@ namespace Ship_Game.Tools.Localization
                         db.AddFromModYaml($"{modContent}\\GameText.Missing.UKR.yaml", logMerge:true);
                         db.AddFromModYaml($"{modContent}\\GameText.Missing.GER.yaml", logMerge:true);
                         db.AddFromModYaml($"{modContent}\\GameText.Missing.PTB.yaml", logMerge:true);
+                        db.AddFromModYaml($"{modContent}\\GameText.Missing.POL.yaml", logMerge:true);
                     }
                 }
                 if (db.NumModLocalizations == 0)
@@ -90,6 +93,7 @@ namespace Ship_Game.Tools.Localization
                 db.ExportMissingModYaml("UKR", $"{modContent}\\GameText.Missing.UKR.yaml");
                 db.ExportMissingModYaml("GER", $"{modContent}\\GameText.Missing.GER.yaml");
                 db.ExportMissingModYaml("PTB", $"{modContent}\\GameText.Missing.PTB.yaml");
+                db.ExportMissingModYaml("POL", $"{modContent}\\GameText.Missing.POL.yaml");
             }
             return db;
         }
