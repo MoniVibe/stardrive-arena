@@ -120,7 +120,7 @@ namespace Ship_Game
         FloatSlider SimulationFps;
         FloatSlider MaxDynamicLightSources;
 
-        public OptionsScreen(MainMenuScreen mainMenu) : base(mainMenu, 600, 640)
+        public OptionsScreen(MainMenuScreen mainMenu) : base(mainMenu, 720, 640)
         {
             IsPopup           = true;
             TransitionOnTime  = 0.25f;
@@ -131,7 +131,7 @@ namespace Ship_Game
             New = Original.GetClone();
         }
 
-        public OptionsScreen(UniverseScreen universe) : base(universe, 600, 640)
+        public OptionsScreen(UniverseScreen universe) : base(universe, 720, 640)
         {
             Fade              = false;
             IsPopup           = true;
@@ -210,34 +210,35 @@ namespace Ship_Game
             New.EffectDetail = New.EffectDetail == 3 ? 0 : New.EffectDetail + 1;
         }
 
-        void Add(UIList graphics, LocalizedText title, Func<UILabel, string> getText, Action<UILabel> onClick)
+        void Add(UIList graphics, LocalizedText title, Func<UILabel, string> getText, Action<UILabel> onClick, float splitOffset = 0)
         {
             graphics.AddSplit(new UILabel($"{title.Text}:"), new UILabel(getText, onClick))
-                .Split = graphics.Width*0.4f;
+                .Split = graphics.Width*0.4f + splitOffset;
         }
 
-        void Add(UIList graphics, LocalizedText title, UIElementV2 second)
+        void Add(UIList graphics, LocalizedText title, UIElementV2 second, float splitOffset = 0)
         {
             graphics.AddSplit(new UILabel($"{title.Text}:"), second)
-                .Split = graphics.Width*0.4f;
+                .Split = graphics.Width*0.4f + splitOffset;
         }
 
         void InitScreen()
         {
-            LeftArea  = new Rectangle(Rect.X + 20,         Rect.Y + 150, 290, 375);
-            RightArea = new Rectangle(LeftArea.Right + 40, LeftArea.Y,   210, 375);
+            LeftArea  = new Rectangle(Rect.X + 24,         Rect.Y + 150, 348, 375);
+            RightArea = new Rectangle(LeftArea.Right + 10, LeftArea.Y,   252, 375);
 
             UIList graphics = AddList(LeftArea.PosVec(), LeftArea.Size());
             graphics.Padding = new Vector2(2f, 4f);
-            ResolutionDropDown = new DropOptions<DisplayMode>(105, 18);
+            ResolutionDropDown = new DropOptions<DisplayMode>(126, 18);
 
-            Add(graphics, GameText.Resolution, ResolutionDropDown);
-            Add(graphics, GameText.ScreenMode,   l => New.Mode.ToString(),               Fullscreen_OnClick);
-            Add(graphics, GameText.AntiAliasing, l => AntiAliasString(),                 AntiAliasing_OnClick);
-            Add(graphics, GameText.TextureQuality, l => QualityString(New.TextureQuality), TextureQuality_OnClick);
-            Add(graphics, GameText.TextureFiltering, l => TextureFilterString(),             TextureFiltering_OnClick);
-            Add(graphics, GameText.ShadowQuality, l => ShadowQualStr(New.ShadowDetail),   ShadowQuality_OnClick);
-            Add(graphics, GameText.EffectsQuality, l => QualityString(New.EffectDetail),   EffectsQuality_OnClick);
+            // graphics rows get +30px between the setting name and its option
+            Add(graphics, GameText.Resolution, ResolutionDropDown, 30);
+            Add(graphics, GameText.ScreenMode,   l => New.Mode.ToString(),               Fullscreen_OnClick, 30);
+            Add(graphics, GameText.AntiAliasing, l => AntiAliasString(),                 AntiAliasing_OnClick, 30);
+            Add(graphics, GameText.TextureQuality, l => QualityString(New.TextureQuality), TextureQuality_OnClick, 30);
+            Add(graphics, GameText.TextureFiltering, l => TextureFilterString(),             TextureFiltering_OnClick, 30);
+            Add(graphics, GameText.ShadowQuality, l => ShadowQualStr(New.ShadowDetail),   ShadowQuality_OnClick, 30);
+            Add(graphics, GameText.EffectsQuality, l => QualityString(New.EffectDetail),   EffectsQuality_OnClick, 30);
             graphics.AddCheckbox(() => New.RenderBloom, GameText.Bloom, GameText.DisablingBloomEffectWillIncrease);
 
             graphics.ReverseZOrder(); // @todo This is a hacky workaround to zorder limitations
@@ -246,23 +247,23 @@ namespace Ship_Game
             UIList botLeft = AddList(new Vector2(LeftArea.X, LeftArea.Y + 180), LeftArea.Size());
             botLeft.Padding = new Vector2(2f, 8f);
             botLeft.LayoutStyle = ListLayoutStyle.Clip;
-            SoundDevices = new DropOptions<MMDevice>(180, 18);
+            SoundDevices = new DropOptions<MMDevice>(216, 18);
             botLeft.AddSplit(new UILabel(GameText.SoundDevice), SoundDevices);
-            MusicVolumeSlider   = botLeft.Add(new FloatSlider(SliderStyle.Percent, 240f, 50f, GameText.MusicVolume, 0f, 1f, GlobalStats.MusicVolume));
-            EffectsVolumeSlider = botLeft.Add(new FloatSlider(SliderStyle.Percent, 240f, 50f, GameText.EffectsVolume, 0f, 1f, GlobalStats.EffectsVolume));
-            EffectsInfluenceNodeAlpha = botLeft.Add(new FloatSlider(SliderStyle.Percent, 240f, 50f, GameText.GameOptionsInfluenceAlpha, 0f, 1f, GlobalStats.InfluenceNodeAlpha));
+            MusicVolumeSlider   = botLeft.Add(new FloatSlider(SliderStyle.Percent, 288f, 50f, GameText.MusicVolume, 0f, 1f, GlobalStats.MusicVolume));
+            EffectsVolumeSlider = botLeft.Add(new FloatSlider(SliderStyle.Percent, 288f, 50f, GameText.EffectsVolume, 0f, 1f, GlobalStats.EffectsVolume));
+            EffectsInfluenceNodeAlpha = botLeft.Add(new FloatSlider(SliderStyle.Percent, 288f, 50f, GameText.GameOptionsInfluenceAlpha, 0f, 1f, GlobalStats.InfluenceNodeAlpha));
             EffectsInfluenceNodeAlpha.Tip = GameText.GameOptionsInfluenceAlphaTip;
-            CurrentLanguage = new DropOptions<Language>(105, 18);
+            CurrentLanguage = new DropOptions<Language>(126, 18);
             Add(botLeft, GameText.Language, CurrentLanguage);
             botLeft.ReverseZOrder(); // @todo This is a hacky workaround to zorder limitations
             
             UIList botRight = AddList(new Vector2(RightArea.X, RightArea.Y + 180), RightArea.Size());
             botRight.Padding = new Vector2(2f, 8f);
             botRight.LayoutStyle = ListLayoutStyle.Clip;
-            MaxDynamicLightSources = botRight.Add(new FloatSlider(SliderStyle.Decimal, 240f, 50f, GameText.MaxDynamicLightSources, 0, 1000, GlobalStats.MaxDynamicLightSources));
-            IconSize      = botRight.Add(new FloatSlider(SliderStyle.Decimal, 240f, 50f, GameText.IconSizes, 1,  30, GlobalStats.IconSize));
-            AutoSaveFreq  = botRight.Add(new FloatSlider(SliderStyle.Decimal, 240f, 50f, GameText.AutosaveFrequency, 60, 540, GlobalStats.AutoSaveFreq));
-            SimulationFps = botRight.Add(new FloatSlider(SliderStyle.Decimal, 240f, 50f, GameText.SimulationFps, 10, 120, GlobalStats.SimulationFramesPerSecond));
+            MaxDynamicLightSources = botRight.Add(new FloatSlider(SliderStyle.Decimal, 288f, 50f, GameText.MaxDynamicLightSources, 0, 1000, GlobalStats.MaxDynamicLightSources));
+            IconSize      = botRight.Add(new FloatSlider(SliderStyle.Decimal, 288f, 50f, GameText.IconSizes, 1,  30, GlobalStats.IconSize));
+            AutoSaveFreq  = botRight.Add(new FloatSlider(SliderStyle.Decimal, 288f, 50f, GameText.AutosaveFrequency, 60, 540, GlobalStats.AutoSaveFreq));
+            SimulationFps = botRight.Add(new FloatSlider(SliderStyle.Decimal, 288f, 50f, GameText.SimulationFps, 10, 120, GlobalStats.SimulationFramesPerSecond));
             
             MusicVolumeSlider.OnChange = (s) => GlobalStats.MusicVolume = s.AbsoluteValue;
             EffectsVolumeSlider.OnChange = (s) => SetEffectsVolume(s.AbsoluteValue);
@@ -288,7 +289,7 @@ namespace Ship_Game
             right.AddCheckbox(() => GlobalStats.DisableScreenPanning,         title: GameText.DisableScreenPanningOption, tooltip: GameText.DisableScreenPanningOptionTip);
             right.AddCheckbox(() => GlobalStats.RouteAroundGravityWells,      title: GameText.Pathfinder, tooltip: GameText.PathfinderTip);
 
-            var apply = Add(new UIButton(ButtonStyle.Default, new Vector2(RightArea.Right - 172, RightArea.Bottom + 60), GameText.ApplySettings));
+            var apply = Add(new UIButton(ButtonStyle.Default, new Vector2(RightArea.Right - 206, RightArea.Bottom + 60), GameText.ApplySettings));
             apply.OnClick = button => RunOnNextFrame(ApplyOptions);
 
             RefreshZOrder();
