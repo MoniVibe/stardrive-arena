@@ -45,6 +45,9 @@ namespace Ship_Game.Tools.Localization
                     if (t.ENG != null) tokens.Add(new TextToken("ENG", t.Id, nameId, t.ENG));
                     if (t.RUS != null) tokens.Add(new TextToken("RUS", t.Id, nameId, t.RUS));
                     if (t.SPA != null) tokens.Add(new TextToken("SPA", t.Id, nameId, t.SPA));
+                    if (t.UKR != null) tokens.Add(new TextToken("UKR", t.Id, nameId, t.UKR));
+                    if (t.GER != null) tokens.Add(new TextToken("GER", t.Id, nameId, t.GER));
+                    if (t.PTB != null) tokens.Add(new TextToken("PTB", t.Id, nameId, t.PTB));
                 }
             }
             return tokens;

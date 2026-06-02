@@ -7,7 +7,7 @@ namespace Ship_Game.Tools.Localization
 {
     public class LocText
     {
-        public static string[] SupportedLangs = new[]{ "ENG", "RUS", "SPA" };
+        public static string[] SupportedLangs = new[]{ "ENG", "RUS", "SPA", "UKR", "GER", "PTB" };
         public int Id;
         public string NameId;
         public string Comment;
