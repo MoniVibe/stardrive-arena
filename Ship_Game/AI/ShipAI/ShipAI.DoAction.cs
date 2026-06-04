@@ -463,6 +463,9 @@ namespace Ship_Game.AI
             return GravityWellRouter.GetThrustTarget(ExploreDetours, ref ExploreDetourIndex, dest, Owner.Position);
         }
 
+        // Test seam for the explore gravity-well routing wrapper (see TestGravityWellRouter).
+        public Vector2 TestExploreThrustTarget(object legTarget, Vector2 dest) => ExploreThrustTarget(legTarget, dest);
+
         public void DoExplore(FixedSimTime timeStep)
         {
             SetPriorityOrder(true);

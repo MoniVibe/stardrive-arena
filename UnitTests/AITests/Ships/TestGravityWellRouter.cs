@@ -106,4 +106,40 @@ public class TestGravityWellRouter : StarDriveTest
             GlobalStats.RouteAroundGravityWells = wasOn;
         }
     }
+
+    // Covers the explore-leg wrapper (ShipAI.ExploreThrustTarget): it must feed the order-time
+    // router with the right ship/origin/destination/order and walk the chain via GetThrustTarget,
+    // and it must reuse the cached chain while the leg target is unchanged. The detour GEOMETRY
+    // itself is the router's concern (the cases above); here we pin the wrapper's delegation.
+    [TestMethod]
+    public void ExploreThrustTarget_MatchesRouter_AndIsStablePerLeg()
+    {
+        Vector2 dest = new(600_000f, 0f);
+        AddDummyPlanetToEmpire(new Vector2(300_000f, 0f), Enemy).System.SetExploredBy(Player);
+
+        bool wasOn = GlobalStats.RouteAroundGravityWells;
+        try
+        {
+            foreach (bool routing in new[] { false, true })
+            {
+                GlobalStats.RouteAroundGravityWells = routing;
+
+                // What the order-time router would return for this leg (Regular = non-combat move).
+                Vector2[] detours = GravityWellRouter.BuildDetours(Scout, Scout.Position, dest, MoveOrder.Regular);
+                int idx = 0;
+                Vector2 expected = GravityWellRouter.GetThrustTarget(detours, ref idx, dest, Scout.Position);
+
+                var leg = new object();
+                AssertEqual(0.01f, expected, Scout.AI.TestExploreThrustTarget(leg, dest),
+                    $"Explore thrust must match the gravity-well router (routing={routing})");
+                // Same leg object → cached chain → identical, stable result (no per-tick jitter).
+                AssertEqual(0.01f, expected, Scout.AI.TestExploreThrustTarget(leg, dest),
+                    $"Re-querying the same explore leg must be stable (routing={routing})");
+            }
+        }
+        finally
+        {
+            GlobalStats.RouteAroundGravityWells = wasOn;
+        }
+    }
 }
