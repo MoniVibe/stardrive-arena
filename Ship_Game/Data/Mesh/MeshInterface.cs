@@ -668,13 +668,48 @@ namespace Ship_Game.Data.Mesh
 
         // If `texturePath` is absolute (an author-machine path baked into the
         // FBX), rebase it onto `modelDir` using only the filename. Relative
-        // paths pass through unchanged.
+        // paths are collapsed (see CollapseRelativePath) but otherwise unchanged.
         static string RebaseAbsolute(string texturePath, string modelDir)
         {
-            if (texturePath.IsEmpty() || !Path.IsPathRooted(texturePath))
+            if (texturePath.IsEmpty())
                 return texturePath;
+            // Shared-texture models bake a parent-relative ref ("..\ship09_d.dds")
+            // while living in sibling subfolders (Remnant/XenoCruiser, Remnant/
+            // XenoFighterGreen, ...). The OS collapses ".." when it OPENS the file,
+            // so every variant reads the one real Remnant/ship09_d.dds — but the
+            // content cache keys on the raw, un-collapsed string, so each subfolder
+            // becomes a distinct key and the SAME 16 MB texture is decoded once per
+            // folder. A Remnant fleet => a dozen redundant DXT decodes (~128 MB of
+            // throwaway LOH) in one frame, which trips a blocking Gen2 GC. Collapse
+            // ".." here so all variants converge on a single cache entry / decode.
+            if (!Path.IsPathRooted(texturePath))
+                return CollapseRelativePath(texturePath);
             string fileName = Path.GetFileName(texturePath);
             return modelDir.IsEmpty() ? fileName : modelDir + "/" + fileName;
+        }
+
+        // Collapses "a/b/../c" -> "a/c" without touching the filesystem (Path.GetFullPath
+        // would make the result absolute and machine-specific, which is wrong for a
+        // content-relative cache key). Separators are normalized to '/'. Leading ".."
+        // segments that can't be collapsed are preserved. Fast-paths when there's
+        // nothing to collapse.
+        static string CollapseRelativePath(string path)
+        {
+            if (path.IndexOf("..", StringComparison.Ordinal) < 0)
+                return path.Replace('\\', '/');
+
+            string[] parts = path.Replace('\\', '/').Split('/');
+            var stack = new Array<string>();
+            foreach (string p in parts)
+            {
+                if (p.Length == 0 || p == ".")
+                    continue;
+                if (p == ".." && stack.Count > 0 && stack[stack.Count - 1] != "..")
+                    stack.RemoveAt(stack.Count - 1);
+                else
+                    stack.Add(p);
+            }
+            return string.Join("/", stack);
         }
     }
 }
