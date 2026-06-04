@@ -93,6 +93,10 @@ namespace Ship_Game
                 e.Atlas = content.LoadTextureAtlas(e.Path); // guaranteed to load an atlas with at least 1 tex
                 if (e.Atlas == null)
                     continue;
+                // Decode the atlas texture now, on the loading thread, instead of lazily on
+                // the first explosion mid-battle (that deferred decode is a render-thread
+                // file-read + DXT decode that surfaced as a frame stutter in big battles).
+                e.Atlas.Warm();
                 Types[e.Type].Add(e);
             }
         }

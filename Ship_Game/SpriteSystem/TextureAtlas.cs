@@ -197,6 +197,19 @@ namespace Ship_Game.SpriteSystem
             return null;
         }
 
+        // Force every sub-texture (the packed atlas texture and any non-packed
+        // sub-textures) to load NOW, instead of lazily on first reference during Draw.
+        // The lazy load does a synchronous file read + managed DXT decode on the calling
+        // thread; for combat VFX (explosions, weapon FX) that first reference happens
+        // mid-battle inside the render loop and shows up as a frame stutter. Call this at
+        // load time (loading screen) so the decode cost is paid up front. Idempotent —
+        // each binding's GetOrLoadTexture caches after the first call.
+        public void Warm()
+        {
+            for (int i = 0; i < Sorted.Length; ++i)
+                Sorted[i].GetOrLoadTexture();
+        }
+
         // used memory in bytes
         public int GetUsedMemory()
         {
