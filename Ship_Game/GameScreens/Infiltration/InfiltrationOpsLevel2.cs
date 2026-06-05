@@ -83,7 +83,7 @@ namespace Ship_Game.GameScreens.EspionageNew
         void PlantMole(UICheckBox b)
         {
             if (PlantingMole)
-                Espionage.AddOperation(InfiltrationOpsType.PlantMole);
+                Espionage.ActivateOpsIfAble(InfiltrationOpsType.PlantMole);
             else
                 Espionage.RemoveOperation(InfiltrationOpsType.PlantMole);
 

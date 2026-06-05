@@ -94,7 +94,7 @@ namespace Ship_Game.GameScreens.EspionageNew
         void Sabotage(UICheckBox b)
         {
             if (Sabotaging)
-                Espionage.AddOperation(InfiltrationOpsType.Sabotage);
+                Espionage.ActivateOpsIfAble(InfiltrationOpsType.Sabotage);
             else
                 Espionage.RemoveOperation(InfiltrationOpsType.Sabotage);
         }
@@ -102,7 +102,7 @@ namespace Ship_Game.GameScreens.EspionageNew
         void SlowResearch(UICheckBox b)
         {
             if (SlowingResearch)
-                Espionage.AddOperation(InfiltrationOpsType.SlowResearch);
+                Espionage.ActivateOpsIfAble(InfiltrationOpsType.SlowResearch);
             else
                 Espionage.RemoveOperation(InfiltrationOpsType.SlowResearch);
 

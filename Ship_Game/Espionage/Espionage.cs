@@ -322,6 +322,9 @@ namespace Ship_Game
             return $"{theirInfiltrationLevel}";
         }
 
+        // Raw add: callers must guarantee the op isn't already active. UI checkboxes can't
+        // (sim turns change Operations under the open screen), so they go through
+        // ActivateOpsIfAble instead; reaching the duplicate here means a real logic error.
         public void AddOperation(InfiltrationOpsType type)
         {
             if (Operations.Any(m => m.Type == type))

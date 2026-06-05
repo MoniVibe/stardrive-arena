@@ -95,7 +95,7 @@ namespace Ship_Game.GameScreens.EspionageNew
         void ArrangeUprise(UICheckBox b)
         {
             if (Uprising)
-                Espionage.AddOperation(InfiltrationOpsType.Uprise);
+                Espionage.ActivateOpsIfAble(InfiltrationOpsType.Uprise);
             else
                 Espionage.RemoveOperation(InfiltrationOpsType.Uprise);
         }
@@ -103,7 +103,7 @@ namespace Ship_Game.GameScreens.EspionageNew
         void CounterEspionage(UICheckBox b)
         {
             if (CounteringEspionage)
-                Espionage.AddOperation(InfiltrationOpsType.CounterEspionage);
+                Espionage.ActivateOpsIfAble(InfiltrationOpsType.CounterEspionage);
             else
                 Espionage.RemoveOperation(InfiltrationOpsType.CounterEspionage);
 

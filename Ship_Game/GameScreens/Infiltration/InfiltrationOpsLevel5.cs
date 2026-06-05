@@ -101,7 +101,7 @@ namespace Ship_Game.GameScreens.EspionageNew
         void Rebellion(UICheckBox b)
         {
             if (IncitingRebellion)
-                Espionage.AddOperation(InfiltrationOpsType.Rebellion);
+                Espionage.ActivateOpsIfAble(InfiltrationOpsType.Rebellion);
             else
                 Espionage.RemoveOperation(InfiltrationOpsType.Rebellion);
         }
@@ -109,7 +109,7 @@ namespace Ship_Game.GameScreens.EspionageNew
         void StealTech(UICheckBox b)
         {
             if (DistuptingProjection)
-                Espionage.AddOperation(InfiltrationOpsType.DisruptProjection);
+                Espionage.ActivateOpsIfAble(InfiltrationOpsType.DisruptProjection);
             else
                 Espionage.RemoveOperation(InfiltrationOpsType.DisruptProjection);
 
