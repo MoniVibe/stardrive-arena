@@ -109,6 +109,15 @@ namespace UnitTests
                 Assert.IsTrue(ranVoid, "Run(Action) body must still execute when the worker thread can't start");
                 AssertEqual(callerThreadId, voidThreadId, "Fallback must run the task inline on the calling thread");
 
+                // Fire-and-forget: a Run whose result is never waited on must STILL execute, because
+                // the fallback runs inline at scheduling time (after lock (Pool) is released) - not
+                // deferred to a Wait() that may never come. Regression guard for the unlocked drain.
+                bool ranForget = false;
+                int forgetThreadId = -1;
+                Parallel.Run(() => { ranForget = true; forgetThreadId = Thread.CurrentThread.ManagedThreadId; });
+                Assert.IsTrue(ranForget, "Fire-and-forget Run(Action) must execute inline even without Wait()");
+                AssertEqual(callerThreadId, forgetThreadId, "Deferred fallback must run on the scheduling thread");
+
                 // ResultTask path: the computed value must come back through the inline fallback.
                 var typed = Parallel.Run(() => 6 * 7);
                 typed.Wait();
