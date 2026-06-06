@@ -26,25 +26,29 @@ namespace UnitTests.Ships
 
             ship.Externals.DebugDump("TEST_Spearhead mk1-a", gs);
 
-            //      0    1    2    3    4    5  
-            //  0 |____|____|E2x2|E2x2|____|____
-            //  1 |____|E1x1|E2x2|E2x2|E1x1|____
-            //  2 |E1x1|E1x1 1x2  1x2 |E1x1|E1x1
-            //  3 |E1x1|E1x2 1x2  1x2 |E1x2|E1x1
-            //  4 |E1x1|E1x2 1x1  1x1 |E1x2|E1x1
-            //  5 |____|E1x1 1x1  1x1 |E1x1|____
-            //  6 |E1x1|E1x1 1x1  1x1 |E1x1|E1x1
-            //  7 |E1x1 2x2  2x2  2x2  2x2 |E1x1
-            //  8 |E1x1 2x2  2x2  2x2  2x2 |E1x1
-            //  9 |E1x1|E1x1 1x2  1x2 |E1x1|E1x1
-            // 10 |____|E1x1 1x2  1x2 |E1x1|____
-            // 11 |____|E1x1 1x1  1x1 |E1x1|____
-            // 12 |E1x1|E1x2 1x1  1x1 |E1x2|E1x1
-            // 13 |E1x1|E1x2 1x1  1x1 |E1x2|E1x1
-            // 14 |E1x1 1x1  2x2  2x2  1x1 |E1x1
-            // 15 |E1x1 1x1  2x2  2x2  1x1 |E1x1
-            // 16 |E1x1|E1x1 1x1  1x1 |E1x1|E1x1
-            // 17 |____|E1x1|E1x1|E1x1|E1x1|____
+            // External slots under the orthogonal-only rule (E = external, . = internal/empty).
+            // Note vs the old diagonal rule: the inner column-1 and column-4 cells (e.g. 1,2 / 4,2)
+            // are now INTERNAL — their only empty neighbor is a diagonal corner, which no longer
+            // counts. Only cells with an orthogonally-adjacent empty/edge slot stay external.
+            //      0  1  2  3  4  5
+            //  0   .  .  E  E  .  .
+            //  1   .  E  E  E  E  .
+            //  2   E  .  .  .  .  E
+            //  3   E  .  .  .  .  E
+            //  4   E  .  .  .  .  E
+            //  5   .  E  .  .  E  .
+            //  6   E  .  .  .  .  E
+            //  7   E  .  .  .  .  E
+            //  8   E  .  .  .  .  E
+            //  9   E  .  .  .  .  E
+            // 10   .  E  .  .  E  .
+            // 11   .  E  .  .  E  .
+            // 12   E  .  .  .  .  E
+            // 13   E  .  .  .  .  E
+            // 14   E  .  .  .  .  E
+            // 15   E  .  .  .  .  E
+            // 16   E  .  .  .  .  E
+            // 17   .  E  E  E  E  .
 
             ShipModule At(int x, int y) => ship.GetModuleAt(x,y);
 
@@ -59,9 +63,9 @@ namespace UnitTests.Ships
             AssertEqual(At(1,1), ship.Externals.Get(gs, 1,1), "must be external - NW,N,W empty");
 
             //ship.Externals.UpdateSlotsUnderModule(gs, At(2,1));
-            AssertEqual(At(2,1), ship.Externals.Get(gs, 2,1), "must be external - NW empty");
-            AssertEqual(At(3,1), ship.Externals.Get(gs, 3,1), "must be external - NE empty");
-            AssertEqual(At(4,1), ship.Externals.Get(gs, 4,1), "must be external - NE,N,E empty");
+            AssertEqual(At(2,1), ship.Externals.Get(gs, 2,1), "must be external - top edge at hull front");
+            AssertEqual(At(3,1), ship.Externals.Get(gs, 3,1), "must be external - top edge at hull front");
+            AssertEqual(At(4,1), ship.Externals.Get(gs, 4,1), "must be external - N,E empty");
             AssertEqual(null,    ship.Externals.Get(gs, 5,1));
 
             // edges of the front section
@@ -72,17 +76,17 @@ namespace UnitTests.Ships
             AssertEqual(At(5,3), ship.Externals.Get(gs, 5,3));
             AssertEqual(At(5,4), ship.Externals.Get(gs, 5,4));
 
-            // inner corners of the front section should be external
-            // because 1 neighboring tile is empty
-            AssertEqual(At(1,2), ship.Externals.Get(gs, 1,2));
-            AssertEqual(At(1,3), ship.Externals.Get(gs, 1,3)); // this is a 1x2 module
-            AssertEqual(At(1,4), ship.Externals.Get(gs, 1,4)); // this is a 1x2 module
+            // inner corners of the front section are now INTERNAL: their only empty neighbor is a
+            // diagonal corner, and orthogonally-sealed modules are protected (no corner exposure).
+            AssertEqual(null, ship.Externals.Get(gs, 1,2));
+            AssertEqual(null, ship.Externals.Get(gs, 1,3)); // this is a 1x2 module
+            AssertEqual(null, ship.Externals.Get(gs, 1,4)); // this is a 1x2 module
 
-            AssertEqual(At(4,2), ship.Externals.Get(gs, 4,2));
-            AssertEqual(At(4,4), ship.Externals.Get(gs, 4,4)); // this is a 1x2 module
-            AssertEqual(At(4,3), ship.Externals.Get(gs, 4,3)); // this is a 1x2 module
+            AssertEqual(null, ship.Externals.Get(gs, 4,2));
+            AssertEqual(null, ship.Externals.Get(gs, 4,4)); // this is a 1x2 module
+            AssertEqual(null, ship.Externals.Get(gs, 4,3)); // this is a 1x2 module
 
-            AssertEqual(49, ship.Externals.NumModules);
+            AssertEqual(37, ship.Externals.NumModules);
 
             // 13 |E1x1|E1x2 1x1  1x1 |E1x2|E1x1
             // 14 |E1x1 1x1  2x2  2x2  1x1 |E1x1
@@ -92,19 +96,20 @@ namespace UnitTests.Ships
 
             // kill a few engine modules, which should trigger an update to external slots
             ship.GetModuleAt(2, 17).SetHealth(0, "Test"); // this is a 1x1 engine slot
-            // killing that module should count -1 slot and expose +2 1x1 modules
-            AssertEqual(49-1+2, ship.Externals.NumModules);
+            // -1 (the dead slot) and +1 (the module above it is now orthogonally exposed) = net 0.
+            // Under the old diagonal rule this exposed +2; corner-only neighbors no longer count.
+            AssertEqual(37, ship.Externals.NumModules);
 
             // and if we resurrect the module, it should go back to previous value
             ship.GetModuleAt(2, 17).SetHealth(100, "Test");
-            AssertEqual(49, ship.Externals.NumModules);
+            AssertEqual(37, ship.Externals.NumModules);
 
             // kill two 1x1 modules, exposing the 2x2 reactor
             ship.GetModuleAt(3, 17).SetHealth(0, "Test");
             ship.GetModuleAt(3, 16).SetHealth(0, "Test");
             AssertEqual(At(3,15), ship.Externals.Get(gs, 3,15));
-            // lose one, but gain 3 externals
-            AssertEqual(49-1+3, ship.Externals.NumModules);
+            // two slots killed, but their orthogonal neighbors get exposed: net 37 -> 39
+            AssertEqual(39, ship.Externals.NumModules);
         }
     }
 }

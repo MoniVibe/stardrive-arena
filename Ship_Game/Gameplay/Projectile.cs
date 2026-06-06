@@ -989,10 +989,13 @@ namespace Ship_Game.Gameplay
         // otherwise just explode and die
         void ArmorPiercingTouch(ShipModule victim, Ship parent, Vector2 hitPos)
         {
-            // for visual consistency we want to show Projectile at hitPos
-            // if the radius is big - adjust the pos accordingly, since if the explosion radius is smaller than
-            // the projectile radius,  it will explode with no affect
-            Position = Radius <= 8 ? hitPos : hitPos + hitPos.DirectionToTarget(victim.Position)*Radius;
+            // Anchor the detonation/visual to the module we actually struck. Using hitPos here is
+            // unreliable: for fast projectiles the narrow-phase ray-cast reports hitPos a full
+            // frame back (outside the hull), and shifting it inward by the projectile radius pushed
+            // the blast PAST the armor onto an internal module (the armor-bypass bug). The struck
+            // module's own position always sits on the armor, and the directional explosion handles
+            // penetration from there.
+            Position = Radius <= 8 ? hitPos : victim.Position;
             Universe.DebugWin?.DrawGameObject(DebugModes.Targeting, this, Color.LightCyan, lifeTime:0.25f);
 
             if (!TryPhaseThroughModule(victim) && Damage(victim))

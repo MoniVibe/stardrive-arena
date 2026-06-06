@@ -110,13 +110,6 @@ namespace Ship_Game.Ships
             return Grid.HitTestShieldsAt(ModuleSlotList, gridPos, hitRadius);
         }
 
-        public ShipModule HitTestShieldsLocal(Vector2 localHitPos, float hitRadius)
-        {
-            if (!Active) return null;
-            Point gridPos = Grid.GridLocalToPoint(localHitPos);
-            return Grid.HitTestShieldsAt(ModuleSlotList, gridPos, hitRadius);
-        }
-
         // Gets the strongest shield currently covering internalModule
         bool IsCoveredByShield(ShipModule internalModule, out ShipModule shield)
         {
@@ -552,108 +545,63 @@ namespace Ship_Game.Ships
                 {
                     mq.Module.DamageExplosive(damageSource, ref remainingDamage);
                 }
-            
+
                 if (mq.Type is DamageTransfer.Diagonal or DamageTransfer.Root)
                     diagonalDamage = remainingDamage;
-                
+
                 currentDistance = mq.Distance;
             }
         }
 
-        void DebugGridStep(Vector2 p, Color color)
-        {
-            Vector2 gridWorldPos = GridLocalPointToWorld(GridLocalToPoint(p)) + new Vector2(8f);
-            Universe.DebugWin?.DrawCircle(DebugModes.SpatialManager, gridWorldPos, 4f, color.Alpha(0.33f), 2.0f);
-        }
+        // Fraction of a directional blast's damage that splashes each surrounding EXTERNAL
+        // armor plate (in addition to the full-strength penetration column along the ray).
+        const float LateralSplashFraction = 0.5f;
 
-        void DebugGridStep(Vector2 a, Vector2 b, Color color, float width = 1f)
+        // A projectile struck the hull and exploded. Unlike a radial blast (DamageExplosive),
+        // a projectile carries momentum: the blast punches INWARD along the projectile's flight
+        // path, and a wide blast also splashes the surrounding external armor plates.
+        //   - Penetration: armor in the flight path absorbs up to its current health and only
+        //     the EXCESS carries to the module behind it, so internal modules stay shielded
+        //     until their covering armor is destroyed (no more armor bypass).
+        //   - Lateral splash: external armor around the impact takes falloff damage; internals
+        //     are NOT splashed here — they only ever take the penetration excess above.
+        public void DamageExplosiveDirectional(GameObject damageSource, float damageAmount,
+                                               ShipModule entry, float hitRadius, bool ignoreShields)
         {
-            Vector2 worldPosA = GridLocalPointToWorld(GridLocalToPoint(a)) + new Vector2(8f);
-            Vector2 worldPosB = GridLocalPointToWorld(GridLocalToPoint(b)) + new Vector2(8f);
-            Universe.DebugWin?.DrawLine(DebugModes.SpatialManager, worldPosA, worldPosB, width, color.Alpha(0.75f), 2.0f);
-        }
+            if (!Active || entry == null) return;
+            if (Loyalty.data.ExplosiveRadiusReduction > 0f)
+                hitRadius *= 1f - Loyalty.data.ExplosiveRadiusReduction;
 
-        // take one step in the module grid
-        ShipModule TakeOneStep(Vector2 localStart, Vector2 step)
-        {
-            Point pos = GridLocalToPoint(localStart);
-            Point end = GridLocalToPoint(localStart + step);
-            if (!Grid.LocalPointInBounds(pos) || !Grid.LocalPointInBounds(end))
-                return null; // we're walking out of bounds
+            Vector2 entryPos = entry.Position;
+            // Punch along the projectile's flight path; if velocity is unavailable, fall back to
+            // punching from the entry module toward the ship interior.
+            Vector2 dir = damageSource is Projectile p && p.Velocity.Length() > 0.001f
+                        ? p.Velocity.Normalized()
+                        : entryPos.DirectionToTarget(Position);
 
-            // @note We don't check grid at [pos], because we assume prev call checked it
-            if (pos.IsDiagonalTo(end))
+            // 1. PENETRATION along the flight path.
+            float penDamage = damageAmount;
+            foreach (ShipModule m in RayHitTestWalkModules(entryPos, dir, Radius * 2f, ignoreShields))
             {
-                // check a module at the same Y height as final point
-                // this forces us to always take an L shaped step instead of diagonal \
-                var neighbor = new Point(pos.X, end.Y);
-                //if (DebugInfoScreen.Mode == DebugModes.SpatialManager)
-                //    DebugGridStep(new Vector2(start.X, endPos.Y), Color.Yellow);
+                if (m.DamageExplosive(damageSource, ref penDamage))
+                    break; // armor column absorbed it all — internals untouched
+            }
 
-                ShipModule mb = GetModuleAt(neighbor.X, neighbor.Y);
-                if (mb != null && mb.Active)
+            // 2. LATERAL SURFACE SPLASH for wide blasts — external plates only.
+            if (hitRadius >= 16f)
+            {
+                foreach (ModuleQuadrant mq in EnumModulesQuadrants(entryPos, hitRadius, !ignoreShields))
                 {
-                    //if (DebugInfoScreen.Mode == DebugModes.SpatialManager)
-                    //    DebugGridStep(start, new Vector2(start.X, endPos.Y), Color.Cyan, 4f);
-                    return mb;
+                    ShipModule m = mq.Module;
+                    if (!m.IsExternal || m == entry)
+                        continue; // internals stay protected; entry already took the penetration hit
+
+                    float falloff = ShipModule.DamageFalloff(entryPos, m.Position, hitRadius, m.Radius);
+                    float splash = damageAmount * LateralSplashFraction * falloff;
+                    if (splash > 0f)
+                        m.DamageExplosive(damageSource, ref splash);
                 }
             }
-
-            //if (DebugInfoScreen.Mode == DebugModes.SpatialManager)
-            //    DebugGridStep(endPos, Color.LightGreen);
-
-            ShipModule mc = GetModuleAt(end.X, end.Y);
-            if (mc != null && mc.Active)
-            {
-                //if (DebugInfoScreen.Mode == DebugModes.SpatialManager)
-                //    DebugGridStep(start, endPos, Color.HotPink, 4f);
-                return mc;
-            }
-            return null;
-        }
-
-        // perform a raytrace from point a to point b, visiting all grid points between them!
-        ShipModule WalkModuleGrid(in Vector2 a, in Vector2 b, float rayRadius, bool ignoreShields)
-        {
-            Vector2 pos = a;
-
-            // sometimes we directly enter the grid and hit a module:
-            Point enter = GridLocalToPoint(pos);
-            if (!ignoreShields)
-            {
-                ShipModule se = HitTestShieldsLocal(pos, rayRadius);
-                if (se != null) return se;
-            }
-
-            ShipModule me = GetModuleAt(enter.X, enter.Y);
-            if (me != null && me.Active)
-            {
-                //if (DebugInfoScreen.Mode == DebugModes.SpatialManager)
-                //    DebugGridStep(pos - step, pos, Color.DarkGoldenrod);
-                return me;
-            }
-
-            Vector2 delta = b - a;
-            Vector2 step = delta.Normalized(16f);
-
-            int n = (int)(delta.Length() / 16f);
-            for (; n >= 0; --n, pos += step)
-            {
-                if (!ignoreShields)
-                {
-                    ShipModule s = HitTestShieldsLocal(pos, rayRadius);
-                    if (s != null) return s;
-                }
-
-                ShipModule m = TakeOneStep(pos, step);
-                if (m != null)
-                {
-                    //if (DebugInfoScreen.Mode == DebugModes.Targeting)
-                    //    Universe.DebugWin?.DrawCircle(DebugModes.SpatialManager, m.Position, 6f, Color.IndianRed.Alpha(0.5f), 3f);
-                    return m;
-                }
-            }
-            return null;
         }
 
         // GridLocal walk from localA to localB
@@ -689,6 +637,28 @@ namespace Ship_Game.Ships
                 Point p = GridLocalToPoint(pos);
                 if (p == prevPos)
                     continue;
+
+                // CONSERVATIVE DIAGONAL TRAVERSAL: half-cell sampling can step straight from a
+                // cell to its diagonal neighbor, skipping the two orthogonal cells the line clips
+                // at the shared corner. If one of those flanking cells holds a module, the line is
+                // really blocked by it - otherwise a shot squeezes through a corner gap and hits a
+                // module that is sealed on all four orthogonal sides. Visit the first solid flank so
+                // it blocks the shot. One flank is enough to seal; yielding just one also avoids
+                // re-emitting a module that spans both the corner and the destination cell.
+                if (prevPos.X != -1000 && p.X != prevPos.X && p.Y != prevPos.Y)
+                {
+                    ShipModule blocker = ActiveHullModuleAt(p.X, prevPos.Y)
+                                      ?? ActiveHullModuleAt(prevPos.X, p.Y);
+                    if (blocker != null && blocker != prevModule)
+                    {
+                        prevModule = blocker;
+                        if (Universe.DebugMode == DebugModes.Targeting)
+                            Universe.DebugWin?.DrawRect(DebugModes.Targeting, blocker.Position,
+                                                        blocker.XSize*8f+1f, Rotation, Color.Red, lifeTime:0.01f);
+                        yield return blocker;
+                    }
+                }
+
                 prevPos = p;
 
                 if (Universe.DebugMode == DebugModes.Targeting)
@@ -713,6 +683,17 @@ namespace Ship_Game.Ships
                     }
                 }
             }
+        }
+
+        // Active hull module at a single grid cell, or null. Allocation-free single lookup (avoids
+        // the yield-based GetModulesAt enumerator). Used by the conservative diagonal traversal to
+        // detect a corner-sealing module. Shields are intentionally not tested here: shield bubbles
+        // span many cells and are already caught at every sampled cell by the main walk, so the
+        // corner-seal check only needs the hull module that the half-cell sampling skipped.
+        ShipModule ActiveHullModuleAt(int gridPosX, int gridPosY)
+        {
+            ShipModule m = GetModuleAt(gridPosX, gridPosY);
+            return m != null && m.Active ? m : null;
         }
 
         // guaranteed bounds safety, clips GridLocal points [a] and [b] into the local grid

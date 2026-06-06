@@ -118,24 +118,28 @@ namespace Ship_Game.Ships
             if (!m.Active)
                 return false;
 
-            // if our module is 2x2, we must check all slots around us
-            // [?][?][?][?]
-            // [?][m][m][?]
-            // [?][m][m][?]
-            // [?][?][?][?]
+            // A module is external only if an ORTHOGONALLY adjacent slot (N/S/E/W) is empty or
+            // inactive. Diagonal corners are deliberately NOT counted: a module sealed on all
+            // four orthogonal sides is protected even when a corner slot is open, since a
+            // straight-line shot can't slip through a zero-width corner gap to reach a face.
+            // For a 2x2 module we only test the orthogonal edges (marked o), not the corners (·):
+            // [·][o][o][·]
+            // [o][m][m][o]
+            // [o][m][m][o]
+            // [·][o][o][·]
             int x = m.Pos.X, y = m.Pos.Y;
             int left = x - 1, right  = x + m.XSize;
             int top  = y - 1, bottom = y + m.YSize;
 
-            // check top row and bottom row simultaneously
-            for (int ix = left; ix <= right; ++ix)
+            // top edge (N) and bottom edge (S): columns directly above/below, excluding corners
+            for (int ix = x; ix < right; ++ix)
                 if (IsInactiveAt(gs, ix, top) || IsInactiveAt(gs, ix, bottom))
-                    return true; // neighboring inactive slot then we are external
+                    return true; // orthogonally-adjacent inactive slot ⇒ external
 
-            // check sides, excluding the bottom corners which were already checked
+            // left edge (W) and right edge (E): rows directly beside us, excluding corners
             for (int iy = y; iy < bottom; ++iy)
                 if (IsInactiveAt(gs, left, iy) || IsInactiveAt(gs, right, iy))
-                    return true; // neighboring inactive slot then we are external
+                    return true; // orthogonally-adjacent inactive slot ⇒ external
 
             return false;
         }

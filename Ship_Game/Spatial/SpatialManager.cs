@@ -218,7 +218,10 @@ namespace Ship_Game.Gameplay
             }
             else
             {
-                victim.GetParent().DamageExplosive(source, damage, source.Position, radius, source.IgnoresShields);
+                // A projectile directly struck a module: explode directionally so the blast
+                // penetrates along the flight path and the armor shields the internals behind it
+                // (a radial blast here would let a big round's splash bypass the hull armor).
+                victim.GetParent().DamageExplosiveDirectional(source, damage, victim, radius, source.IgnoresShields);
             }
         }
 
