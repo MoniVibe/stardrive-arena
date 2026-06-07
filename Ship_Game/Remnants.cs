@@ -655,7 +655,7 @@ namespace Ship_Game
             foreach (SolarSystem system in portal.Universe.Systems)
             {
                 Ship chosenGuardian = Owner.Random.ItemFilter(system.ShipList,
-                    s => s is { IsGuardian: true, InCombat: false, BaseStrength: < 1000 }
+                    s => s is { IsGuardian: true, InCombat: false, BaseStrength: < 1000, BombBays.Count: 0 }
                 );
                 chosenGuardian?.AI.AddEscortGoal(portal);
             }
