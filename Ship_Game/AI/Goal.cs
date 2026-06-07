@@ -213,9 +213,22 @@ namespace Ship_Game.AI
         public float LifeTime => UState.StarDate - StarDateAdded;
         public bool IsMainGoalCompleted => MainGoalCompleted;
 
+        // Optional per-evaluation guard run before the current step. Subclasses return a
+        // non-null GoalStep to short-circuit (abort/complete) the goal before it steps;
+        // null means "proceed normally". Keeps the step-advance/self-remove contract below
+        // sealed so it can't be accidentally overridden away.
+        protected virtual GoalStep? PreEvaluate() => null;
+
         // @note Goals are mainly evaluated during Empire update
         public GoalStep Evaluate()
         {
+            if (PreEvaluate() is GoalStep preStep)
+            {
+                if (preStep is GoalStep.GoalComplete or GoalStep.GoalFailed)
+                    RemoveThisGoal();
+                return preStep;
+            }
+
             if ((uint)Step >= Steps.Length)
             {
                 Log.Error($"{Type} invalid Goal.Step: {Step}, Steps.Length: {Steps.Length}");

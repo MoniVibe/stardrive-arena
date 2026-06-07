@@ -31,11 +31,12 @@ namespace Ship_Game.Commands.Goals  // Created by Fat Bastard
             TargetEmpire = enemy;
         }
 
+        // We can only bomb from a planet we still own; bail the instant it's lost.
+        protected override GoalStep? PreEvaluate()
+            => PlanetBuildingAt.Owner != Owner ? GoalStep.GoalFailed : null;
+
         GoalStep LaunchBoardingShips()
         {
-            if (PlanetBuildingAt.Owner != Owner)
-                return GoalStep.GoalFailed;
-
             int numTroopCanLaunch = PlanetBuildingAt.NumTroopsCanLaunchFor(Owner);
             if (numTroopCanLaunch == 0)
                 return GoalStep.GoToNextStep; // Cant do anything about it, just wait until combat ends
@@ -87,9 +88,6 @@ namespace Ship_Game.Commands.Goals  // Created by Fat Bastard
 
         GoalStep WaitForCombatEnd()
         {
-            if (PlanetBuildingAt.Owner != Owner)
-                return GoalStep.GoalFailed;
-
             return PlanetBuildingAt.System.DangerousForcesPresent(Owner) ? GoalStep.TryAgain : GoalStep.GoalComplete;
         }
     }

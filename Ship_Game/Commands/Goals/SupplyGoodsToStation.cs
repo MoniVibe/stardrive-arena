@@ -39,11 +39,12 @@ namespace Ship_Game.Commands.Goals
         }
 
 
+        // The target station must still exist and belong to us for the whole trade run.
+        protected override GoalStep? PreEvaluate()
+            => StationApplicable ? null : GoalStep.GoalFailed;
+
         GoalStep SetupTrade()
         {
-            if (!StationApplicable)
-                return GoalStep.GoalFailed;
-
             if (Owner.TryDispatchGoodsSupplyToStation(Goods, TargetStation, out Empire.ExportPlanetAndFreighter exportAndFreighter))
             {
                 Planet exportPlanet = exportAndFreighter.Planet;
@@ -57,9 +58,6 @@ namespace Ship_Game.Commands.Goals
 
         GoalStep WaitForFrieghter()
         {
-            if (!StationApplicable)
-                return GoalStep.GoalFailed;
-
             if (Freighter == null || !Freighter.Active)
                 return GoalStep.GoalFailed;
 

@@ -30,11 +30,13 @@ namespace Ship_Game.Commands.Goals
         WarType GetWarType() => Owner.GetRelations(TargetEmpire).ActiveWar.WarType;
         War ActiveWar => Owner.GetRelations(TargetEmpire).ActiveWar;
 
+        // The whole goal is moot once the war is over - completing here also keeps every step's
+        // ActiveWar/GetWarType access safe, since they never run while we're not at war.
+        protected override GoalStep? PreEvaluate()
+            => Owner.IsAtWarWith(TargetEmpire) ? null : GoalStep.GoalComplete;
+
         GoalStep SelectTargetSystems()
         {
-            if (!Owner.IsAtWarWith(TargetEmpire))
-                return GoalStep.GoalComplete;
-
             if (!Owner.GetPotentialTargetPlanets(TargetEmpire, GetWarType(), out Planet[] planetTargets))
             {
                 if (!Owner.TryGetMissionsVsEmpire(TargetEmpire, out _))
@@ -58,17 +60,14 @@ namespace Ship_Game.Commands.Goals
 
         GoalStep ProcessWar()
         {
-            if (!Owner.IsAtWarWith(TargetEmpire))
-                return GoalStep.GoalComplete;
-
-            return Owner.GetPotentialTargetPlanets(TargetEmpire, GetWarType(), out _) && Owner.CanAddAnotherWarGoal(TargetEmpire) 
+            return Owner.GetPotentialTargetPlanets(TargetEmpire, GetWarType(), out _) && Owner.CanAddAnotherWarGoal(TargetEmpire)
                 ? GoalStep.RestartGoal 
                 : GoalStep.TryAgain;
         }
 
         GoalStep RequestPeaceOrEscalate()
         {
-            if (!Owner.IsAtWarWith(TargetEmpire) || TargetEmpire.IsDefeated)
+            if (TargetEmpire.IsDefeated)
                 return GoalStep.GoalComplete;
 
             var warType = GetWarType();

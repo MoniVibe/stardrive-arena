@@ -557,6 +557,11 @@ namespace Ship_Game.Ships
         // armor plate (in addition to the full-strength penetration column along the ray).
         const float LateralSplashFraction = 0.5f;
 
+        // Reused per-explosion to dedup splash targets without allocating. EnumModulesQuadrants
+        // yields a module once per covered cell, so without this a wide module (or a shield bubble
+        // covering many cells) would be damaged many times over for a single blast.
+        [System.ThreadStatic] static HashSet<ShipModule> SplashHitScratch;
+
         // A projectile struck the hull and exploded. Unlike a radial blast (DamageExplosive),
         // a projectile carries momentum: the blast punches INWARD along the projectile's flight
         // path, and a wide blast also splashes the surrounding external armor plates.
@@ -572,6 +577,12 @@ namespace Ship_Game.Ships
             if (Loyalty.data.ExplosiveRadiusReduction > 0f)
                 hitRadius *= 1f - Loyalty.data.ExplosiveRadiusReduction;
 
+            // Capture the shield state AT IMPACT: the penetration column below can drain the entry
+            // shield to zero this same blast, but per the rule "a blast that hit an active shield
+            // stays on the shield layer" the splash must key off whether the shield was live when
+            // it was struck - not its leftover power after penetration.
+            bool hitActiveShield = !ignoreShields && entry.ShieldsAreActive;
+
             Vector2 entryPos = entry.Position;
             // Punch along the projectile's flight path; if velocity is unavailable, fall back to
             // punching from the entry module toward the ship interior.
@@ -581,20 +592,59 @@ namespace Ship_Game.Ships
 
             // 1. PENETRATION along the flight path.
             float penDamage = damageAmount;
+            // When the blast struck a live shield, the overflow that breaches it disperses over the
+            // depth of the bubble before reaching the hull. Attenuate the excess ONCE, as it crosses
+            // from the shield(s) to the first real hull module, by the distance from the bubble's
+            // outer impact point to that module (decay range = bubble radius + blast radius). A wide
+            // bubble pushes the impact point far out, so little overflow survives; a tight bubble
+            // barely attenuates.
+            bool attenuateShieldOverflow = hitActiveShield;
+            Vector2 shieldImpact = entryPos - dir * entry.ShieldHitRadius;
             foreach (ShipModule m in RayHitTestWalkModules(entryPos, dir, Radius * 2f, ignoreShields))
             {
+                if (attenuateShieldOverflow && m.ShieldPowerMax <= 0f)
+                {
+                    penDamage *= ShipModule.DamageFalloff(shieldImpact, m.Position,
+                                     entry.ShieldHitRadius + hitRadius, m.Radius);
+                    attenuateShieldOverflow = false;
+                }
+
                 if (m.DamageExplosive(damageSource, ref penDamage))
                     break; // armor column absorbed it all — internals untouched
             }
 
-            // 2. LATERAL SURFACE SPLASH for wide blasts — external plates only.
+            // 2. LATERAL SURFACE SPLASH for wide blasts, respecting the shield layer.
+            //   - If the blast landed on an ACTIVE shield it stays on the shield layer: it spreads
+            //     only to other active shields covering the blast area and NEVER leaks onto a hull
+            //     module (splash never transfers from a shield to a module).
+            //   - If the blast landed on the bare hull it spreads to surrounding EXTERNAL plates,
+            //     but any plate an active shield covers is protected by that shield.
+            //   - A shield-ignoring projectile splashes external modules directly, as before.
+            //   - Each module is hit at most once (the per-cell yields used to multiply the damage
+            //     and drain a multi-cell shield in a single blast).
             if (hitRadius >= 16f)
             {
-                foreach (ModuleQuadrant mq in EnumModulesQuadrants(entryPos, hitRadius, !ignoreShields))
+                HashSet<ShipModule> splashed = SplashHitScratch ??= new HashSet<ShipModule>();
+                splashed.Clear();
+
+                foreach (ModuleQuadrant mq in EnumModulesQuadrants(entryPos, hitRadius, checkShields: !ignoreShields))
                 {
                     ShipModule m = mq.Module;
-                    if (!m.IsExternal || m == entry)
-                        continue; // internals stay protected; entry already took the penetration hit
+                    if (m == entry || !splashed.Add(m))
+                        continue; // entry took the penetration hit; damage each module at most once
+
+                    if (!ignoreShields && m.ShieldsAreActive)
+                    {
+                        // an active shield always absorbs splash over the area it covers
+                    }
+                    else if (hitActiveShield)
+                    {
+                        continue; // shield-layer blast never damages a non-shield module
+                    }
+                    else if (!m.IsExternal || (!ignoreShields && HitTestShields(m.Position, 8f) != null))
+                    {
+                        continue; // hull blast: only exposed external plates — skip internals and shielded plates
+                    }
 
                     float falloff = ShipModule.DamageFalloff(entryPos, m.Position, hitRadius, m.Radius);
                     float splash = damageAmount * LateralSplashFraction * falloff;

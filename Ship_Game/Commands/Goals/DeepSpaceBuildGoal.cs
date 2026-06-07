@@ -49,6 +49,22 @@ namespace Ship_Game.Commands.Goals
         }
         public override bool IsDeploymentGoal => true;
 
+        bool TetherPlanetTakenByOtherEmpire => TetherPlanet?.Owner != null && TetherPlanet.Owner != Owner;
+
+        protected override GoalStep? PreEvaluate()
+        {
+            if (TetherPlanetTakenByOtherEmpire)
+            {
+                // We no longer own the planet this orbital was for: scrap the in-flight
+                // constructor (if one was already built) and abandon the goal. The base
+                // Evaluate removes the goal once we return GoalFailed.
+                FinishedShip?.AI.OrderScuttleShip();
+                return GoalStep.GoalFailed;
+            }
+
+            return null;
+        }
+
         public override Vector2 BuildPosition
         {
             get

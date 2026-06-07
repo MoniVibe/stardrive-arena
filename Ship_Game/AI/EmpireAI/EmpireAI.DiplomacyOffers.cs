@@ -105,6 +105,7 @@ namespace Ship_Game.AI
 
                     toRemove.Add(p);
                     p.SetOwner(them);
+                    p.Construction.ClearQueue();
 
                     p.System.OwnerList.Clear();
                     foreach (Planet pl in p.System.PlanetList)

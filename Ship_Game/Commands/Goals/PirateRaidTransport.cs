@@ -41,11 +41,23 @@ namespace Ship_Game.Commands.Goals
 
         public override bool IsRaid => true;
 
+        // Stand down the moment the victim pays protection or is defeated - on every step, not
+        // just the first - unless we've already taken the target (let that capture conclude).
+        // Send the boarding ship home, as the other mid-raid abort paths do.
+        protected override GoalStep? PreEvaluate()
+        {
+            if ((Pirates.PaidBy(TargetEmpire) || Pirates.VictimIsDefeated(TargetEmpire))
+                && TargetShip?.Loyalty != Pirates.Owner)
+            {
+                BoardingShip?.AI.OrderPirateFleeHome();
+                return GoalStep.GoalFailed;
+            }
+
+            return null;
+        }
+
         GoalStep DetectAndSpawnRaidForce()
         {
-            if (Pirates.PaidBy(TargetEmpire) || Pirates.VictimIsDefeated(TargetEmpire))
-                return GoalStep.GoalFailed; // They paid or dead
-
             if (Pirates.GetTarget(TargetEmpire, Pirates.TargetType.FreighterAtWarp, out Ship freighter))
             {
                 Vector2 where = freighter.Position.GenerateRandomPointOnCircle(1000, Owner.Random);
