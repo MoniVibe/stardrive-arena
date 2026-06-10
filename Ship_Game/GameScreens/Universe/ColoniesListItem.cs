@@ -301,24 +301,26 @@ namespace Ship_Game
 
             DrawStorage(batch);
 
-            if (P.ConstructionQueue.Count > 0)
+            // Snapshot under lock: the sim thread mutates the live queue while we draw.
+            QueueItem[] queue = P.ConstructionQueueSnapshot;
+            if (queue.Length > 0)
             {
-                QueueItem qi = P.ConstructionQueue[0];
+                QueueItem qi = queue[0];
                 qi.DrawAt(P.Universe, batch, new Vector2(QueueRect.X + 10, QueueRect.Y + QueueRect.Height / 2 - 30), LowRes);
                 batch.Draw((ApplyProdHover ? ResourceManager.Texture("NewUI/icon_queue_rushconstruction_hover1") : ResourceManager.Texture("NewUI/icon_queue_rushconstruction")), ApplyProductionRect, Color.White);
                 batch.Draw((CancelProdHover ? ResourceManager.Texture("NewUI/icon_queue_delete_hover1") : ResourceManager.Texture("NewUI/icon_queue_delete")), CancelProductionRect, Color.White);
-                DrawQueueStats(batch);
+                DrawQueueStats(batch, queue.Length);
             }
 
             batch.DrawRectangle(Rect, TextColor2);
         }
 
-        void DrawQueueStats(SpriteBatch batch)
+        void DrawQueueStats(SpriteBatch batch, int queueCount)
         {
-            if (P.ConstructionQueue.Count < 2)
+            if (queueCount < 2)
                 return;
 
-            string stats = $"In Queue ({P.ConstructionQueue.Count}):";
+            string stats = $"In Queue ({queueCount}):";
             if (NumShipsInQueue > 0)
                 stats = $"{stats} ships ({NumShipsInQueue}),";
 
@@ -369,13 +371,15 @@ namespace Ship_Game
 
         void UpdateQueueItemsList()
         {
-            if (P.ConstructionQueue.Count < 2)
+            // Snapshot once under lock; the live queue is mutated on the sim thread.
+            QueueItem[] queue = P.ConstructionQueueSnapshot;
+            if (queue.Length < 2)
                 return;
 
-            NumShipsInQueue     = P.ConstructionQueue.Filter(q => q.isShip).Length;
-            NumBuildingsInQueue = P.ConstructionQueue.Filter(q => q.isBuilding).Length;
-            NumTroopsInQueue    = P.ConstructionQueue.Filter(q => q.isTroop).Length;
-            TotalProdNeeded     = (int)P.TotalProdNeededInQueue();
+            NumShipsInQueue     = queue.Count(q => q.isShip);
+            NumBuildingsInQueue = queue.Count(q => q.isBuilding);
+            NumTroopsInQueue    = queue.Count(q => q.isTroop);
+            TotalProdNeeded     = (int)queue.Sum(q => q.ProductionNeeded);
         }
     }
 }

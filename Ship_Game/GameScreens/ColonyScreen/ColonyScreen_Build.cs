@@ -85,9 +85,11 @@ namespace Ship_Game
 
             if (!ConstructionQueue.IsDragging)
             {
-                if (!ConstructionQueue.AllEntries.Select(item => item.Item).EqualElements(P.ConstructionQueue))
+                // Snapshot once under lock: the sim thread mutates the live queue while we read it.
+                QueueItem[] queue = P.ConstructionQueueSnapshot;
+                if (!ConstructionQueue.AllEntries.Select(item => item.Item).EqualElements(queue))
                 {
-                    var newItems = P.ConstructionQueue.Select(qi => new ConstructionQueueScrollListItem(qi, LowRes));
+                    var newItems = queue.Select(qi => new ConstructionQueueScrollListItem(qi, LowRes));
                     ConstructionQueue.SetItems(newItems);
                 }
             }

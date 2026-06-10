@@ -47,6 +47,15 @@ namespace Ship_Game.Universe.SolarBodies
             return ConstructionQueue;
         }
 
+        // Thread-safe snapshot for cross-thread (UI) readers. The live queue is
+        // mutated on the sim thread under lock(ConstructionQueue), so UI code must
+        // not iterate GetConstructionQueue() directly or it can index a shrinking list.
+        public QueueItem[] GetConstructionQueueSnapshot()
+        {
+            lock (ConstructionQueue)
+                return ConstructionQueue.ToArray();
+        }
+
         // Rush button is used only in debug mode for fast debug rush
         public bool RushProduction(int itemIndex, float maxAmount, bool rushButton = false)
         {

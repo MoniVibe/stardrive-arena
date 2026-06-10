@@ -95,6 +95,9 @@ namespace Ship_Game
 
         public IReadOnlyList<QueueItem> ConstructionQueue => Construction.GetConstructionQueue();
 
+        // Locked copy for cross-thread (UI) readers; see SBProduction.GetConstructionQueueSnapshot.
+        public QueueItem[] ConstructionQueueSnapshot => Construction.GetConstructionQueueSnapshot();
+
         public bool WeCanLandTroopsViaSpacePort(Empire us) => HasSpacePort && Owner == us && !SpaceCombatNearPlanet;
 
         public int CountEmpireTroops(Empire us) => Troops.NumTroopsHere(us);
