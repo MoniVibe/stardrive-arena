@@ -93,6 +93,38 @@ public class ThreatMatrixTests : StarDriveTest
             owner.Threats.Update(new(time:2.0f));
     }
 
+    // Regression: a planet's sensor coverage must be centered on the planet itself,
+    // not on the solar system center. While it was centered on the star (Mars 1.50),
+    // a planet orbiting beyond its sensor range got zero coverage around itself, so a
+    // bare outpost never detected ships circling it. ScanForShipsFromPlanet scans around
+    // node.Position, so asserting the node is centered on the planet guards detection too.
+    [TestMethod]
+    public void PlanetSensorNodeIsCenteredOnThePlanetNotTheStar()
+    {
+        // a planet well offset from its system center
+        Planet planet = AddDummyPlanet(new(500_000, 500_000), 1, 1, 0,
+            pos: new(560_000, 500_000), explored: false);
+        planet.SetOwner(Player);
+        AssertTrue(planet.Position.Distance(planet.System.Position) > 1000f,
+            "test setup: planet must be offset from its system center");
+
+        // ResetBorders (which builds SensorNodes) runs inside Objects.Update
+        UState.Objects.Update(new(time: 1f));
+
+        bool found = false;
+        Empire.InfluenceNode[] nodes = Player.SensorNodes;
+        for (int i = 0; i < nodes.Length; ++i)
+        {
+            if (nodes[i].Source == planet)
+            {
+                found = true;
+                AssertEqual(planet.Position, nodes[i].Position,
+                    "Planet sensor coverage must be centered on the planet, not the system center");
+            }
+        }
+        AssertTrue(found, "Player must have a sensor node for its owned planet");
+    }
+
     [TestMethod]
     public void FindClusters_OfASingleEmpire()
     {
