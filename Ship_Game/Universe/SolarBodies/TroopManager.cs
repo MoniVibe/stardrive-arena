@@ -644,47 +644,47 @@ namespace Ship_Game
         // mutating TroopsHere; a lazy iterator would index a shrinking list and throw.
         public IEnumerable<Troop> GetLaunchableTroops(Empire of, int maxToTake = int.MaxValue, bool forceLaunch = false)
         {
-            var result = new Array<Troop>();
+            Array<Troop> result = null;
             lock (TroopsHere)
             {
-                for (int i = TroopsHere.Count - 1; i >= 0; --i)
+                for (int i = TroopsHere.Count - 1; i >= 0 && (result?.Count ?? 0) < maxToTake; --i)
                 {
                     Troop troop = TroopsHere[i];
-                    if (troop.Loyalty == of && (troop.CanLaunch || forceLaunch) && maxToTake-- > 0)
-                        result.Add(troop);
+                    if (troop.Loyalty == of && (troop.CanLaunch || forceLaunch))
+                        (result ??= new Array<Troop>()).Add(troop);
                 }
             }
-            return result;
+            return result ?? (IEnumerable<Troop>)Empty<Troop>.Array;
         }
 
         public IEnumerable<Troop> GetTroopsOf(Empire of)
         {
-            var result = new Array<Troop>();
+            Array<Troop> result = null;
             lock (TroopsHere)
             {
                 for (int i = TroopsHere.Count - 1; i >= 0; --i)
                 {
                     Troop troop = TroopsHere[i];
                     if (troop.Loyalty == of)
-                        result.Add(troop);
+                        (result ??= new Array<Troop>()).Add(troop);
                 }
             }
-            return result;
+            return result ?? (IEnumerable<Troop>)Empty<Troop>.Array;
         }
 
         public IEnumerable<Troop> GetTroopsNotOf(Empire notOf)
         {
-            var result = new Array<Troop>();
+            Array<Troop> result = null;
             lock (TroopsHere)
             {
                 for (int i = TroopsHere.Count - 1; i >= 0; --i)
                 {
                     Troop troop = TroopsHere[i];
                     if (troop.Loyalty != notOf)
-                        result.Add(troop);
+                        (result ??= new Array<Troop>()).Add(troop);
                 }
             }
-            return result;
+            return result ?? (IEnumerable<Troop>)Empty<Troop>.Array;
         }
 
         // Added by McShooterz: heal builds and troops every turn

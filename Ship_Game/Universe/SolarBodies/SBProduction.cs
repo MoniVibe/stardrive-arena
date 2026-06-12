@@ -28,6 +28,11 @@ namespace Ship_Game.Universe.SolarBodies
         /// </summary>
         [StarData] readonly Array<QueueItem> ConstructionQueue = new();
 
+        // Cached cross-thread snapshot (see GetConstructionQueueSnapshot). Rebuilt lazily only
+        // when the queue's membership/order changes, so per-frame UI readers don't allocate.
+        QueueItem[] CachedQueueSnapshot;
+        bool QueueSnapshotDirty = true;
+
         float ProductionHere
         {
             get => P.ProdHere;
@@ -50,10 +55,19 @@ namespace Ship_Game.Universe.SolarBodies
         // Thread-safe snapshot for cross-thread (UI) readers. The live queue is
         // mutated on the sim thread under lock(ConstructionQueue), so UI code must
         // not iterate GetConstructionQueue() directly or it can index a shrinking list.
+        // The snapshot array is cached and only rebuilt when the queue's membership or
+        // order changed (QueueSnapshotDirty), so per-frame UI Draw doesn't re-allocate.
         public QueueItem[] GetConstructionQueueSnapshot()
         {
             lock (ConstructionQueue)
-                return ConstructionQueue.ToArray();
+            {
+                if (QueueSnapshotDirty || CachedQueueSnapshot == null)
+                {
+                    CachedQueueSnapshot = ConstructionQueue.IsEmpty ? Empty<QueueItem>.Array : ConstructionQueue.ToArray();
+                    QueueSnapshotDirty = false;
+                }
+                return CachedQueueSnapshot;
+            }
         }
 
         // Rush button is used only in debug mode for fast debug rush
@@ -467,6 +481,7 @@ namespace Ship_Game.Universe.SolarBodies
             lock (ConstructionQueue)
             {
                 ConstructionQueue.Add(item);
+                QueueSnapshotDirty = true;
                 if (!P.OwnerIsPlayer)
                 {
                     int totalFreighters = Owner.TotalFreighters;
@@ -500,7 +515,10 @@ namespace Ship_Game.Universe.SolarBodies
         void Finish(QueueItem q)
         {
             lock (ConstructionQueue)
+            {
                 ConstructionQueue.Remove(q);
+                QueueSnapshotDirty = true;
+            }
         }
 
         public bool Cancel(Building b)
@@ -545,7 +563,10 @@ namespace Ship_Game.Universe.SolarBodies
             }
 
             lock (ConstructionQueue)
+            {
                 ConstructionQueue.Remove(q);
+                QueueSnapshotDirty = true;
+            }
             if (q.isBuilding)
                 P.RefreshBuildingsWeCanBuildHere();
         }
@@ -649,6 +670,7 @@ namespace Ship_Game.Universe.SolarBodies
                 if ((uint)newIndex < ConstructionQueue.Count)
                 {
                     ConstructionQueue.Reorder(oldIndex, newIndex);
+                    QueueSnapshotDirty = true;
                 }
             }
         }
@@ -662,6 +684,7 @@ namespace Ship_Game.Universe.SolarBodies
                 currentIndex = currentIndex.Clamped(0, cq.Count - 1);
 
                 (cq[swapTo], cq[currentIndex]) = (cq[currentIndex], cq[swapTo]);
+                QueueSnapshotDirty = true;
             }
         }
 
@@ -672,6 +695,7 @@ namespace Ship_Game.Universe.SolarBodies
                 QueueItem item = ConstructionQueue[currentIndex];
                 ConstructionQueue.RemoveAt(currentIndex);
                 ConstructionQueue.Insert(moveTo, item);
+                QueueSnapshotDirty = true;
             }
         }
 
@@ -699,7 +723,10 @@ namespace Ship_Game.Universe.SolarBodies
         public void ClearQueue()
         {
             lock (ConstructionQueue)
+            {
                 ConstructionQueue.Clear();
+                QueueSnapshotDirty = true;
+            }
             foreach (PlanetGridSquare tile in P.TilesList)
                 tile.RemoveQueueItem(); // Clear all planned buildings from tiles
         }
