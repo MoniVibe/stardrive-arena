@@ -541,21 +541,43 @@ namespace Ship_Game.AI
             return GoalsList.Count(predicate);
         }
 
+        // GoalsList is owned by the simulation thread (it's iterated & evaluated in Update()).
+        // Any caller NOT on the sim thread must not mutate it directly or the sim thread's
+        // snapshot reads a torn slot (null) -> NRE. Off-thread callers are the UI windows
+        // (build/scrap/refit) and the parallel ship-update path (Ship.Update -> Die ->
+        // AddGoalAndEvaluate runs on a Parallel.For worker). Marshal those onto the sim thread
+        // via the pending-action queue; sim-thread callers (the common case) run inline with no
+        // closure allocation, so ordering and hot-path performance are preserved.
+        UniverseScreen MarshalScreen => UState?.Screen is { IsOnSimThread: false } s ? s : null;
+
         public void AddGoal(Goal goal)
         {
-            GoalsList.Add(goal);
+            if (MarshalScreen is { } screen)
+                screen.RunOnSimThread(() => GoalsList.Add(goal));
+            else
+                GoalsList.Add(goal);
         }
 
         public void AddGoalAndEvaluate(Goal goal)
         {
-            GoalsList.Add(goal);
-            goal.Evaluate();
+            if (MarshalScreen is { } screen)
+                screen.RunOnSimThread(() => { GoalsList.Add(goal); goal.Evaluate(); });
+            else
+            {
+                GoalsList.Add(goal);
+                goal.Evaluate();
+            }
         }
 
         public void RemoveGoal(Goal goal)
         {
-            goal.OnRemoved();
-            GoalsList.Remove(goal);
+            if (MarshalScreen is { } screen)
+                screen.RunOnSimThread(() => { goal.OnRemoved(); GoalsList.Remove(goal); });
+            else
+            {
+                goal.OnRemoved();
+                GoalsList.Remove(goal);
+            }
         }
 
         public void ClearGoals()

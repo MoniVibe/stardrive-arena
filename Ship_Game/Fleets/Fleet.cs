@@ -1665,7 +1665,7 @@ namespace Ship_Game.Fleets
                     break;
                 case 1:
                     MoveStatus moveStatus = FleetMoveStatus(task.RallyPlanet.System.Radius);
-                    if (moveStatus.IsSet(MoveStatus.MajorityAssembled) && !task.RallyPlanet.System.HostileForcesPresent(Owner))
+                    if (moveStatus.IsSet(MoveStatus.MajorityAssembled) && !task.RallyPlanet.System.DangerousForcesPresent(Owner))
                     {
                         AddFleetProjectorGoal();
                         TaskStep = 2;
@@ -1745,7 +1745,7 @@ namespace Ship_Game.Fleets
             bool threatIncoming = Owner.IsSystemUnderThreatForUs(FleetTask.TargetSystem)
                 || Owner.IsSystemUnderThreatForAllies(FleetTask.TargetSystem);
 
-            if (threatIncoming && EndInvalidTask(!CanTakeThisFight(enemyStrength*0.5f, task, inCombat: TaskStep >= 2))) 
+            if (threatIncoming && EndInvalidTask(!CanTakeThisFight(enemyStrength*0.5f, task, inCombat: TaskStep >= 2)))
                 return; // If no threat is incoming, stay put to clear remaining lone ships
 
             float aoRadius = task.TargetSystem?.Radius * 2 ?? task.RallyPlanet.System.Radius * 2;
@@ -1772,7 +1772,7 @@ namespace Ship_Game.Fleets
                     break;
                 case 1:
                     MoveStatus moveStatus = FleetMoveStatus(task.RallyPlanet.System.Radius);
-                    if (moveStatus.IsSet(MoveStatus.MajorityAssembled) && !task.RallyPlanet.System.HostileForcesPresent(Owner))
+                    if (moveStatus.IsSet(MoveStatus.MajorityAssembled) && !task.RallyPlanet.System.DangerousForcesPresent(Owner))
                     {
                         GatherAtAO(task, distanceFromAO: aoRadius);
                         TaskStep = 2;
@@ -1883,7 +1883,7 @@ namespace Ship_Game.Fleets
 
         bool EndInvalidTask(bool condition)
         {
-            if (!condition) 
+            if (!condition)
                 return false;
 
             FleetTask?.EndTask();

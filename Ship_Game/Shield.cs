@@ -29,7 +29,14 @@ namespace Ship_Game
         // a fraction of a second so it reads as a transient hit, not a
         // persistent halo.
         float DistortionTimeLeft;
-        const float DistortionDuration = 0.2f;
+        const float DistortionDuration = 0.1f;
+
+        // Screen-space shield-hit ripple is disabled: it doesn't look good in game
+        // (the warp reads as a distracting smear rather than a clean impact). The
+        // shield bubble glow is unaffected. Tuning constants below (DistortionDuration,
+        // and RippleRadiusScale in ShieldManager) are kept for anyone who wants to
+        // revisit the effect — set this back to false to re-enable.
+        const bool RippleDisabled = true;
 
         public Shield()
         {
@@ -214,17 +221,17 @@ namespace Ship_Game
         public bool LightEnabled => Light?.Enabled == true;
 
         // Phase 3.7 step 2 distortion signal. Active during the brief window
-        // (~80 frames for ship shields, fewer for planet shields) when a
-        // shield was just hit and Light.Intensity is decaying toward zero.
-        // The returned worldCenter is z=0 for ship shields and z=2500 for
-        // planet shields (matches UpdateWorldTransform).
+        // (DistortionDuration seconds) after a shield was just hit, gated by
+        // DistortionTimeLeft and refreshed on each impact. The returned
+        // worldCenter is z=0 for ship shields and z=2500 for planet shields
+        // (matches UpdateWorldTransform).
         public bool TryGetDistortionSource(out Vector3 worldCenter, out float worldRadius, out float intensity)
         {
             worldCenter = default;
             worldRadius = 0f;
             intensity   = 0f;
 
-            if (Radius <= 0f || DistortionTimeLeft <= 0f)
+            if (RippleDisabled || Radius <= 0f || DistortionTimeLeft <= 0f)
                 return false;
 
             // 1.0 right after hit, fading linearly to 0 over DistortionDuration.

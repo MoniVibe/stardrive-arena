@@ -17,6 +17,13 @@ namespace Ship_Game
         public bool CreateSimThread = true;
         Thread SimThread;
 
+        /// <summary>
+        /// True when the caller is already on the simulation thread (or no sim thread exists,
+        /// e.g. headless/unit-test runs). Used to decide whether a sim-state mutation must be
+        /// marshaled via RunOnSimThread() or can run inline.
+        /// </summary>
+        public bool IsOnSimThread => SimThread == null || Thread.CurrentThread == SimThread;
+
         // This is our current time in simulation time axis [0 .. current .. target]
         public float CurrentSimTime;
 

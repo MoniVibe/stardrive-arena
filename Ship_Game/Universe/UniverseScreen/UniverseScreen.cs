@@ -806,7 +806,15 @@ namespace Ship_Game
             Thread processTurnsThread = SimThread;
             SimThread = null;
             DrawCompletedEvt.Set(); // notify processTurnsThread that we're terminating
-            processTurnsThread?.Join(250);
+
+            // Wait for the in-flight simulation turn to finish before Dispose() below tears
+            // down UState (which disposes every Planet/Ship). A single turn is bounded, but a
+            // heavy one (e.g. an empire federation AbsorbEmpire) on a memory-pressured machine
+            // can take far longer than the old 250ms timeout. Disposing underneath a running
+            // turn makes the sim thread dereference a disposed planet (NRE in ProcessTurns).
+            // Use a generous timeout that still guards against a genuinely stuck thread.
+            if (processTurnsThread != null && !processTurnsThread.Join(10_000))
+                Log.Warning("UniverseScreen.ExitScreen: sim thread did not stop within 10s; tearing down anyway");
 
             RemoveLighting();
             ScreenManager.StopMusic();

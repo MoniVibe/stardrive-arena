@@ -219,7 +219,8 @@ namespace Ship_Game.Universe
         {
             fleet.FinalPosition = shipToAttack.Position;
             fleet.AssignPositions(Vectors.Up);
-            if (fleet.Ships.Any(s => s.Position.Distance(shipToAttack.Position) > 7500f
+            if (fleet.Ships.Any(s => s.Active
+                   && s.Position.Distance(shipToAttack.Position) > 7500f
                    && !HelperFunctions.CanExitWarpForChangingDirectionByCommand([s], s.AI.PotentialTargets)))
             {
                 GameAudio.NegativeClick();

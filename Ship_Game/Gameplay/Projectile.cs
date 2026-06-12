@@ -995,7 +995,22 @@ namespace Ship_Game.Gameplay
             // the blast PAST the armor onto an internal module (the armor-bypass bug). The struck
             // module's own position always sits on the armor, and the directional explosion handles
             // penetration from there.
-            Position = Radius <= 8 ? hitPos : victim.Position;
+            if (victim.ShieldsAreActive)
+            {
+                // ...but a shield module's center is the BUBBLE center, up to ShieldHitRadius
+                // (~60-210u) behind the surface the projectile actually struck. Anchoring there
+                // draws the explosion/sparks deep inside the bubble. Snap to the bubble surface
+                // along the incoming direction so the visual reads at the point of hit. Damage is
+                // unaffected: DamageExplosiveDirectional derives its geometry from the module, and
+                // shield damage uses no position at all.
+                Vector2 fromCenter = hitPos - victim.Position;
+                Vector2 dir = fromCenter.AlmostZero() ? -VelocityDirection : fromCenter.Normalized();
+                Position = victim.Position + dir * victim.ShieldHitRadius;
+            }
+            else
+            {
+                Position = Radius <= 8 ? hitPos : victim.Position;
+            }
             Universe.DebugWin?.DrawGameObject(DebugModes.Targeting, this, Color.LightCyan, lifeTime:0.25f);
 
             if (!TryPhaseThroughModule(victim) && Damage(victim))

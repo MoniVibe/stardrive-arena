@@ -242,8 +242,22 @@ public static class GlobalStats
     //////// DEV AppConfig Options
 
     // DEV APP CONFIG OPTION
-    // Dev Option for AUTOPERF
-    public static bool RestrictAIPlayerInteraction;
+    // Dev Option for AUTOPERF.
+    // Backing field holds ONLY the value read from / written to the user config.
+    // AUTO/AUTOFAST soak builds force the *effective* value on via the getter below, but
+    // must never persist that forced value: SaveSettings writes the backing field, not the
+    // getter, so an Auto run can't leak RestrictAIPlayerInteraction=true into the shared
+    // user config and poison subsequent normal Debug/Release play.
+    static bool RestrictAIPlayerInteractionSetting;
+    public static bool RestrictAIPlayerInteraction
+    {
+#if AUTO || AUTOFAST
+        get => true; // soak builds always lock the player out; runtime-only, never persisted
+#else
+        get => RestrictAIPlayerInteractionSetting;
+#endif
+        set => RestrictAIPlayerInteractionSetting = value;
+    }
 
     // When TRUE, UniverseScreen.UpdateGame auto-ramps UState.GameSpeed up to whatever
     // the simulation can sustain — used by AUTOFAST soak runs. The 'Auto' build
@@ -333,7 +347,7 @@ public static class GlobalStats
             
         var config = OpenUserConfiguration();
         GetSetting(config, "ConfigVersion", ref ConfigVersion);
-        GetSetting(config, "RestrictAIPlayerInteraction", ref RestrictAIPlayerInteraction);
+        GetSetting(config, "RestrictAIPlayerInteraction", ref RestrictAIPlayerInteractionSetting);
         GetSetting(config, "XRES", ref XRES);
         GetSetting(config, "YRES", ref YRES);
         GetSetting(config, "MaxParallelism", ref MaxParallelism);
@@ -379,13 +393,12 @@ public static class GlobalStats
             VerboseLogging = true;
         #endif
         #if AUTOFAST
-            RestrictAIPlayerInteraction = true;
+            // Player lockout is forced on via the RestrictAIPlayerInteraction getter (not
+            // persisted). AUTOFAST also ramps the sim speed.
             AutoRampGameSpeed = true;
         #endif
-        #if AUTO
-            // Same input lockout as AUTOFAST, but no simulation-speed ramping.
-            RestrictAIPlayerInteraction = true;
-        #endif
+        // NOTE: AUTO is the same player lockout as AUTOFAST without sim-speed ramping; it is
+        // handled entirely by the RestrictAIPlayerInteraction getter, so nothing to force here.
 
         Log.Write(ConsoleColor.DarkYellow, "Loaded App Settings");
 
@@ -528,7 +541,7 @@ public static class GlobalStats
         Configuration config = OpenUserConfiguration();
 
         WriteSetting(config, "ConfigVersion", ConfigVersion);
-        WriteSetting(config, "RestrictAIPlayerInteraction", RestrictAIPlayerInteraction);
+        WriteSetting(config, "RestrictAIPlayerInteraction", RestrictAIPlayerInteractionSetting);
         WriteSetting(config, "XRES", XRES);
         WriteSetting(config, "YRES", YRES);
         WriteSetting(config, "MaxParallelism", MaxParallelism);

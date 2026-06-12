@@ -301,7 +301,7 @@ public sealed partial class Empire
         }
         foreach (ref InfluenceNode n in sensorPlanets)
         {
-            n.Position = n.Source.System.Position;
+            n.Position = n.Source.Position;
             n.KnownToPlayer = knownToPlayer;
         }
     }

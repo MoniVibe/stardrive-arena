@@ -359,6 +359,9 @@ namespace Ship_Game.Ships
 
         public bool PlayerShipCanTakeFleetOrders(bool forAttack = false)
         {
+            if (!Active)
+                return false;
+
             if (Loyalty.isPlayer)
             {
                 if (!forAttack && (IsPlatformOrStation || IsSubspaceProjector))

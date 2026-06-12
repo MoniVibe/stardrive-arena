@@ -24,18 +24,16 @@ namespace Ship_Game.Commands.Goals
             };
         }
 
-        public BuildConstructionShip(Vector2 buildPos, string platformUid, Empire owner, bool rush = false)
+        public BuildConstructionShip(Vector2 buildPos, string platformUid, Empire owner, bool rush = false, bool manualPlacement = false)
             : this(owner)
         {
             Initialize(platformUid, buildPos, null);
             Build.Rush = rush;
 
-            // try catch multipler projector build on same place
-            if (ToBuild.IsSubspaceProjector)
-            {
-                if (owner.FindProjectorAt(buildPos, 100, out Ship _))
-                    Log.Error($"Build pos of projector is near {buildPos}");
-            }
+            // Manual UI placement may intentionally drop a projector anywhere. Only automated
+            // builders (AI road/bridge planners, player automation) get the dedupe diagnostic.
+            if (!manualPlacement && ToBuild.IsSubspaceProjector && owner.FindProjectorAt(buildPos, 100, out Ship _))
+                Log.Error($"Build pos of projector is near {buildPos}");
         }
 
         /// <summary>

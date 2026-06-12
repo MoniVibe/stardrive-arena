@@ -57,10 +57,10 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 
-  <!-- AUTOFAST defines the symbol that GlobalStats.LoadConfig checks (line ~362)
-       to flip RestrictAIPlayerInteraction = true at startup. That flag, in turn,
-       lets the AI play full-speed among itself with the player ignored — used
-       for unattended balance/perf soak runs. UniverseScreen also auto-tunes
+  <!-- AUTOFAST defines a symbol that the GlobalStats.RestrictAIPlayerInteraction
+       getter checks: under AUTO/AUTOFAST the getter returns true (runtime-only, never
+       persisted) so the AI plays full-speed among itself with the player ignored —
+       used for unattended balance/perf soak runs. UniverseScreen also auto-tunes
        simulation FPS when the flag is on. Otherwise these mirror Debug/Release
        settings; warning gate stays off here per §4.3 (Release|x64 only). -->
   <PropertyGroup Condition="'$(Configuration)' == 'Debug - Auto Fast'">

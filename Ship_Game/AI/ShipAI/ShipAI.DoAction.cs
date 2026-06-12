@@ -229,7 +229,11 @@ namespace Ship_Game.AI
 
             bool ShouldTryOvertakeTarget()
             {
-                if (Owner.IsInWarp || target.IsInWarp || Owner.Loyalty.Random.RollDice(95 - Owner.Level))
+                // A stationary ship (station/platform) can't overtake anything; issuing a Pursue
+                // priority-order move only drops it out of combat (it never reaches the prediction
+                // point). This is what left Remnant portals oscillating Combat<->Pursue instead of
+                // fighting in place.
+                if (Owner.IsInWarp || target.IsInWarp || Owner.Stats.IsStationary || Owner.Loyalty.Random.RollDice(95 - Owner.Level))
                     return false;
 
                 float distance = Owner.Position.Distance(target.Position);

@@ -1,4 +1,5 @@
-﻿using Ship_Game.Data.Serialization;
+﻿using System.Collections.Generic;
+using Ship_Game.Data.Serialization;
 using Ship_Game.Utils;
 
 namespace Ship_Game.Universe
@@ -39,7 +40,12 @@ namespace Ship_Game.Universe
 
         public bool IsResearchStationDeployedBy(Empire empire)
         {
-            return IsResearchable && empire.Universe.ResearchableSolarBodies[this].Contains(empire.Id);
+            // TryGetValue, not the throwing indexer: a save crossing a patch can restore
+            // IsResearchable=true on a body whose ResearchableSolarBodies entry is absent.
+            // Not in the map means no station is tracked there, so none is deployed.
+            return IsResearchable
+                && empire.Universe.ResearchableSolarBodies.TryGetValue(this, out HashSet<int> deployedBy)
+                && deployedBy.Contains(empire.Id);
         }
     }
 }

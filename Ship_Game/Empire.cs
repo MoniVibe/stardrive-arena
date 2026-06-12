@@ -599,7 +599,10 @@ namespace Ship_Game
 
         public void RemovePlanet(Planet planet, Empire attacker)
         {
-            GetRelations(attacker).LostAColony(planet, attacker);
+            // No relationship when attacker == us (e.g. a meteor wiping an Unknown-faction
+            // colony, attributed to Universe.Unknown): skip the colony-loss bookkeeping.
+            if (GetRelations(attacker, out Relationship rel))
+                rel.LostAColony(planet, attacker);
             RemovePlanet(planet);
 
             if (!isPlayer && attacker.data.IsRebelFaction)

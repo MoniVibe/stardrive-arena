@@ -683,7 +683,7 @@ namespace Ship_Game.AI
         {
             bool badGuysNear = BadGuysNear;
             bool inCombat = Owner.InCombat;
- 
+
             // if there are Enemies nearby, or ship is in combat, always set HighAlert
             if (badGuysNear || inCombat)
             {

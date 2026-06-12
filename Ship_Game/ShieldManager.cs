@@ -186,6 +186,11 @@ public sealed class ShieldManager : IDisposable
         AppendActive(planetShields, u, destWidth, destHeight, output);
     }
 
+    // Ripple disk radius as a fraction of the shield bubble radius. <1 keeps the
+    // screen-space distortion tight around the impact point instead of warping the
+    // whole bubble. Frustum/sub-pixel culls below still use the full bubble radius.
+    const float RippleRadiusScale = 0.4f;
+
     static void AppendActive(Shield[] arr, UniverseScreen u, int destW, int destH,
                              List<DistortionComponent.DistortionSource> output)
     {
@@ -217,7 +222,7 @@ public sealed class ShieldManager : IDisposable
             output.Add(new DistortionComponent.DistortionSource
             {
                 CenterUV  = new Vector2((float)(centerPx.X * invW), (float)(centerPx.Y * invH)),
-                RadiusUV  = (float)(radiusPx * invW), // assume square pixels; UV radius in X
+                RadiusUV  = (float)(radiusPx * invW) * RippleRadiusScale, // assume square pixels; UV radius in X
                 Intensity = intensity,
             });
         }
