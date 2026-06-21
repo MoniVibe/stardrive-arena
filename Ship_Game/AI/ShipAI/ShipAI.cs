@@ -211,9 +211,8 @@ namespace Ship_Game.AI
         {
             get
             {
-                if (OrderQueue.NotEmpty)
+                if (OrderQueue.TryPeekFirst(out ShipGoal goal) && goal != null)
                 {
-                    ShipGoal goal = OrderQueue.PeekFirst;
                     Vector2 pos = goal.TargetPlanet?.Position ?? goal.MovePosition;
                     if (pos.NotZero())
                         return pos;
