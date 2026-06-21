@@ -175,7 +175,10 @@ namespace Ship_Game.Universe.SolarBodies // Fat Bastard - Refactored March 21, 2
             for (int i = 0; i < ParentSystem.ShipList.Count; i++)
             {
                 Ship ship = ParentSystem.ShipList[i];
-                if (ship == null)
+                // skip dead ships still lingering in ShipList: Active flips false in
+                // QueueTotalRemoval before their troops/modules are torn down
+                // (OurTroops.Clear / = null), which would NRE in SupplyShip below.
+                if (ship == null || !ship.Active)
                     continue;
 
                 bool loyaltyMatch = ship.Loyalty == Owner || ship.Loyalty.IsAlliedWith(Owner);
