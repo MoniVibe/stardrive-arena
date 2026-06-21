@@ -305,8 +305,11 @@ namespace Ship_Game.Ships
             float currentHealPoints = totalHealPoints;
             for (int i = 0; i < OurTroops.Count; i++)
             {
+                // OurTroops can be torn-read while another thread clears/removes troops
+                // (e.g. the ship dies during this planet-supply heal); skip null slots,
+                // matching the ship==null guard in GeodeticManager.AffectNearbyShips.
                 Troop troop = OurTroops[i];
-                if (troop.IsWounded)
+                if (troop != null && troop.IsWounded)
                 {
                     troop.HealTroop(1);
                     currentHealPoints -= 1;
