@@ -337,6 +337,9 @@ namespace Ship_Game
         // extraPending: orbitals already queued in the same batch that the marshalled goal-add
         // (RunOnSimThread) hasn't applied to the empire goals list yet, so OrbitalsBeingBuilt/
         // ShipyardsBeingBuilt still under-counts them. Callers that enqueue in a tight loop pass it.
+        // Assumes a homogeneous batch (one design repeated): extraPending is added to both the orbital
+        // and shipyard counts, which is only safe because the unused count's gate can't fire for that
+        // design (a platform never trips the shipyard branch). Mixed-design batches would miscount.
         public bool IsOutOfOrbitalsLimit(IShipDesign ship, int extraPending = 0) => IsOutOfOrbitalsLimit(ship, Owner, 0, extraPending);
         public bool IsOverOrbitalsLimit(IShipDesign ship)  => IsOutOfOrbitalsLimit(ship, Owner, 1, 0);
 
