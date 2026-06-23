@@ -30,9 +30,14 @@ public class TestOrbitalBuildLimit : StarDriveTest
 
         // Guard the assumptions the threshold tests rely on: design roles and an empty baseline.
         Assert.IsTrue(Platform.IsPlatformOrStation && !Platform.IsShipyard, "Platform design role changed");
-        Assert.IsTrue(Shipyard.IsShipyard, "Shipyard design role changed");
+        // A shipyard must consume BOTH a shipyard slot and a shared orbital slot - if it ever stopped
+        // counting as IsPlatformOrStation the orbital-cap branch would silently skip it.
+        Assert.IsTrue(Shipyard.IsShipyard && Shipyard.IsPlatformOrStation,
+            "Shipyard must count as both a shipyard and an orbital");
         Assert.AreEqual(0, Homeworld.OrbitalStations.Count, "Fresh homeworld must start with no orbital stations");
-        Assert.AreEqual(0, Homeworld.OrbitalsBeingBuilt(Platform.Role), "Fresh homeworld must have no pending orbital goals");
+        Assert.AreEqual(0, Homeworld.OrbitalsBeingBuilt(Platform.Role), "Fresh homeworld must have no pending platform goals");
+        Assert.AreEqual(0, Homeworld.OrbitalsBeingBuilt(Shipyard.Role), "Fresh homeworld must have no pending station goals");
+        Assert.AreEqual(0, Homeworld.ShipyardsBeingBuilt(), "Fresh homeworld must have no pending shipyard goals");
     }
 
     [TestMethod]
