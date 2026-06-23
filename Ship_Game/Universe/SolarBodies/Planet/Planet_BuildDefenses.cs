@@ -334,13 +334,16 @@ namespace Ship_Game
         public int NumPlatforms => FilterOrbitals(RoleName.platform).Count;
         public int NumStations  => FilterOrbitals(RoleName.station).Count;
 
-        public bool IsOutOfOrbitalsLimit(IShipDesign ship) => IsOutOfOrbitalsLimit(ship, Owner, 0);
-        public bool IsOverOrbitalsLimit(IShipDesign ship)  => IsOutOfOrbitalsLimit(ship, Owner, 1);
+        // extraPending: orbitals already queued in the same batch that the marshalled goal-add
+        // (RunOnSimThread) hasn't applied to the empire goals list yet, so OrbitalsBeingBuilt/
+        // ShipyardsBeingBuilt still under-counts them. Callers that enqueue in a tight loop pass it.
+        public bool IsOutOfOrbitalsLimit(IShipDesign ship, int extraPending = 0) => IsOutOfOrbitalsLimit(ship, Owner, 0, extraPending);
+        public bool IsOverOrbitalsLimit(IShipDesign ship)  => IsOutOfOrbitalsLimit(ship, Owner, 1, 0);
 
-        bool IsOutOfOrbitalsLimit(IShipDesign ship, Empire owner, int overLimit)
+        bool IsOutOfOrbitalsLimit(IShipDesign ship, Empire owner, int overLimit, int extraPending)
         {
-            int numOrbitals  = OrbitalStations.Count + OrbitalsBeingBuilt(ship.Role, owner);
-            int numShipyards = OrbitalStations.Count(s => s.ShipData.IsShipyard) + ShipyardsBeingBuilt(owner);
+            int numOrbitals  = OrbitalStations.Count + OrbitalsBeingBuilt(ship.Role, owner) + extraPending;
+            int numShipyards = OrbitalStations.Count(s => s.ShipData.IsShipyard) + ShipyardsBeingBuilt(owner) + extraPending;
             if (numOrbitals >= ShipBuilder.OrbitalsLimit + overLimit && ship.IsPlatformOrStation)
                 return true;
 

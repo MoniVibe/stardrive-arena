@@ -262,9 +262,12 @@ namespace Ship_Game
 
         public void Build(IShipDesign ship, int repeat = 1)
         {
+            // Orbitals are added via marshalled goals that don't apply until the sim thread runs,
+            // so the limit check can't see what we queued earlier in this same loop. Track it locally.
+            int orbitalsQueued = 0;
             for (int i = 0; i < repeat; i++)
             {
-                if (P.IsOutOfOrbitalsLimit(ship))
+                if (P.IsOutOfOrbitalsLimit(ship, orbitalsQueued))
                 {
                     GameAudio.NegativeClick();
                     return;
@@ -273,6 +276,7 @@ namespace Ship_Game
                 if (ship.IsPlatformOrStation || ship.IsShipyard)
                 {
                     P.AddOrbital(ship);
+                    orbitalsQueued++;
                 }
                 else
                 {

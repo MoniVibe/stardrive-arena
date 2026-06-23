@@ -1,0 +1,80 @@
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Ship_Game;
+using Ship_Game.AI;
+using Ship_Game.Ships;
+using Vector2 = SDGraphics.Vector2;
+#pragma warning disable CA2213
+
+namespace UnitTests.Planets;
+
+// Colony screen "+" button shift/ctrl-clicks queue 5/10 orbitals in one batch. The orbital build
+// limit (ShipBuilder.OrbitalsLimit platforms+stations, ShipBuilder.ShipYardsLimit shipyards) is
+// enforced via Planet.IsOutOfOrbitalsLimit, which counts pending build goals. Those goals are added
+// on the sim thread (deferred via RunOnSimThread), so a tight batch loop can't see what it already
+// queued earlier in the same loop - it must pass the in-batch count through extraPending. These
+// tests pin that extraPending accounting so a batch can never breach either limit.
+[TestClass]
+public class TestOrbitalBuildLimit : StarDriveTest
+{
+    readonly Planet Homeworld;
+    readonly IShipDesign Platform;
+    readonly IShipDesign Shipyard;
+
+    public TestOrbitalBuildLimit()
+    {
+        LoadStarterShips("Platform Base mk1-a", "Shipyard");
+        CreateUniverseAndPlayerEmpire();
+        Homeworld = AddHomeWorldToEmpire(new Vector2(2000), Player);
+        Platform  = ResourceManager.GetShipTemplate("Platform Base mk1-a").ShipData;
+        Shipyard  = ResourceManager.GetShipTemplate("Shipyard").ShipData;
+
+        // Guard the assumptions the threshold tests rely on: design roles and an empty baseline.
+        Assert.IsTrue(Platform.IsPlatformOrStation && !Platform.IsShipyard, "Platform design role changed");
+        Assert.IsTrue(Shipyard.IsShipyard, "Shipyard design role changed");
+        Assert.AreEqual(0, Homeworld.OrbitalStations.Count, "Fresh homeworld must start with no orbital stations");
+        Assert.AreEqual(0, Homeworld.OrbitalsBeingBuilt(Platform.Role), "Fresh homeworld must have no pending orbital goals");
+    }
+
+    [TestMethod]
+    public void FreshPlanet_IsNotOutOfLimit()
+    {
+        Assert.IsFalse(Homeworld.IsOutOfOrbitalsLimit(Platform), "A planet with no orbitals should allow building");
+        Assert.IsFalse(Homeworld.IsOutOfOrbitalsLimit(Shipyard), "A planet with no shipyards should allow building");
+    }
+
+    [TestMethod]
+    public void PlatformBatch_StopsAtOrbitalsLimit()
+    {
+        // extraPending models orbitals already queued earlier in the same batch (shift/ctrl click).
+        // One slot below the limit is still buildable; reaching the limit blocks the rest of the batch.
+        Assert.IsFalse(Homeworld.IsOutOfOrbitalsLimit(Platform, ShipBuilder.OrbitalsLimit - 1),
+            "Should still allow the last orbital before the limit");
+        Assert.IsTrue(Homeworld.IsOutOfOrbitalsLimit(Platform, ShipBuilder.OrbitalsLimit),
+            "Must block once the in-batch count reaches the orbitals limit");
+    }
+
+    [TestMethod]
+    public void ShipyardBatch_StopsAtShipyardLimit()
+    {
+        // Shipyards have their own, much smaller limit on top of the shared orbitals limit.
+        Assert.IsFalse(Homeworld.IsOutOfOrbitalsLimit(Shipyard, ShipBuilder.ShipYardsLimit - 1),
+            "Should still allow the last shipyard before the shipyard limit");
+        Assert.IsTrue(Homeworld.IsOutOfOrbitalsLimit(Shipyard, ShipBuilder.ShipYardsLimit),
+            "Must block once the in-batch count reaches the shipyard limit");
+    }
+
+    [TestMethod]
+    public void ExistingOrbitalsCountAgainstBatch()
+    {
+        // Seed real stations so the baseline isn't empty; the batch headroom shrinks accordingly.
+        const int seeded = 5;
+        for (int i = 0; i < seeded; i++)
+            Homeworld.OrbitalStations.Add(SpawnShip("Platform Base mk1-a", Player, new Vector2(3000 + i*50)));
+
+        int headroom = ShipBuilder.OrbitalsLimit - seeded;
+        Assert.IsFalse(Homeworld.IsOutOfOrbitalsLimit(Platform, headroom - 1),
+            "With existing stations, the batch can still fill the remaining slots");
+        Assert.IsTrue(Homeworld.IsOutOfOrbitalsLimit(Platform, headroom),
+            "Existing stations plus the in-batch count must not exceed the orbitals limit");
+    }
+}
