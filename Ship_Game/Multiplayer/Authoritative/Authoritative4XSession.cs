@@ -275,6 +275,25 @@ public readonly struct Authoritative4XClientSpec
     }
 }
 
+readonly struct AuthoritativeCommandKey : IEquatable<AuthoritativeCommandKey>
+{
+    public readonly int OriginPeer;
+    public readonly int Sequence;
+
+    public AuthoritativeCommandKey(int originPeer, int sequence)
+    {
+        OriginPeer = originPeer;
+        Sequence = sequence;
+    }
+
+    public bool Equals(AuthoritativeCommandKey other)
+        => OriginPeer == other.OriginPeer && Sequence == other.Sequence;
+    public override bool Equals(object obj)
+        => obj is AuthoritativeCommandKey other && Equals(other);
+    public override int GetHashCode()
+        => HashCode.Combine(OriginPeer, Sequence);
+}
+
 /// <summary>
 /// Headless Phase-A harness: client submits primitive requests over the SDLockstep transport, host
 /// validates/applies/advances, then sends ack + canonical sync snapshot back.
@@ -323,6 +342,7 @@ public sealed class Authoritative4XInProcessSession
 
         AuthoritativePlayerCommand command = AuthoritativePlayerCommand.FromMessage(request);
         (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) = Authority.Process(command);
+        result.OriginPeer = request.FromPeer;
         Transport.Send(ClientPeer, result.ToMessage(HostPeer));
         Transport.Send(ClientPeer, snapshot.ToMessage(HostPeer));
     }
@@ -335,6 +355,7 @@ public sealed class Authoritative4XInProcessSession
                 LastResult = new AuthoritativeCommandResult
                 {
                     Sequence = resultMessage.Sequence,
+                    OriginPeer = resultMessage.OriginPeer,
                     Accepted = resultMessage.Accepted,
                     Tick = resultMessage.Tick,
                     Reason = resultMessage.Reason ?? "",
@@ -364,7 +385,7 @@ public sealed class Authoritative4XInProcessMultiClientSession
     readonly Dictionary<int, Authoritative4XClientReplica> Clients = new();
     readonly Dictionary<int, int> EmpireByPeer = new();
     readonly Dictionary<int, int> PeerByEmpire = new();
-    readonly Dictionary<int, AuthoritativePlayerCommand> Pending = new();
+    readonly Dictionary<AuthoritativeCommandKey, AuthoritativePlayerCommand> Pending = new();
     readonly Dictionary<int, AuthoritativeCommandResult> LastResults = new();
     readonly Dictionary<int, AuthoritativeStateSnapshot> LastSnapshots = new();
     readonly Dictionary<int, List<AuthoritativeDiplomacyPopup>> Popups = new();
@@ -394,7 +415,6 @@ public sealed class Authoritative4XInProcessMultiClientSession
 
     public void SubmitFromClient(int peerId, AuthoritativePlayerCommand command)
     {
-        Pending[command.Sequence] = command;
         Transport.Send(HostPeer, command.ToMessage(peerId));
         Pump();
     }
@@ -420,10 +440,12 @@ public sealed class Authoritative4XInProcessMultiClientSession
                 ? Authority.RejectAndAdvance(command.Sequence,
                     $"Peer {request.FromPeer} does not control empire {command.EmpireId}.")
                 : Authority.Process(command);
+        result.OriginPeer = request.FromPeer;
         LastAuthoritySnapshot = snapshot;
 
         foreach (int peer in Clients.Keys)
         {
+            Transport.Send(peer, command.ToMessage(request.FromPeer));
             Transport.Send(peer, result.ToMessage(HostPeer));
             Transport.Send(peer, snapshot.ToMessage(HostPeer));
         }
@@ -439,10 +461,15 @@ public sealed class Authoritative4XInProcessMultiClientSession
     {
         switch (message)
         {
+            case AuthoritativeCommandRequestMessage requestMessage:
+                Pending[new AuthoritativeCommandKey(requestMessage.FromPeer, requestMessage.Sequence)] =
+                    AuthoritativePlayerCommand.FromMessage(requestMessage);
+                break;
             case AuthoritativeCommandResultMessage resultMessage:
                 LastResults[peerId] = new AuthoritativeCommandResult
                 {
                     Sequence = resultMessage.Sequence,
+                    OriginPeer = resultMessage.OriginPeer,
                     Accepted = resultMessage.Accepted,
                     Tick = resultMessage.Tick,
                     Reason = resultMessage.Reason ?? "",
@@ -451,7 +478,8 @@ public sealed class Authoritative4XInProcessMultiClientSession
             case AuthoritativeStateSnapshotMessage snapshotMessage:
                 AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.FromMessage(snapshotMessage);
                 if (!LastResults.TryGetValue(peerId, out AuthoritativeCommandResult result)
-                    || !Pending.TryGetValue(result.Sequence, out AuthoritativePlayerCommand command))
+                    || !Pending.TryGetValue(new AuthoritativeCommandKey(result.OriginPeer, result.Sequence),
+                        out AuthoritativePlayerCommand command))
                     throw new System.InvalidOperationException("Received authoritative snapshot without a matching command result.");
                 Clients[peerId].ApplyAuthoritativeResult(command, result, authoritySnapshot);
                 LastSnapshots[peerId] = Clients[peerId].LastSnapshot;
@@ -476,6 +504,7 @@ public sealed class Authoritative4XNetworkHost : IDisposable
     readonly Authoritative4XAuthority Authority;
     readonly Dictionary<int, int> EmpireByPeer;
     readonly Dictionary<int, int> PeerByEmpire;
+    readonly int[] PeerIds;
 
     public AuthoritativeCommandResult LastResult { get; private set; }
     public AuthoritativeStateSnapshot LastAuthoritySnapshot { get; private set; }
@@ -487,6 +516,7 @@ public sealed class Authoritative4XNetworkHost : IDisposable
         Transport = transport;
         EmpireByPeer = new Dictionary<int, int>(empireByPeer);
         PeerByEmpire = empireByPeer.ToDictionary(kv => kv.Value, kv => kv.Key);
+        PeerIds = empireByPeer.Keys.OrderBy(peer => peer).ToArray();
         if (humanEmpireIds != null)
             AuthoritativeHumanPlayers.SetHumanControlledEmpires(authorityUniverse.UState, humanEmpireIds);
         Authority = new Authoritative4XAuthority(authorityUniverse, humanEmpireIds: humanEmpireIds);
@@ -507,11 +537,16 @@ public sealed class Authoritative4XNetworkHost : IDisposable
                 ? Authority.RejectAndAdvance(command.Sequence,
                     $"Peer {request.FromPeer} does not control empire {command.EmpireId}.")
                 : Authority.Process(command);
+        result.OriginPeer = request.FromPeer;
 
         LastResult = result;
         LastAuthoritySnapshot = snapshot;
-        Transport.Send(request.FromPeer, result.ToMessage(HostPeerId));
-        Transport.Send(request.FromPeer, snapshot.ToMessage(HostPeerId));
+        foreach (int peer in PeerIds)
+        {
+            Transport.Send(peer, command.ToMessage(request.FromPeer));
+            Transport.Send(peer, result.ToMessage(HostPeerId));
+            Transport.Send(peer, snapshot.ToMessage(HostPeerId));
+        }
 
         foreach (AuthoritativeDiplomacyPopup popup in Authority.DrainDiplomacyPopups())
         {
@@ -529,7 +564,7 @@ public sealed class Authoritative4XNetworkClient : IDisposable
 {
     readonly TcpLockstepTransport Transport;
     readonly Authoritative4XClientReplica Replica;
-    readonly Dictionary<int, AuthoritativePlayerCommand> Pending = new();
+    readonly Dictionary<AuthoritativeCommandKey, AuthoritativePlayerCommand> Pending = new();
     readonly List<AuthoritativeDiplomacyPopup> Popups = new();
 
     public int PeerId { get; }
@@ -551,7 +586,6 @@ public sealed class Authoritative4XNetworkClient : IDisposable
 
     public void Submit(AuthoritativePlayerCommand command)
     {
-        Pending[command.Sequence] = command;
         Transport.Send(Authoritative4XNetworkHost.HostPeerId, command.ToMessage(PeerId));
     }
 
@@ -563,10 +597,15 @@ public sealed class Authoritative4XNetworkClient : IDisposable
     {
         switch (message)
         {
+            case AuthoritativeCommandRequestMessage requestMessage:
+                Pending[new AuthoritativeCommandKey(requestMessage.FromPeer, requestMessage.Sequence)] =
+                    AuthoritativePlayerCommand.FromMessage(requestMessage);
+                break;
             case AuthoritativeCommandResultMessage resultMessage:
                 LastResult = new AuthoritativeCommandResult
                 {
                     Sequence = resultMessage.Sequence,
+                    OriginPeer = resultMessage.OriginPeer,
                     Accepted = resultMessage.Accepted,
                     Tick = resultMessage.Tick,
                     Reason = resultMessage.Reason ?? "",
@@ -574,9 +613,11 @@ public sealed class Authoritative4XNetworkClient : IDisposable
                 break;
             case AuthoritativeStateSnapshotMessage snapshotMessage:
                 LastAuthoritySnapshot = AuthoritativeStateSnapshot.FromMessage(snapshotMessage);
-                if (LastResult == null || !Pending.TryGetValue(LastResult.Sequence, out AuthoritativePlayerCommand command))
+                if (LastResult == null
+                    || !Pending.TryGetValue(new AuthoritativeCommandKey(LastResult.OriginPeer, LastResult.Sequence),
+                        out AuthoritativePlayerCommand command))
                     throw new InvalidOperationException("Received authoritative snapshot without a matching command result.");
-                Pending.Remove(LastResult.Sequence);
+                Pending.Remove(new AuthoritativeCommandKey(LastResult.OriginPeer, LastResult.Sequence));
                 Replica.ApplyAuthoritativeResult(command, LastResult, LastAuthoritySnapshot);
                 break;
             case AuthoritativeDiplomacyPopupMessage popupMessage:

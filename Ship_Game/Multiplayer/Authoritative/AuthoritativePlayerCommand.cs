@@ -147,6 +147,7 @@ public sealed class AuthoritativePlayerCommand
 public sealed class AuthoritativeCommandResult
 {
     public int Sequence;
+    public int OriginPeer;
     public bool Accepted;
     public uint Tick;
     public string Reason = "";
@@ -156,6 +157,7 @@ public sealed class AuthoritativeCommandResult
         {
             FromPeer = fromPeer,
             Sequence = Sequence,
+            OriginPeer = OriginPeer,
             Accepted = Accepted,
             Tick = Tick,
             Reason = Reason ?? "",

@@ -81,6 +81,23 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(snapshot.SyncDigest, snapshotCopy.SyncDigest);
         Assert.AreEqual(snapshot.Payload, snapshotCopy.Payload);
 
+        var result = new AuthoritativeCommandResultMessage
+        {
+            FromPeer = 1,
+            Sequence = 88,
+            OriginPeer = 3,
+            Accepted = true,
+            Tick = 99,
+            Reason = "ok"
+        };
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(result, toPeer: 4));
+        var resultCopy = (AuthoritativeCommandResultMessage)decoded.Message;
+        Assert.AreEqual(result.Sequence, resultCopy.Sequence);
+        Assert.AreEqual(result.OriginPeer, resultCopy.OriginPeer);
+        Assert.AreEqual(result.Accepted, resultCopy.Accepted);
+        Assert.AreEqual(result.Tick, resultCopy.Tick);
+        Assert.AreEqual(result.Reason, resultCopy.Reason);
+
         var popup = new AuthoritativeDiplomacyPopupMessage
         {
             FromPeer = 1,
@@ -288,6 +305,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsFalse(networkClient.LastResult.Accepted,
                 "The TCP host must reject a peer spoofing another empire.");
             StringAssert.Contains(networkClient.LastResult.Reason, "does not control");
+            Assert.AreEqual(Peer, networkClient.LastResult.OriginPeer);
             Assert.AreEqual(networkClient.LastAuthoritySnapshot.SyncDigest,
                 networkClient.LastClientSnapshot.SyncDigest);
         }
@@ -296,6 +314,55 @@ public class Authoritative4XSessionTests : StarDriveTest
             ResourceManager.Ships.Delete(NetworkDesignName);
             authority.Screen.Dispose();
             client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XMultiClient_BroadcastsAcceptedCommandsToEveryReplica_Headless()
+    {
+        const ulong Seed = 0xBADC0DEUL;
+        const int PeerA = 2;
+        const int PeerB = 3;
+        const int SharedLocalSequence = 500;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld clientA = BuildWorld(Seed);
+        BuiltWorld clientB = BuildWorld(Seed);
+
+        try
+        {
+            int empireA = authority.Player.Id;
+            int empireB = authority.Enemy.Id;
+            var session = new Authoritative4XInProcessMultiClientSession(authority.Screen, new[]
+            {
+                new Authoritative4XClientSpec(PeerA, empireA, clientA.Screen),
+                new Authoritative4XClientSpec(PeerB, empireB, clientB.Screen),
+            });
+
+            session.SubmitFromClient(PeerA, AuthoritativePlayerCommand.SetColonyType(SharedLocalSequence,
+                empireA, authority.Planet.Id, Planet.ColonyType.Research));
+            AssertAccepted(session, PeerA);
+            Assert.AreEqual(PeerA, session.LastResultFor(PeerB).OriginPeer,
+                "Remote replicas must know which peer originated a broadcast command.");
+            Assert.AreEqual(Planet.ColonyType.Research, authority.Planet.CType);
+            Assert.AreEqual(Planet.ColonyType.Research, clientA.UState.GetPlanet(authority.Planet.Id).CType);
+            Assert.AreEqual(Planet.ColonyType.Research, clientB.UState.GetPlanet(authority.Planet.Id).CType);
+            AssertAllSynced(session, PeerA, PeerB);
+
+            session.SubmitFromClient(PeerB, AuthoritativePlayerCommand.SetColonyType(SharedLocalSequence,
+                empireB, authority.EnemyPlanet.Id, Planet.ColonyType.Military));
+            AssertAccepted(session, PeerB);
+            Assert.AreEqual(PeerB, session.LastResultFor(PeerA).OriginPeer,
+                "Same local sequence numbers from different peers must not collide.");
+            Assert.AreEqual(Planet.ColonyType.Military, authority.EnemyPlanet.CType);
+            Assert.AreEqual(Planet.ColonyType.Military, clientA.UState.GetPlanet(authority.EnemyPlanet.Id).CType);
+            Assert.AreEqual(Planet.ColonyType.Military, clientB.UState.GetPlanet(authority.EnemyPlanet.Id).CType);
+            AssertAllSynced(session, PeerA, PeerB);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            clientA.Screen.Dispose();
+            clientB.Screen.Dispose();
         }
     }
 

@@ -120,6 +120,7 @@ public static class LockstepMessageCodec
                     w.Write(result.Accepted);
                     w.Write(result.Tick);
                     WriteString(w, result.Reason);
+                    w.Write(result.OriginPeer);
                     break;
                 case AuthoritativeStateSnapshotMessage snapshot:
                     w.Write(AuthoritativeStateSnapshot);
@@ -266,6 +267,8 @@ public static class LockstepMessageCodec
                     Tick = r.ReadUInt32(),
                     Reason = ReadString(r),
                 };
+                ((AuthoritativeCommandResultMessage)message).OriginPeer =
+                    r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
                 break;
             case AuthoritativeStateSnapshot:
                 message = new AuthoritativeStateSnapshotMessage

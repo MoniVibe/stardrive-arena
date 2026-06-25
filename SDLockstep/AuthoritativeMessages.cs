@@ -19,6 +19,7 @@ public sealed class AuthoritativeCommandRequestMessage : LockstepMessage
 public sealed class AuthoritativeCommandResultMessage : LockstepMessage
 {
     public int Sequence;
+    public int OriginPeer;
     public bool Accepted;
     public uint Tick;
     public string Reason = "";
