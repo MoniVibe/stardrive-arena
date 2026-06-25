@@ -28,6 +28,12 @@ public sealed class ArenaMultiplayerSettings
     public int MaxTurns = 420;
     public int CommandEveryTurns = 1;
     public string PlayerPreference = "United";
+    public string HostRacePreference = "United";
+    public string JoinRacePreference = "";
+    public string HostLoadoutTrait = ArenaStartArchetype.Wingmates.ToString();
+    public string JoinLoadoutTrait = ArenaStartArchetype.Wingmates.ToString();
+    public float GameSpeed = 1f;
+    public bool StartPaused;
     public string[] HostFleetDesignNames = Array.Empty<string>();
     public string[] JoinFleetDesignNames = Array.Empty<string>();
 
@@ -43,6 +49,12 @@ public sealed class ArenaMultiplayerSettings
             h.AddInt(MaxTurns);
             h.AddInt(CommandEveryTurns);
             h.AddString(PlayerPreference);
+            h.AddString(HostRacePreference);
+            h.AddString(JoinRacePreference);
+            h.AddString(HostLoadoutTrait);
+            h.AddString(JoinLoadoutTrait);
+            h.AddInt((int)(ClampGameSpeed(GameSpeed) * 1000f));
+            h.AddBool(StartPaused);
             AddFleet(ref h, HostFleetDesignNames);
             AddFleet(ref h, JoinFleetDesignNames);
             return "0x" + h.Value.ToString("X16", CultureInfo.InvariantCulture);
@@ -58,9 +70,16 @@ public sealed class ArenaMultiplayerSettings
             RngSeed = RngSeed,
             InputDelay = InputDelay,
             MaxTurns = MaxTurns,
+            CommandEveryTurns = CommandEveryTurns,
+            GameSpeed = ClampGameSpeed(GameSpeed),
+            StartPaused = StartPaused,
             SettingsHash = SettingsHash,
             BuildHash = ArenaMultiplayerPeerSignature.Hash(this),
             BuildSummary = ArenaMultiplayerPeerSignature.Summary(this),
+            HostRacePreference = HostRacePreference,
+            JoinRacePreference = JoinRacePreference,
+            HostLoadoutTrait = HostLoadoutTrait,
+            JoinLoadoutTrait = JoinLoadoutTrait,
             HostFleet = EncodeFleet(HostFleetDesignNames),
             JoinFleet = EncodeFleet(JoinFleetDesignNames),
         };
@@ -72,8 +91,14 @@ public sealed class ArenaMultiplayerSettings
             RngSeed = message.RngSeed,
             InputDelay = Math.Max(0, message.InputDelay),
             MaxTurns = Math.Max(1, message.MaxTurns),
-            CommandEveryTurns = 1,
-            PlayerPreference = "United",
+            CommandEveryTurns = Math.Max(1, message.CommandEveryTurns),
+            PlayerPreference = message.HostRacePreference.NotEmpty() ? message.HostRacePreference : "United",
+            HostRacePreference = message.HostRacePreference.NotEmpty() ? message.HostRacePreference : "United",
+            JoinRacePreference = message.JoinRacePreference ?? "",
+            HostLoadoutTrait = NormalizeLoadoutTrait(message.HostLoadoutTrait),
+            JoinLoadoutTrait = NormalizeLoadoutTrait(message.JoinLoadoutTrait),
+            GameSpeed = ClampGameSpeed(message.GameSpeed),
+            StartPaused = message.StartPaused,
             HostFleetDesignNames = DecodeFleet(message.HostFleet),
             JoinFleetDesignNames = DecodeFleet(message.JoinFleet),
         };
@@ -87,15 +112,27 @@ public sealed class ArenaMultiplayerSettings
             InputDelay = Math.Max(0, InputDelay),
             MaxTurns = Math.Max(1, MaxTurns),
             CommandEveryTurns = Math.Max(1, CommandEveryTurns),
-            PlayerPreference = PlayerPreference.NotEmpty() ? PlayerPreference : "United",
+            PlayerPreference = HostRacePreference.NotEmpty()
+                ? HostRacePreference
+                : PlayerPreference.NotEmpty() ? PlayerPreference : "United",
+            HostRacePreference = HostRacePreference.NotEmpty()
+                ? HostRacePreference
+                : PlayerPreference.NotEmpty() ? PlayerPreference : "United",
+            JoinRacePreference = JoinRacePreference ?? "",
+            HostLoadoutTrait = NormalizeLoadoutTrait(HostLoadoutTrait),
+            JoinLoadoutTrait = NormalizeLoadoutTrait(JoinLoadoutTrait),
+            GameSpeed = ClampGameSpeed(GameSpeed),
+            StartPaused = StartPaused,
             HostFleetDesignNames = NormalizeFleet(HostFleetDesignNames),
             JoinFleetDesignNames = NormalizeFleet(JoinFleetDesignNames),
         };
 
         if (copy.HostFleetDesignNames.Length == 0)
-            copy.HostFleetDesignNames = DefaultFleetForSeed((ulong)(uint)copy.MatchSeed ^ 0xA12E_0001ul);
+            copy.HostFleetDesignNames = DefaultFleetForSeed((ulong)(uint)copy.MatchSeed ^ 0xA12E_0001ul,
+                ParseLoadoutTrait(copy.HostLoadoutTrait));
         if (copy.JoinFleetDesignNames.Length == 0)
-            copy.JoinFleetDesignNames = DefaultFleetForSeed((ulong)(uint)copy.MatchSeed ^ 0xA12E_0002ul);
+            copy.JoinFleetDesignNames = DefaultFleetForSeed((ulong)(uint)copy.MatchSeed ^ 0xA12E_0002ul,
+                ParseLoadoutTrait(copy.JoinLoadoutTrait));
         return copy;
     }
 
@@ -115,9 +152,25 @@ public sealed class ArenaMultiplayerSettings
             .Take(32)
             .ToArray();
 
-    static string[] DefaultFleetForSeed(ulong seed)
+    public static string NormalizeLoadoutTrait(string trait)
     {
-        IShipDesign[] designs = CareerManager.StartingRosterDesigns(ArenaStartArchetype.Wingmates, seed);
+        ArenaStartArchetype parsed = ParseLoadoutTrait(trait);
+        return parsed.ToString();
+    }
+
+    public static ArenaStartArchetype ParseLoadoutTrait(string trait)
+    {
+        if (Enum.TryParse(trait ?? "", ignoreCase: true, out ArenaStartArchetype parsed))
+            return parsed;
+        return ArenaStartArchetype.Wingmates;
+    }
+
+    public static float ClampGameSpeed(float speed)
+        => Math.Max(0.25f, Math.Min(4f, speed));
+
+    static string[] DefaultFleetForSeed(ulong seed, ArenaStartArchetype archetype)
+    {
+        IShipDesign[] designs = CareerManager.StartingRosterDesigns(archetype, seed);
         if (designs == null || designs.Length == 0)
         {
             IShipDesign fallback = ArenaFightScreen.AutoPickPlayerWarship(null, careerLevel: 0);
@@ -260,6 +313,18 @@ public static class ArenaMultiplayerSession
         return RunTwoPeerLockstep(settings, hostScreen, joinScreen, new FakeTransport(), forceDesyncAfterTurn);
     }
 
+    public static string DesyncSummary(DesyncDetector desync)
+    {
+        if (desync == null || !desync.HasDesync)
+            return "";
+
+        string reference = desync.ReferencePeer >= 0
+            ? $"peer {desync.ReferencePeer} 0x{desync.ReferenceHi:X16}:0x{desync.ReferenceLo:X16}"
+            : "no reference";
+        string divergent = $"peer {desync.DivergentPeer} 0x{desync.DivergentHi:X16}:0x{desync.DivergentLo:X16}";
+        return $"turn {desync.FirstDivergentTick} {reference} != {divergent}";
+    }
+
     public static ArenaMultiplayerRunResult RunNetworkHost(ArenaMultiplayerSettings settings, int port,
         Action<string> log = null)
     {
@@ -376,7 +441,8 @@ public static class ArenaMultiplayerSession
     static ArenaFightScreen BuildPeerScreen(ArenaMultiplayerSettings settings)
     {
         settings = (settings ?? new ArenaMultiplayerSettings()).WithResolvedFleets();
-        ArenaFightScreen screen = ArenaFightScreen.Create(settings.PlayerPreference, settings.MatchSeed, startAtHub: false);
+        ArenaFightScreen screen = ArenaFightScreen.Create(settings.HostRacePreference, settings.MatchSeed,
+            startAtHub: false, opponentPreference: settings.JoinRacePreference);
         screen.ConfigureMultiplayerPvP(settings);
         screen.CreateSimThread = false;
         screen.UState.Objects.EnableParallelUpdate = false;
@@ -478,6 +544,7 @@ public static class ArenaMultiplayerSession
             UpdateMatchOutcome(result, turn, screen.MultiplayerMatchStatus(), sim.Hash());
             if (result.Desynced)
             {
+                Log.Warning($"Arena MP DESYNC network-host turn={result.DesyncTurn}: {result.DesyncReason}");
                 log?.Invoke($"DESYNC at turn {result.DesyncTurn}: {result.DesyncReason}");
                 break;
             }
@@ -592,8 +659,9 @@ public static class ArenaMultiplayerSession
             result.Desynced = true;
             result.DesyncTurn = desync.HasDesync ? desync.FirstDivergentTick : turn;
             result.DesyncReason = desync.HasDesync
-                ? $"peer {desync.DivergentPeer} diverged"
+                ? DesyncSummary(desync)
                 : "local hash comparison diverged";
+            Log.Warning($"Arena MP DESYNC in-process turn={result.DesyncTurn}: {result.DesyncReason}");
         }
     }
 
@@ -606,7 +674,7 @@ public static class ArenaMultiplayerSession
         {
             result.Desynced = true;
             result.DesyncTurn = desync.FirstDivergentTick;
-            result.DesyncReason = $"peer {desync.DivergentPeer} diverged";
+            result.DesyncReason = DesyncSummary(desync);
         }
     }
 

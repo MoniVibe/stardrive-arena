@@ -29,6 +29,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     UITextEntry SeedEntry;
     UITextEntry SpeedEntry;
     TcpLockstepTransport Transport;
+    ArenaMultiplayerTelemetry LobbyTelemetry;
     ArenaMultiplayerRole? LocalRole;
     LobbyPeer LocalPeer = new() { PlayerName = "Local", RacePreference = "United", LoadoutTrait = "Wingmates" };
     LobbyPeer RemotePeer = new() { PlayerName = "Remote", RacePreference = "-", LoadoutTrait = "-", Ready = false };
@@ -181,10 +182,13 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         LocalRole = ArenaMultiplayerRole.Host;
         LocalPeer.PlayerName = "Host";
         ApplyLocalSelection();
+        LobbyTelemetry?.Dispose();
+        LobbyTelemetry = ArenaMultiplayerTelemetry.Start("Host", "lobby", CreateDefaultSettings(ParseTurns()));
         Transport = TcpLockstepTransport.Host(ParsePort(), ArenaMultiplayerSession.JoinPlayerPeerId);
         Transport.AddObserver(LockstepHost.HostPeerId, OnHostMessage);
         SendLocalLobby();
         SetStatus($"HOST listening on port {ParsePort()}\nPick setup, ready, then launch when remote is ready.");
+        LobbyTelemetry.Event("HOST_LISTEN", $"port={ParsePort()}");
         GameAudio.AffirmativeClick();
     }
 
@@ -203,6 +207,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         LocalRole = ArenaMultiplayerRole.Join;
         LocalPeer.PlayerName = "Join";
         ApplyLocalSelection();
+        LobbyTelemetry?.Dispose();
+        LobbyTelemetry = ArenaMultiplayerTelemetry.Start("Join", "lobby", CreateDefaultSettings(ParseTurns()));
         Transport = TcpLockstepTransport.Join(host, ParsePort(), LockstepHost.HostPeerId);
         Transport.AddObserver(ArenaMultiplayerSession.JoinPlayerPeerId, OnJoinMessage);
         Transport.Send(LockstepHost.HostPeerId, new SessionHelloMessage
@@ -216,6 +222,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         });
         SendLocalLobby();
         SetStatus($"JOIN connected to {host}:{ParsePort()}\nPress ready; host launches the match.");
+        LobbyTelemetry.Event("JOIN_CONNECT", $"host={host} port={ParsePort()}");
         GameAudio.AffirmativeClick();
     }
 
@@ -230,6 +237,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         LocalPeer.Ready = !LocalPeer.Ready;
         SendLocalLobby();
         SetStatus(LocalPeer.Ready ? "Local player ready." : "Local player un-ready.");
+        LobbyTelemetry?.Event("LOCAL_READY", $"ready={LocalPeer.Ready}");
         GameAudio.AffirmativeClick();
     }
 
@@ -261,10 +269,13 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             Transport.Send(ArenaMultiplayerSession.JoinPlayerPeerId,
                 new SessionErrorMessage { FromPeer = LockstepHost.HostPeerId, Error = error });
             SetStatus(error);
+            LobbyTelemetry?.Event("PREFLIGHT_REJECT", error);
             GameAudio.NegativeClick();
             return;
         }
 
+        LobbyTelemetry?.Event("LAUNCH_HOST",
+            $"settingsHash={settings.SettingsHash} sessionHash={ArenaMultiplayerPeerSignature.Hash(settings)}");
         Transport.Send(ArenaMultiplayerSession.JoinPlayerPeerId, settings.ToStartMessage());
         LaunchVisibleMatch(ArenaMultiplayerRole.Host, settings);
     }
@@ -277,15 +288,27 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                 ? $"Arena multiplayer protocol mismatch. Local {ArenaMultiplayerSettings.ProtocolVersion}, remote {h.ProtocolVersion}."
                 : ArenaMultiplayerPeerSignature.ValidateEnvironment(h.BuildHash, h.BuildSummary, "remote");
             if (error.NotEmpty())
+            {
                 SetStatus(error);
+                LobbyTelemetry?.Event("HELLO_REJECT", error);
+            }
+            else
+            {
+                LobbyTelemetry?.Event("HELLO", $"peer={h.PeerId} summary='{h.BuildSummary}'");
+            }
         }
         if (message is SessionLobbyMessage lobby && lobby.PeerId == ArenaMultiplayerSession.JoinPlayerPeerId)
         {
             RemotePeer = LobbyPeer.From(lobby, "Join");
             SetStatus($"Remote lobby updated.\n{RemotePeer.Summary}");
+            LobbyTelemetry?.Event("REMOTE_LOBBY",
+                $"ready={RemotePeer.Ready} race='{RemotePeer.RacePreference}' summary='{RemotePeer.BuildSummary}'");
         }
         if (message is SessionErrorMessage e)
+        {
             SetStatus(e.Error);
+            LobbyTelemetry?.Event("SESSION_ERROR", e.Error);
+        }
     }
 
     void OnJoinMessage(LockstepMessage message)
@@ -303,12 +326,18 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             if (error.NotEmpty())
             {
                 SetStatus(error);
+                LobbyTelemetry?.Event("START_REJECT", error);
                 return;
             }
+            LobbyTelemetry?.Event("START_RECEIVED",
+                $"settingsHash={settings.SettingsHash} sessionHash={ArenaMultiplayerPeerSignature.Hash(settings)}");
             PendingLaunchSettings = settings;
         }
         if (message is SessionErrorMessage e)
+        {
             SetStatus(e.Error);
+            LobbyTelemetry?.Event("SESSION_ERROR", e.Error);
+        }
     }
 
     void SendLocalLobby()
@@ -341,6 +370,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         Launching = true;
         TcpLockstepTransport transport = Transport;
         Transport = null;
+        LobbyTelemetry?.Event("LAUNCH_VISIBLE", $"role={role}");
+        LobbyTelemetry?.Dispose();
+        LobbyTelemetry = null;
         var live = new ArenaMultiplayerLiveSession(role, transport, settings);
         ArenaFightScreen screen = ArenaFightScreen.Create(settings.HostRacePreference, settings.MatchSeed,
             startAtHub: false, opponentPreference: settings.JoinRacePreference);
@@ -372,9 +404,15 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         {
             Transport.Poll();
             if (Transport.LastError.NotEmpty())
+            {
                 SetStatus("NETWORK: " + Transport.LastError);
+                LobbyTelemetry?.NetworkError(Transport.LastError);
+            }
             if (LocalRole == ArenaMultiplayerRole.Host && Transport.IsConnected && CurrentStatus.StartsWith("HOST listening", StringComparison.Ordinal))
+            {
                 SetStatus("Client connected. Ready up and launch when both sides are ready.");
+                LobbyTelemetry?.Event("CLIENT_CONNECTED");
+            }
         }
         if (PendingLaunchSettings != null)
         {
@@ -495,6 +533,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     {
         Transport?.Dispose();
         Transport = null;
+        LobbyTelemetry?.Dispose();
+        LobbyTelemetry = null;
         base.ExitScreen();
         ScreenManager.GoToScreen(new Ship_Game.GameScreens.MainMenu.MainMenuScreen(), clear3DObjects: true);
     }

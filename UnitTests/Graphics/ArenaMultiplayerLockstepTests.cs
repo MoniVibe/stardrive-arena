@@ -351,6 +351,50 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         }
     }
 
+    [TestMethod]
+    public void ArenaMultiplayerTelemetryWritesSessionArtifacts_Headless()
+    {
+        LoadAllGameData();
+        string dir = Path.Combine(Path.GetTempPath(), $"arena_mp_telemetry_{Guid.NewGuid():N}");
+        string savedDir = ArenaMultiplayerTelemetry.OutputDirectoryOverride;
+
+        try
+        {
+            Directory.CreateDirectory(dir);
+            ArenaMultiplayerTelemetry.OutputDirectoryOverride = dir;
+            ArenaMultiplayerSettings settings = ArenaMultiplayerLobbyScreen.CreateDefaultSettings(90).WithResolvedFleets();
+
+            string sessionPath;
+            string lastPath;
+            using (ArenaMultiplayerTelemetry telemetry = ArenaMultiplayerTelemetry.Start("Host", "headless-proof", settings))
+            {
+                sessionPath = telemetry.SessionPath;
+                lastPath = telemetry.LastSessionPath;
+                telemetry.Event("PROOF", "hello");
+                telemetry.Turn(60, ArenaMultiplayerRole.Host, "0x1111111111111111:0x2222222222222222",
+                    simTick: 61, remoteChecksumTick: 60, commandsSubmitted: 120,
+                    playerAlive: 2, enemyAlive: 2, forced: true);
+            }
+
+            Assert.IsTrue(File.Exists(sessionPath), "Telemetry should write a unique session artifact.");
+            Assert.IsTrue(File.Exists(lastPath), "Telemetry should update the stable last-session artifact.");
+            string text = File.ReadAllText(lastPath);
+            StringAssert.Contains(text, "BEGIN");
+            StringAssert.Contains(text, "ENV");
+            StringAssert.Contains(text, "SETTINGS");
+            StringAssert.Contains(text, settings.SettingsHash);
+            StringAssert.Contains(text, "FLEETS");
+            StringAssert.Contains(text, "PROOF hello");
+            StringAssert.Contains(text, "TURN turn=60");
+            StringAssert.Contains(text, "END");
+        }
+        finally
+        {
+            ArenaMultiplayerTelemetry.OutputDirectoryOverride = savedDir;
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
     static string[] FleetNames(ArenaStartArchetype archetype, ulong seed)
         => CareerManager.StartingRosterDesigns(archetype, seed)
             .Select(d => d.Name)

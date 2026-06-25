@@ -71,10 +71,12 @@
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaMonteCarloTelemetry.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaMultiplayerLobbyScreen.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaMultiplayerSession.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaMultiplayerTelemetry.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaPerks.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaPlugin.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaPopupListItem.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaProgressionSimulator.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaRegularMultiplayerSettings.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaRivalDossiers.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaScoutIntel.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaStubScreens.cs" />

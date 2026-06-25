@@ -84,6 +84,7 @@ public sealed partial class ArenaFightScreen
     LockstepClient MultiplayerLiveClient;
     UniverseStateLockstepSimulation MultiplayerLiveSim;
     ArenaMultiplayerRunResult MultiplayerLiveResult;
+    ArenaMultiplayerTelemetry MultiplayerTelemetry;
     readonly Dictionary<uint, HashSet<int>> MultiplayerSubmittedInputs = new();
     uint MultiplayerLiveTurn;
     float MultiplayerLiveAccumulator;
@@ -134,6 +135,8 @@ public sealed partial class ArenaFightScreen
     {
         MultiplayerLiveSession = session ?? throw new ArgumentNullException(nameof(session));
         ArenaMultiplayerSettings settings = session.Settings.WithResolvedFleets();
+        MultiplayerTelemetry?.Dispose();
+        MultiplayerTelemetry = ArenaMultiplayerTelemetry.Start(session.Role.ToString(), "live-arena", settings);
         ConfigureMultiplayerPvP(settings);
         CreateSimThread = false;
         ArenaEngineCapabilities.TrySetParallelUpdate(UState.Objects, false);
@@ -141,6 +144,7 @@ public sealed partial class ArenaFightScreen
         MultiplayerLivePaused = settings.StartPaused;
         MultiplayerLiveSpeed = ArenaMultiplayerSettings.ClampGameSpeed(settings.GameSpeed);
         MultiplayerLiveStatus = $"{session.Role.ToString().ToUpperInvariant()} armed";
+        MultiplayerTelemetry.Event("ARMED", $"paused={MultiplayerLivePaused} speed={MultiplayerLiveSpeed:0.###}");
     }
 
     public void InitializeMultiplayerLiveIfNeeded()
@@ -178,6 +182,9 @@ public sealed partial class ArenaFightScreen
         MultiplayerLiveStatus = $"{MultiplayerLiveSession.Role.ToString().ToUpperInvariant()} match started";
         MultiplayerLiveInitialized = true;
         UState.Paused = MultiplayerLivePaused;
+        MultiplayerTelemetry.Event("MATCH_STARTED",
+            $"snapshotPlayerShips={MultiplayerLiveResult.HostSnapshot.PlayerShipIds.Length} "
+            + $"snapshotEnemyShips={MultiplayerLiveResult.HostSnapshot.EnemyShipIds.Length}");
     }
 
     public void StartMultiplayerPvPMatch()
@@ -213,6 +220,10 @@ public sealed partial class ArenaFightScreen
         RunStarted = PlayerShips.Count > 0 && EnemyShips.Count > 0;
         if (!RunStarted)
             throw new InvalidOperationException("Arena PvP lockstep failed to spawn both fleets.");
+        MultiplayerTelemetry?.Event("PVP_SPAWNED",
+            $"hostDesigns=[{string.Join(",", hostDesigns.Select(d => d.Name))}] "
+            + $"joinDesigns=[{string.Join(",", joinDesigns.Select(d => d.Name))}] "
+            + $"playerShips={PlayerShips.Count} enemyShips={EnemyShips.Count}");
     }
 
     public void PrepareForMultiplayerLockstep(uint rngSeed)
@@ -233,6 +244,7 @@ public sealed partial class ArenaFightScreen
         if (MultiplayerLiveSession.Transport.LastError.NotEmpty())
         {
             MultiplayerLiveStatus = "NETWORK: " + MultiplayerLiveSession.Transport.LastError;
+            MultiplayerTelemetry?.NetworkError(MultiplayerLiveSession.Transport.LastError);
             return;
         }
         if (MultiplayerLivePaused)
@@ -279,6 +291,7 @@ public sealed partial class ArenaFightScreen
             if (ShouldHaveSubmittedForExecTick(settings, turn) && !HasBothInputsForTurn(turn))
             {
                 MultiplayerLiveStatus = $"waiting for turn {turn} input";
+                MultiplayerTelemetry?.Event("WAIT_INPUT", $"turn={turn}");
                 return false;
             }
 
@@ -296,6 +309,7 @@ public sealed partial class ArenaFightScreen
             if (MultiplayerLiveSim.Tick <= turn)
             {
                 MultiplayerLiveStatus = $"waiting for host turn {turn}";
+                MultiplayerTelemetry?.Event("WAIT_HOST_FRAME", $"turn={turn} simTick={MultiplayerLiveSim.Tick}");
                 return false;
             }
 
@@ -327,7 +341,12 @@ public sealed partial class ArenaFightScreen
     void OnMultiplayerHostMessage(LockstepMessage message)
     {
         if (message is ChecksumMessage c && c.FromPeer == ArenaMultiplayerSession.JoinPlayerPeerId)
+        {
             MultiplayerRemoteChecksumTick = Math.Max(MultiplayerRemoteChecksumTick, c.Tick);
+            if (c.Tick <= 5 || c.Tick % 60 == 0)
+                MultiplayerTelemetry?.Event("REMOTE_CHECKSUM",
+                    $"turn={c.Tick} peer={c.FromPeer} hash=0x{c.Hi:X16}:0x{c.Lo:X16}");
+        }
         if (message is SubmitCommandMessage s)
         {
             if (!MultiplayerSubmittedInputs.TryGetValue(s.Command.Tick, out HashSet<int> peers))
@@ -336,6 +355,9 @@ public sealed partial class ArenaFightScreen
                 MultiplayerSubmittedInputs[s.Command.Tick] = peers;
             }
             peers.Add(s.Command.PlayerId);
+            if (s.Command.Tick <= 5 || s.Command.Tick % 60 == 0)
+                MultiplayerTelemetry?.Event("REMOTE_SUBMIT",
+                    $"execTick={s.Command.Tick} player={s.Command.PlayerId} kind={s.Command.Kind}");
         }
     }
 
@@ -346,11 +368,14 @@ public sealed partial class ArenaFightScreen
             MultiplayerLivePaused = c.Paused;
             MultiplayerLiveSpeed = ArenaMultiplayerSettings.ClampGameSpeed(c.GameSpeed);
             UState.GameSpeed = MultiplayerLiveSpeed;
+            MultiplayerTelemetry?.Event("CONTROL",
+                $"paused={MultiplayerLivePaused} speed={MultiplayerLiveSpeed:0.###}");
         }
         if (message is SessionErrorMessage e)
         {
             MultiplayerLiveComplete = true;
             MultiplayerLiveStatus = e.Error;
+            MultiplayerTelemetry?.Event("SESSION_ERROR", e.Error);
         }
     }
 
@@ -359,6 +384,7 @@ public sealed partial class ArenaFightScreen
         if (MultiplayerLiveSession?.Role != ArenaMultiplayerRole.Host || MultiplayerLiveComplete)
             return;
         MultiplayerLivePaused = !MultiplayerLivePaused;
+        MultiplayerTelemetry?.Event("HOST_PAUSE", $"paused={MultiplayerLivePaused}");
         SendMultiplayerControl();
     }
 
@@ -370,6 +396,7 @@ public sealed partial class ArenaFightScreen
             : MultiplayerLiveSpeed < 1.5f ? 2f
             : MultiplayerLiveSpeed < 3.5f ? 4f
             : 0.5f;
+        MultiplayerTelemetry?.Event("HOST_SPEED", $"speed={MultiplayerLiveSpeed:0.###}");
         SendMultiplayerControl();
     }
 
@@ -389,11 +416,17 @@ public sealed partial class ArenaFightScreen
     {
         MultiplayerLiveResult.TurnHashes.Add(new ArenaMultiplayerTurnHash(turn, hash, hash));
         MultiplayerLiveResult.FinalHash = MultiplayerHashText(hash);
+        ArenaMultiplayerMatchStatus status = MultiplayerMatchStatus();
+        MultiplayerTelemetry?.Turn(turn, MultiplayerLiveSession.Role, MultiplayerLiveResult.FinalHash,
+            MultiplayerLiveSim?.Tick ?? 0, MultiplayerRemoteChecksumTick,
+            MultiplayerLiveResult.CommandsSubmitted, status.PlayerAlive, status.EnemyAlive,
+            forced: desync?.HasDesync == true);
         if (desync != null && desync.HasDesync)
         {
             MultiplayerLiveResult.Desynced = true;
             MultiplayerLiveResult.DesyncTurn = desync.FirstDivergentTick;
             MultiplayerLiveResult.DesyncReason = ArenaMultiplayerSession.DesyncSummary(desync);
+            MultiplayerTelemetry?.Desync(turn, MultiplayerLiveResult, desync);
             Log.Warning($"Arena MP DESYNC live role={MultiplayerLiveSession.Role} turn={turn}: "
                         + MultiplayerLiveResult.DesyncReason);
         }
@@ -403,6 +436,8 @@ public sealed partial class ArenaFightScreen
     {
         MultiplayerLiveComplete = true;
         MultiplayerLiveStatus = $"COMPLETE {reason}\nturns {MultiplayerLiveResult.TurnsCompleted}\nfinal {MultiplayerLiveResult.FinalHash}";
+        MultiplayerTelemetry?.Event("COMPLETE",
+            $"reason='{reason}' turns={MultiplayerLiveResult.TurnsCompleted} final={MultiplayerLiveResult.FinalHash}");
         Log.Warning($"Arena MP COMPLETE role={MultiplayerLiveSession.Role} reason='{reason}' "
                     + $"turns={MultiplayerLiveResult.TurnsCompleted} final={MultiplayerLiveResult.FinalHash}");
     }
@@ -455,6 +490,8 @@ public sealed partial class ArenaFightScreen
     {
         MultiplayerLiveSession?.Dispose();
         MultiplayerLiveSession = null;
+        MultiplayerTelemetry?.Dispose();
+        MultiplayerTelemetry = null;
         base.ExitScreen();
     }
 
