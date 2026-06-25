@@ -32,8 +32,9 @@ namespace Ship_Game.GameScreens.NewGame
 
         public UniverseGenerator(UniverseParams p)
         {
-            // TODO: allow players to enter their own universe seed
-            Random = new SeededRandom();
+            // GenerationSeed == 0 keeps legacy clock-seeded generation. A non-zero seed is used by
+            // deterministic/lockstep setup so map placement and background selection match across peers.
+            Random = p.GenerationSeed != 0 ? new SeededRandom(p.GenerationSeed) : new SeededRandom();
 
             foreach (Artifact art in ResourceManager.ArtifactsDict.Values)
                 art.Discovered = false;
@@ -61,7 +62,9 @@ namespace Ship_Game.GameScreens.NewGame
 
             us = new UniverseScreen(p, uSize);
             UState = us.UState;
-            UState.BackgroundSeed = new Random().Next();
+            UState.BackgroundSeed = p.GenerationSeed != 0
+                ? p.GenerationSeed ^ unchecked((int)0x5A17BEEF)
+                : new Random().Next();
 
             UState.P.DisableInhibitionWarning = p.Difficulty > GameDifficulty.Hard;
 

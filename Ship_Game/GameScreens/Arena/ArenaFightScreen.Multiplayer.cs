@@ -100,6 +100,17 @@ public sealed partial class ArenaFightScreen
 
     public bool HasPendingMultiplayerPvPSetup => MultiplayerPvPMode;
 
+    public override bool HandleInput(InputState input)
+    {
+        if (!MultiplayerLiveActive)
+            return base.HandleInput(input);
+
+        // In network lockstep, local world input must not mutate UniverseScreen state directly.
+        // Only screen UI controls are allowed here; gameplay commands enter through SimCommand frames.
+        Input = input;
+        return HandleScreenInputOnly(input);
+    }
+
     public ArenaMultiplayerShipSnapshot MultiplayerSnapshot()
         => new(
             ArenaPlayer?.Id ?? 1,
@@ -382,7 +393,9 @@ public sealed partial class ArenaFightScreen
         {
             MultiplayerLiveResult.Desynced = true;
             MultiplayerLiveResult.DesyncTurn = desync.FirstDivergentTick;
-            MultiplayerLiveResult.DesyncReason = $"peer {desync.DivergentPeer} diverged";
+            MultiplayerLiveResult.DesyncReason = ArenaMultiplayerSession.DesyncSummary(desync);
+            Log.Warning($"Arena MP DESYNC live role={MultiplayerLiveSession.Role} turn={turn}: "
+                        + MultiplayerLiveResult.DesyncReason);
         }
     }
 
@@ -390,6 +403,8 @@ public sealed partial class ArenaFightScreen
     {
         MultiplayerLiveComplete = true;
         MultiplayerLiveStatus = $"COMPLETE {reason}\nturns {MultiplayerLiveResult.TurnsCompleted}\nfinal {MultiplayerLiveResult.FinalHash}";
+        Log.Warning($"Arena MP COMPLETE role={MultiplayerLiveSession.Role} reason='{reason}' "
+                    + $"turns={MultiplayerLiveResult.TurnsCompleted} final={MultiplayerLiveResult.FinalHash}");
     }
 
     bool HasBothInputsForTurn(uint turn)

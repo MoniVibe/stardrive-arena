@@ -303,7 +303,7 @@ namespace Ship_Game
             InvokeLoadContent();
         }
 
-        public override bool HandleInput(InputState input)
+        protected bool HandleScreenInputOnly(InputState input)
         {
             if (!Visible || !Enabled || !IsActive)
                 return false;
@@ -322,6 +322,9 @@ namespace Ship_Game
             }
             return false;
         }
+
+        public override bool HandleInput(InputState input)
+            => HandleScreenInputOnly(input);
 
         public override void Draw(SpriteBatch batch, DrawTimes elapsed)
         {

@@ -79,6 +79,11 @@ public sealed class DesyncDetector
     public bool HasDesync { get; private set; }
     public long FirstDivergentTick { get; private set; } = -1;
     public int DivergentPeer { get; private set; } = -1;
+    public int ReferencePeer { get; private set; } = -1;
+    public ulong ReferenceLo { get; private set; }
+    public ulong ReferenceHi { get; private set; }
+    public ulong DivergentLo { get; private set; }
+    public ulong DivergentHi { get; private set; }
 
     public void Report(int peer, uint tick, ulong lo, ulong hi)
     {
@@ -89,6 +94,11 @@ public sealed class DesyncDetector
                 HasDesync = true;
                 FirstDivergentTick = tick;
                 DivergentPeer = peer;
+                ReferencePeer = prev.peer;
+                ReferenceLo = prev.lo;
+                ReferenceHi = prev.hi;
+                DivergentLo = lo;
+                DivergentHi = hi;
             }
         }
         else

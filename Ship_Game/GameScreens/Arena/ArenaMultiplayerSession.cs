@@ -313,6 +313,18 @@ public static class ArenaMultiplayerSession
         return RunTwoPeerLockstep(settings, hostScreen, joinScreen, new FakeTransport(), forceDesyncAfterTurn);
     }
 
+    public static string DesyncSummary(DesyncDetector desync)
+    {
+        if (desync == null || !desync.HasDesync)
+            return "";
+
+        string reference = desync.ReferencePeer >= 0
+            ? $"peer {desync.ReferencePeer} 0x{desync.ReferenceHi:X16}:0x{desync.ReferenceLo:X16}"
+            : "no reference";
+        string divergent = $"peer {desync.DivergentPeer} 0x{desync.DivergentHi:X16}:0x{desync.DivergentLo:X16}";
+        return $"turn {desync.FirstDivergentTick} {reference} != {divergent}";
+    }
+
     public static ArenaMultiplayerRunResult RunNetworkHost(ArenaMultiplayerSettings settings, int port,
         Action<string> log = null)
     {
@@ -532,6 +544,7 @@ public static class ArenaMultiplayerSession
             UpdateMatchOutcome(result, turn, screen.MultiplayerMatchStatus(), sim.Hash());
             if (result.Desynced)
             {
+                Log.Warning($"Arena MP DESYNC network-host turn={result.DesyncTurn}: {result.DesyncReason}");
                 log?.Invoke($"DESYNC at turn {result.DesyncTurn}: {result.DesyncReason}");
                 break;
             }
@@ -646,8 +659,9 @@ public static class ArenaMultiplayerSession
             result.Desynced = true;
             result.DesyncTurn = desync.HasDesync ? desync.FirstDivergentTick : turn;
             result.DesyncReason = desync.HasDesync
-                ? $"peer {desync.DivergentPeer} diverged"
+                ? DesyncSummary(desync)
                 : "local hash comparison diverged";
+            Log.Warning($"Arena MP DESYNC in-process turn={result.DesyncTurn}: {result.DesyncReason}");
         }
     }
 
@@ -660,7 +674,7 @@ public static class ArenaMultiplayerSession
         {
             result.Desynced = true;
             result.DesyncTurn = desync.FirstDivergentTick;
-            result.DesyncReason = $"peer {desync.DivergentPeer} diverged";
+            result.DesyncReason = DesyncSummary(desync);
         }
     }
 

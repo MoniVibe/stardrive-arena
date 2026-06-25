@@ -15,11 +15,11 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     public const int DefaultPort = 47377;
     public const int DefaultTurns = 600;
     const string DefaultHost = "127.0.0.1";
-    static readonly string[] LoadoutTraits =
+    static readonly GalSize[] GalaxyOptions =
     {
-        ArenaStartArchetype.Ace.ToString(),
-        ArenaStartArchetype.Wingmates.ToString(),
-        ArenaStartArchetype.Swarm.ToString(),
+        GalSize.Tiny,
+        GalSize.Small,
+        GalSize.Medium,
     };
 
     readonly object Sync = new();
@@ -37,9 +37,10 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     string StatusText = "Idle. Host, join, ready up, then host launches.";
     string[] RaceOptions = Array.Empty<string>();
     int RaceIndex;
-    int TraitIndex = 1;
+    int GalaxyIndex;
     bool StartPaused;
     bool Launching;
+    ArenaRegularMultiplayerSettings RegularSettings = new();
 
     public ArenaMultiplayerLobbyScreen() : base(null, toPause: null)
     {
@@ -67,7 +68,6 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         RemoveAll();
         RaceOptions = AvailableRacePreferences();
         RaceIndex = Math.Max(0, Array.IndexOf(RaceOptions, LocalPeer.RacePreference));
-        TraitIndex = Math.Max(0, Array.IndexOf(LoadoutTraits, LocalPeer.LoadoutTrait));
         ApplyLocalSelection();
 
         Vector2 c = ScreenCenter;
@@ -93,9 +93,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         UIButton race = ArenaTheme.AddPillButton(setup, "", _ => CycleRace(), 176f);
         race.Name = "arena_mp_race";
         race.DynamicText = () => $"RACE {LocalPeer.RacePreference}";
-        UIButton trait = ArenaTheme.AddPillButton(setup, "", _ => CycleTrait(), 176f);
-        trait.Name = "arena_mp_trait";
-        trait.DynamicText = () => $"LOADOUT {LocalPeer.LoadoutTrait.ToUpperInvariant()}";
+        UIButton galaxy = ArenaTheme.AddPillButton(setup, "", _ => CycleGalaxy(), 176f);
+        galaxy.Name = "arena_mp_regular_settings";
+        galaxy.DynamicText = () => $"MAP {RegularSettings.GalaxySize.ToString().ToUpperInvariant()}";
         UIButton pause = ArenaTheme.AddPillButton(setup, "", _ => ToggleStartPaused(), 126f);
         pause.Name = "arena_mp_start_paused";
         pause.DynamicText = () => StartPaused ? "START PAUSED" : "START LIVE";
@@ -154,7 +154,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         });
         Add(new UILabel(new Vector2(rect.X + 14, rect.Y + 70), "", ArenaTheme.BodySmallFont, ArenaTheme.TextSecondary)
         {
-            DynamicText = _ => $"Race: {peer().RacePreference}  Loadout: {peer().LoadoutTrait}",
+            DynamicText = _ => $"Race: {peer().RacePreference}",
         });
         Add(new UILabel(new Vector2(rect.X + 14, rect.Y + 94), "", ArenaTheme.BodySmallFont, ArenaTheme.TextMuted)
         {
@@ -394,10 +394,10 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         SendLocalLobby();
     }
 
-    void CycleTrait()
+    void CycleGalaxy()
     {
-        TraitIndex = (TraitIndex + 1) % LoadoutTraits.Length;
-        ApplyLocalSelection();
+        GalaxyIndex = (GalaxyIndex + 1) % GalaxyOptions.Length;
+        RegularSettings.GalaxySize = GalaxyOptions[GalaxyIndex];
         LocalPeer.Ready = false;
         SendLocalLobby();
     }
@@ -411,7 +411,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     void ApplyLocalSelection()
     {
         LocalPeer.RacePreference = RaceOptions.Length == 0 ? "United" : RaceOptions[RaceIndex.Clamped(0, RaceOptions.Length - 1)];
-        LocalPeer.LoadoutTrait = LoadoutTraits[TraitIndex.Clamped(0, LoadoutTraits.Length - 1)];
+        LocalPeer.LoadoutTrait = ArenaStartArchetype.Wingmates.ToString();
+        RegularSettings.HostRacePreference = LocalPeer.RacePreference;
+        RegularSettings.JoinRacePreference = RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference;
     }
 
     int ParsePort()
@@ -515,7 +517,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         public string BuildSummary = "";
 
         public string Summary => BuildHash.NotEmpty()
-            ? $"{BuildHash} | {ArenaMultiplayerSettings.NormalizeLoadoutTrait(LoadoutTrait)}"
+            ? $"{BuildHash}"
             : "No peer data yet.";
 
         public static LobbyPeer From(SessionLobbyMessage message, string fallbackName)

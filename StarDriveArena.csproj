@@ -73,6 +73,7 @@
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaPlugin.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaPopupListItem.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaProgressionSimulator.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaRegularMultiplayerSettings.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaRivalDossiers.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaScoutIntel.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaStubScreens.cs" />

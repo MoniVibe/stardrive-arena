@@ -211,6 +211,12 @@ namespace Ship_Game.Universe
                 throw new ArgumentException("UniverseSize not set!");
 
             Initialize(universeRadius*2f);
+            if (P.GenerationSeed != 0)
+            {
+                DeterministicRootSeed = (ulong)(uint)P.GenerationSeed;
+                Random = Determinism.DeterministicStreams.For(DeterministicRootSeed, Determinism.RngStreamKind.Universe, 0);
+                Spatial.DeterministicCollisions = true;
+            }
 
             Events = new();
             Stats = new(this);
