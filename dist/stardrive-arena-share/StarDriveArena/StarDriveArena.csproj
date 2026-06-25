@@ -1,0 +1,92 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Pass -p:BlackBoxCheckout=C:\path\to\TeamStarDrive\StarDrive when building. -->
+    <BlackBoxCheckout Condition="'$(BlackBoxCheckout)' == ''">..\..\blackbox-upstream</BlackBoxCheckout>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Platforms>x64</Platforms>
+    <Configurations>Debug;Release;Debug - Auto Fast;Release - Auto Fast;Debug - Auto;Release - Auto;Deploy</Configurations>
+    <OutputType>Library</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>Ship_Game</RootNamespace>
+    <AssemblyName>StarDriveArena</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Deterministic>true</Deterministic>
+    <OutputPath>$(BlackBoxCheckout)\game\Plugins\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+    <EnableDefaultNoneItems>false</EnableDefaultNoneItems>
+    <EnableDefaultContentItems>false</EnableDefaultContentItems>
+    <EnableMGCBItems>false</EnableMGCBItems>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <DebugType>portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DefineConstants>TRACE</DefineConstants>
+    <Optimize>true</Optimize>
+    <DebugType>portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="SDGraphics.Range" Alias="Range" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaBalanceMetaWatch.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaBetting.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaBossChallengeScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaBossRewardScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaCareer.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaCareerMenuScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaCareerSeasonSimulator.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaConfigScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaDealershipScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaDesignTooltipProvider.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaEngineCapabilities.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaFightModifier.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaFightOptions.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaFightOptionsScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaFightScreen.Multiplayer.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaFightScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaFleetScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaGarageScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaHubScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaInventoryScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaLeaderboardScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaLeagues.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaLivingEcosystemSimulator.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaModuleShopScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaMonteCarloTelemetry.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaMultiplayerLobbyScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaMultiplayerSession.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaPerks.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaPlugin.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaPopupListItem.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaProgressionSimulator.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaRivalDossiers.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaScoutIntel.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaStubScreens.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaTheme.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\CareerLadder.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(BlackBoxCheckout)\StarDrive.csproj" Private="false" />
+    <ProjectReference Include="$(BlackBoxCheckout)\SDGraphics\SDGraphics.csproj" Private="false" />
+    <ProjectReference Include="$(BlackBoxCheckout)\SDLockstep\SDLockstep.csproj" Private="false" />
+    <ProjectReference Include="$(BlackBoxCheckout)\SDUtils\SDUtils.csproj" Private="false" />
+  </ItemGroup>
+
+</Project>

@@ -5,6 +5,7 @@ using Color = Microsoft.Xna.Framework.Color;
 using Ship_Game.Audio;
 using Ship_Game.Data.Yaml;
 using Ship_Game.GameScreens.Scene;
+using Ship_Game.Plugins;
 using Vector2 = SDGraphics.Vector2;
 using SDGraphics;
 using Rectangle = SDGraphics.Rectangle;
@@ -82,6 +83,9 @@ namespace Ship_Game.GameScreens.MainMenu
             if (list.Find("options",   out UIButton options))   options.OnClick   = Options_Clicked;
             if (list.Find("mods",      out UIButton mods))      mods.OnClick      = Mods_Clicked;
             if (list.Find("sandbox",   out UIButton sandbox))   sandbox.OnClick   = DevSandbox_Clicked;
+            foreach (PluginMainMenuAction action in PluginManager.RegisteredMainMenuActions)
+                if (list.Find(action.ButtonName, out UIButton pluginButton))
+                    pluginButton.OnClick = _ => PluginAction_Clicked(action);
             if (list.Find("info",      out UIButton info))      info.OnClick      = Info_Clicked;
             if (list.Find("support",   out UIButton support))   support.OnClick   = Support_Clicked;
             if (list.Find("exit",      out UIButton exit))      exit.OnClick      = Exit_Clicked;
@@ -168,6 +172,19 @@ namespace Ship_Game.GameScreens.MainMenu
         void Info_Clicked(UIButton button)      => ScreenManager.AddScreen(new Codex.CodexScreen(this));
         void Support_Clicked(UIButton button) => ScreenManager.AddScreen(new SupportBlackbox(this));
         void DevSandbox_Clicked(UIButton button)=> ScreenManager.GoToScreen(new DeveloperSandbox(), clear3DObjects: true);
+        void PluginAction_Clicked(PluginMainMenuAction action)
+        {
+            try
+            {
+                GameScreen screen = action.CreateScreen?.Invoke();
+                if (screen != null)
+                    ScreenManager.GoToScreen(screen, clear3DObjects: true);
+            }
+            catch (Exception e)
+            {
+                Log.Warning($"MainMenuScreen: plugin menu action '{action.ButtonName}' failed: {e.Message}");
+            }
+        }
         void Exit_Clicked(UIButton button)      => ExitScreen();
 
 

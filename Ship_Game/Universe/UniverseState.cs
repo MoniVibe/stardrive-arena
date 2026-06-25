@@ -169,7 +169,36 @@ namespace Ship_Game.Universe
         public float ExoticPlanetDivisor => (P.ExtraPlanets * 0.8f).LowerBound(1);
         public float DefaultProjectorRadius;
 
-        public readonly RandomBase Random = new ThreadSafeRandom();
+        public RandomBase Random { get; private set; } = new ThreadSafeRandom();
+
+        // Determinism: the world root seed once reproducible RNG is enabled (0 == clock-seeded / off).
+        // Generation-time entity creation (solar bodies) reads this to put each body's per-entity RNG on a
+        // reproducible stream keyed by its stable Id, so the GENERATED universe is bit-identical run-to-run.
+        public ulong DeterministicRootSeed { get; private set; }
+        public bool IsDeterministicRng => DeterministicRootSeed != 0;
+
+        // Determinism (VS2/RC7): put the whole match on reproducible RNG streams derived from a world
+        // root seed — the universe stream plus a per-empire stream keyed by each empire's stable Id.
+        // This is what makes an autobattler / lockstep match fair and replayable. Normal play is unaffected.
+        public void EnableDeterministicRng(ulong rootSeed)
+        {
+            DeterministicRootSeed = rootSeed;
+            Random = Determinism.DeterministicStreams.For(rootSeed, Determinism.RngStreamKind.Universe, 0);
+            foreach (Empire e in Empires)
+                e.UseDeterministicRandom(rootSeed);
+            foreach (SolarSystem sys in Systems)
+                foreach (Planet p in sys.PlanetList)
+                    p.UseDeterministicRandom(rootSeed);
+
+            // A deterministic match must also resolve COLLISIONS deterministically: tell the spatial
+            // to return collision pairs in a stable Id-sorted order so damage doesn't depend on native
+            // traversal/thread scheduling. Without this, two runs from the same seed can diverge in
+            // combat (the headless arena round-1 flake). Live (non-deterministic) play is unaffected.
+            // (Spatial is created in Initialize(); guard in case this is called on a not-yet-initialized
+            // deserialized state — the flag is re-applied wherever the spatial is (re)created.)
+            if (Spatial != null)
+                Spatial.DeterministicCollisions = true;
+        }
 
         [StarDataConstructor] UniverseState() {}
 

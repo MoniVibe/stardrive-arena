@@ -242,7 +242,17 @@ namespace Ship_Game
         public IReadOnlyList<Building> GetBuildingsCanBuild() => BuildingsCanBuild;
         
         // per-planet pseudo-random source
-        public readonly RandomBase Random = new ThreadSafeRandom();
+        public RandomBase Random { get; private set; } = new ThreadSafeRandom();
+
+        // Determinism: switch this solar body to a reproducible per-entity RNG stream derived from the
+        // world root seed + this body's stable Id. Generation-time consumers (moon counts, tile events,
+        // random commodities/volcanoes) then draw reproducibly, so the generated universe is bit-identical
+        // run-to-run. seed==0 (normal play) keeps the default clock-seeded ThreadSafeRandom.
+        public void UseDeterministicRandom(ulong rootSeed)
+        {
+            if (rootSeed != 0)
+                Random = Determinism.DeterministicStreams.For(rootSeed, Determinism.RngStreamKind.SolarBody, (ulong)Id);
+        }
 
         public SolarSystemBody(int id, GameObjectType type) : base(id, type)
         {

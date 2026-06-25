@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Platforms>x64</Platforms>
+    <OutputType>Library</OutputType>
+    <RootNamespace>SDLockstep</RootNamespace>
+    <AssemblyName>SDLockstep</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <!-- Engine-agnostic deterministic lockstep layer. Depends ONLY on SDUtils (no game / MonoGame /
+       SDNative), so the whole 2-client lockstep skeleton is testable headless against a toy sim.
+       StarDrive integrates by implementing ILockstepSimulation over UniverseState (done in a real clone). -->
+  <ItemGroup>
+    <ProjectReference Include="..\SDUtils\SDUtils.csproj" />
+  </ItemGroup>
+
+</Project>

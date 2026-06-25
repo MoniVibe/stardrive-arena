@@ -114,6 +114,50 @@ namespace Ship_Game
         [StarData] public bool AutoResearch;
         [StarData] public bool AutoBuildResearchStations;
         [StarData] public bool AutoBuildMiningStations;
+
+        // --- AI Sidekick (auto-pilot) ---
+        // The per-slice Auto* flags above already hand individual slices (research, colonization,
+        // exploration, stations, space roads, taxes) to the AI even for the human player. The two flags
+        // below open the remaining slices that used to be AI-only — MILITARY (warships / fleets / defense)
+        // and ESPIONAGE — so every slice is now individually toggleable in the Automation window. The
+        // planner code is identical to what AI empires run, so it inherits the same determinism the
+        // lockstep/replay tests verify.
+        [StarData] public bool AutoMilitary; // AI builds warships and manages fleets/defense for the player
+        [StarData] public bool AutoSpy;      // AI runs espionage (spies / covert operations) for the player
+
+        // Master flag: true when the player has handed the WHOLE empire to the AI (every slice on).
+        [StarData] public bool AISidekickEnabled;
+
+        // Player-only CHEAT layer: when on, the human's automated slices read TRUE (oracle) galaxy state and
+        // use smarter planning (research pivots to military tech under threat; expansion stops under-claiming).
+        // Orthogonal to who runs the empire. AI opponents must NEVER see this true — every oracle code path is
+        // guarded by `isPlayer && OracleSidekickEnabled` (+ the relevant Auto* slice flag).
+        [StarData] public bool OracleSidekickEnabled;
+
+        public bool IsAIControlled => !isPlayer || AISidekickEnabled;
+
+        // Hand this empire fully over to the AI (every slice). For per-slice control, set the individual
+        // Auto* flags instead (e.g. AutoMilitary / AutoSpy / AutoResearch) and leave AISidekickEnabled off.
+        public void EnableAISidekick(bool enableOracle = false)
+        {
+            AISidekickEnabled           = true;
+            if (enableOracle && isPlayer) OracleSidekickEnabled = true; // player-only cheat layer (opt-in)
+            AutoResearch                = true;
+            AutoColonize                = true;
+            AutoExplore                 = true;
+            AutoTaxes                   = true;
+            AutoMilitary                = true;
+            AutoSpy                     = true;
+            AutoBuildSpaceRoads         = true;
+            AutoBuildResearchStations   = true;
+            AutoBuildMiningStations     = true;
+            AutoPickBestColonizer       = true;
+            AutoPickConstructors        = true;
+            AutoPickBestResearchStation = true;
+            AutoPickBestMiningStation   = true;
+            AutoBuildTerraformers       = true;
+        }
+
         [StarData] public int TotalScore;
         [StarData] public float TechScore;
         [StarData] public float ExpansionScore;
@@ -216,7 +260,20 @@ namespace Ship_Game
         public PersonalityModifiers PersonalityModifiers { get; private set; }
 
         // per-faction pseudo-random source
-        public readonly RandomBase Random = new ThreadSafeRandom();
+        public RandomBase Random { get; private set; } = new ThreadSafeRandom();
+
+        // Determinism (VS2/RC7): switch this empire to a reproducible per-entity RNG stream derived from
+        // the world root seed + this empire's stable Id. Used for lockstep/replay; normal play keeps the
+        // default clock-seeded ThreadSafeRandom.
+        public void UseDeterministicRandom(ulong rootSeed)
+            => Random = Determinism.DeterministicStreams.For(rootSeed, Determinism.RngStreamKind.Empire, (ulong)Id);
+
+        // Determinism: put this empire's RNG on its reproducible per-empire stream DURING generation,
+        // before the Id is assigned, so personality-trait draws made at creation time are deterministic.
+        // Keyed by the predicted stable Id (EmpireList.Count at Add time) so it matches the topology that
+        // UseDeterministicRandom uses once the global re-seed runs.
+        public void SeedPersonalityRandom(ulong rootSeed, ulong predictedId)
+            => Random = Determinism.DeterministicStreams.For(rootSeed, Determinism.RngStreamKind.Empire, predictedId);
 
         /// <summary>
         /// Empire unique ID. If this is 0, then this empire is invalid!
@@ -2432,7 +2489,10 @@ namespace Ship_Game
 
         void AssignSniffingTasks()
         {
-            if (!isPlayer && AI.CountGoals(g => g.Type == GoalType.ScoutSystem) < DifficultyModifiers.NumSystemsToSniff)
+            // Oracle sidekick (player-only): spawn parallel scout-sniffing goals like the AI, so it actually
+            // discovers the colonizable systems the softened expansion logic wants to claim.
+            if ((!isPlayer || (OracleSidekickEnabled && AutoExplore))
+                && AI.CountGoals(g => g.Type == GoalType.ScoutSystem) < DifficultyModifiers.NumSystemsToSniff)
                 AI.AddGoal(new ScoutSystem(this));
         }
 
@@ -2479,8 +2539,9 @@ namespace Ship_Game
                 }
             }
 
-            // Build a scout if needed
-            if (numScouts < desiredScouts  && !AI.HasGoal(GoalType.BuildScout))
+            // Build a scout if needed (and one is actually buildable — don't crash an empire that has no
+            // scout-roled design available, e.g. a player handed to the AI sidekick in a minimal setup)
+            if (numScouts < desiredScouts && !AI.HasGoal(GoalType.BuildScout) && ChooseScoutShipToBuild(out _))
                 AI.AddGoal(new BuildScout(this));
         }
 

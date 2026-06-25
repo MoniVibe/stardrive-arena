@@ -94,6 +94,7 @@ namespace Ship_Game
 
         // Used in Dev SandBox to enable some special debug features
         public bool EnableDebugFeatures;
+        IShipDesign InitialDesignToLoad;
 
         public RoleName Role => DesignedShip.DesignRole;
         Rectangle DesignRoleRect;
@@ -124,6 +125,11 @@ namespace Ship_Game
             HullEditMode = false;
             UnlockAllFactionDesigns = universe is DeveloperUniverse;
             EnableDebugFeatures = universe is DeveloperUniverse || universe.Debug;
+        }
+
+        public void LoadDesignOnOpen(IShipDesign design)
+        {
+            InitialDesignToLoad = design;
         }
 
         void ReorientActiveModule(ModuleOrientation orientation)
@@ -337,19 +343,20 @@ namespace Ship_Game
 
             if (!HullEditMode)
             {
-                OrdersButton.ResetButtons(CurrentDesign);
+                OrdersButton?.ResetButtons(CurrentDesign);
                 UpdateCarrierShip();
             }
 
             // force modules list to reset itself, so if we change from Battleship to Fighter
             // the available modules list is adjusted correctly
-            ModuleSelectComponent.SelectedIndex = -1;
+            if (ModuleSelectComponent != null)
+                ModuleSelectComponent.SelectedIndex = -1;
             if (zoomToHull)
                 ZoomCameraToEncloseHull();
 
             // TODO: remove DesignIssues from this page
-            InfoPanel.SetActiveDesign(DesignedShip);
-            IssuesPanel.SetActiveDesign(DesignedShip);
+            InfoPanel?.SetActiveDesign(DesignedShip);
+            IssuesPanel?.SetActiveDesign(DesignedShip);
             ShipSaved = DesignedShip.Modules.Length > 0;
         }
 
@@ -391,9 +398,12 @@ namespace Ship_Game
                 RoleData.CreateDesignRoleToolTip(Role, DesignRoleRect, true, Input.CursorPosition);
 
             ShipSaved = false;
-            BtnSaveAs.Text = Localizer.Token(HullEditMode || IsGoodDesign() || IsEmptyHull 
-                ? GameText.SaveAs
-                : GameText.SaveWIP);
+            if (BtnSaveAs != null)
+            {
+                BtnSaveAs.Text = Localizer.Token(HullEditMode || IsGoodDesign() || IsEmptyHull
+                    ? GameText.SaveAs
+                    : GameText.SaveWIP);
+            }
 
             if (playSound)
                 GameAudio.SmallServo();
@@ -453,8 +463,11 @@ namespace Ship_Game
             AssignLightRig(LightRigIdentity.Shipyard);
             SetupShipyardLighting();
 
-            ShipDesign lastWIP = ShipDesignWIP.GetLatestWipToLoad(Player);
-            if (lastWIP != null)
+            IShipDesign initial = InitialDesignToLoad;
+            InitialDesignToLoad = null;
+            if (initial != null)
+                ChangeHull(initial);
+            else if (ShipDesignWIP.GetLatestWipToLoad(Player) is ShipDesign lastWIP)
                 ChangeHull(lastWIP);
             else
                 ChangeHull(AvailableHulls[0]);

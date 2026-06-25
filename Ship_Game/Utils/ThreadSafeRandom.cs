@@ -6,7 +6,6 @@ public sealed class ThreadSafeRandom : RandomBase, IDisposable
 {
     // NOTE: This is really fast
     readonly ThreadLocal<Random> Randoms;
-    protected override Random Rand => Randoms.Value;
 
     // Automatically initializes the seed with a unique seed value
     public ThreadSafeRandom() : this(0)
@@ -22,4 +21,9 @@ public sealed class ThreadSafeRandom : RandomBase, IDisposable
     {
         Randoms?.Dispose();
     }
+
+    protected override double NextUnitDouble() => Randoms.Value.NextDouble();
+
+    protected override int NextIntExclusive(int minInclusive, int maxExclusive)
+        => Randoms.Value.Next(minInclusive, maxExclusive);
 }

@@ -752,16 +752,17 @@ namespace Ship_Game
             TroopsDictKeys = TroopsDict.Keys.ToArr();
         }
 
-        public static MarkovNameGenerator GetRandomNames(Empire empire)
+        // seed != 0 makes generated names reproducible (seeded universe generation / lockstep)
+        public static MarkovNameGenerator GetRandomNames(Empire empire, int seed = 0)
         {
-            return GetNameGenerator($"NameGenerators/spynames_{empire?.PortraitName}.txt");
+            return GetNameGenerator($"NameGenerators/spynames_{empire?.PortraitName}.txt", seed);
         }
 
-        public static MarkovNameGenerator GetNameGenerator(string relativePath)
+        public static MarkovNameGenerator GetNameGenerator(string relativePath, int seed = 0)
         {
             var nameFile = GetModOrVanillaFile(relativePath);
             if (nameFile == null) return null;
-            return new MarkovNameGenerator(nameFile.OpenText().ReadToEnd());
+            return new MarkovNameGenerator(nameFile.OpenText().ReadToEnd(), seed);
         }
 
         static void DeleteShipFromDir(string dir, string shipName)

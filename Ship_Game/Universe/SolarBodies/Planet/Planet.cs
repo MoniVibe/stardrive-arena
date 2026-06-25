@@ -281,10 +281,11 @@ namespace Ship_Game
         // For TESTING only
         // You can't call GeneratePlanet / GenerateNewHomeworld after calling this
         // It will set planet scale/radius to default values
-        public Planet(int id, SolarSystem system, Vector2 pos, 
+        public Planet(int id, SolarSystem system, Vector2 pos,
                       float fertility, float minerals, float maxPop) : this(id)
         {
             SetSystem(system);
+            SeedDeterministicBodyRandom(system);
             BaseFertility     = fertility;
             MineralRichness   = minerals;
             BasePopPerTileVal = maxPop;
@@ -301,6 +302,7 @@ namespace Ship_Game
                       float sysMaxRingRadius, Empire owner, SolarSystemData.Ring data, float exoticPlanetMultiplier = 1) : this(id)
         {
             SetSystem(system);
+            SeedDeterministicBodyRandom(system);
             OrbitalAngle = randomAngle;
             OrbitalRadius = ringRadius;
 
@@ -353,6 +355,12 @@ namespace Ship_Game
             {
                 RingTilt = random.Float(-80f, -45f).ToRadians();
             }
+        }
+
+        void SeedDeterministicBodyRandom(SolarSystem system)
+        {
+            if (system?.Universe?.IsDeterministicRng == true)
+                UseDeterministicRandom(system.Universe.DeterministicRootSeed);
         }
         public void AddCrippledTurns(int value)
         {

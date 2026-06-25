@@ -11,7 +11,9 @@ namespace Ship_Game
 
 		private Array<string> _used = new Array<string>();
 
-		private Random _rnd = new Random();
+		// seed != 0 makes generated names reproducible for seeded universe generation.
+		// seed == 0 keeps the legacy clock-seeded behaviour for normal play.
+		private Random _rnd;
 
 		private int _order;
 
@@ -70,8 +72,13 @@ namespace Ship_Game
 			}
 		}
 
-		public MarkovNameGenerator(string sampleNames)
+		public MarkovNameGenerator(string sampleNames) : this(sampleNames, 0)
 		{
+		}
+
+		public MarkovNameGenerator(string sampleNames, int seed)
+		{
+			_rnd = seed != 0 ? new Random(seed) : new Random();
 			_order = 3;
 			_minLength = 5;
 			string[] strArrays = sampleNames.Split(',');

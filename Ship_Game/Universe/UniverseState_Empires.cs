@@ -117,6 +117,11 @@ public partial class UniverseState
         EmpireList.Add(e);
         e.Id = EmpireList.Count;
 
+        // Seed the expansion-interval timer for EVERY empire (player included). An AI-driven player
+        // (sidekick/observer/autoplay) otherwise keeps ExpansionPlanner's default 100_000 timer and never
+        // fires its first colonization check. This is a pure timer assignment with no other side effects.
+        e.AI?.ExpansionAI.InitExpansionIntervalTimer(e.Id);
+
         if (e.isPlayer)
         {
             if (Player != null)
@@ -125,7 +130,6 @@ public partial class UniverseState
         }
         else
         {
-            e.AI?.ExpansionAI.InitExpansionIntervalTimer(e.Id);
             if (e.NewEspionageEnabled)
                 e.AI?.EspionageManager.InitEspionageManager(e.Id);
         }
@@ -286,6 +290,18 @@ public partial class UniverseState
         if      (data.IsFaction) Log.Info($"Creating Faction {data.Traits.Name}");
         else if (data.MinorRace) Log.Info($"Creating MinorRace {data.Traits.Name}");
         else                     Log.Info($"Creating MajorEmpire {data.Traits.Name}");
+
+        // Determinism: the Diplomatic/Economic personality traits below are drawn from empire.Random,
+        // but at this point (before AddEmpire) empire.Random is still the default clock-seeded
+        // ThreadSafeRandom, AND the global EnableDeterministicRng re-seed only runs AFTER every empire
+        // exists. That made the chosen personalities — and therefore Research.Strategy ratios, the colony
+        // labor split and NetResearch — differ run-to-run on a seeded game. When generating with a seed,
+        // put empire.Random on its reproducible per-empire stream HERE so these draws are deterministic.
+        // The empire's stable Id is assigned in AddEmpire as EmpireList.Count AFTER the Add, i.e. the
+        // current EmpireList.Count + 1; key the stream off that predicted Id so it matches the later
+        // EnableDeterministicRng re-seed topology exactly. seed==0 keeps clock-seeded behaviour (normal play).
+        if (P != null && P.GenerationSeed != 0)
+            empire.SeedPersonalityRandom((ulong)P.GenerationSeed, (ulong)(EmpireList.Count + 1));
 
         data.DiplomaticPersonality = CreateDiplomaticTrait();
         data.EconomicPersonality = CreateEconimicTrait();

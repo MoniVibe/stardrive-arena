@@ -369,8 +369,17 @@ namespace Ship_Game
                 }
             }
 
-            //UpdateSystems(0, UState.Systems.Count);
-            Parallel.For(UState.Systems.Count, UpdateSystems, MaxTaskCores);
+            // DETERMINISM: honor EnableParallelUpdate like every other update phase in this
+            // class (ships/projectiles/sensors/AI all gate on it). When parallel update is OFF
+            // (headless determinism tests, lockstep), run the per-system ship assignment SERIALLY
+            // so the same inputs always produce the same ship->system assignment + iteration order.
+            // Previously this phase ALWAYS ran Parallel.For regardless of the flag, which let
+            // thread scheduling perturb the sim run-to-run even with deterministic RNG — the source
+            // of the flaky lone-gladiator arena round that couldn't resolve within budget.
+            if (EnableParallelUpdate)
+                Parallel.For(UState.Systems.Count, UpdateSystems, MaxTaskCores);
+            else
+                UpdateSystems(0, UState.Systems.Count);
         }
 
         void UpdateAllShips(FixedSimTime timeStep)

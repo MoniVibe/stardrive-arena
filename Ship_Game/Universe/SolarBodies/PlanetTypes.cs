@@ -41,7 +41,13 @@ public sealed class PlanetTypes : IDisposable
     Map<int, PlanetType> PlanetTypeMap;
     Map<PlanetCategory, PlanetType[]> PlanetTypesByCategory;
     public PlanetRenderer Renderer;
-    readonly RandomBase Random = new ThreadSafeRandom();
+    RandomBase Random = new ThreadSafeRandom();
+
+    // Determinism: planet-type selection normally uses a clock-seeded shared RNG. For deterministic
+    // (seeded) universe generation, route it through a reproducible stream so two runs pick the same
+    // planet types. seed==0 restores the clock-seeded default.
+    public void SeedDeterministicGeneration(int seed)
+        => Random = seed != 0 ? new SeededRandom(seed) : new ThreadSafeRandom();
 
     void Initialize(GameContentManager content)
     {

@@ -5,6 +5,7 @@ using Microsoft.Xna.Framework;
 using SDUtils;
 using Ship_Game.Audio;
 using Ship_Game.GameScreens;
+using Ship_Game.Plugins;
 using Color = Microsoft.Xna.Framework.Color;
 using Ship_Game.GameScreens.MainMenu;
 using Ship_Game.Utils;
@@ -113,6 +114,7 @@ namespace Ship_Game
             InitializeAudio();
             ApplyGraphics(GraphicsSettings.FromGlobalStats());
             ProbeVideoBackend();
+            PluginManager.LoadAndRegister(Path.Combine(Directory.GetCurrentDirectory(), "Plugins"));
             // CWD at runtime is game/, so step up one to land alongside the rest of phase4-logs.
             // Disabled — §4.1 baseline already captured. Re-enable for the next perf pass
             // (e.g., §4.4 or anywhere we need fresh frame traces). All Begin/End/Stop calls

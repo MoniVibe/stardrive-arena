@@ -12,6 +12,7 @@ using Ship_Game;
 using Ship_Game.AI;
 using Ship_Game.Data;
 using Ship_Game.Gameplay;
+using Ship_Game.GameScreens.Arena;
 using Ship_Game.GameScreens.NewGame;
 using Ship_Game.Ships;
 using Ship_Game.Universe;
@@ -43,11 +44,25 @@ public partial class StarDriveTest : IDisposable
     public Empire ThirdMajor { get; private set; }
     public Empire Faction { get; private set; }
 
+    readonly string SavedArenaCareerSavePath;
+    readonly int SavedArenaActiveCareerSlot;
+    readonly string SavedArenaPendingPlayerDesignName;
+    readonly string SavedArenaSlotDirectoryOverride;
+    readonly string SavedArenaTestSaveIsolationRoot;
+
     public const double TestSimStepD = 1.0 / 60.0;
     public readonly FixedSimTime TestSimStep = new((float)TestSimStepD);
 
     public StarDriveTest()
     {
+        SavedArenaCareerSavePath = ArenaFightScreen.CareerSavePath;
+        SavedArenaActiveCareerSlot = ArenaFightScreen.ActiveCareerSlot;
+        SavedArenaPendingPlayerDesignName = ArenaFightScreen.PendingPlayerDesignName;
+        SavedArenaSlotDirectoryOverride = CareerManager.SlotDirectoryOverride;
+        SavedArenaTestSaveIsolationRoot = CareerManager.TestSaveIsolationRoot;
+
+        CareerManager.TestSaveIsolationRoot = Path.GetTempPath();
+        CareerManager.ClearTestSaveIsolationAudit();
     }
 
     public static void EnableMockInput(bool enabled)
@@ -195,6 +210,13 @@ public partial class StarDriveTest : IDisposable
             ResourceManager.UnloadAllData(ScreenManager.Instance);
             StarDriveTestContext.LoadStarterContent();
         }
+
+        ArenaFightScreen.CareerSavePath = SavedArenaCareerSavePath;
+        ArenaFightScreen.ActiveCareerSlot = SavedArenaActiveCareerSlot;
+        ArenaFightScreen.PendingPlayerDesignName = SavedArenaPendingPlayerDesignName;
+        CareerManager.SlotDirectoryOverride = SavedArenaSlotDirectoryOverride;
+        CareerManager.TestSaveIsolationRoot = SavedArenaTestSaveIsolationRoot;
+        CareerManager.ClearTestSaveIsolationAudit();
     }
 
     public void CreateCustomUniverseSandbox(int numOpponents, GalSize galSize, int numExtraShipsPerEmpire = 0)
@@ -234,6 +256,39 @@ public partial class StarDriveTest : IDisposable
             }
         }
     }
+
+    // Like CreateCustomUniverseSandbox, but with a fixed generation seed => a REAL, fully-generated game
+    // (homeworlds, capitals, ships, colonizable systems) that is reproducible. For determinism / AI-sidekick
+    // tests that need the planners to have a real game to act on.
+    public void CreateSeededSandbox(int generationSeed, int numOpponents, GalSize galSize)
+    {
+        LoadAllGameData();
+        (int numStars, float starNumModifier) = RaceDesignScreen.GetNumStars(
+            RaceDesignScreen.StarsAbundance.Rare, galSize, numOpponents
+        );
+
+        EmpireData playerData = ResourceManager.FindEmpire("United").CreateInstance();
+        playerData.DiplomaticPersonality = new DTrait();
+
+        CreateCustomUniverse(new UniverseParams
+        {
+            PlayerData = playerData,
+            Mode = RaceDesignScreen.GameMode.Sandbox,
+            GalaxySize = galSize,
+            NumSystems = numStars,
+            NumOpponents = numOpponents,
+            StarsModifier = starNumModifier,
+            Pace = 1.0f,
+            Difficulty = GameDifficulty.Normal,
+            GenerationSeed = generationSeed,
+            TurnTimer = 1,
+        });
+        Universe.CreateSimThread = false;
+        Universe.LoadContent();
+    }
+
+    // Convenience: smallest reproducible real game (1 opponent, Tiny galaxy).
+    public void CreateSeededSandbox(int generationSeed) => CreateSeededSandbox(generationSeed, 1, GalSize.Tiny);
 
     protected virtual void Dispose(bool disposing)
     {

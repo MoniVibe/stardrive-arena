@@ -33,6 +33,9 @@ public class UniverseParams
     [StarData(DefaultValue=1f)] public float Pace = 1f;
     [StarData(DefaultValue=1f)] public float StarsModifier = 1f;
 
+    // Optional explicit universe-generation seed. 0 (default) keeps clock-seeded legacy generation.
+    [StarData] public int GenerationSeed;
+
     // Universe customization parameters:
     [StarData] public int TurnTimer; // seconds between Empire turns, every turn advances stardate by 0.1
     [StarData] public bool PreventFederations;

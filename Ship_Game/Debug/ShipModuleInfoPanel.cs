@@ -58,6 +58,14 @@ public class ShipModuleInfoPanel : Submenu
         }
         base.Draw(batch, elapsed);
     }
+
+    public static string ModuleSummary(ShipModule module)
+    {
+        if (module == null)
+            return "";
+        string name = !string.IsNullOrEmpty(module.NameText.Text) ? module.NameText.Text : module.UID;
+        return $"{name} [{module.ModuleType}] HP {module.ActualMaxHealth:0}";
+    }
     
     UIList CreateModuleTextLabels()
     {

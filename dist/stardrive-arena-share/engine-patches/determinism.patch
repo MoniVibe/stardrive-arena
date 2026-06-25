@@ -1,0 +1,1021 @@
+diff --git a/SDUtils/Deterministic/DetRandom.cs b/SDUtils/Deterministic/DetRandom.cs
+new file mode 100644
+index 0000000..de2019f
+--- /dev/null
++++ b/SDUtils/Deterministic/DetRandom.cs
+@@ -0,0 +1,132 @@
++using System;
++using System.Runtime.CompilerServices;
++
++namespace SDUtils.Deterministic;
++
++/// <summary>
++/// Deterministic, seekable, cross-platform pseudo-random generator.
++///
++/// Properties required for lockstep multiplayer:
++///  - Integer-only internal state (no float state) =&gt; bit-identical on any IEEE754 platform.
++///  - Single 64-bit state =&gt; save/restore is exact (see <see cref="State"/>).
++///  - Stream forking =&gt; independent sub-streams per entity, so parallel per-entity
++///    consumption is order-independent: <see cref="Fork"/> derives a new generator
++///    deterministically from (state, streamId).
++///
++/// Algorithm: SplitMix64 (Steele, Lea, Flood 2014). Fast, well-distributed, integer-only.
++/// This is a mutable struct: hold it in a field and call its methods in place. Do NOT copy
++/// it into a local and draw from the copy, or the owner's stream will not advance.
++/// </summary>
++public struct DetRandom
++{
++    const ulong Gamma = 0x9E3779B97F4A7C15UL;
++
++    ulong StateField;
++
++    /// <summary>Raw 64-bit state. Persist this for exact save/restore across save files and the network.</summary>
++    public ulong State
++    {
++        readonly get => StateField;
++        set => StateField = value;
++    }
++
++    /// <summary>Seed the generator. A zero seed is remapped so it never produces a degenerate stream.</summary>
++    public DetRandom(ulong seed)
++    {
++        StateField = Mix64(seed == 0 ? Gamma : seed);
++    }
++
++    DetRandom(ulong state, ulong stream, bool _)
++    {
++        StateField = Mix64(state ^ Mix64(stream + Gamma));
++    }
++
++    /// <summary>
++    /// Derive an independent deterministic sub-stream. Use one fork per entity so that
++    /// parallel per-entity updates draw from disjoint streams and the result never
++    /// depends on thread interleaving.
++    /// </summary>
++    public readonly DetRandom Fork(ulong streamId) => new(StateField, streamId, false);
++
++    /// <summary>Advance state and return the next 64-bit value.</summary>
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    public ulong NextULong()
++    {
++        unchecked
++        {
++            StateField += Gamma;
++            ulong z = StateField;
++            z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9UL;
++            z = (z ^ (z >> 27)) * 0x94D049BB133111EBUL;
++            return z ^ (z >> 31);
++        }
++    }
++
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    public uint NextUInt() => (uint)(NextULong() >> 32);
++
++    /// <summary>Stateless 64-bit finalizer mix. Used for stream derivation and hashing.</summary>
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    public static ulong Mix64(ulong x)
++    {
++        unchecked
++        {
++            x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9UL;
++            x = (x ^ (x >> 27)) * 0x94D049BB133111EBUL;
++            return x ^ (x >> 31);
++        }
++    }
++
++    /// <summary>
++    /// Float in [0,1). Built from the top 24 bits via a single exact multiply by 2^-24.
++    /// Both operands are exactly representable, so the result is deterministic on any
++    /// IEEE754 round-to-nearest platform (no transcendental, no FMA-sensitive expression).
++    /// </summary>
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    public float NextFloat()
++    {
++        uint bits24 = (uint)(NextULong() >> 40); // [0, 2^24)
++        return bits24 * (1.0f / 16777216.0f);
++    }
++
++    /// <summary>Float in [min, max).</summary>
++    public float NextFloat(float min, float max) => min + NextFloat() * (max - min);
++
++    /// <summary>Double in [0,1) from the top 53 bits via a single exact multiply by 2^-53.</summary>
++    public double NextDouble()
++    {
++        ulong bits53 = NextULong() >> 11; // [0, 2^53)
++        return bits53 * (1.0 / 9007199254740992.0);
++    }
++
++    /// <summary>
++    /// Unbiased integer in [min, max) using Lemire's multiply-shift with rejection.
++    /// Integer-only =&gt; deterministic. Returns min when the range is empty.
++    /// </summary>
++    public int NextInt(int min, int max)
++    {
++        if (max <= min) return min;
++        uint range = (uint)((long)max - min);
++        ulong m = (ulong)NextUInt() * range;
++        uint low = (uint)m;
++        if (low < range)
++        {
++            uint threshold = (0u - range) % range; // 2^32 mod range
++            while (low < threshold)
++            {
++                m = (ulong)NextUInt() * range;
++                low = (uint)m;
++            }
++        }
++        return min + (int)(m >> 32);
++    }
++
++    /// <summary>Inclusive [min, max].</summary>
++    public int NextIntInclusive(int min, int max)
++        => NextInt(min, max == int.MaxValue ? max : max + 1);
++
++    public bool NextBool() => (NextULong() & 1) != 0;
++
++    /// <summary>Dice roll: TRUE with the given percent chance [0..100].</summary>
++    public bool RollDice(float percent) => NextFloat(0f, 100f) < percent;
++}
+diff --git a/SDUtils/Deterministic/DetStreams.cs b/SDUtils/Deterministic/DetStreams.cs
+new file mode 100644
+index 0000000..36573b7
+--- /dev/null
++++ b/SDUtils/Deterministic/DetStreams.cs
+@@ -0,0 +1,36 @@
++namespace SDUtils.Deterministic;
++
++/// <summary>
++/// Parallel-safe deterministic RNG stream derivation (advisor plan, Rework 3).
++///
++/// The cardinal rule of deterministic parallel sim: <b>no shared mutable RNG stream may cross a
++/// Parallel.For boundary</b> — the value a draw returns must never depend on which worker ran first.
++/// This type makes the safe path the shortest path: a worker asks for a stream keyed by stable
++/// identity (and tick), never a shared object.
++///
++///  - <see cref="ForEntity"/> — one independent stream per (rootSeed, streamKind, stableId).
++///  - <see cref="ForEntityTick"/> — a fresh per (entity, tick) stream; the preferred form inside a
++///    parallel per-entity loop, since it depends only on inputs, never on scheduling. Proven
++///    order-independent by <see cref="DetMiniSim"/> (PARALLEL == SEQUENTIAL).
++/// </summary>
++public static class DetStreams
++{
++    const ulong KindMul = 0x9E3779B97F4A7C15UL;
++    const ulong IdAdd = 0xD1B54A32D192ED03UL;
++
++    /// <summary>An independent, reproducible RNG for an entity, derived from the world root seed.</summary>
++    public static DetRandom ForEntity(ulong rootSeed, ulong streamKind, ulong stableId)
++    {
++        ulong seed = DetRandom.Mix64(rootSeed
++                     ^ DetRandom.Mix64(streamKind * KindMul)
++                     ^ DetRandom.Mix64(stableId + IdAdd));
++        return new DetRandom(seed == 0 ? 1UL : seed);
++    }
++
++    /// <summary>
++    /// A fresh per-(entity, tick) RNG. Use this inside parallel per-entity loops so draws never
++    /// depend on thread interleaving. Equivalent to <c>ForEntity(...).Fork(tick)</c>.
++    /// </summary>
++    public static DetRandom ForEntityTick(ulong rootSeed, ulong streamKind, ulong stableId, ulong tick)
++        => ForEntity(rootSeed, streamKind, stableId).Fork(tick);
++}
+diff --git a/SDUtils/SDUtils.csproj b/SDUtils/SDUtils.csproj
+index 8abee6a..4fa8e34 100644
+--- a/SDUtils/SDUtils.csproj
++++ b/SDUtils/SDUtils.csproj
+@@ -40,6 +40,8 @@
+     <Compile Include="CollectionExt.cs" />
+     <Compile Include="CollectionFilter.cs" />
+     <Compile Include="CollectionFilterSelect.cs" />
++    <Compile Include="Deterministic\DetRandom.cs" />
++    <Compile Include="Deterministic\DetStreams.cs" />
+     <Compile Include="Dir.cs" />
+     <Compile Include="FileSystemExtensions.cs" />
+     <Compile Include="Map.cs" />
+diff --git a/Ship_Game/Empire.cs b/Ship_Game/Empire.cs
+index a30f6a6..02b6f38 100644
+--- a/Ship_Game/Empire.cs
++++ b/Ship_Game/Empire.cs
+@@ -10,6 +10,7 @@ using System.Collections.Generic;
+ using System.Linq;
+ using SDGraphics;
+ using SDUtils;
++using SDUtils.Deterministic;
+ using Ship_Game.Data.Serialization;
+ using Ship_Game.Empires.Components;
+ using Ship_Game.GameScreens.DiplomacyScreen;
+@@ -216,7 +217,13 @@ namespace Ship_Game
+         public PersonalityModifiers PersonalityModifiers { get; private set; }
+ 
+         // per-faction pseudo-random source
+-        public readonly RandomBase Random = new ThreadSafeRandom();
++        public RandomBase Random { get; private set; } = new ThreadSafeRandom();
++
++        const ulong DeterministicEmpireStream = 2;
++
++        public void UseDeterministicRandom(ulong rootSeed)
++            => Random = DeterministicRandom.FromStream(
++                DetStreams.ForEntity(rootSeed, DeterministicEmpireStream, (ulong)Id));
+ 
+         /// <summary>
+         /// Empire unique ID. If this is 0, then this empire is invalid!
+diff --git a/Ship_Game/Spatial/ISpatial.cs b/Ship_Game/Spatial/ISpatial.cs
+index 32de3f4..bb96de7 100644
+--- a/Ship_Game/Spatial/ISpatial.cs
++++ b/Ship_Game/Spatial/ISpatial.cs
+@@ -34,6 +34,15 @@ namespace Ship_Game
+         /// </summary>
+         int Count { get; }
+ 
++        /// <summary>
++        /// DETERMINISM lever: when true, CollideAll returns collision pairs in a STABLE order
++        /// (sorted by object Id, ascending) so collision/damage resolution is reproducible
++        /// run-to-run regardless of native traversal/thread scheduling. Off by default (live
++        /// play favors raw throughput); the universe turns it ON when running on a deterministic
++        /// RNG (lockstep matches / headless determinism tests).
++        /// </summary>
++        bool DeterministicCollisions { get; set; }
++
+         /// <summary>
+         /// Clears the entire state of the Spatial collection
+         /// </summary>
+diff --git a/Ship_Game/Spatial/NativeSpatial.cs b/Ship_Game/Spatial/NativeSpatial.cs
+index 78bb499..5b239c5 100644
+--- a/Ship_Game/Spatial/NativeSpatial.cs
++++ b/Ship_Game/Spatial/NativeSpatial.cs
+@@ -81,6 +81,10 @@ namespace Ship_Game.Spatial
+         public int MaxObjects => SpatialMaxObjects(Spat);
+         public string Name { get; }
+ 
++        // DETERMINISM lever: drives CollisionParams.SortCollisionsById so collision pairs come
++        // back in a stable Id-sorted order (reproducible damage resolution). See ISpatial.
++        public bool DeterministicCollisions { get; set; }
++
+         /// <summary>
+         /// Allows to access C++ spatial containers implemented in SDNative.dll
+         /// </summary>
+@@ -210,7 +214,10 @@ namespace Ship_Game.Spatial
+             var p = new CollisionParams
+             {
+                 IgnoreSameLoyalty = 1,
+-                SortCollisionsById = 0,
++                // DETERMINISM: sort collision pairs by Id so damage resolves in a reproducible order
++                // when the sim is running deterministically (lockstep / headless tests). Off in live
++                // play (0) for raw throughput; the native traversal order is otherwise scheduler-dependent.
++                SortCollisionsById = (byte)(DeterministicCollisions ? 1 : 0),
+                 ShowCollisions = (byte)(showCollisions ? 1 : 0),
+             };
+             
+diff --git a/Ship_Game/Spatial/Qtree.cs b/Ship_Game/Spatial/Qtree.cs
+index fceaf10..ba25713 100644
+--- a/Ship_Game/Spatial/Qtree.cs
++++ b/Ship_Game/Spatial/Qtree.cs
+@@ -35,6 +35,10 @@ public sealed unsafe partial class Qtree : ISpatial, IDisposable
+     public float WorldSize { get; }
+     public int Count { get; private set; }
+ 
++    // DETERMINISM lever (see ISpatial). The managed Qtree already collides single-threaded in a
++    // stable traversal order, so this is accepted for interface parity; honored by the native path.
++    public bool DeterministicCollisions { get; set; }
++
+     public string Name => "C#-Qtree";
+ 
+     // Create a quadtree to fit the universe
+diff --git a/Ship_Game/Spatial/SpatialManager.cs b/Ship_Game/Spatial/SpatialManager.cs
+index de42e25..70d540d 100644
+--- a/Ship_Game/Spatial/SpatialManager.cs
++++ b/Ship_Game/Spatial/SpatialManager.cs
+@@ -21,6 +21,20 @@ namespace Ship_Game.Gameplay
+         public int Collisions { get; private set; }
+         public int Count => Spatial?.Count ?? 0;
+ 
++        // DETERMINISM lever (see ISpatial). Mirrored onto the active spatial so collision pairs
++        // resolve in a stable Id-sorted order when the sim runs deterministically (lockstep / tests).
++        bool DeterministicCollisionsField;
++        public bool DeterministicCollisions
++        {
++            get => DeterministicCollisionsField;
++            set
++            {
++                DeterministicCollisionsField = value;
++                if (Spatial != null) Spatial.DeterministicCollisions = value;
++                if (ResetToNewSpatial != null) ResetToNewSpatial.DeterministicCollisions = value;
++            }
++        }
++
+         public VisualizerOptions VisOpt = new();
+ 
+         public SpatialManager(float universeWidth)
+@@ -42,6 +56,7 @@ namespace Ship_Game.Gameplay
+                 case SpatialType.GridL2:       newSpatial = new NativeSpatial(type, UniverseWidth, 16_000, 500); break;
+                 case SpatialType.ManagedQtree: newSpatial = new Qtree(UniverseWidth, 512); break;
+             }
++            newSpatial.DeterministicCollisions = DeterministicCollisionsField; // inherit the determinism lever
+             Log.Info($"SpatialManager {newSpatial.Name} Width: {UniverseWidth}  FullSize: {(int)newSpatial.FullSize}");
+             return newSpatial;
+         }
+diff --git a/Ship_Game/Universe/SolarBodies/PlanetTypes.cs b/Ship_Game/Universe/SolarBodies/PlanetTypes.cs
+index a563191..0810832 100644
+--- a/Ship_Game/Universe/SolarBodies/PlanetTypes.cs
++++ b/Ship_Game/Universe/SolarBodies/PlanetTypes.cs
+@@ -41,7 +41,13 @@ public sealed class PlanetTypes : IDisposable
+     Map<int, PlanetType> PlanetTypeMap;
+     Map<PlanetCategory, PlanetType[]> PlanetTypesByCategory;
+     public PlanetRenderer Renderer;
+-    readonly RandomBase Random = new ThreadSafeRandom();
++    RandomBase Random = new ThreadSafeRandom();
++
++    // Determinism: planet-type selection normally uses a clock-seeded shared RNG. For deterministic
++    // (seeded) universe generation, route it through a reproducible stream so two runs pick the same
++    // planet types. seed==0 restores the clock-seeded default.
++    public void SeedDeterministicGeneration(int seed)
++        => Random = seed != 0 ? new SeededRandom(seed) : new ThreadSafeRandom();
+ 
+     void Initialize(GameContentManager content)
+     {
+diff --git a/Ship_Game/Universe/SolarBodies/SolarSystemBody.cs b/Ship_Game/Universe/SolarBodies/SolarSystemBody.cs
+index 84db23c..821816d 100644
+--- a/Ship_Game/Universe/SolarBodies/SolarSystemBody.cs
++++ b/Ship_Game/Universe/SolarBodies/SolarSystemBody.cs
+@@ -2,6 +2,7 @@ using System;
+ using System.Collections.Generic;
+ using SDGraphics;
+ using SDUtils;
++using SDUtils.Deterministic;
+ using Ship_Game.Audio;
+ using Ship_Game.Gameplay;
+ using Ship_Game.Ships;
+@@ -242,7 +243,16 @@ namespace Ship_Game
+         public IReadOnlyList<Building> GetBuildingsCanBuild() => BuildingsCanBuild;
+         
+         // per-planet pseudo-random source
+-        public readonly RandomBase Random = new ThreadSafeRandom();
++        public RandomBase Random { get; private set; } = new ThreadSafeRandom();
++
++        const ulong DeterministicSolarBodyStream = 3;
++
++        public void UseDeterministicRandom(ulong rootSeed)
++        {
++            if (rootSeed != 0)
++                Random = DeterministicRandom.FromStream(
++                    DetStreams.ForEntity(rootSeed, DeterministicSolarBodyStream, (ulong)Id));
++        }
+ 
+         public SolarSystemBody(int id, GameObjectType type) : base(id, type)
+         {
+diff --git a/Ship_Game/Universe/UniverseScreen/UniverseObjectManager.cs b/Ship_Game/Universe/UniverseScreen/UniverseObjectManager.cs
+index 868f9d6..e6a109a 100644
+--- a/Ship_Game/Universe/UniverseScreen/UniverseObjectManager.cs
++++ b/Ship_Game/Universe/UniverseScreen/UniverseObjectManager.cs
+@@ -369,8 +369,17 @@ namespace Ship_Game
+                 }
+             }
+ 
+-            //UpdateSystems(0, UState.Systems.Count);
+-            Parallel.For(UState.Systems.Count, UpdateSystems, MaxTaskCores);
++            // DETERMINISM: honor EnableParallelUpdate like every other update phase in this
++            // class (ships/projectiles/sensors/AI all gate on it). When parallel update is OFF
++            // (headless determinism tests, lockstep), run the per-system ship assignment SERIALLY
++            // so the same inputs always produce the same ship->system assignment + iteration order.
++            // Previously this phase ALWAYS ran Parallel.For regardless of the flag, which let
++            // thread scheduling perturb the sim run-to-run even with deterministic RNG — the source
++            // of the flaky lone-gladiator arena round that couldn't resolve within budget.
++            if (EnableParallelUpdate)
++                Parallel.For(UState.Systems.Count, UpdateSystems, MaxTaskCores);
++            else
++                UpdateSystems(0, UState.Systems.Count);
+         }
+ 
+         void UpdateAllShips(FixedSimTime timeStep)
+diff --git a/Ship_Game/Universe/UniverseState.cs b/Ship_Game/Universe/UniverseState.cs
+index 44f976c..77f769b 100644
+--- a/Ship_Game/Universe/UniverseState.cs
++++ b/Ship_Game/Universe/UniverseState.cs
+@@ -1,9 +1,10 @@
+-﻿using System;
++using System;
+ using System.Collections.Generic;
+ using System.Linq;
+ using System.Threading;
+ using SDGraphics;
+ using SDUtils;
++using SDUtils.Deterministic;
+ using Ship_Game.Data.Serialization;
+ using Ship_Game.Debug;
+ using Ship_Game.Gameplay;
+@@ -169,7 +170,29 @@ namespace Ship_Game.Universe
+         public float ExoticPlanetDivisor => (P.ExtraPlanets * 0.8f).LowerBound(1);
+         public float DefaultProjectorRadius;
+ 
+-        public readonly RandomBase Random = new ThreadSafeRandom();
++        public RandomBase Random { get; private set; } = new ThreadSafeRandom();
++
++        public ulong DeterministicRootSeed { get; private set; }
++        public bool IsDeterministicRng => DeterministicRootSeed != 0;
++
++        const ulong DeterministicUniverseStream = 1;
++
++        public void EnableDeterministicRng(ulong rootSeed)
++        {
++            DeterministicRootSeed = rootSeed;
++            Random = DeterministicRandom.FromStream(
++                DetStreams.ForEntity(rootSeed, DeterministicUniverseStream, 0));
++
++            foreach (Empire e in Empires)
++                e.UseDeterministicRandom(rootSeed);
++
++            foreach (SolarSystem sys in Systems)
++                foreach (Planet p in sys.PlanetList)
++                    p.UseDeterministicRandom(rootSeed);
++
++            if (Spatial != null)
++                Spatial.DeterministicCollisions = true;
++        }
+ 
+         [StarDataConstructor] UniverseState() {}
+ 
+diff --git a/Ship_Game/Utils/DeterministicRandom.cs b/Ship_Game/Utils/DeterministicRandom.cs
+new file mode 100644
+index 0000000..69d61ff
+--- /dev/null
++++ b/Ship_Game/Utils/DeterministicRandom.cs
+@@ -0,0 +1,56 @@
++using SDUtils.Deterministic;
++
++namespace Ship_Game.Utils;
++
++/// <summary>
++/// Lockstep-grade deterministic RNG backend for <see cref="RandomBase"/>.
++///
++/// Backed by SplitMix64 (integer-only), so its draws are bit-identical across machines/.NET
++/// versions and its state is exactly save/restorable via <see cref="RandomBase.TryGetState"/> /
++/// <see cref="RandomBase.SetState"/>. Use this for any owner whose draws must be reproducible
++/// (UniverseState, Empire, SolarSystemBody, ...).
++///
++/// NOT thread-safe: it is a single advancing stream. For parallel per-entity consumption, give
++/// each entity its own stream via <see cref="Fork"/> so draws never depend on thread interleaving.
++/// </summary>
++public sealed class DeterministicRandom : RandomBase
++{
++    DetRandom Rng;
++
++    public DeterministicRandom(int seed) : base(seed == 0 ? 1 : seed)
++    {
++        Rng = new DetRandom((ulong)(uint)Seed);
++    }
++
++    public DeterministicRandom(ulong seed64) : base(seed64 == 0 ? 1 : unchecked((int)seed64))
++    {
++        Rng = new DetRandom(seed64 == 0 ? 1UL : seed64);
++    }
++
++    DeterministicRandom(DetRandom forked, int seedTag) : base(seedTag == 0 ? 1 : seedTag)
++    {
++        Rng = forked;
++    }
++
++    /// <summary>Wrap a pre-derived deterministic stream (e.g. from DetStreams) as a RandomBase.</summary>
++    public static DeterministicRandom FromStream(DetRandom rng) => new(rng, 0);
++
++    protected override double NextUnitDouble() => Rng.NextDouble();
++
++    protected override int NextIntExclusive(int minInclusive, int maxExclusive)
++        => Rng.NextInt(minInclusive, maxExclusive);
++
++    public override bool TryGetState(out ulong state)
++    {
++        state = Rng.State;
++        return true;
++    }
++
++    public override void SetState(ulong state) => Rng.State = state;
++
++    /// <summary>
++    /// Derive an independent deterministic sub-stream (e.g. one per entity) for parallel-safe draws.
++    /// </summary>
++    public DeterministicRandom Fork(ulong streamId)
++        => new(Rng.Fork(streamId), unchecked((int)streamId));
++}
+diff --git a/Ship_Game/Utils/RandomBase.cs b/Ship_Game/Utils/RandomBase.cs
+index 2170d59..e7c37f9 100644
+--- a/Ship_Game/Utils/RandomBase.cs
++++ b/Ship_Game/Utils/RandomBase.cs
+@@ -1,4 +1,4 @@
+-﻿using System;
++using System;
+ using System.Collections.Generic;
+ using SDGraphics;
+ using SDUtils;
+@@ -6,15 +6,26 @@ using SDUtils;
+ namespace Ship_Game.Utils;
+ 
+ /// <summary>
+-/// Provides a base class for Random number utilities
++/// Provides a base class for Random number utilities.
++///
++/// Determinism note: the core draw surface is reduced to two primitives —
++/// <see cref="NextUnitDouble"/> and <see cref="NextIntExclusive"/>. System.Random-backed
++/// subclasses (<see cref="SeededRandom"/>, <see cref="ThreadSafeRandom"/>) implement them by
++/// delegating to System.Random, preserving their exact historical sequences. The lockstep
++/// backend (DeterministicRandom) implements them on an integer SplitMix64 stream, so its
++/// output is bit-identical across machines and is save/restorable.
+ /// </summary>
+ public abstract class RandomBase
+ {
+     protected int Seed;
+ 
++    /// <summary>The seed this generator was initialized with (for diagnostics / save metadata).</summary>
++    public int CurrentSeed => Seed;
++
+     /// <summary>
+     /// Initializes the pseudo-random with a seed value. If 0 seed is given,
+-    /// then a seed is automatically generated based on CPU clock ticks
++    /// then a seed is automatically generated based on CPU clock ticks.
++    /// NOTE: clock seeding is non-reproducible — deterministic owners must pass an explicit seed.
+     /// </summary>
+     protected RandomBase(int seed)
+     {
+@@ -30,19 +41,28 @@ public abstract class RandomBase
+         }
+     }
+ 
+-    protected abstract Random Rand { get; }
++    // ---- Core draw primitives (the only thing subclasses must implement) ----
++
++    /// <summary>Next double in [0,1).</summary>
++    protected abstract double NextUnitDouble();
++
++    /// <summary>Next int in [minInclusive, maxExclusive). Caller guarantees maxExclusive &gt;= minInclusive.</summary>
++    protected abstract int NextIntExclusive(int minInclusive, int maxExclusive);
++
++    // ---- Save / restore (deterministic backends override) ----
++
++    /// <summary>True if this generator exposes a restorable integer state (deterministic backends).</summary>
++    public virtual bool TryGetState(out ulong state) { state = 0; return false; }
++
++    /// <summary>Restore a previously captured integer state. No-op for non-deterministic backends.</summary>
++    public virtual void SetState(ulong state) { }
+ 
+     /// <summary>
+     /// Generate a random float within inclusive [min, max]
+     /// </summary>
+     public float Float(float min, float max)
+     {
+-        return min + ((float)Rand.NextDouble() * (max - min));
+-    }
+-
+-    static float Float(Random random, float min, float max)
+-    {
+-        return min + ((float)random.NextDouble() * (max - min));
++        return min + ((float)NextUnitDouble() * (max - min));
+     }
+ 
+     /// <summary>
+@@ -50,7 +70,7 @@ public abstract class RandomBase
+     /// </summary>
+     public float Float()
+     {
+-        return (float)Rand.NextDouble();
++        return (float)NextUnitDouble();
+     }
+ 
+     /// <summary>
+@@ -58,7 +78,7 @@ public abstract class RandomBase
+     /// </summary>
+     public double Double(double min, double max)
+     {
+-        return min + (Rand.NextDouble() * (max - min));
++        return min + (NextUnitDouble() * (max - min));
+     }
+ 
+     /// <summary>
+@@ -66,7 +86,7 @@ public abstract class RandomBase
+     /// </summary>
+     public double Double()
+     {
+-        return Rand.NextDouble();
++        return NextUnitDouble();
+     }
+ 
+     /// <summary>
+@@ -74,12 +94,7 @@ public abstract class RandomBase
+     /// </summary>
+     public int Int(int min, int max)
+     {
+-        return Rand.Next(min, max + 1);
+-    }
+-
+-    static int Int(Random random, int min, int max)
+-    {
+-        return random.Next(min, max + 1);
++        return NextIntExclusive(min, max == int.MaxValue ? max : max + 1);
+     }
+ 
+     /// <summary>
+@@ -87,7 +102,7 @@ public abstract class RandomBase
+     /// </summary>
+     public byte Byte()
+     {
+-        return (byte)Rand.Next(255);
++        return (byte)NextIntExclusive(0, 255);
+     }
+ 
+     /// <summary>
+@@ -96,7 +111,7 @@ public abstract class RandomBase
+     /// </summary>
+     public int InRange(int startIndex, int arrayLength)
+     {
+-        return Rand.Next(startIndex, arrayLength);
++        return NextIntExclusive(startIndex, arrayLength);
+     }
+ 
+     /// <summary>
+@@ -105,7 +120,7 @@ public abstract class RandomBase
+     /// </summary>
+     public int InRange(int arrayLength)
+     {
+-        return Rand.Next(0, arrayLength);
++        return NextIntExclusive(0, arrayLength);
+     }
+ 
+     /// <summary>
+@@ -195,7 +210,7 @@ public abstract class RandomBase
+     {
+         for (int n = list.Count - 1; n > 0; --n)
+         {
+-            int k = Rand.Next(n + 1);
++            int k = NextIntExclusive(0, n + 1);
+             (list[k], list[n]) = (list[n], list[k]);
+         }
+     }
+@@ -235,10 +250,9 @@ public abstract class RandomBase
+         if (iterations == 0)
+             return 0f;
+ 
+-        Random rand = Rand;
+         float sum = 0;
+         for (int i = 0; i < iterations; i++)
+-            sum += Float(rand, 0f, 100f);
++            sum += Float(0f, 100f);
+         return (sum / iterations);
+     }
+ 
+@@ -247,9 +261,8 @@ public abstract class RandomBase
+     /// </summary>
+     public Vector2 RandomPointInRing(float minRadius, float maxRadius)
+     {
+-        Random rand = Rand;
+-        float theta = Float(rand, 0f, 2f * (float)Math.PI);
+-        float w = Float(rand, 0f, 1f);
++        float theta = Float(0f, 2f * (float)Math.PI);
++        float w = Float(0f, 1f);
+         float r = (float)Math.Sqrt((1f - w) * minRadius * minRadius + w * maxRadius * maxRadius);
+         return new(r * Math.Cos(theta), r * Math.Sin(theta));
+     }
+@@ -268,9 +281,8 @@ public abstract class RandomBase
+     /// </summary>
+     public Vector2 Vector2D(float radius)
+     {
+-        Random rand = Rand;
+-        return new(Float(rand, -radius, radius),
+-                   Float(rand, -radius, radius));
++        return new(Float(-radius, radius),
++                   Float(-radius, radius));
+     }
+ 
+     /// <summary>
+@@ -278,9 +290,8 @@ public abstract class RandomBase
+     /// </summary>
+     public Vector2 Vector2D(float min, float max)
+     {
+-        Random rand = Rand;
+-        return new(Float(rand, min, max),
+-                   Float(rand, min, max));
++        return new(Float(min, max),
++                   Float(min, max));
+     }
+ 
+     /// <summary>
+@@ -288,10 +299,9 @@ public abstract class RandomBase
+     /// </summary>
+     public Vector3 Vector3D(float radius)
+     {
+-        Random rand = Rand;
+-        return new(Float(rand, -radius, radius),
+-                   Float(rand, -radius, radius),
+-                   Float(rand, -radius, radius));
++        return new(Float(-radius, radius),
++                   Float(-radius, radius),
++                   Float(-radius, radius));
+     }
+ 
+     /// <summary>
+@@ -299,9 +309,8 @@ public abstract class RandomBase
+     /// </summary>
+     public Vector3 Vector32D(float radius)
+     {
+-        Random rand = Rand;
+-        return new(Float(rand, -radius, radius),
+-                   Float(rand, -radius, radius),
++        return new(Float(-radius, radius),
++                   Float(-radius, radius),
+                    0f);
+     }
+ 
+@@ -310,10 +319,9 @@ public abstract class RandomBase
+     /// </summary>
+     public Vector3 Vector3D(float min, float max)
+     {
+-        Random rand = Rand;
+-        return new(Float(rand, min, max),
+-                   Float(rand, min, max),
+-                   Float(rand, min, max));
++        return new(Float(min, max),
++                   Float(min, max),
++                   Float(min, max));
+     }
+ 
+     /// <summary>
+@@ -321,10 +329,9 @@ public abstract class RandomBase
+     /// </summary>
+     public Vector3 Vector3D(in Vector3 minValue, in Vector3 maxValue)
+     {
+-        Random rand = Rand;
+-        return new(Float(rand, minValue.X, maxValue.X),
+-                   Float(rand, minValue.Y, maxValue.Y),
+-                   Float(rand, minValue.Z, maxValue.Z));
++        return new(Float(minValue.X, maxValue.X),
++                   Float(minValue.Y, maxValue.Y),
++                   Float(minValue.Z, maxValue.Z));
+     }
+ 
+     /// <summary>
+@@ -332,10 +339,9 @@ public abstract class RandomBase
+     /// </summary>
+     public Vector3 Vector3D(in Vector3 minMax)
+     {
+-        Random rand = Rand;
+-        return new(Float(rand, -minMax.X, minMax.X),
+-                   Float(rand, -minMax.Y, minMax.Y),
+-                   Float(rand, -minMax.Z, minMax.Z));
++        return new(Float(-minMax.X, minMax.X),
++                   Float(-minMax.Y, minMax.Y),
++                   Float(-minMax.Z, minMax.Z));
+     }
+ 
+     /// <summary>
+@@ -343,13 +349,12 @@ public abstract class RandomBase
+     /// </summary>
+     public float AvgFloat(float min, float max, int iterations = 3)
+     {
+-        Random rand = Rand;
+         if (iterations <= 1)
+-            return Float(rand, min, max);
++            return Float(min, max);
+ 
+         float sum = 0;
+         for (int x = 0; x < iterations; ++x)
+-            sum += Float(rand, min, max);
++            sum += Float(min, max);
+         return sum / iterations;
+     }
+ 
+@@ -358,13 +363,12 @@ public abstract class RandomBase
+     /// </summary>
+     public int AvgInt(int min, int max, int iterations = 3)
+     {
+-        Random rand = Rand;
+         if (iterations <= 1)
+-            return Int(rand, min, max);
++            return Int(min, max);
+ 
+         int sum = 0;
+         for (int x = 0; x < iterations; ++x)
+-            sum += Int(rand, min, max);
++            sum += Int(min, max);
+         return sum / iterations;
+     }
+ }
+diff --git a/Ship_Game/Utils/SeededRandom.cs b/Ship_Game/Utils/SeededRandom.cs
+index d7c5f6b..b50fcc9 100644
+--- a/Ship_Game/Utils/SeededRandom.cs
++++ b/Ship_Game/Utils/SeededRandom.cs
+@@ -1,13 +1,15 @@
+-﻿using System;
++using System;
+ namespace Ship_Game.Utils;
+ 
+ /// <summary>
+-/// An implementation of RandomBase
+-/// NOTE: This is not thread-safe, @see ThreadSafeRandom
++/// An implementation of RandomBase backed by System.Random.
++/// NOTE: This is not thread-safe, @see ThreadSafeRandom.
++/// NOTE: System.Random is NOT reproducible across .NET versions/platforms — for lockstep
++/// determinism use DeterministicRandom instead.
+ /// </summary>
+ public class SeededRandom : RandomBase
+ {
+-    protected override Random Rand { get; }
++    readonly Random Rand;
+ 
+     // Automatically initializes the seed with a unique seed value
+     public SeededRandom() : this(0)
+@@ -18,4 +20,9 @@ public class SeededRandom : RandomBase
+     {
+         Rand = new(Seed);
+     }
++
++    protected override double NextUnitDouble() => Rand.NextDouble();
++
++    protected override int NextIntExclusive(int minInclusive, int maxExclusive)
++        => Rand.Next(minInclusive, maxExclusive);
+ }
+diff --git a/Ship_Game/Utils/ThreadSafeRandom.cs b/Ship_Game/Utils/ThreadSafeRandom.cs
+index df582c9..8cd3dab 100644
+--- a/Ship_Game/Utils/ThreadSafeRandom.cs
++++ b/Ship_Game/Utils/ThreadSafeRandom.cs
+@@ -1,12 +1,18 @@
+-﻿using System;
++using System;
+ using System.Threading;
+ namespace Ship_Game.Utils;
+ 
++/// <summary>
++/// Thread-safe RandomBase backed by a per-thread System.Random.
++/// NOTE: per-thread streams make this fast and thread-safe but NON-deterministic under parallel
++/// consumption (the value a call returns depends on which thread serviced it). For lockstep
++/// determinism use DeterministicRandom with per-entity Fork() instead.
++/// </summary>
+ public sealed class ThreadSafeRandom : RandomBase, IDisposable
+ {
+     // NOTE: This is really fast
+     readonly ThreadLocal<Random> Randoms;
+-    protected override Random Rand => Randoms.Value;
++    Random Rand => Randoms.Value;
+ 
+     // Automatically initializes the seed with a unique seed value
+     public ThreadSafeRandom() : this(0)
+@@ -18,6 +24,11 @@ public sealed class ThreadSafeRandom : RandomBase, IDisposable
+         Randoms = new ThreadLocal<Random>(() => new Random(Seed));
+     }
+ 
++    protected override double NextUnitDouble() => Rand.NextDouble();
++
++    protected override int NextIntExclusive(int minInclusive, int maxExclusive)
++        => Rand.Next(minInclusive, maxExclusive);
++
+     public void Dispose()
+     {
+         Randoms?.Dispose();
+diff --git a/StarDrive.csproj b/StarDrive.csproj
+index 807aadd..959d180 100644
+--- a/StarDrive.csproj
++++ b/StarDrive.csproj
+@@ -743,6 +743,7 @@
+     <Compile Include="Ship_Game\Utils\EnumFlatMap.cs" />
+     <Compile Include="Ship_Game\Utils\ObjectPool.cs" />
+     <Compile Include="Ship_Game\Utils\RandomBase.cs" />
++    <Compile Include="Ship_Game\Utils\DeterministicRandom.cs" />
+     <Compile Include="Ship_Game\Utils\MethodUtil.cs" />
+     <Compile Include="Ship_Game\Universe\SolarBodies\Planet\PlanetEdict.cs" />
+     <Compile Include="Ship_Game\Threading\Parallel.cs" />
+diff --git a/UnitTests/Determinism/ArenaDeterminismPatchContractTests.cs b/UnitTests/Determinism/ArenaDeterminismPatchContractTests.cs
+new file mode 100644
+index 0000000..3e91e4e
+--- /dev/null
++++ b/UnitTests/Determinism/ArenaDeterminismPatchContractTests.cs
+@@ -0,0 +1,123 @@
++using System;
++using Microsoft.VisualStudio.TestTools.UnitTesting;
++using Ship_Game;
++using Ship_Game.Ships;
++using Ship_Game.Utils;
++using Vector2 = SDGraphics.Vector2;
++
++namespace UnitTests.Determinism;
++
++[TestClass]
++public class ArenaDeterminismPatchContractTests : StarDriveTest
++{
++    [TestMethod]
++    public void ArenaDeterminismPatch_ModeOffIsInert_Headless()
++    {
++        CreateUniverseAndPlayerEmpire();
++
++        Assert.AreEqual(0ul, UState.DeterministicRootSeed,
++            "Deterministic root seed must default to zero so deterministic mode is off.");
++        Assert.IsFalse(UState.IsDeterministicRng,
++            "Deterministic RNG mode must be opt-in.");
++        Assert.IsInstanceOfType(UState.Random, typeof(ThreadSafeRandom),
++            "Default universe RNG must remain the historical clock-seeded backend.");
++        Assert.IsFalse(UState.Random.TryGetState(out _),
++            "Default RNG must not expose deterministic save/restore state.");
++        Assert.IsInstanceOfType(Player.Random, typeof(ThreadSafeRandom),
++            "Default empire RNG must remain the historical clock-seeded backend.");
++        Assert.IsInstanceOfType(Enemy.Random, typeof(ThreadSafeRandom),
++            "Default enemy RNG must remain the historical clock-seeded backend.");
++        Assert.IsFalse(UState.Spatial.DeterministicCollisions,
++            "Default collision ordering must remain native traversal order; this false value marshals to SortCollisionsById=0.");
++        Assert.IsTrue(UState.Objects.EnableParallelUpdate,
++            "Default object update must remain parallel-capable; serial update is opt-in per caller.");
++    }
++
++    [TestMethod]
++    public void ArenaDeterminismPatch_SameSeedReproducible_DifferentSeedDiffers_Headless()
++    {
++        const ulong SeedA = 0xA12E_D37E_0000_0001ul;
++        const ulong SeedB = 0xA12E_D37E_0000_0002ul;
++
++        ulong first = RunSmallSeededSerialSim(SeedA);
++        ulong rerun = RunSmallSeededSerialSim(SeedA);
++        ulong different = RunSmallSeededSerialSim(SeedB);
++
++        Assert.AreEqual(first, rerun,
++            "Same seed plus serial object update must reproduce the exact small-sim digest.");
++        Assert.AreNotEqual(first, different,
++            "A different deterministic root seed must perturb the small sim.");
++    }
++
++    ulong RunSmallSeededSerialSim(ulong seed)
++    {
++        CreateUniverseAndPlayerEmpire();
++        UState.P.GravityWellRange = 0;
++        UState.Objects.EnableParallelUpdate = false;
++        UState.Paused = false;
++        UState.EnableDeterministicRng(seed);
++
++        Assert.IsTrue(UState.IsDeterministicRng, "EnableDeterministicRng must flip the public mode flag.");
++        Assert.AreEqual(seed, UState.DeterministicRootSeed,
++            "The root seed must be visible for generation-time and owner re-seeding.");
++        Assert.IsInstanceOfType(UState.Random, typeof(DeterministicRandom),
++            "Enabled deterministic mode must replace the universe RNG backend.");
++        Assert.IsInstanceOfType(Player.Random, typeof(DeterministicRandom),
++            "Enabled deterministic mode must replace empire RNG backends.");
++        Assert.IsTrue(UState.Spatial.DeterministicCollisions,
++            "Enabled deterministic mode must request stable Id-sorted native collision order.");
++
++        Ship player = SpawnShip("Fang Strafer", Player,
++            new Vector2(-1800f + UState.Random.Float(-150f, 150f), UState.Random.Float(-120f, 120f)),
++            new Vector2(1f, 0f));
++        Ship enemy = SpawnShip("Fang Strafer", Enemy,
++            new Vector2(1800f + UState.Random.Float(-150f, 150f), UState.Random.Float(-120f, 120f)),
++            new Vector2(-1f, 0f));
++
++        player.SensorRange = 60000f;
++        enemy.SensorRange = 60000f;
++        player.AI.OrderAttackSpecificTarget(enemy);
++        enemy.AI.OrderAttackSpecificTarget(player);
++
++        for (int tick = 0; tick < 360; ++tick)
++        {
++            if ((tick % 90) == 0)
++            {
++                if (player.Active && enemy.Active) player.AI.OrderAttackSpecificTarget(enemy);
++                if (enemy.Active && player.Active) enemy.AI.OrderAttackSpecificTarget(player);
++            }
++            UState.Objects.Update(TestSimStep);
++        }
++
++        return Digest(player, enemy);
++    }
++
++    static ulong Digest(params Ship[] ships)
++    {
++        ulong hash = 1469598103934665603ul;
++        foreach (Ship ship in ships)
++        {
++            Mix(ref hash, ship?.Id ?? 0);
++            Mix(ref hash, ship?.Active == true ? 1 : 0);
++            Mix(ref hash, Bits(ship?.Position.X ?? 0f));
++            Mix(ref hash, Bits(ship?.Position.Y ?? 0f));
++            Mix(ref hash, Bits(ship?.Rotation ?? 0f));
++            Mix(ref hash, Bits(ship?.Velocity.X ?? 0f));
++            Mix(ref hash, Bits(ship?.Velocity.Y ?? 0f));
++            Mix(ref hash, Bits(ship?.Health ?? 0f));
++            Mix(ref hash, Bits(ship?.Ordinance ?? 0f));
++        }
++        return hash;
++    }
++
++    static int Bits(float value) => BitConverter.SingleToInt32Bits(value);
++
++    static void Mix(ref ulong hash, int value)
++    {
++        unchecked
++        {
++            hash ^= (uint)value;
++            hash *= 1099511628211ul;
++        }
++    }
++}
+diff --git a/UnitTests/SDUnitTests.csproj b/UnitTests/SDUnitTests.csproj
+index e383fed..c45a69a 100644
+--- a/UnitTests/SDUnitTests.csproj
++++ b/UnitTests/SDUnitTests.csproj
+@@ -79,6 +79,7 @@
+     <Compile Include="Data\Ship17DiagnosticTest.cs" />
+     <Compile Include="Data\Ship17EndToEndTest.cs" />
+     <Compile Include="Data\TestLocalizedText.cs" />
++    <Compile Include="Determinism\ArenaDeterminismPatchContractTests.cs" />
+     <Compile Include="Empires\IncomingThreatDetectorTests.cs" />
+     <Compile Include="ExoticSystems\ResearchStations.cs" />
+     <Compile Include="Fleets\FleetFocusFireTests.cs" />

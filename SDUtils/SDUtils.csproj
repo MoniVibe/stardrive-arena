@@ -40,6 +40,15 @@
     <Compile Include="CollectionExt.cs" />
     <Compile Include="CollectionFilter.cs" />
     <Compile Include="CollectionFilterSelect.cs" />
+    <Compile Include="Deterministic\DetRandom.cs" />
+    <Compile Include="Deterministic\DetHash.cs" />
+    <Compile Include="Deterministic\DeterminismChecksum.cs" />
+    <Compile Include="Deterministic\DetStreams.cs" />
+    <Compile Include="Deterministic\ScenarioSeedUtilityNet8.cs" />
+    <Compile Include="Deterministic\Fixed64.cs" />
+    <Compile Include="Deterministic\FixVector2.cs" />
+    <Compile Include="Deterministic\DetPhysics2D.cs" />
+    <Compile Include="Deterministic\DetMiniSim.cs" />
     <Compile Include="Dir.cs" />
     <Compile Include="FileSystemExtensions.cs" />
     <Compile Include="Map.cs" />

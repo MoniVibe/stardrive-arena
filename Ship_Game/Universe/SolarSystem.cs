@@ -501,7 +501,7 @@ namespace Ship_Game
 
             MarkovNameGenerator markovNameGenerator = null;
             if (owner != null)
-                markovNameGenerator = ResourceManager.GetRandomNames(owner);
+                markovNameGenerator = ResourceManager.GetRandomNames(owner, us.P.GenerationSeed);
 
             float NextRingRadius(int ringNum) => firstRingRadius + random.Float(0, ringSpace / (1 + NumberOfRings - ringNum));
 

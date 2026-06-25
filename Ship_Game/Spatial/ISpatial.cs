@@ -35,6 +35,15 @@ namespace Ship_Game
         int Count { get; }
 
         /// <summary>
+        /// DETERMINISM lever: when true, CollideAll returns collision pairs in a STABLE order
+        /// (sorted by object Id, ascending) so collision/damage resolution is reproducible
+        /// run-to-run regardless of native traversal/thread scheduling. Off by default (live
+        /// play favors raw throughput); the universe turns it ON when running on a deterministic
+        /// RNG (lockstep matches / headless determinism tests).
+        /// </summary>
+        bool DeterministicCollisions { get; set; }
+
+        /// <summary>
         /// Clears the entire state of the Spatial collection
         /// </summary>
         void Clear();

@@ -38,6 +38,9 @@ namespace Ship_Game
         void BindListsToActiveHull()
         {
             ShipDesign design = CurrentDesign;
+            if (CategoryList == null || HangarOptionsList == null)
+                return;
+
             CategoryList.Visible = design != null;
             HangarOptionsList.Visible = design != null;
 

@@ -114,6 +114,35 @@ public partial class Ship
         LastDamagedTime = GameBase.Base.TotalElapsed;
     }
 
+    /// <summary>
+    /// Instantly restores every module to full health (resurrecting any destroyed
+    /// ones via ShipModule.SetHealth's Resurrect path) and refreshes the ship's
+    /// aggregate Health to HealthMax. Used by the ARENA roguelike shop's 'Repair Hull'
+    /// buy — a full, combat-correct repair (modules, not just the Health scalar) so the
+    /// repaired ship actually fights at full strength in the next round.
+    /// </summary>
+    public void RepairFully()
+    {
+        ShipModule[] modules = ModuleSlotList;
+        for (int i = 0; i < modules.Length; ++i)
+            modules[i].SetHealth(modules[i].ActualMaxHealth, "ArenaRepair");
+        HealthMax = RecalculateMaxHealth();
+        Health = HealthMax;
+    }
+
+    /// <summary>
+    /// Recharges every shield module back to its full strength and refreshes the
+    /// ship's aggregate ShieldPower. Used by the ARENA roguelike run loop between
+    /// rounds (attrition to the HULL persists across rounds, but shields recharge to
+    /// full for the next fight).
+    /// </summary>
+    public void RechargeShieldsFully()
+    {
+        foreach (ShipModule shield in GetShields())
+            shield.InitShieldPower(0f);
+        UpdateShields();
+    }
+
     /// <param name="repairAmount">How many HP-s to repair</param>
     /// <param name="repairInterval">This repair event interval in seconds, important for correct UI estimation</param>
     /// <param name="repairLevel">Level which improves repair decisions</param>

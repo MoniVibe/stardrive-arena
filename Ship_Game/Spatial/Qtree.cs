@@ -35,6 +35,10 @@ public sealed unsafe partial class Qtree : ISpatial, IDisposable
     public float WorldSize { get; }
     public int Count { get; private set; }
 
+    // DETERMINISM lever (see ISpatial). The managed Qtree already collides single-threaded in a
+    // stable traversal order, so this is accepted for interface parity; honored by the native path.
+    public bool DeterministicCollisions { get; set; }
+
     public string Name => "C#-Qtree";
 
     // Create a quadtree to fit the universe

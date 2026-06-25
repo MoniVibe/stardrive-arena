@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using SDGraphics;
 using SDUtils;
@@ -6,15 +6,26 @@ using SDUtils;
 namespace Ship_Game.Utils;
 
 /// <summary>
-/// Provides a base class for Random number utilities
+/// Provides a base class for Random number utilities.
+///
+/// Determinism note: the core draw surface is reduced to two primitives —
+/// <see cref="NextUnitDouble"/> and <see cref="NextIntExclusive"/>. System.Random-backed
+/// subclasses (<see cref="SeededRandom"/>, <see cref="ThreadSafeRandom"/>) implement them by
+/// delegating to System.Random, preserving their exact historical sequences. The lockstep
+/// backend (DeterministicRandom) implements them on an integer SplitMix64 stream, so its
+/// output is bit-identical across machines and is save/restorable.
 /// </summary>
 public abstract class RandomBase
 {
     protected int Seed;
 
+    /// <summary>The seed this generator was initialized with (for diagnostics / save metadata).</summary>
+    public int CurrentSeed => Seed;
+
     /// <summary>
     /// Initializes the pseudo-random with a seed value. If 0 seed is given,
-    /// then a seed is automatically generated based on CPU clock ticks
+    /// then a seed is automatically generated based on CPU clock ticks.
+    /// NOTE: clock seeding is non-reproducible — deterministic owners must pass an explicit seed.
     /// </summary>
     protected RandomBase(int seed)
     {
@@ -30,19 +41,28 @@ public abstract class RandomBase
         }
     }
 
-    protected abstract Random Rand { get; }
+    // ---- Core draw primitives (the only thing subclasses must implement) ----
+
+    /// <summary>Next double in [0,1).</summary>
+    protected abstract double NextUnitDouble();
+
+    /// <summary>Next int in [minInclusive, maxExclusive). Caller guarantees maxExclusive &gt;= minInclusive.</summary>
+    protected abstract int NextIntExclusive(int minInclusive, int maxExclusive);
+
+    // ---- Save / restore (deterministic backends override) ----
+
+    /// <summary>True if this generator exposes a restorable integer state (deterministic backends).</summary>
+    public virtual bool TryGetState(out ulong state) { state = 0; return false; }
+
+    /// <summary>Restore a previously captured integer state. No-op for non-deterministic backends.</summary>
+    public virtual void SetState(ulong state) { }
 
     /// <summary>
     /// Generate a random float within inclusive [min, max]
     /// </summary>
     public float Float(float min, float max)
     {
-        return min + ((float)Rand.NextDouble() * (max - min));
-    }
-
-    static float Float(Random random, float min, float max)
-    {
-        return min + ((float)random.NextDouble() * (max - min));
+        return min + ((float)NextUnitDouble() * (max - min));
     }
 
     /// <summary>
@@ -50,7 +70,7 @@ public abstract class RandomBase
     /// </summary>
     public float Float()
     {
-        return (float)Rand.NextDouble();
+        return (float)NextUnitDouble();
     }
 
     /// <summary>
@@ -58,7 +78,7 @@ public abstract class RandomBase
     /// </summary>
     public double Double(double min, double max)
     {
-        return min + (Rand.NextDouble() * (max - min));
+        return min + (NextUnitDouble() * (max - min));
     }
 
     /// <summary>
@@ -66,7 +86,7 @@ public abstract class RandomBase
     /// </summary>
     public double Double()
     {
-        return Rand.NextDouble();
+        return NextUnitDouble();
     }
 
     /// <summary>
@@ -74,12 +94,7 @@ public abstract class RandomBase
     /// </summary>
     public int Int(int min, int max)
     {
-        return Rand.Next(min, max + 1);
-    }
-
-    static int Int(Random random, int min, int max)
-    {
-        return random.Next(min, max + 1);
+        return NextIntExclusive(min, max == int.MaxValue ? max : max + 1);
     }
 
     /// <summary>
@@ -87,7 +102,7 @@ public abstract class RandomBase
     /// </summary>
     public byte Byte()
     {
-        return (byte)Rand.Next(255);
+        return (byte)NextIntExclusive(0, 255);
     }
 
     /// <summary>
@@ -96,7 +111,7 @@ public abstract class RandomBase
     /// </summary>
     public int InRange(int startIndex, int arrayLength)
     {
-        return Rand.Next(startIndex, arrayLength);
+        return NextIntExclusive(startIndex, arrayLength);
     }
 
     /// <summary>
@@ -105,7 +120,7 @@ public abstract class RandomBase
     /// </summary>
     public int InRange(int arrayLength)
     {
-        return Rand.Next(0, arrayLength);
+        return NextIntExclusive(0, arrayLength);
     }
 
     /// <summary>
@@ -195,7 +210,7 @@ public abstract class RandomBase
     {
         for (int n = list.Count - 1; n > 0; --n)
         {
-            int k = Rand.Next(n + 1);
+            int k = NextIntExclusive(0, n + 1);
             (list[k], list[n]) = (list[n], list[k]);
         }
     }
@@ -235,10 +250,9 @@ public abstract class RandomBase
         if (iterations == 0)
             return 0f;
 
-        Random rand = Rand;
         float sum = 0;
         for (int i = 0; i < iterations; i++)
-            sum += Float(rand, 0f, 100f);
+            sum += Float(0f, 100f);
         return (sum / iterations);
     }
 
@@ -247,9 +261,8 @@ public abstract class RandomBase
     /// </summary>
     public Vector2 RandomPointInRing(float minRadius, float maxRadius)
     {
-        Random rand = Rand;
-        float theta = Float(rand, 0f, 2f * (float)Math.PI);
-        float w = Float(rand, 0f, 1f);
+        float theta = Float(0f, 2f * (float)Math.PI);
+        float w = Float(0f, 1f);
         float r = (float)Math.Sqrt((1f - w) * minRadius * minRadius + w * maxRadius * maxRadius);
         return new(r * Math.Cos(theta), r * Math.Sin(theta));
     }
@@ -268,9 +281,8 @@ public abstract class RandomBase
     /// </summary>
     public Vector2 Vector2D(float radius)
     {
-        Random rand = Rand;
-        return new(Float(rand, -radius, radius),
-                   Float(rand, -radius, radius));
+        return new(Float(-radius, radius),
+                   Float(-radius, radius));
     }
 
     /// <summary>
@@ -278,9 +290,8 @@ public abstract class RandomBase
     /// </summary>
     public Vector2 Vector2D(float min, float max)
     {
-        Random rand = Rand;
-        return new(Float(rand, min, max),
-                   Float(rand, min, max));
+        return new(Float(min, max),
+                   Float(min, max));
     }
 
     /// <summary>
@@ -288,10 +299,9 @@ public abstract class RandomBase
     /// </summary>
     public Vector3 Vector3D(float radius)
     {
-        Random rand = Rand;
-        return new(Float(rand, -radius, radius),
-                   Float(rand, -radius, radius),
-                   Float(rand, -radius, radius));
+        return new(Float(-radius, radius),
+                   Float(-radius, radius),
+                   Float(-radius, radius));
     }
 
     /// <summary>
@@ -299,9 +309,8 @@ public abstract class RandomBase
     /// </summary>
     public Vector3 Vector32D(float radius)
     {
-        Random rand = Rand;
-        return new(Float(rand, -radius, radius),
-                   Float(rand, -radius, radius),
+        return new(Float(-radius, radius),
+                   Float(-radius, radius),
                    0f);
     }
 
@@ -310,10 +319,9 @@ public abstract class RandomBase
     /// </summary>
     public Vector3 Vector3D(float min, float max)
     {
-        Random rand = Rand;
-        return new(Float(rand, min, max),
-                   Float(rand, min, max),
-                   Float(rand, min, max));
+        return new(Float(min, max),
+                   Float(min, max),
+                   Float(min, max));
     }
 
     /// <summary>
@@ -321,10 +329,9 @@ public abstract class RandomBase
     /// </summary>
     public Vector3 Vector3D(in Vector3 minValue, in Vector3 maxValue)
     {
-        Random rand = Rand;
-        return new(Float(rand, minValue.X, maxValue.X),
-                   Float(rand, minValue.Y, maxValue.Y),
-                   Float(rand, minValue.Z, maxValue.Z));
+        return new(Float(minValue.X, maxValue.X),
+                   Float(minValue.Y, maxValue.Y),
+                   Float(minValue.Z, maxValue.Z));
     }
 
     /// <summary>
@@ -332,10 +339,9 @@ public abstract class RandomBase
     /// </summary>
     public Vector3 Vector3D(in Vector3 minMax)
     {
-        Random rand = Rand;
-        return new(Float(rand, -minMax.X, minMax.X),
-                   Float(rand, -minMax.Y, minMax.Y),
-                   Float(rand, -minMax.Z, minMax.Z));
+        return new(Float(-minMax.X, minMax.X),
+                   Float(-minMax.Y, minMax.Y),
+                   Float(-minMax.Z, minMax.Z));
     }
 
     /// <summary>
@@ -343,13 +349,12 @@ public abstract class RandomBase
     /// </summary>
     public float AvgFloat(float min, float max, int iterations = 3)
     {
-        Random rand = Rand;
         if (iterations <= 1)
-            return Float(rand, min, max);
+            return Float(min, max);
 
         float sum = 0;
         for (int x = 0; x < iterations; ++x)
-            sum += Float(rand, min, max);
+            sum += Float(min, max);
         return sum / iterations;
     }
 
@@ -358,13 +363,12 @@ public abstract class RandomBase
     /// </summary>
     public int AvgInt(int min, int max, int iterations = 3)
     {
-        Random rand = Rand;
         if (iterations <= 1)
-            return Int(rand, min, max);
+            return Int(min, max);
 
         int sum = 0;
         for (int x = 0; x < iterations; ++x)
-            sum += Int(rand, min, max);
+            sum += Int(min, max);
         return sum / iterations;
     }
 }

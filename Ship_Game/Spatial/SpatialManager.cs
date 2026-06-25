@@ -21,6 +21,20 @@ namespace Ship_Game.Gameplay
         public int Collisions { get; private set; }
         public int Count => Spatial?.Count ?? 0;
 
+        // DETERMINISM lever (see ISpatial). Mirrored onto the active spatial so collision pairs
+        // resolve in a stable Id-sorted order when the sim runs deterministically (lockstep / tests).
+        bool DeterministicCollisionsField;
+        public bool DeterministicCollisions
+        {
+            get => DeterministicCollisionsField;
+            set
+            {
+                DeterministicCollisionsField = value;
+                if (Spatial != null) Spatial.DeterministicCollisions = value;
+                if (ResetToNewSpatial != null) ResetToNewSpatial.DeterministicCollisions = value;
+            }
+        }
+
         public VisualizerOptions VisOpt = new();
 
         public SpatialManager(float universeWidth)
@@ -42,6 +56,7 @@ namespace Ship_Game.Gameplay
                 case SpatialType.GridL2:       newSpatial = new NativeSpatial(type, UniverseWidth, 16_000, 500); break;
                 case SpatialType.ManagedQtree: newSpatial = new Qtree(UniverseWidth, 512); break;
             }
+            newSpatial.DeterministicCollisions = DeterministicCollisionsField; // inherit the determinism lever
             Log.Info($"SpatialManager {newSpatial.Name} Width: {UniverseWidth}  FullSize: {(int)newSpatial.FullSize}");
             return newSpatial;
         }

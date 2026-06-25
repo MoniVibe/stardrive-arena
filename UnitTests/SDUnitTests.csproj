@@ -79,9 +79,32 @@
     <Compile Include="Data\Ship17DiagnosticTest.cs" />
     <Compile Include="Data\Ship17EndToEndTest.cs" />
     <Compile Include="Data\TestLocalizedText.cs" />
+    <Compile Include="..\x64Migration\Tools\ArenaFingerprint\PortableFingerprint.cs" Link="Determinism\ArenaPortableFingerprintRunner.cs" />
+    <Compile Include="..\x64Migration\Tools\ArenaLockstepProbe\PortableLockstepProbe.cs" Link="Determinism\ArenaPortableLockstepProbeRunner.cs" />
+    <Compile Include="Determinism\DeterminismHashTests.cs" />
+    <Compile Include="Determinism\ArenaDeterminismPatchContractTests.cs" />
+    <Compile Include="Determinism\ArenaPortableFingerprintTests.cs" />
+    <Compile Include="Determinism\ArenaPortableLockstepProbeTests.cs" />
+    <Compile Include="Determinism\LockstepNetworkTransportTests.cs" />
+    <Compile Include="Determinism\NetworkLockstepProbeTests.cs" />
+    <Compile Include="Determinism\StarDriveLockstepAdapterTests.cs" />
+    <Compile Include="Determinism\StarDriveLockstepMoveTests.cs" />
+    <Compile Include="Determinism\StarDriveLockstepCombatTests.cs" />
+    <Compile Include="Determinism\StarDriveLockstepMatchTests.cs" />
+    <Compile Include="Determinism\StarDriveAutobattleTests.cs" />
+    <Compile Include="Determinism\StarDriveEmpireTurnTests.cs" />
+    <Compile Include="Determinism\StarDriveAIWarTests.cs" />
+    <Compile Include="Determinism\StarDriveAIObservationTests.cs" />
+    <Compile Include="Determinism\StarDriveCombinedArmsTests.cs" />
+    <Compile Include="Determinism\StarDriveOracleSidekickTests.cs" />
+    <Compile Include="Determinism\StarDriveFleetVsFleetTests.cs" />
+    <Compile Include="Determinism\BattleReplay.cs" />
+    <Compile Include="Determinism\StarDriveOracleWarTests.cs" />
+    <Compile Include="Determinism\StarDriveColonyFixTests.cs" />
+    <Compile Include="Determinism\StarDriveSnowballTests.cs" />
+    <Compile Include="Determinism\StarDriveStrategyRoiTests.cs" />
     <Compile Include="Empires\IncomingThreatDetectorTests.cs" />
     <Compile Include="ExoticSystems\ResearchStations.cs" />
-    <Compile Include="Fleets\FleetFocusFireTests.cs" />
     <Compile Include="Fleets\FleetTests.cs" />
     <Compile Include="Graphics\BloomFilterTests.cs" />
     <Compile Include="Graphics\DistortionComponentTests.cs" />
@@ -96,6 +119,9 @@
     <Compile Include="Graphics\ShadowMapTests.cs" />
     <Compile Include="Graphics\SkinnedLightingEffectTests.cs" />
     <Compile Include="Graphics\ExplosionLightIntensityTests.cs" />
+    <Compile Include="Graphics\UniverseRenderSmokeTests.cs" />
+    <Compile Include="Graphics\ArenaMultiplayerLockstepTests.cs" />
+    <Compile Include="Graphics\ArenaRenderSmokeTests.cs" />
     <Compile Include="ImpactSimulation.cs" />
     <Compile Include="Collections\ArrayT_Tests.cs" />
     <Compile Include="Collections\TestCollectionExt.cs" />
@@ -104,7 +130,6 @@
     <Compile Include="Planets\CapitalTransfer.cs" />
     <Compile Include="Planets\LandOnTiles.cs" />
     <Compile Include="Planets\TestOrbitalBomb.cs" />
-    <Compile Include="Planets\TestOrbitalBuildLimit.cs" />
     <Compile Include="Planets\TestRefitQueuePlacement.cs" />
     <Compile Include="Planets\TestSabotageWorkDistribution.cs" />
     <Compile Include="Serialization\BinaryReadWriteTests.cs" />
@@ -207,6 +232,7 @@
     <ProjectReference Include="..\SDGraphics\SDGraphics.csproj" />
     <ProjectReference Include="..\SDUtils\SDUtils.csproj" />
     <ProjectReference Include="..\StarDrive.csproj" />
+    <ProjectReference Include="..\StarDriveArena.csproj" />
   </ItemGroup>
 
   <ItemGroup>

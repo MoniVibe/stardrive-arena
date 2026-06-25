@@ -154,8 +154,9 @@ namespace Ship_Game.Ships
                 float third = Radius / 3f;
                 for (int i = 0; i < 4; ++i)
                 {
-                    Vector3 randPos = Loyalty.Random.Vector32D(third);
-                    Universe.Screen.Particles.Lightning.AddParticle(Position.ToVec3() + randPos);
+                    Vector3 randPos = Loyalty.Random.Vector32D(third); // keep the RNG draw for determinism parity
+                    // Headless (tests / early load) has no particle system; null-guard the visual-only add.
+                    Universe.Screen?.Particles?.Lightning?.AddParticle(Position.ToVec3() + randPos);
                 }
             }
 

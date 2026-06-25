@@ -1,0 +1,271 @@
+diff --git a/Ship_Game/GameScreens/MainMenu/MainMenuScreen.cs b/Ship_Game/GameScreens/MainMenu/MainMenuScreen.cs
+index f10a94e..4a2761d 100644
+--- a/Ship_Game/GameScreens/MainMenu/MainMenuScreen.cs
++++ b/Ship_Game/GameScreens/MainMenu/MainMenuScreen.cs
+@@ -5,6 +5,7 @@ using Color = Microsoft.Xna.Framework.Color;
+ using Ship_Game.Audio;
+ using Ship_Game.Data.Yaml;
+ using Ship_Game.GameScreens.Scene;
++using Ship_Game.Plugins;
+ using Vector2 = SDGraphics.Vector2;
+ using SDGraphics;
+ using Rectangle = SDGraphics.Rectangle;
+@@ -82,6 +83,9 @@ namespace Ship_Game.GameScreens.MainMenu
+             if (list.Find("options",   out UIButton options))   options.OnClick   = Options_Clicked;
+             if (list.Find("mods",      out UIButton mods))      mods.OnClick      = Mods_Clicked;
+             if (list.Find("sandbox",   out UIButton sandbox))   sandbox.OnClick   = DevSandbox_Clicked;
++            foreach (PluginMainMenuAction action in PluginManager.RegisteredMainMenuActions)
++                if (list.Find(action.ButtonName, out UIButton pluginButton))
++                    pluginButton.OnClick = _ => PluginAction_Clicked(action);
+             if (list.Find("info",      out UIButton info))      info.OnClick      = Info_Clicked;
+             if (list.Find("support",   out UIButton support))   support.OnClick   = Support_Clicked;
+             if (list.Find("exit",      out UIButton exit))      exit.OnClick      = Exit_Clicked;
+@@ -168,6 +172,19 @@ namespace Ship_Game.GameScreens.MainMenu
+         void Info_Clicked(UIButton button)      => ScreenManager.AddScreen(new Codex.CodexScreen(this));
+         void Support_Clicked(UIButton button) => ScreenManager.AddScreen(new SupportBlackbox(this));
+         void DevSandbox_Clicked(UIButton button)=> ScreenManager.GoToScreen(new DeveloperSandbox(), clear3DObjects: true);
++        void PluginAction_Clicked(PluginMainMenuAction action)
++        {
++            try
++            {
++                GameScreen screen = action.CreateScreen?.Invoke();
++                if (screen != null)
++                    ScreenManager.GoToScreen(screen, clear3DObjects: true);
++            }
++            catch (Exception e)
++            {
++                Log.Warning($"MainMenuScreen: plugin menu action '{action.ButtonName}' failed: {e.Message}");
++            }
++        }
+         void Exit_Clicked(UIButton button)      => ExitScreen();
+ 
+ 
+@@ -251,4 +268,4 @@ namespace Ship_Game.GameScreens.MainMenu
+             FTLManager.DrawFTLModels(batch, this);
+         }
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/Ship_Game/GameScreens/StarDriveGame.cs b/Ship_Game/GameScreens/StarDriveGame.cs
+index 44211c2..dd371b7 100644
+--- a/Ship_Game/GameScreens/StarDriveGame.cs
++++ b/Ship_Game/GameScreens/StarDriveGame.cs
+@@ -3,11 +3,12 @@ using System.IO;
+ using System.Runtime;
+ using Microsoft.Xna.Framework;
+ using SDUtils;
+-using Ship_Game.Audio;
+-using Ship_Game.GameScreens;
+-using Color = Microsoft.Xna.Framework.Color;
+-using Ship_Game.GameScreens.MainMenu;
+-using Ship_Game.Utils;
++using Ship_Game.Audio;
++using Ship_Game.GameScreens;
++using Ship_Game.Plugins;
++using Color = Microsoft.Xna.Framework.Color;
++using Ship_Game.GameScreens.MainMenu;
++using Ship_Game.Utils;
+ 
+ namespace Ship_Game
+ {
+@@ -111,10 +112,11 @@ namespace Ship_Game
+             ResourceManager.InitContentDir();
+             ScreenManager = new(this, Graphics);
+             InitializeAudio();
+-            ApplyGraphics(GraphicsSettings.FromGlobalStats());
+-            ProbeVideoBackend();
+-            // CWD at runtime is game/, so step up one to land alongside the rest of phase4-logs.
+-            // Disabled — §4.1 baseline already captured. Re-enable for the next perf pass
++            ApplyGraphics(GraphicsSettings.FromGlobalStats());
++            ProbeVideoBackend();
++            PluginManager.LoadAndRegister(Path.Combine(Directory.GetCurrentDirectory(), "Plugins"));
++            // CWD at runtime is game/, so step up one to land alongside the rest of phase4-logs.
++            // Disabled — §4.1 baseline already captured. Re-enable for the next perf pass
+             // (e.g., §4.4 or anywhere we need fresh frame traces). All Begin/End/Stop calls
+             // are no-ops when Init wasn't called, so no other edits are needed.
+             // FrameTimeLogger.Init("../x64Migration/phase4-logs/perf-baseline/frames.csv");
+@@ -219,4 +221,4 @@ namespace Ship_Game
+             SteamManager.Shutdown();
+         }
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/Ship_Game/Plugins/IGameExtensionPoints.cs b/Ship_Game/Plugins/IGameExtensionPoints.cs
+new file mode 100644
+index 0000000..aec03f0
+--- /dev/null
++++ b/Ship_Game/Plugins/IGameExtensionPoints.cs
+@@ -0,0 +1,9 @@
++using System;
++using Ship_Game.GameScreens;
++
++namespace Ship_Game.Plugins;
++
++public interface IGameExtensionPoints
++{
++    void RegisterMainMenuAction(string buttonName, Func<GameScreen> createScreen);
++}
+diff --git a/Ship_Game/Plugins/IGamePlugin.cs b/Ship_Game/Plugins/IGamePlugin.cs
+new file mode 100644
+index 0000000..b9f1993
+--- /dev/null
++++ b/Ship_Game/Plugins/IGamePlugin.cs
+@@ -0,0 +1,8 @@
++namespace Ship_Game.Plugins;
++
++public interface IGamePlugin
++{
++    string Name { get; }
++    string Version { get; }
++    void Register(IGameExtensionPoints ext);
++}
+diff --git a/Ship_Game/Plugins/PluginManager.cs b/Ship_Game/Plugins/PluginManager.cs
+new file mode 100644
+index 0000000..c87ab21
+--- /dev/null
++++ b/Ship_Game/Plugins/PluginManager.cs
+@@ -0,0 +1,128 @@
++using System;
++using System.Collections.Generic;
++using System.IO;
++using System.Linq;
++using System.Reflection;
++using Ship_Game.GameScreens;
++
++namespace Ship_Game.Plugins;
++
++public readonly struct PluginMainMenuAction
++{
++    public readonly string ButtonName;
++    public readonly Func<GameScreen> CreateScreen;
++
++    public PluginMainMenuAction(string buttonName, Func<GameScreen> createScreen)
++    {
++        ButtonName = buttonName ?? "";
++        CreateScreen = createScreen;
++    }
++}
++
++public static class PluginManager
++{
++    static readonly List<PluginMainMenuAction> MainMenuActions = new();
++
++    public static PluginMainMenuAction[] RegisteredMainMenuActions => MainMenuActions.ToArray();
++
++    public static void LoadAndRegister(string pluginsDir)
++    {
++        Clear();
++        if (pluginsDir.IsEmpty() || !Directory.Exists(pluginsDir))
++        {
++            Log.Info($"PluginManager: plugin directory absent; skipping ({pluginsDir}).");
++            return;
++        }
++
++        string[] dlls;
++        try
++        {
++            dlls = Directory.GetFiles(pluginsDir, "*.dll", SearchOption.TopDirectoryOnly)
++                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
++                .ToArray();
++        }
++        catch (Exception e)
++        {
++            Log.Warning($"PluginManager: could not scan {pluginsDir}: {e.Message}");
++            return;
++        }
++
++        foreach (string dll in dlls)
++            LoadPluginAssembly(dll);
++    }
++
++    public static void Clear()
++    {
++        MainMenuActions.Clear();
++    }
++
++    public static void RegisterMainMenuAction(string buttonName, Func<GameScreen> createScreen)
++    {
++        if (buttonName.IsEmpty() || createScreen == null)
++            return;
++
++        MainMenuActions.RemoveAll(a => string.Equals(a.ButtonName, buttonName, StringComparison.Ordinal));
++        MainMenuActions.Add(new PluginMainMenuAction(buttonName, createScreen));
++        Log.Info($"PluginManager: registered main-menu action '{buttonName}'.");
++    }
++
++    static void LoadPluginAssembly(string dll)
++    {
++        try
++        {
++            Assembly assembly = Assembly.LoadFrom(dll);
++            foreach (Type type in PluginTypes(assembly))
++                RegisterPluginType(type);
++        }
++        catch (Exception e)
++        {
++            Log.Warning($"PluginManager: skipping plugin assembly {dll}: {e.Message}");
++        }
++    }
++
++    static IEnumerable<Type> PluginTypes(Assembly assembly)
++    {
++        Type[] types;
++        try
++        {
++            types = assembly.GetTypes();
++        }
++        catch (ReflectionTypeLoadException e)
++        {
++            Log.Warning($"PluginManager: partial type load from {assembly.FullName}: {e.Message}");
++            types = e.Types?.Where(t => t != null).ToArray() ?? Array.Empty<Type>();
++        }
++        catch (Exception e)
++        {
++            Log.Warning($"PluginManager: could not enumerate {assembly.FullName}: {e.Message}");
++            return Array.Empty<Type>();
++        }
++
++        return types.Where(t => t != null
++                             && !t.IsAbstract
++                             && typeof(IGamePlugin).IsAssignableFrom(t)
++                             && t.GetConstructor(Type.EmptyTypes) != null);
++    }
++
++    static void RegisterPluginType(Type type)
++    {
++        try
++        {
++            var plugin = (IGamePlugin)Activator.CreateInstance(type);
++            var ext = new ExtensionPoints();
++            plugin.Register(ext);
++            Log.Info($"PluginManager: registered plugin {plugin.Name} {plugin.Version} " +
++                     $"({type.Assembly.GetName().Name}).");
++        }
++        catch (Exception e)
++        {
++            Log.Warning($"PluginManager: plugin type {type.FullName} failed registration: {e.Message}");
++        }
++    }
++
++    sealed class ExtensionPoints : IGameExtensionPoints
++    {
++        public void RegisterMainMenuAction(string buttonName, Func<GameScreen> createScreen)
++            => PluginManager.RegisterMainMenuAction(buttonName, createScreen);
++    }
++}
+diff --git a/StarDrive.csproj b/StarDrive.csproj
+index 807aadd..2800195 100644
+--- a/StarDrive.csproj
++++ b/StarDrive.csproj
+@@ -363,6 +363,9 @@
+     <Compile Include="Ship_Game\Ships\Ship_Events.cs" />
+     <Compile Include="Ship_Game\Ships\Ship_PowerCalc.cs" />
+     <Compile Include="Ship_Game\Ships\Ship_Repair.cs" />
++    <Compile Include="Ship_Game\Plugins\IGameExtensionPoints.cs" />
++    <Compile Include="Ship_Game\Plugins\IGamePlugin.cs" />
++    <Compile Include="Ship_Game\Plugins\PluginManager.cs" />
+     <Compile Include="Ship_Game\Ships\TacticalIcon.cs" />
+     <Compile Include="Ship_Game\Spatial\DebugQtreeFind.cs" />
+     <Compile Include="Ship_Game\Spatial\FindResultBuffer.cs" />

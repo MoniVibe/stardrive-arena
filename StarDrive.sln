@@ -33,6 +33,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		.editorconfig = .editorconfig
 	EndProjectSection
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StarDriveArena", "StarDriveArena.csproj", "{7564CF65-81D9-469C-AA58-4251756D9789}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug - Auto Fast|x64 = Debug - Auto Fast|x64
@@ -134,6 +136,20 @@ Global
 		{991F9257-97A2-4CF0-8959-C8EC09F17796}.Release - Auto Fast|x64.ActiveCfg = Release|x86
 		{991F9257-97A2-4CF0-8959-C8EC09F17796}.Release - Auto|x64.ActiveCfg = Release|x86
 		{991F9257-97A2-4CF0-8959-C8EC09F17796}.Release|x64.ActiveCfg = Release|x86
+		{7564CF65-81D9-469C-AA58-4251756D9789}.Debug - Auto Fast|x64.ActiveCfg = Debug - Auto Fast|x64
+		{7564CF65-81D9-469C-AA58-4251756D9789}.Debug - Auto Fast|x64.Build.0 = Debug - Auto Fast|x64
+		{7564CF65-81D9-469C-AA58-4251756D9789}.Debug - Auto|x64.ActiveCfg = Debug - Auto|x64
+		{7564CF65-81D9-469C-AA58-4251756D9789}.Debug - Auto|x64.Build.0 = Debug - Auto|x64
+		{7564CF65-81D9-469C-AA58-4251756D9789}.Debug|x64.ActiveCfg = Debug|x64
+		{7564CF65-81D9-469C-AA58-4251756D9789}.Debug|x64.Build.0 = Debug|x64
+		{7564CF65-81D9-469C-AA58-4251756D9789}.Deploy|x64.ActiveCfg = Deploy|x64
+		{7564CF65-81D9-469C-AA58-4251756D9789}.Deploy|x64.Build.0 = Deploy|x64
+		{7564CF65-81D9-469C-AA58-4251756D9789}.Release - Auto Fast|x64.ActiveCfg = Release - Auto Fast|x64
+		{7564CF65-81D9-469C-AA58-4251756D9789}.Release - Auto Fast|x64.Build.0 = Release - Auto Fast|x64
+		{7564CF65-81D9-469C-AA58-4251756D9789}.Release - Auto|x64.ActiveCfg = Release - Auto|x64
+		{7564CF65-81D9-469C-AA58-4251756D9789}.Release - Auto|x64.Build.0 = Release - Auto|x64
+		{7564CF65-81D9-469C-AA58-4251756D9789}.Release|x64.ActiveCfg = Release|x64
+		{7564CF65-81D9-469C-AA58-4251756D9789}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -364,6 +364,9 @@
     <Compile Include="Ship_Game\Ships\Ship_PowerCalc.cs" />
     <Compile Include="Ship_Game\Ships\Ship_Repair.cs" />
     <Compile Include="Ship_Game\Ships\TacticalIcon.cs" />
+    <Compile Include="Ship_Game\Plugins\IGameExtensionPoints.cs" />
+    <Compile Include="Ship_Game\Plugins\IGamePlugin.cs" />
+    <Compile Include="Ship_Game\Plugins\PluginManager.cs" />
     <Compile Include="Ship_Game\Spatial\DebugQtreeFind.cs" />
     <Compile Include="Ship_Game\Spatial\FindResultBuffer.cs" />
     <Compile Include="Ship_Game\Spatial\GenericQtree.cs" />
@@ -743,6 +746,18 @@
     <Compile Include="Ship_Game\Utils\EnumFlatMap.cs" />
     <Compile Include="Ship_Game\Utils\ObjectPool.cs" />
     <Compile Include="Ship_Game\Utils\RandomBase.cs" />
+    <Compile Include="Ship_Game\Utils\DeterministicRandom.cs" />
+    <Compile Include="Ship_Game\Determinism\DeterminismHashWriter.cs" />
+    <Compile Include="Ship_Game\Determinism\UniverseStateHash.cs" />
+    <Compile Include="Ship_Game\Determinism\DeterminismProfile.cs" />
+    <Compile Include="Ship_Game\Determinism\BuildFingerprint.cs" />
+    <Compile Include="Ship_Game\Determinism\DeterministicStreams.cs" />
+    <Compile Include="Ship_Game\Determinism\Lockstep\UniverseStateLockstepSimulation.cs" />
+    <Compile Include="Ship_Game\Determinism\Lockstep\StarDriveCommandContext.cs" />
+    <Compile Include="Ship_Game\Determinism\Lockstep\StarDriveEntityResolver.cs" />
+    <Compile Include="Ship_Game\Determinism\Lockstep\StarDriveCommandApplicator.cs" />
+    <Compile Include="Ship_Game\Determinism\ReplayValidationResult.cs" />
+    <Compile Include="Ship_Game\Determinism\ScenarioInputReplay.cs" />
     <Compile Include="Ship_Game\Utils\MethodUtil.cs" />
     <Compile Include="Ship_Game\Universe\SolarBodies\Planet\PlanetEdict.cs" />
     <Compile Include="Ship_Game\Threading\Parallel.cs" />
@@ -1013,6 +1028,7 @@
   <ItemGroup>
     <ProjectReference Include="SDGraphics\SDGraphics.csproj" />
     <ProjectReference Include="SDUtils\SDUtils.csproj" />
+    <ProjectReference Include="SDLockstep\SDLockstep.csproj" />
     <!-- Compile-time only: build-fails on non-premultiplied `new Color(R,G,B,A<255)`
          literals fed to SpriteBatch draws (SD0001). Not copied into game/ output. -->
     <ProjectReference Include="SDAnalyzers\SDAnalyzers.csproj"

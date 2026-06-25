@@ -81,6 +81,10 @@ namespace Ship_Game.Spatial
         public int MaxObjects => SpatialMaxObjects(Spat);
         public string Name { get; }
 
+        // DETERMINISM lever: drives CollisionParams.SortCollisionsById so collision pairs come
+        // back in a stable Id-sorted order (reproducible damage resolution). See ISpatial.
+        public bool DeterministicCollisions { get; set; }
+
         /// <summary>
         /// Allows to access C++ spatial containers implemented in SDNative.dll
         /// </summary>
@@ -210,7 +214,10 @@ namespace Ship_Game.Spatial
             var p = new CollisionParams
             {
                 IgnoreSameLoyalty = 1,
-                SortCollisionsById = 0,
+                // DETERMINISM: sort collision pairs by Id so damage resolves in a reproducible order
+                // when the sim is running deterministically (lockstep / headless tests). Off in live
+                // play (0) for raw throughput; the native traversal order is otherwise scheduler-dependent.
+                SortCollisionsById = (byte)(DeterministicCollisions ? 1 : 0),
                 ShowCollisions = (byte)(showCollisions ? 1 : 0),
             };
             
