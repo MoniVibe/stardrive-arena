@@ -7,6 +7,7 @@ using SDUtils;
 using Ship_Game.AI;
 using Ship_Game.AI.Budget;
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Ship_Game.SpriteSystem;
 using Vector2 = SDGraphics.Vector2;
@@ -392,6 +393,12 @@ namespace Ship_Game
 
         void OnColonyTypeChanged(Planet.ColonyType type)
         {
+            if (Authoritative4XClientContext.TrySubmitSetColonyType(Planet, type))
+            {
+                ColonyTypeList.ActiveValue = Planet.CType;
+                return;
+            }
+
             Planet.CType = type;
             WorldType.Text = Planet.WorldType;
             WorldDescription.Text = GetParsedDescription();

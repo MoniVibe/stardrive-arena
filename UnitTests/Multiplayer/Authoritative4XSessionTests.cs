@@ -231,6 +231,67 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XClientContext_SubmitsColonyCommandsWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xC0110C8UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            EnsureSingleBuildTile(world.Planet);
+            Building buildable = PickBuildableBuilding(world.Planet);
+            IShipDesign mobileShip = PickMobileBuildableShip(world.Player);
+            var submitted = new List<AuthoritativePlayerCommand>();
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 700))
+            {
+                Assert.IsTrue(Authoritative4XClientContext.TrySubmitQueueBuilding(world.Planet, buildable.Name),
+                    "The colony build UI dispatch context should accept an MP command submission.");
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.QueueBuilding, submitted[0].Kind);
+                Assert.AreEqual(700, submitted[0].Sequence);
+                Assert.AreEqual(world.Player.Id, submitted[0].EmpireId);
+                Assert.AreEqual(world.Planet.Id, submitted[0].SubjectId);
+                Assert.AreEqual(buildable.Name, submitted[0].Text);
+                Assert.IsFalse(world.Planet.Construction.GetConstructionQueueSnapshot()
+                        .Any(q => q.isBuilding && q.Building?.Name == buildable.Name),
+                    "Passive MP clients must not locally enqueue the building before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitQueueShip(world.Planet, mobileShip, repeat: 2));
+                Assert.AreEqual(3, submitted.Count);
+                Assert.IsTrue(submitted.Skip(1).All(c => c.Kind == AuthoritativePlayerCommandKind.QueueBuild));
+                Assert.AreEqual(701, submitted[1].Sequence);
+                Assert.AreEqual(702, submitted[2].Sequence);
+                Assert.IsTrue(submitted.Skip(1).All(c => c.SubjectId == world.Planet.Id && c.Text == mobileShip.Name));
+                Assert.IsFalse(world.Planet.Construction.GetConstructionQueueSnapshot()
+                        .Any(q => q.isShip && q.ShipData?.Name == mobileShip.Name),
+                    "Passive MP clients must not locally enqueue ships before host acceptance.");
+
+                Planet.ColonyType originalType = world.Planet.CType;
+                Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetColonyType(world.Planet,
+                    Planet.ColonyType.Research));
+                Assert.AreEqual(originalType, world.Planet.CType,
+                    "The context should submit a colony-type request without directly mutating the replica.");
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetColonyType, submitted[3].Kind);
+                Assert.AreEqual(703, submitted[3].Sequence);
+
+                int beforeWrongEmpire = submitted.Count;
+                Assert.IsFalse(Authoritative4XClientContext.TrySubmitQueueBuilding(world.EnemyPlanet, buildable.Name),
+                    "An active client context must only handle its own empire's UI commands.");
+                Assert.AreEqual(beforeWrongEmpire, submitted.Count);
+            }
+
+            Assert.IsFalse(Authoritative4XClientContext.IsActive,
+                "Disposing the context should restore the single-player/no-context default.");
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XShipyard_DesignAndQueueBuildCommandsSync_Headless()
     {
         const ulong Seed = 0x51F7A11UL;
@@ -839,6 +900,17 @@ public class Authoritative4XSessionTests : StarDriveTest
             .FirstOrDefault();
         Assert.IsNotNull(building, $"Planet {planet.Id} needs at least one buildable building for the authoritative queue proof.");
         return building;
+    }
+
+    static IShipDesign PickMobileBuildableShip(Empire empire)
+    {
+        IShipDesign ship = empire.ShipsWeCanBuildSnapshot
+            .Where(s => !s.IsPlatformOrStation && !s.IsShipyard)
+            .OrderBy(s => s.BaseCost)
+            .ThenBy(s => s.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(ship, $"Empire {empire.Id} needs at least one mobile buildable ship for the UI dispatch proof.");
+        return ship;
     }
 
     static void EnsureSingleBuildTile(Planet planet)

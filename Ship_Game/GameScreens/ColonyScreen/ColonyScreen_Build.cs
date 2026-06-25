@@ -2,6 +2,7 @@ using System.Linq;
 using SDGraphics;
 using SDUtils;
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Vector2 = SDGraphics.Vector2;
 
@@ -250,6 +251,13 @@ namespace Ship_Game
 
         public bool Build(Building b, PlanetGridSquare where = null)
         {
+            if (where == null && Authoritative4XClientContext.TrySubmitQueueBuilding(P, b?.Name))
+            {
+                GameAudio.AcceptClick();
+                ClearItemsFilter();
+                return true;
+            }
+
             if (P.Construction.Enqueue(b, where, true))
             {
                 GameAudio.AcceptClick();
@@ -262,6 +270,16 @@ namespace Ship_Game
 
         public void Build(IShipDesign ship, int repeat = 1)
         {
+            switch (Authoritative4XClientContext.TrySubmitQueueShip(P, ship, repeat))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.AcceptClick();
+                    return;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return;
+            }
+
             // Orbitals are added via marshalled goals that don't apply until the sim thread runs,
             // so the limit check can't see what we queued earlier in this same loop. Track it locally.
             int orbitalsQueued = 0;
@@ -289,6 +307,12 @@ namespace Ship_Game
 
         public void Build(Troop troop, int repeat = 1)
         {
+            if (Authoritative4XClientContext.IsActiveFor(P.Owner))
+            {
+                GameAudio.NegativeClick();
+                return;
+            }
+
             for (int i = 0; i < repeat; i++)
             {
                 P.Construction.Enqueue(troop, QueueItemType.Troop);

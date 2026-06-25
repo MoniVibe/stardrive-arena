@@ -761,6 +761,7 @@
     <Compile Include="Ship_Game\Multiplayer\Authoritative\AuthoritativeHumanPlayers.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\AuthoritativeDiplomacy.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XCommandApplicator.cs" />
+    <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XClientContext.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XSession.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XLobby.cs" />
     <Compile Include="Ship_Game\Determinism\ReplayValidationResult.cs" />
