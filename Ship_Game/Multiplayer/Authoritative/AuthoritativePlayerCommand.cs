@@ -58,6 +58,14 @@ public sealed class AuthoritativePlayerCommand
     public Vector2 Position;
     public string Text = "";
 
+    public static AuthoritativePlayerCommand NoOp(int sequence, int empireId)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.NoOp,
+        };
+
     public static AuthoritativePlayerCommand MoveShip(int sequence, int empireId, int shipId, Vector2 destination,
         MoveOrder order = MoveOrder.Regular)
         => new()

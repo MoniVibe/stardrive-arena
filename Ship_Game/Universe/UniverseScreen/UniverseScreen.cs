@@ -673,6 +673,8 @@ namespace Ship_Game
 
         public override void Update(float fixedDeltaTime)
         {
+            UpdateAuthoritative4XMultiplayer();
+
             if (LookingAtPlanet)
                 workersPanel?.Update(fixedDeltaTime);
             
@@ -780,6 +782,7 @@ namespace Ship_Game
             // up; we just don't drive that walk from here.
             if (disposing)
             {
+                DetachAuthoritative4XMultiplayer();
                 UnloadGraphics();
 
                 anomalyManager = null;

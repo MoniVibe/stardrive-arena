@@ -720,6 +720,86 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XLiveHost_AttachesPollsAndBroadcastsHeartbeat_Headless()
+    {
+        const ulong Seed = 0x41E40057UL;
+        const int Peer = 2;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            int port = FreeTcpPort();
+            TcpLockstepTransport hostTransport = TcpLockstepTransport.Host(port, Peer);
+            TcpLockstepTransport clientTransport = TcpLockstepTransport.Join("127.0.0.1", port,
+                Authoritative4XNetworkHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(3)),
+                "Authoritative live host did not accept the loopback client.");
+
+            using var networkClient = new Authoritative4XNetworkClient(client.Screen, clientTransport, Peer,
+                new[] { client.Player.Id });
+            Authoritative4XLiveSession liveHost = Authoritative4XLiveSession.HostGame(authority.Screen,
+                hostTransport, Peer, new Dictionary<int, int> { [Peer] = authority.Player.Id },
+                new[] { authority.Player.Id });
+            authority.Screen.AttachAuthoritative4XMultiplayer(liveHost);
+
+            PumpLiveTcpUntil(() => NetworkClientCaughtHeartbeat(networkClient, Peer),
+                liveHost, networkClient);
+            Assert.IsNotNull(authority.Screen.Authoritative4XMultiplayer,
+                "The visible universe should own the live authoritative session.");
+            Assert.AreEqual(networkClient.LastAuthoritySnapshot.SyncDigest,
+                networkClient.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XLiveClient_SubmitsUiCommandThroughTcpHost_Headless()
+    {
+        const ulong Seed = 0xC11E475UL;
+        const int Peer = 2;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            int port = FreeTcpPort();
+            TcpLockstepTransport hostTransport = TcpLockstepTransport.Host(port, Peer);
+            TcpLockstepTransport clientTransport = TcpLockstepTransport.Join("127.0.0.1", port,
+                Authoritative4XNetworkHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(3)),
+                "Authoritative live client proof did not connect to the loopback host.");
+
+            using var host = new Authoritative4XNetworkHost(authority.Screen, hostTransport,
+                new Dictionary<int, int> { [Peer] = authority.Player.Id },
+                new[] { authority.Player.Id });
+            Authoritative4XLiveSession liveClient = Authoritative4XLiveSession.ClientGame(client.Screen,
+                clientTransport, Peer, client.Player.Id, new[] { client.Player.Id });
+            client.Screen.AttachAuthoritative4XMultiplayer(liveClient);
+
+            Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetColonyType(client.Planet,
+                    Planet.ColonyType.Research),
+                "A live passive client should route colony UI actions into the authoritative command stream.");
+            PumpLiveTcpUntil(() => NetworkClientCaughtUp(liveClient, Peer, 1), host, liveClient);
+
+            Assert.IsTrue(liveClient.LastResult.Accepted, liveClient.LastResult.Reason);
+            Assert.AreEqual(Planet.ColonyType.Research, authority.Planet.CType);
+            Assert.AreEqual(Planet.ColonyType.Research, client.Planet.CType);
+            Assert.AreEqual(liveClient.LastSnapshot.SyncDigest,
+                ((Authoritative4XNetworkHost)host).LastAuthoritySnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XNetworkTcpMultiClient_BroadcastsCommandsToEveryReplica_Headless()
     {
         const ulong Seed = 0x4E7C3EEUL;
@@ -1135,6 +1215,34 @@ public class Authoritative4XSessionTests : StarDriveTest
             $"Timed out waiting for authoritative TCP multi-client loopback. host='{host.LastError}' clients='{clientErrors}'");
     }
 
+    static void PumpLiveTcpUntil(Func<bool> done, Authoritative4XLiveSession host,
+        Authoritative4XNetworkClient client)
+    {
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!done() && DateTime.UtcNow < deadline)
+        {
+            host.Poll();
+            client.Poll();
+            System.Threading.Thread.Sleep(5);
+        }
+        Assert.IsTrue(done(),
+            $"Timed out waiting for live authoritative host. host='{host.LastError}' client='{client.LastError}'");
+    }
+
+    static void PumpLiveTcpUntil(Func<bool> done, Authoritative4XNetworkHost host,
+        Authoritative4XLiveSession client)
+    {
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!done() && DateTime.UtcNow < deadline)
+        {
+            host.Poll();
+            client.Poll();
+            System.Threading.Thread.Sleep(5);
+        }
+        Assert.IsTrue(done(),
+            $"Timed out waiting for live authoritative client. host='{host.LastError}' client='{client.LastError}'");
+    }
+
     static bool NetworkClientCaughtUp(Authoritative4XNetworkClient client, int sequence)
     {
         return client.LastResult?.Sequence == sequence
@@ -1148,6 +1256,22 @@ public class Authoritative4XSessionTests : StarDriveTest
                && client.LastResult.OriginPeer == originPeer
                && client.LastClientSnapshot != null
                && client.LastClientSnapshot.Tick == client.LastResult.Tick;
+    }
+
+    static bool NetworkClientCaughtHeartbeat(Authoritative4XNetworkClient client, int originPeer)
+    {
+        return client.LastResult?.Sequence <= -1
+               && client.LastResult.OriginPeer == originPeer
+               && client.LastClientSnapshot != null
+               && client.LastClientSnapshot.Tick == client.LastResult.Tick;
+    }
+
+    static bool NetworkClientCaughtUp(Authoritative4XLiveSession client, int originPeer, int sequence)
+    {
+        return client.LastResult?.Sequence == sequence
+               && client.LastResult.OriginPeer == originPeer
+               && client.LastSnapshot != null
+               && client.LastSnapshot.Tick == client.LastResult.Tick;
     }
 
     static bool WaitForMappedPeers(TcpLockstepTransport hostTransport, params int[] peers)

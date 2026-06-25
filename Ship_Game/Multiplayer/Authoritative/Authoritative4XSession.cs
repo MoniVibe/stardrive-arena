@@ -543,24 +543,33 @@ public sealed class Authoritative4XNetworkHost : IDisposable
     public void Poll() => Transport.Poll();
     public void Dispose() => Transport.Dispose();
 
+    public void SubmitLocal(int peerId, AuthoritativePlayerCommand command)
+    {
+        ProcessCommand(peerId, command);
+    }
+
     void OnHostMessage(LockstepMessage message)
     {
         if (message is not AuthoritativeCommandRequestMessage request)
             return;
 
-        AuthoritativePlayerCommand command = AuthoritativePlayerCommand.FromMessage(request);
+        ProcessCommand(request.FromPeer, AuthoritativePlayerCommand.FromMessage(request));
+    }
+
+    void ProcessCommand(int fromPeer, AuthoritativePlayerCommand command)
+    {
         (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) =
-            !EmpireByPeer.TryGetValue(request.FromPeer, out int allowedEmpire) || allowedEmpire != command.EmpireId
+            !EmpireByPeer.TryGetValue(fromPeer, out int allowedEmpire) || allowedEmpire != command.EmpireId
                 ? Authority.RejectAndAdvance(command.Sequence,
-                    $"Peer {request.FromPeer} does not control empire {command.EmpireId}.")
+                    $"Peer {fromPeer} does not control empire {command.EmpireId}.")
                 : Authority.Process(command);
-        result.OriginPeer = request.FromPeer;
+        result.OriginPeer = fromPeer;
 
         LastResult = result;
         LastAuthoritySnapshot = snapshot;
         foreach (int peer in PeerIds)
         {
-            Transport.Send(peer, command.ToMessage(request.FromPeer));
+            Transport.Send(peer, command.ToMessage(fromPeer));
             Transport.Send(peer, result.ToMessage(HostPeerId));
             Transport.Send(peer, snapshot.ToMessage(HostPeerId));
         }
