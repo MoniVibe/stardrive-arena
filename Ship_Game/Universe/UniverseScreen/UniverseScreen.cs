@@ -61,7 +61,7 @@ namespace Ship_Game
         public ParticleManager Particles;
 
         public Background3D bg3d;
-        public Empire Player => UState.Player;
+        public Empire Player => Authoritative4XLocalPlayer ?? UState.Player;
         public string PlayerLoyalty => Player.data.Traits.Name;
 
         public UnivScreenState viewState { get => UState.ViewState; set => UState.ViewState = value; }

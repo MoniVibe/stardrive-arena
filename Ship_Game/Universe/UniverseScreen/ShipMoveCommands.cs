@@ -40,7 +40,7 @@ namespace Ship_Game.Universe
         {
             if (targetShip == null 
                 || selectedShip == targetShip 
-                || !selectedShip.PlayerShipCanTakeFleetOrders(forAttack: true))
+                || !Universe.LocalShipCanTakeFleetOrders(selectedShip, forAttack: true))
             {
                 return false; 
             }
@@ -54,7 +54,7 @@ namespace Ship_Game.Universe
                     return false;
             }
 
-            if (targetShip.Loyalty.isPlayer)
+            if (Universe.IsLocalShipForUi(targetShip))
             {
                 if (!HelperFunctions.CanExitWarpForChangingDirectionByCommand([selectedShip], selectedShip.AI.PotentialTargets))
                 {
@@ -222,7 +222,7 @@ namespace Ship_Game.Universe
             if (planetClicked == null || fleet == null)
                 return false;
 
-            Ship[] actionable = fleet.Ships.Where(s => s.PlayerShipCanTakeFleetOrders(forAttack: false)).ToArray();
+            Ship[] actionable = fleet.Ships.Where(s => Universe.LocalShipCanTakeFleetOrders(s, forAttack: false)).ToArray();
             bool clearOrders = !Input.IsShiftKeyDown;
             MoveOrder moveOrder = GetStanceType();
             switch (Authoritative4XClientContext.TrySubmitShipPlanetOrders(actionable, planetClicked,
@@ -293,7 +293,7 @@ namespace Ship_Game.Universe
 
         bool TryFleetAttackShip(ShipGroup fleet, Ship shipToAttack)
         {
-            Ship[] actionable = fleet.Ships.Where(s => s.PlayerShipCanTakeFleetOrders(forAttack: true)).ToArray();
+            Ship[] actionable = fleet.Ships.Where(s => Universe.LocalShipCanTakeFleetOrders(s, forAttack: true)).ToArray();
             switch (Authoritative4XClientContext.TrySubmitAttackShips(actionable, shipToAttack, Input.QueueAction))
             {
                 case Authoritative4XUiCommandResult.Submitted:
@@ -316,7 +316,7 @@ namespace Ship_Game.Universe
 
             foreach (Ship fleetShip in fleet.Ships)
             {
-                if (fleetShip.PlayerShipCanTakeFleetOrders(forAttack: true))
+                if (Universe.LocalShipCanTakeFleetOrders(fleetShip, forAttack: true))
                 {
                     ResetShipsTargetAndPriorityOrders(fleetShip);
                     AttackSpecificShip(fleetShip, shipToAttack);
@@ -349,7 +349,7 @@ namespace Ship_Game.Universe
             Vector2 movePosition, Vector2 facingDir, ShipGroup fleet = null)
         {
             fleet = fleet ?? Universe.SelectedFleet;
-            if (shipClicked != null && !shipClicked.Loyalty.isPlayer)
+            if (shipClicked != null && !Universe.IsLocalShipForUi(shipClicked))
             {
                 TryFleetAttackShip(fleet, shipClicked);
                 return;
@@ -359,7 +359,7 @@ namespace Ship_Game.Universe
                 return;
 
             Vector2 corrected = HelperFunctions.GetCorrectedMovePosWithAudio(fleet.Ships, enemyShips, movePosition);
-            Ship[] actionable = fleet.Ships.Where(s => s.PlayerShipCanTakeFleetOrders(forAttack: false)).ToArray();
+            Ship[] actionable = fleet.Ships.Where(s => Universe.LocalShipCanTakeFleetOrders(s, forAttack: false)).ToArray();
             switch (Authoritative4XClientContext.TrySubmitMoveShips(actionable, corrected, GetMoveOrderType()))
             {
                 case Authoritative4XUiCommandResult.Submitted:
@@ -384,7 +384,7 @@ namespace Ship_Game.Universe
         void ResetShipsTargetAndPriorityOrders(Ship ship)
         {
             ship.AI.Target = null;
-            if (ship.PlayerShipCanTakeFleetOrders())
+            if (Universe.LocalShipCanTakeFleetOrders(ship))
                 ship.AI.ResetPriorityOrder(!Input.QueueAction);
         }
 

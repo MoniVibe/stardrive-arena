@@ -841,8 +841,8 @@ namespace Ship_Game
             // TODO: These are not documented to the players
             bool addToSelection = input.IsShiftKeyDown;
             bool selectAll      = input.IsCtrlKeyDown || !hasCombatShips;
-            bool nonPlayer      = input.IsAltKeyDown || !potentialShips.Any(s => s.Loyalty.isPlayer);
-            bool onlyPlayer     = !nonPlayer && potentialShips.Any(s => s.Loyalty.isPlayer);
+            bool nonPlayer      = input.IsAltKeyDown || !potentialShips.Any(IsLocalShipForUi);
+            bool onlyPlayer     = !nonPlayer && potentialShips.Any(IsLocalShipForUi);
 
             var ships = new Array<Ship>();
             if (addToSelection)
@@ -850,8 +850,8 @@ namespace Ship_Game
 
             foreach (Ship ship in potentialShips)
             {
-                if       (onlyPlayer && ship.Loyalty.isPlayer) ships.AddUnique(ship);
-                else if  (nonPlayer && !ship.Loyalty.isPlayer) ships.AddUnique(ship);
+                if       (onlyPlayer && IsLocalShipForUi(ship)) ships.AddUnique(ship);
+                else if  (nonPlayer && !IsLocalShipForUi(ship)) ships.AddUnique(ship);
             }
 
             if (onlyPlayer && !selectAll && fleet == null) // Need to remove non combat ship.

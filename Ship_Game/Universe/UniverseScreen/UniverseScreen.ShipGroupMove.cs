@@ -123,12 +123,12 @@ namespace Ship_Game
 
             Project.Started = false;
 
-            if (SelectedFleet != null && SelectedFleet.Owner.isPlayer)
+            if (SelectedFleet != null && IsLocalEmpireForUi(SelectedFleet.Owner))
             {
                 SelectedSomethingTimer = 3f;
                 MoveFleetToMouse(SelectedFleet, planetClicked, shipClicked, wasProjecting: false);
             }
-            else if (SelectedShip != null && SelectedShip.Loyalty.isPlayer)
+            else if (SelectedShip != null && IsLocalShipForUi(SelectedShip))
             {
                 SelectedSomethingTimer = 3f;
                 if (shipClicked != null && shipClicked != SelectedShip)
@@ -159,7 +159,7 @@ namespace Ship_Game
             {
                 SelectedSomethingTimer = 3f;
                 foreach (Ship ship in SelectedShipList)
-                    if (UnselectableShip(ship) || !ship.Loyalty.isPlayer)
+                    if (UnselectableShip(ship) || !IsLocalShipForUi(ship))
                         return;
 
                 GameAudio.AffirmativeClick();
@@ -200,7 +200,7 @@ namespace Ship_Game
             if (fleet.Ships.Count == 0) 
                 return;
 
-            bool attackSingleEnemyShip = targetShip != null && !targetShip.Loyalty.isPlayer;
+            bool attackSingleEnemyShip = targetShip != null && !IsLocalShipForUi(targetShip);
             Ship[] enemyShips = targetPlanet == null && (targetShip == null || attackSingleEnemyShip)
                 ?  GetVisibleEnemyShipsInScreen() 
                 : HelperFunctions.GetAllPotentialTargetsIfInWarp(fleet.Ships);

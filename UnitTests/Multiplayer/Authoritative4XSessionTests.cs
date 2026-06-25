@@ -800,6 +800,86 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XLiveClient_UsesAssignedEmpireForLocalView_Headless()
+    {
+        const ulong Seed = 0xC11E476UL;
+        const int Peer = 2;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            int port = FreeTcpPort();
+            TcpLockstepTransport hostTransport = TcpLockstepTransport.Host(port, Peer);
+            TcpLockstepTransport clientTransport = TcpLockstepTransport.Join("127.0.0.1", port,
+                Authoritative4XNetworkHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(3)),
+                "Authoritative local-view proof did not connect to the loopback host.");
+
+            using var host = new Authoritative4XNetworkHost(authority.Screen, hostTransport,
+                new Dictionary<int, int> { [Peer] = authority.Enemy.Id },
+                new[] { authority.Player.Id, authority.Enemy.Id });
+            Authoritative4XLiveSession liveClient = Authoritative4XLiveSession.ClientGame(client.Screen,
+                clientTransport, Peer, client.Enemy.Id, new[] { client.Player.Id, client.Enemy.Id });
+            client.Screen.AttachAuthoritative4XMultiplayer(liveClient);
+            Planet clientRemotePlanet = client.UState.GetPlanet(authority.EnemyPlanet.Id);
+            Planet clientHostPlanet = client.UState.GetPlanet(authority.Planet.Id);
+            Planet authorityRemotePlanet = authority.UState.GetPlanet(clientRemotePlanet?.Id ?? 0);
+            Planet authorityHostPlanet = authority.UState.GetPlanet(clientHostPlanet?.Id ?? 0);
+            Assert.IsNotNull(clientRemotePlanet, "The client replica should contain the authority enemy planet id.");
+            Assert.IsNotNull(clientHostPlanet, "The client replica should contain the authority host planet id.");
+            Assert.IsNotNull(authorityRemotePlanet, "The authority should resolve the client remote planet id.");
+            Assert.IsNotNull(authorityHostPlanet, "The authority should resolve the client host planet id.");
+            Assert.AreSame(authority.Enemy, authorityRemotePlanet.Owner,
+                "The chosen authority-side planet should belong to the peer's assigned empire.");
+            Assert.AreSame(authority.Player, authorityHostPlanet.Owner,
+                "The chosen authority-side host planet should belong to the host empire.");
+            Assert.AreSame(client.Enemy, clientRemotePlanet.Owner,
+                "The chosen client-side planet should belong to the peer's assigned empire.");
+            Assert.AreSame(client.Player, clientHostPlanet.Owner,
+                "The chosen client-side host planet should belong to the host empire.");
+
+            Assert.AreSame(client.Enemy, client.Screen.Player,
+                "The visible client screen should render and command the empire assigned to this peer.");
+            Assert.AreSame(client.Player, client.UState.Player,
+                "The deterministic replica state must keep the original generated player empire for sync.");
+            Assert.IsTrue(client.Player.isPlayer,
+                "The local-view hook must not rewrite simulation isPlayer flags.");
+            Assert.IsFalse(client.Enemy.isPlayer,
+                "The local-view hook must not rewrite simulation isPlayer flags.");
+            Assert.IsTrue(client.Screen.IsLocalShipForUi(client.EnemyShip));
+            Assert.IsFalse(client.Screen.IsLocalShipForUi(client.Ship));
+            Assert.IsTrue(client.Screen.LocalShipCanTakeFleetOrders(client.EnemyShip, forAttack: false));
+            Assert.IsFalse(client.Screen.LocalShipCanTakeFleetOrders(client.Ship, forAttack: false));
+
+            EnsureSingleBuildTile(authorityRemotePlanet);
+            EnsureSingleBuildTile(clientRemotePlanet);
+            Building buildable = PickBuildableBuilding(clientRemotePlanet);
+            Assert.IsTrue(Authoritative4XClientContext.TrySubmitQueueBuilding(clientRemotePlanet,
+                    buildable.Name),
+                "The visible remote client should submit commands for its assigned empire.");
+            PumpLiveTcpUntil(() => NetworkClientCaughtUp(liveClient, Peer, 1), host, liveClient);
+
+            Assert.IsTrue(liveClient.LastResult.Accepted, liveClient.LastResult.Reason);
+            Assert.IsNotNull(LastQueuedBuilding(authorityRemotePlanet, buildable.Name));
+            Assert.IsNotNull(LastQueuedBuilding(clientRemotePlanet, buildable.Name));
+            Assert.AreEqual(liveClient.LastSnapshot.SyncDigest,
+                ((Authoritative4XNetworkHost)host).LastAuthoritySnapshot.SyncDigest);
+
+            int beforeWrongEmpire = liveClient.LastResult.Sequence;
+            Assert.IsFalse(Authoritative4XClientContext.TrySubmitSetColonyType(clientHostPlanet,
+                    Planet.ColonyType.Military),
+                "The visible remote client must not submit UI commands for the host empire.");
+            Assert.AreEqual(beforeWrongEmpire, liveClient.LastResult.Sequence);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XNetworkTcpMultiClient_BroadcastsCommandsToEveryReplica_Headless()
     {
         const ulong Seed = 0x4E7C3EEUL;
