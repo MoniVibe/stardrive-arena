@@ -1,3 +1,4 @@
+using System;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -68,6 +69,22 @@ public sealed class AuthoritativeStateSnapshot
 
         foreach (Empire e in us.Empires.OrderBy(e => e.Id))
         {
+            foreach (IShipDesign design in e.ShipsWeCanBuildSnapshot
+                         .Where(d => d.IsPlayerDesign)
+                         .OrderBy(d => d.Name, StringComparer.Ordinal))
+            {
+                sb.Append("D|").Append(e.Id)
+                  .Append('|').Append(design.Name)
+                  .Append('|').Append(design.Hull)
+                  .Append('|').Append((int)design.Role)
+                  .Append('|').Append(FloatBits(design.BaseCost))
+                  .Append('|').Append(DesignSlotSignature(design))
+                  .AppendLine();
+            }
+        }
+
+        foreach (Empire e in us.Empires.OrderBy(e => e.Id))
+        {
             foreach (Relationship rel in e.AllRelations.OrderBy(r => r.Them.Id))
                 sb.Append("R|").Append(e.Id)
                   .Append('|').Append(rel.Them.Id)
@@ -82,11 +99,31 @@ public sealed class AuthoritativeStateSnapshot
         }
 
         foreach (Planet p in us.Planets.OrderBy(p => p.Id))
+        {
             sb.Append("P|").Append(p.Id)
               .Append('|').Append(p.Owner?.Id ?? 0)
               .Append('|').Append((int)p.CType)
               .Append('|').Append(p.ConstructionQueue.Count)
               .AppendLine();
+
+            QueueItem[] queue = p.Construction.GetConstructionQueueSnapshot();
+            for (int i = 0; i < queue.Length; ++i)
+            {
+                QueueItem q = queue[i];
+                sb.Append("Q|").Append(p.Id)
+                  .Append('|').Append(i)
+                  .Append('|').Append(q.isShip ? 1 : 0)
+                  .Append('|').Append(q.isBuilding ? 1 : 0)
+                  .Append('|').Append(q.isTroop ? 1 : 0)
+                  .Append('|').Append((int)q.QType)
+                  .Append('|').Append(q.ShipData?.Name ?? "")
+                  .Append('|').Append(q.Building?.Name ?? "")
+                  .Append('|').Append(q.TroopType ?? "")
+                  .Append('|').Append(FloatBits(q.Cost))
+                  .Append('|').Append(FloatBits(q.ProductionSpent))
+                  .AppendLine();
+            }
+        }
 
         foreach (Ship s in us.Ships.OrderBy(s => s.Id))
             sb.Append("S|").Append(s.Id)
@@ -106,6 +143,27 @@ public sealed class AuthoritativeStateSnapshot
         var h = DetHash.New();
         h.AddString(payload);
         return "0x" + h.Value.ToString("X16", CultureInfo.InvariantCulture);
+    }
+
+    static string DesignSlotSignature(IShipDesign design)
+    {
+        if (design is not ShipDesign shipDesign)
+            return string.Join(",", design.UniqueModuleUIDs.OrderBy(uid => uid, StringComparer.Ordinal));
+
+        DesignSlot[] slots = shipDesign.GetOrLoadDesignSlots() ?? Empty<DesignSlot>.Array;
+        var sb = new StringBuilder(slots.Length * 32);
+        for (int i = 0; i < slots.Length; ++i)
+        {
+            DesignSlot s = slots[i];
+            if (i != 0) sb.Append(';');
+            sb.Append(s.Pos.X).Append(',').Append(s.Pos.Y)
+              .Append(',').Append(s.Size.X).Append('x').Append(s.Size.Y)
+              .Append(',').Append((int)s.ModuleRot)
+              .Append(',').Append(s.TurretAngle)
+              .Append(',').Append(s.ModuleUID ?? "")
+              .Append(',').Append(s.HangarShipUID ?? "");
+        }
+        return sb.ToString();
     }
 
     static uint FloatBits(float value) => System.BitConverter.SingleToUInt32Bits(value);

@@ -25,6 +25,7 @@ public class Authoritative4XSessionTests : StarDriveTest
         public Empire Player;
         public Empire Enemy;
         public Planet Planet;
+        public Planet EnemyPlanet;
         public Ship Ship;
         public string ResearchUid;
     }
@@ -47,6 +48,21 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(request.SubjectId, copy.SubjectId);
         Assert.AreEqual(request.X, copy.X);
         Assert.AreEqual(request.Y, copy.Y);
+
+        var designRequest = AuthoritativePlayerCommand.DesignShip(8, 2, "BASE64-DESIGN")
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(designRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.DesignShip, copy.Kind);
+        Assert.AreEqual("BASE64-DESIGN", copy.Text);
+
+        var queueRequest = AuthoritativePlayerCommand.QueueBuild(9, 2, 123, "MP Frigate")
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(queueRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.QueueBuild, copy.Kind);
+        Assert.AreEqual(123, copy.SubjectId);
+        Assert.AreEqual("MP Frigate", copy.Text);
 
         var snapshot = new AuthoritativeStateSnapshotMessage
         {
@@ -136,6 +152,75 @@ public class Authoritative4XSessionTests : StarDriveTest
         finally
         {
             authority.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XShipyard_DesignAndQueueBuildCommandsSync_Headless()
+    {
+        const ulong Seed = 0x51F7A11UL;
+        const string LegalName = "Authoritative MP Test Scout";
+        const string IllegalName = "Authoritative MP Locked Module Test";
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            ResourceManager.Ships.Delete(LegalName);
+            ResourceManager.Ships.Delete(IllegalName);
+            authority.Planet.HasSpacePort = true;
+            client.Planet.HasSpacePort = true;
+
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            ShipDesign legal = BuildLegalPlayerDesign(authority.Player, LegalName);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.DesignShip(10, authority.Player.Id,
+                legal.GetBase64DesignString()));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.Player.CanBuildShip(LegalName),
+                "The authority empire should register the submitted legal design as buildable.");
+            Assert.IsTrue(client.Player.CanBuildShip(LegalName),
+                "The client replica should apply the accepted design registration deterministically.");
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, LegalName);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeQueueDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueBuild(11, authority.Player.Id,
+                authority.Planet.Id, LegalName));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.Planet.Construction.ContainsShipDesignName(LegalName));
+            Assert.IsTrue(client.Planet.Construction.ContainsShipDesignName(LegalName));
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, $"|{LegalName}|");
+            Assert.AreNotEqual(beforeQueueDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover real planet queue entries, not just command acks.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            ShipDesign illegal = BuildIllegalLockedModuleDesign(authority.Player, IllegalName);
+            session.SubmitFromClient(AuthoritativePlayerCommand.DesignShip(12, authority.Player.Id,
+                illegal.GetBase64DesignString()));
+            Assert.IsFalse(session.LastResult.Accepted, "A design containing locked modules must be rejected.");
+            Assert.IsFalse(authority.Player.CanBuildShip(IllegalName));
+            Assert.IsFalse(client.Player.CanBuildShip(IllegalName));
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueBuild(13, authority.Player.Id,
+                authority.EnemyPlanet.Id, LegalName));
+            Assert.IsFalse(session.LastResult.Accepted, "A player must not queue builds at another empire's planet.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueBuild(14, authority.Player.Id,
+                authority.Planet.Id, IllegalName));
+            Assert.IsFalse(session.LastResult.Accepted, "An unregistered or unbuildable design must not enter the queue.");
+            Assert.IsFalse(authority.Planet.Construction.ContainsShipDesignName(IllegalName));
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            ResourceManager.Ships.Delete(LegalName);
+            ResourceManager.Ships.Delete(IllegalName);
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
         }
     }
 
@@ -405,11 +490,61 @@ public class Authoritative4XSessionTests : StarDriveTest
         }
     }
 
+    static ShipDesign BuildLegalPlayerDesign(Empire empire, string name)
+    {
+        ShipDesign source = empire.ShipsWeCanBuildSnapshot
+            .OfType<ShipDesign>()
+            .Where(d => !d.IsPlatformOrStation
+                        && d.IsValidDesign
+                        && d.NumDesignSlots > 0
+                        && d.UniqueModuleUIDs.All(empire.IsModuleUnlocked))
+            .OrderBy(d => d.BaseCost)
+            .ThenBy(d => d.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(source, "The test empire needs at least one legal mobile design to clone.");
+        source.GetOrLoadDesignSlots();
+
+        ShipDesign clone = source.GetClone(name);
+        clone.IsPlayerDesign = true;
+        clone.IsReadonlyDesign = false;
+        return clone;
+    }
+
+    static ShipDesign BuildIllegalLockedModuleDesign(Empire empire, string name)
+    {
+        ShipDesign clone = BuildLegalPlayerDesign(empire, name);
+        DesignSlot[] slots = clone.GetOrLoadDesignSlots().Select(s => new DesignSlot(s)).ToArray();
+        int slotIndex = -1;
+        ShipModule locked = null;
+        for (int i = 0; i < slots.Length && locked == null; ++i)
+        {
+            DesignSlot candidate = slots[i];
+            if (candidate == null || candidate.ModuleUID.IsEmpty())
+                continue;
+
+            locked = ResourceManager.ShipModuleTemplates
+                .Where(m => !empire.IsModuleUnlocked(m.UID)
+                            && m.GetOrientedSize(candidate.ModuleRot) == candidate.Size)
+                .OrderBy(m => m.UID, StringComparer.Ordinal)
+                .FirstOrDefault();
+            if (locked != null)
+                slotIndex = i;
+        }
+        Assert.IsNotNull(locked, "Could not find a locked module matching any occupied slot size.");
+
+        DesignSlot original = slots[slotIndex];
+
+        slots[slotIndex] = new DesignSlot(original.Pos, locked.UID, original.Size, original.TurretAngle,
+            original.ModuleRot, original.HangarShipUID);
+        clone.SetDesignSlots(slots);
+        return clone;
+    }
+
     BuiltWorld BuildWorld(ulong seed)
     {
         CreateUniverseAndPlayerEmpire();
         Planet planet = AddDummyPlanetToEmpire(new Vector2(200_000, 200_000), Player, fertility: 1f, minerals: 1f, maxPop: 5f);
-        AddDummyPlanetToEmpire(new Vector2(-200_000, -200_000), Enemy, fertility: 1f, minerals: 1f, maxPop: 5f);
+        Planet enemyPlanet = AddDummyPlanetToEmpire(new Vector2(-200_000, -200_000), Enemy, fertility: 1f, minerals: 1f, maxPop: 5f);
         Ship ship = SpawnShip("Vulcan Scout", Player, new Vector2(0, 0));
 
         Player.InitEmpireFromSave(UState);
@@ -431,6 +566,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             Player = Player,
             Enemy = Enemy,
             Planet = planet,
+            EnemyPlanet = enemyPlanet,
             Ship = ship,
             ResearchUid = researchUid,
         };

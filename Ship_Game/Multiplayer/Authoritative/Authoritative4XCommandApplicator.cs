@@ -1,3 +1,4 @@
+using System;
 using Ship_Game.AI;
 using Ship_Game.Determinism.Lockstep;
 using Ship_Game.Ships;
@@ -39,6 +40,8 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.SetResearchTopic => ApplyResearchTopic(command, empire, result),
                 AuthoritativePlayerCommandKind.DiplomacyProposal => ApplyDiplomacy(command, empire, result),
                 AuthoritativePlayerCommandKind.DiplomacyResponse => ApplyDiplomacy(command, empire, result),
+                AuthoritativePlayerCommandKind.DesignShip => ApplyDesignShip(command, empire, result),
+                AuthoritativePlayerCommandKind.QueueBuild => ApplyQueueBuild(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
             };
         }
@@ -102,6 +105,125 @@ public sealed class Authoritative4XCommandApplicator
 
         empire.Research.SetTopic(techUid);
         return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyDesignShip(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (command.Text.IsEmpty())
+            return Reject(result, "Ship design payload is empty.");
+
+        ShipDesign design;
+        try
+        {
+            design = ShipDesign.FromBytes(Convert.FromBase64String(command.Text));
+        }
+        catch (Exception e)
+        {
+            return Reject(result, $"Ship design payload is invalid: {e.Message}");
+        }
+
+        if (design == null || design.Name.IsEmpty())
+            return Reject(result, "Ship design payload did not produce a named design.");
+        if (design.Hull.IsEmpty() || !ResourceManager.Hull(design.Hull, out _))
+            return Reject(result, $"Ship design {design.Name} uses unknown hull {design.Hull}.");
+        if (!empire.IsHullUnlocked(design.Hull))
+            return Reject(result, $"Empire {empire.Id} has not unlocked hull {design.Hull}.");
+        if (!design.IsValidDesign)
+            return Reject(result, $"Ship design {design.Name} is not a valid buildable design.");
+        if (design.IsPlatformOrStation)
+            return Reject(result, "Authoritative shipyard MVP supports mobile ship designs only.");
+        if (!CanBeAddedToHumanBuildables(design, empire))
+            return Reject(result, $"Ship design {design.Name} is not legal for empire {empire.Id}.");
+        if (!empire.WeCanBuildThis(design))
+            return Reject(result, $"Empire {empire.Id} lacks technology or modules for design {design.Name}.");
+
+        IShipDesign registered = RegisterPlayerDesign(design, out string conflictReason);
+        if (registered == null)
+            return Reject(result, conflictReason);
+
+        empire.AddBuildableShip(registered);
+        if (!empire.CanBuildShip(registered))
+            return Reject(result, $"Empire {empire.Id} could not register buildable design {registered.Name}.");
+
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyQueueBuild(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} not found.");
+        if (planet.Owner != empire)
+            return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
+        if (!planet.HasSpacePort)
+            return Reject(result, $"Planet {command.SubjectId} has no spaceport or shipyard.");
+
+        string designName = command.Text ?? "";
+        if (designName.IsEmpty())
+            return Reject(result, "Build design name is empty.");
+        if (!ResourceManager.Ships.GetDesign(designName, out IShipDesign design))
+            return Reject(result, $"Ship design {designName} not found.");
+        if (design.IsPlatformOrStation)
+            return Reject(result, "Authoritative shipyard MVP queues mobile ships only.");
+        if (!empire.CanBuildShip(design))
+            return Reject(result, $"Empire {empire.Id} cannot build design {designName}.");
+
+        planet.Construction.Enqueue(design, QueueTypeFor(design), notifyOnEmpty: false);
+        return Accept(result);
+    }
+
+    static IShipDesign RegisterPlayerDesign(ShipDesign design, out string rejectReason)
+    {
+        if (ResourceManager.Ships.GetDesign(design.Name, out IShipDesign existing))
+        {
+            if (existing.IsPlayerDesign && existing.AreModulesEqual(design))
+            {
+                rejectReason = "";
+                return existing;
+            }
+
+            rejectReason = $"A different ship design named {design.Name} already exists.";
+            return null;
+        }
+
+        if (!ResourceManager.AddShipTemplate(design, playerDesign: true, readOnly: false))
+        {
+            rejectReason = $"Failed to register ship design {design.Name}.";
+            return null;
+        }
+
+        rejectReason = "";
+        return ResourceManager.Ships.GetDesign(design.Name, out IShipDesign registered) ? registered : design;
+    }
+
+    static bool CanBeAddedToHumanBuildables(ShipDesign design, Empire empire)
+    {
+        bool wasPlayerDesign = design.IsPlayerDesign;
+        bool wasReadonly = design.IsReadonlyDesign;
+        bool wasEmpirePlayer = empire.isPlayer;
+        try
+        {
+            design.IsPlayerDesign = false;
+            design.IsReadonlyDesign = false;
+            empire.isPlayer = true;
+            return design.CanBeAddedToBuildableShips(empire);
+        }
+        finally
+        {
+            empire.isPlayer = wasEmpirePlayer;
+            design.IsPlayerDesign = wasPlayerDesign;
+            design.IsReadonlyDesign = wasReadonly;
+        }
+    }
+
+    static QueueItemType QueueTypeFor(IShipDesign design)
+    {
+        if (design.IsColonyShip) return QueueItemType.ColonyShip;
+        if (design.IsFreighter) return QueueItemType.Freighter;
+        if (design.Role == RoleName.scout) return QueueItemType.Scout;
+        return QueueItemType.CombatShip;
     }
 
     static AuthoritativeCommandResult Accept(AuthoritativeCommandResult result)
