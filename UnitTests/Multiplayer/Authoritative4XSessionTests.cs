@@ -3,11 +3,14 @@ using SDGraphics;
 using SDLockstep;
 using Ship_Game;
 using Ship_Game.AI;
+using Ship_Game.Data;
 using Ship_Game.GameScreens.DiplomacyScreen;
 using Ship_Game.Gameplay;
 using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Ship_Game.Universe;
+using System;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace UnitTests.Multiplayer;
@@ -265,6 +268,107 @@ public class Authoritative4XSessionTests : StarDriveTest
         }
     }
 
+    [TestMethod]
+    public void Authoritative4XLobby_StartsGeneratedGameWithHumanRosterAndSettings_Headless()
+    {
+        LoadAllGameData();
+
+        try
+        {
+            IEmpireData[] races = ResourceManager.MajorRaces
+                .Where(r => !r.IsFactionOrMinorRace)
+                .OrderBy(r => RacePreference(r), StringComparer.Ordinal)
+                .Take(3)
+                .ToArray();
+            Assert.IsTrue(races.Length >= 3, "The lobby proof needs at least three playable major races.");
+
+            var settings = new Authoritative4XGameSettings
+            {
+                GenerationSeed = 0x4B1B4B1,
+                GalaxySize = GalSize.Tiny,
+                StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+                Mode = RaceDesignScreen.GameMode.Sandbox,
+                Difficulty = GameDifficulty.Normal,
+                NumOpponents = 2,
+                Pace = 2f,
+                TurnTimer = 3,
+                ExtraPlanets = 1,
+                StartingPlanetRichnessBonus = 1.5f,
+                GameSpeed = 1.5f,
+                StartPaused = false,
+            };
+
+            var lobby = new Authoritative4XLobby(hostPlayerPeerId: 2, hostName: "Host");
+            lobby.Join(3, "Client A");
+            lobby.Join(4, "Client B");
+            Assert.IsTrue(lobby.SetSettings(2, settings).Valid);
+
+            Authoritative4XLobbyValidation invalid = lobby.SetPlayerSelection(3,
+                RacePreference(races[1]), OverBudgetTraitSelection());
+            Assert.IsFalse(invalid.Valid, "Trait budget validation must reject an illegal over-budget selection.");
+            StringAssert.Contains(invalid.Reason, "budget");
+            Assert.IsFalse(lobby.SetReady(3, true).Valid, "A player with invalid traits must not ready up.");
+
+            string[] hostTraits = OneAffordableTrait();
+            Assert.IsTrue(lobby.SetPlayerSelection(2, RacePreference(races[0]), hostTraits).Valid);
+            Assert.IsTrue(lobby.SetPlayerSelection(3, RacePreference(races[1]), Array.Empty<string>()).Valid);
+            Assert.IsTrue(lobby.SetPlayerSelection(4, RacePreference(races[2]), Array.Empty<string>()).Valid);
+            Assert.IsTrue(lobby.SetReady(2, true).Valid);
+            Assert.IsTrue(lobby.SetReady(3, true).Valid);
+            Assert.IsTrue(lobby.SetReady(4, true).Valid);
+            Assert.IsTrue(lobby.CanStart().Valid, lobby.CanStart().Reason);
+
+            using Authoritative4XLobbyStartResult started = lobby.StartInProcess();
+            UniverseState us = started.AuthorityUniverse.UState;
+            Assert.AreEqual(settings.GenerationSeed, us.P.GenerationSeed);
+            Assert.AreEqual(settings.GalaxySize, us.P.GalaxySize);
+            Assert.AreEqual(settings.StarsCount, us.P.StarsCount);
+            Assert.AreEqual(settings.Mode, us.P.Mode);
+            Assert.AreEqual(settings.Pace, us.P.Pace);
+            Assert.AreEqual(settings.TurnTimer, us.P.TurnTimer);
+            Assert.AreEqual(settings.ExtraPlanets, us.P.ExtraPlanets);
+            Assert.AreEqual(settings.StartingPlanetRichnessBonus, us.P.StartingPlanetRichnessBonus);
+            Assert.AreEqual(settings.GameSpeed, us.GameSpeed);
+            Assert.AreEqual(3, started.HumanEmpireIds.Length);
+
+            for (int i = 0; i < races.Length; ++i)
+            {
+                int peer = 2 + i;
+                Empire empire = us.GetEmpireById(started.EmpireIdForPeer(peer));
+                Assert.IsNotNull(empire, $"Peer {peer} should map to a generated empire.");
+                Assert.IsTrue(SameRace(empire.data, races[i]), $"Peer {peer} race did not match the lobby selection.");
+                Assert.IsTrue(AuthoritativeHumanPlayers.IsHumanControlled(empire),
+                    $"Peer {peer}'s empire should be registered as human-controlled.");
+                Assert.IsTrue(empire.GetPlanets().Count > 0, $"Peer {peer}'s empire should have a homeworld.");
+            }
+
+            Empire hostEmpire = us.GetEmpireById(started.EmpireIdForPeer(2));
+            Assert.IsTrue(hostTraits.All(t => hostEmpire.data.Traits.PlayerTraitOptions.Contains(t)),
+                "The host player's selected trait options should flow into the generated player empire.");
+
+            Planet hostPlanet = hostEmpire.GetPlanets().First();
+            started.Session.SubmitFromClient(2, AuthoritativePlayerCommand.SetColonyType(100,
+                hostEmpire.Id, hostPlanet.Id, Planet.ColonyType.Research));
+            Assert.IsTrue(started.Session.LastResultFor(2).Accepted,
+                started.Session.LastResultFor(2).Reason);
+            Assert.AreEqual(Planet.ColonyType.Research, hostPlanet.CType);
+
+            foreach (int peer in new[] { 2, 3, 4 })
+            {
+                Assert.AreEqual(started.Session.LastAuthoritySnapshot.HashLo,
+                    started.Session.LastClientSnapshotFor(peer).HashLo);
+                Assert.AreEqual(started.Session.LastAuthoritySnapshot.HashHi,
+                    started.Session.LastClientSnapshotFor(peer).HashHi);
+                Assert.AreEqual(started.Session.LastAuthoritySnapshot.SyncDigest,
+                    started.Session.LastClientSnapshotFor(peer).SyncDigest);
+            }
+        }
+        finally
+        {
+            // StarDriveTest.Cleanup unloads extra data; this keeps the intent explicit for future test edits.
+        }
+    }
+
     static void AcceptProposal(Authoritative4XInProcessMultiClientSession session, int proposerPeer, int targetPeer,
         int proposerEmpire, int targetEmpire, int sequence, AuthoritativeDiplomacyProposalType type)
     {
@@ -330,5 +434,44 @@ public class Authoritative4XSessionTests : StarDriveTest
             Ship = ship,
             ResearchUid = researchUid,
         };
+    }
+
+    static string RacePreference(IEmpireData race)
+        => race.ArchetypeName.NotEmpty() ? race.ArchetypeName : race.Name;
+
+    static bool SameRace(IEmpireData generated, IEmpireData selected)
+        => string.Equals(RacePreference(generated), RacePreference(selected), StringComparison.OrdinalIgnoreCase)
+           || string.Equals(generated.Name, selected.Name, StringComparison.OrdinalIgnoreCase);
+
+    static string[] OneAffordableTrait()
+    {
+        int points = new UniverseParams().RacialTraitPoints;
+        RacialTraitOption trait = ResourceManager.RaceTraits.TraitList
+            .Where(t => t.Cost > 0 && t.Cost <= points)
+            .OrderBy(t => t.Cost)
+            .ThenBy(t => t.TraitName, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(trait, "No affordable positive-cost trait exists for lobby validation.");
+        return new[] { trait.TraitName };
+    }
+
+    static string[] OverBudgetTraitSelection()
+    {
+        int points = new UniverseParams().RacialTraitPoints;
+        var traits = new List<string>();
+        int cost = 0;
+        foreach (RacialTraitOption trait in ResourceManager.RaceTraits.TraitList
+                     .Where(t => t.Cost > 0)
+                     .OrderByDescending(t => t.Cost)
+                     .ThenBy(t => t.TraitName, StringComparer.Ordinal))
+        {
+            traits.Add(trait.TraitName);
+            cost += trait.Cost;
+            if (cost > points)
+                return traits.ToArray();
+        }
+
+        Assert.Fail("Could not construct an over-budget trait selection from loaded trait data.");
+        return Array.Empty<string>();
     }
 }
