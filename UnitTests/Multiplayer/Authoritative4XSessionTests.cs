@@ -225,6 +225,81 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XNetworkTcpLoopback_AppliesCommandsAndSyncsReplica_Headless()
+    {
+        const ulong Seed = 0x4E7C0DEUL;
+        const int Peer = 2;
+        const string NetworkDesignName = "Authoritative TCP Test Scout";
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            ResourceManager.Ships.Delete(NetworkDesignName);
+            authority.UState.GetPlanet(authority.Planet.Id).HasSpacePort = true;
+            client.UState.GetPlanet(authority.Planet.Id).HasSpacePort = true;
+            int port = FreeTcpPort();
+
+            TcpLockstepTransport hostTransport = TcpLockstepTransport.Host(port, Peer);
+            TcpLockstepTransport clientTransport = TcpLockstepTransport.Join("127.0.0.1", port,
+                Authoritative4XNetworkHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(3)),
+                "Authoritative TCP host did not accept the loopback client.");
+            Assert.IsTrue(clientTransport.IsConnected, "Authoritative TCP client did not connect.");
+
+            using var host = new Authoritative4XNetworkHost(authority.Screen, hostTransport,
+                new Dictionary<int, int> { [Peer] = authority.Player.Id },
+                new[] { authority.Player.Id });
+            using var networkClient = new Authoritative4XNetworkClient(client.Screen, clientTransport, Peer,
+                new[] { client.Player.Id });
+
+            networkClient.Submit(AuthoritativePlayerCommand.SetColonyType(200, authority.Player.Id,
+                authority.Planet.Id, Planet.ColonyType.Research));
+            PumpTcpUntil(() => NetworkClientCaughtUp(networkClient, 200), host, networkClient);
+            Assert.IsTrue(networkClient.LastResult.Accepted, networkClient.LastResult.Reason);
+            Assert.AreEqual(Planet.ColonyType.Research, authority.Planet.CType);
+            Assert.AreEqual(Planet.ColonyType.Research, client.Planet.CType);
+            Assert.AreEqual(networkClient.LastAuthoritySnapshot.SyncDigest,
+                networkClient.LastClientSnapshot.SyncDigest);
+
+            ShipDesign legal = BuildLegalPlayerDesign(authority.Player, NetworkDesignName);
+            networkClient.Submit(AuthoritativePlayerCommand.DesignShip(201, authority.Player.Id,
+                legal.GetBase64DesignString()));
+            PumpTcpUntil(() => NetworkClientCaughtUp(networkClient, 201), host, networkClient);
+            Assert.IsTrue(networkClient.LastResult.Accepted, networkClient.LastResult.Reason);
+            Assert.IsTrue(authority.Player.CanBuildShip(NetworkDesignName));
+            Assert.IsTrue(client.Player.CanBuildShip(NetworkDesignName));
+            Assert.AreEqual(networkClient.LastAuthoritySnapshot.SyncDigest,
+                networkClient.LastClientSnapshot.SyncDigest);
+
+            networkClient.Submit(AuthoritativePlayerCommand.QueueBuild(202, authority.Player.Id,
+                authority.Planet.Id, NetworkDesignName));
+            PumpTcpUntil(() => NetworkClientCaughtUp(networkClient, 202), host, networkClient);
+            Assert.IsTrue(networkClient.LastResult.Accepted, networkClient.LastResult.Reason);
+            Assert.IsTrue(authority.Planet.Construction.ContainsShipDesignName(NetworkDesignName));
+            Planet clientQueuePlanet = client.UState.GetPlanet(authority.Planet.Id);
+            Assert.IsTrue(clientQueuePlanet.Construction.ContainsShipDesignName(NetworkDesignName));
+            Assert.AreEqual(networkClient.LastAuthoritySnapshot.SyncDigest,
+                networkClient.LastClientSnapshot.SyncDigest);
+
+            networkClient.Submit(AuthoritativePlayerCommand.SetColonyType(203, authority.Enemy.Id,
+                authority.Planet.Id, Planet.ColonyType.Military));
+            PumpTcpUntil(() => NetworkClientCaughtUp(networkClient, 203), host, networkClient);
+            Assert.IsFalse(networkClient.LastResult.Accepted,
+                "The TCP host must reject a peer spoofing another empire.");
+            StringAssert.Contains(networkClient.LastResult.Reason, "does not control");
+            Assert.AreEqual(networkClient.LastAuthoritySnapshot.SyncDigest,
+                networkClient.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            ResourceManager.Ships.Delete(NetworkDesignName);
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void AuthoritativeHumanDiplomacy_SuppressesAiRelationshipTurnsOnlyForHumanPairs_Headless()
     {
         BuiltWorld world = BuildWorld(0xD170D1UL);
@@ -488,6 +563,35 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(session.LastAuthoritySnapshot.HashHi, session.LastClientSnapshotFor(peer).HashHi);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshotFor(peer).SyncDigest);
         }
+    }
+
+    static void PumpTcpUntil(Func<bool> done, Authoritative4XNetworkHost host, Authoritative4XNetworkClient client)
+    {
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!done() && DateTime.UtcNow < deadline)
+        {
+            host.Poll();
+            client.Poll();
+            System.Threading.Thread.Sleep(5);
+        }
+        Assert.IsTrue(done(),
+            $"Timed out waiting for authoritative TCP loopback. host='{host.LastError}' client='{client.LastError}'");
+    }
+
+    static bool NetworkClientCaughtUp(Authoritative4XNetworkClient client, int sequence)
+    {
+        return client.LastResult?.Sequence == sequence
+               && client.LastClientSnapshot != null
+               && client.LastClientSnapshot.Tick == client.LastResult.Tick;
+    }
+
+    static int FreeTcpPort()
+    {
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
     }
 
     static ShipDesign BuildLegalPlayerDesign(Empire empire, string name)

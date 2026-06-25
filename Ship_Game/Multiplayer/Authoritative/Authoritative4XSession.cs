@@ -462,3 +462,126 @@ public sealed class Authoritative4XInProcessMultiClientSession
         }
     }
 }
+
+/// <summary>
+/// TCP-backed authoritative 4X host spine. This is deliberately thin: the host owns the real
+/// UniverseState, validates incoming PlayerCommand requests, broadcasts the accepted snapshot,
+/// and routes human diplomacy popups to the peer that owns the target empire.
+/// </summary>
+public sealed class Authoritative4XNetworkHost : IDisposable
+{
+    public const int HostPeerId = 1;
+
+    readonly TcpLockstepTransport Transport;
+    readonly Authoritative4XAuthority Authority;
+    readonly Dictionary<int, int> EmpireByPeer;
+    readonly Dictionary<int, int> PeerByEmpire;
+
+    public AuthoritativeCommandResult LastResult { get; private set; }
+    public AuthoritativeStateSnapshot LastAuthoritySnapshot { get; private set; }
+    public string LastError => Transport.LastError;
+
+    public Authoritative4XNetworkHost(UniverseScreen authorityUniverse, TcpLockstepTransport transport,
+        IReadOnlyDictionary<int, int> empireByPeer, int[] humanEmpireIds = null)
+    {
+        Transport = transport;
+        EmpireByPeer = new Dictionary<int, int>(empireByPeer);
+        PeerByEmpire = empireByPeer.ToDictionary(kv => kv.Value, kv => kv.Key);
+        if (humanEmpireIds != null)
+            AuthoritativeHumanPlayers.SetHumanControlledEmpires(authorityUniverse.UState, humanEmpireIds);
+        Authority = new Authoritative4XAuthority(authorityUniverse, humanEmpireIds: humanEmpireIds);
+        Transport.Register(HostPeerId, OnHostMessage);
+    }
+
+    public void Poll() => Transport.Poll();
+    public void Dispose() => Transport.Dispose();
+
+    void OnHostMessage(LockstepMessage message)
+    {
+        if (message is not AuthoritativeCommandRequestMessage request)
+            return;
+
+        AuthoritativePlayerCommand command = AuthoritativePlayerCommand.FromMessage(request);
+        (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) =
+            !EmpireByPeer.TryGetValue(request.FromPeer, out int allowedEmpire) || allowedEmpire != command.EmpireId
+                ? Authority.RejectAndAdvance(command.Sequence,
+                    $"Peer {request.FromPeer} does not control empire {command.EmpireId}.")
+                : Authority.Process(command);
+
+        LastResult = result;
+        LastAuthoritySnapshot = snapshot;
+        Transport.Send(request.FromPeer, result.ToMessage(HostPeerId));
+        Transport.Send(request.FromPeer, snapshot.ToMessage(HostPeerId));
+
+        foreach (AuthoritativeDiplomacyPopup popup in Authority.DrainDiplomacyPopups())
+        {
+            if (PeerByEmpire.TryGetValue(popup.TargetEmpireId, out int targetPeer))
+                Transport.Send(targetPeer, popup.ToMessage(HostPeerId));
+        }
+    }
+}
+
+/// <summary>
+/// TCP-backed passive authoritative 4X client replica. UI code submits commands through this
+/// object; it never mutates locally except when a host-accepted result and snapshot arrive.
+/// </summary>
+public sealed class Authoritative4XNetworkClient : IDisposable
+{
+    readonly TcpLockstepTransport Transport;
+    readonly Authoritative4XClientReplica Replica;
+    readonly Dictionary<int, AuthoritativePlayerCommand> Pending = new();
+    readonly List<AuthoritativeDiplomacyPopup> Popups = new();
+
+    public int PeerId { get; }
+    public AuthoritativeCommandResult LastResult { get; private set; }
+    public AuthoritativeStateSnapshot LastAuthoritySnapshot { get; private set; }
+    public AuthoritativeStateSnapshot LastClientSnapshot => Replica.LastSnapshot;
+    public string LastError => Transport.LastError;
+
+    public Authoritative4XNetworkClient(UniverseScreen clientUniverse, TcpLockstepTransport transport,
+        int peerId, int[] humanEmpireIds = null)
+    {
+        PeerId = peerId;
+        Transport = transport;
+        if (humanEmpireIds != null)
+            AuthoritativeHumanPlayers.SetHumanControlledEmpires(clientUniverse.UState, humanEmpireIds);
+        Replica = new Authoritative4XClientReplica(clientUniverse, humanEmpireIds: humanEmpireIds);
+        Transport.Register(peerId, OnClientMessage);
+    }
+
+    public void Submit(AuthoritativePlayerCommand command)
+    {
+        Pending[command.Sequence] = command;
+        Transport.Send(Authoritative4XNetworkHost.HostPeerId, command.ToMessage(PeerId));
+    }
+
+    public void Poll() => Transport.Poll();
+    public AuthoritativeDiplomacyPopup[] PopupsForClient() => Popups.ToArray();
+    public void Dispose() => Transport.Dispose();
+
+    void OnClientMessage(LockstepMessage message)
+    {
+        switch (message)
+        {
+            case AuthoritativeCommandResultMessage resultMessage:
+                LastResult = new AuthoritativeCommandResult
+                {
+                    Sequence = resultMessage.Sequence,
+                    Accepted = resultMessage.Accepted,
+                    Tick = resultMessage.Tick,
+                    Reason = resultMessage.Reason ?? "",
+                };
+                break;
+            case AuthoritativeStateSnapshotMessage snapshotMessage:
+                LastAuthoritySnapshot = AuthoritativeStateSnapshot.FromMessage(snapshotMessage);
+                if (LastResult == null || !Pending.TryGetValue(LastResult.Sequence, out AuthoritativePlayerCommand command))
+                    throw new InvalidOperationException("Received authoritative snapshot without a matching command result.");
+                Pending.Remove(LastResult.Sequence);
+                Replica.ApplyAuthoritativeResult(command, LastResult, LastAuthoritySnapshot);
+                break;
+            case AuthoritativeDiplomacyPopupMessage popupMessage:
+                Popups.Add(AuthoritativeDiplomacyPopup.FromMessage(popupMessage));
+                break;
+        }
+    }
+}
