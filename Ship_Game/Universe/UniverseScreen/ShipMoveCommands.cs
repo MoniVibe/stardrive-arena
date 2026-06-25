@@ -4,6 +4,7 @@ using Ship_Game.AI;
 using Ship_Game.Audio;
 using Ship_Game.Commands.Goals;
 using Ship_Game.Fleets;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using System.Linq;
 using Vector2 = SDGraphics.Vector2;
@@ -299,7 +300,17 @@ namespace Ship_Game.Universe
             }
 
             Vector2 corrected = HelperFunctions.GetCorrectedMovePosWithAudio([ship], enemyShips, pos);
-            ship.AI.OrderMoveTo(corrected, direction, GetMoveOrderType());
+            MoveOrder order = GetMoveOrderType();
+            switch (Authoritative4XClientContext.TrySubmitMoveShip(ship, corrected, order))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    return;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return;
+            }
+
+            ship.AI.OrderMoveTo(corrected, direction, order);
         }
     }
 }

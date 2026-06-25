@@ -1,7 +1,9 @@
 using System;
 using System.Threading;
 using Ship_Game;
+using Ship_Game.AI;
 using Ship_Game.Ships;
+using Vector2 = SDGraphics.Vector2;
 
 namespace Ship_Game.Multiplayer.Authoritative;
 
@@ -78,6 +80,18 @@ public sealed class Authoritative4XClientContext : IDisposable
         int count = Math.Max(1, repeat);
         for (int i = 0; i < count; ++i)
             context.Submit(AuthoritativePlayerCommand.QueueBuild(context.Next(), context.EmpireId, planet.Id, ship.Name));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitMoveShip(Ship ship, Vector2 destination, MoveOrder order)
+    {
+        if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
+            return Authoritative4XUiCommandResult.NotActive;
+        if (ship?.Active != true || ship.IsPlatformOrStation)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.MoveShip(context.Next(), context.EmpireId, ship.Id,
+            destination, order));
         return Authoritative4XUiCommandResult.Submitted;
     }
 

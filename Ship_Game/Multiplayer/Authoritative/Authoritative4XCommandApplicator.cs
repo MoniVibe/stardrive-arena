@@ -70,7 +70,12 @@ public sealed class Authoritative4XCommandApplicator
 
         Vector2 delta = command.Position - ship.Position;
         Vector2 dir = delta.Length() > 0f ? delta.Normalized() : new Vector2(1f, 0f);
-        ship.AI.OrderMoveTo(command.Position, dir, AIState.AwaitingOrders, MoveOrder.Regular);
+        MoveOrder order = command.TargetId != 0 ? (MoveOrder)command.TargetId : MoveOrder.Regular;
+        const MoveOrder Allowed = MoveOrder.Regular | MoveOrder.Aggressive | MoveOrder.StandGround | MoveOrder.AddWayPoint;
+        if ((order & ~Allowed) != 0)
+            return Reject(result, $"Move order {order} is not supported by authoritative MP.");
+
+        ship.AI.OrderMoveTo(command.Position, dir, AIState.AwaitingOrders, order);
         return Accept(result);
     }
 

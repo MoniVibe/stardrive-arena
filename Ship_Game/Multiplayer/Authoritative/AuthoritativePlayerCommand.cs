@@ -1,4 +1,5 @@
 using SDLockstep;
+using Ship_Game.AI;
 using Vector2 = SDGraphics.Vector2;
 
 namespace Ship_Game.Multiplayer.Authoritative;
@@ -47,13 +48,15 @@ public sealed class AuthoritativePlayerCommand
     public Vector2 Position;
     public string Text = "";
 
-    public static AuthoritativePlayerCommand MoveShip(int sequence, int empireId, int shipId, Vector2 destination)
+    public static AuthoritativePlayerCommand MoveShip(int sequence, int empireId, int shipId, Vector2 destination,
+        MoveOrder order = MoveOrder.Regular)
         => new()
         {
             Sequence = sequence,
             EmpireId = empireId,
             Kind = AuthoritativePlayerCommandKind.MoveShip,
             SubjectId = shipId,
+            TargetId = (int)order,
             Position = destination,
         };
 

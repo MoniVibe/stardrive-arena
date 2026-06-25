@@ -46,8 +46,16 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(request.EmpireId, copy.EmpireId);
         Assert.AreEqual(request.Kind, copy.Kind);
         Assert.AreEqual(request.SubjectId, copy.SubjectId);
+        Assert.AreEqual((int)MoveOrder.Regular, copy.TargetId);
         Assert.AreEqual(request.X, copy.X);
         Assert.AreEqual(request.Y, copy.Y);
+
+        var aggressiveMove = AuthoritativePlayerCommand.MoveShip(77, 2, 99,
+            new Vector2(-22f, 33f), MoveOrder.Aggressive | MoveOrder.AddWayPoint).ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(aggressiveMove, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.MoveShip, copy.Kind);
+        Assert.AreEqual((int)(MoveOrder.Aggressive | MoveOrder.AddWayPoint), copy.TargetId);
 
         var designRequest = AuthoritativePlayerCommand.DesignShip(8, 2, "BASE64-DESIGN")
             .ToMessage(fromPeer: 2);
@@ -150,11 +158,13 @@ public class Authoritative4XSessionTests : StarDriveTest
             string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
 
             var move = AuthoritativePlayerCommand.MoveShip(1, authority.Player.Id, authority.Ship.Id,
-                authority.Ship.Position + new Vector2(25_000, 10_000));
+                authority.Ship.Position + new Vector2(25_000, 10_000),
+                MoveOrder.Aggressive | MoveOrder.AddWayPoint);
             session.SubmitFromClient(move);
             Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
             Assert.AreEqual(AIState.AwaitingOrders, authority.Ship.AI.State);
             Assert.AreEqual(move.Position, authority.Ship.AI.MovePosition);
+            Assert.IsTrue(authority.Ship.AI.OrderQueue.PeekFirst.MoveOrder.IsSet(MoveOrder.Aggressive));
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
             var colony = AuthoritativePlayerCommand.SetColonyType(2, authority.Player.Id, authority.Planet.Id,
@@ -301,13 +311,27 @@ public class Authoritative4XSessionTests : StarDriveTest
                         .Any(q => q.isShip && q.ShipData?.Name == mobileShip.Name),
                     "Passive MP clients must not locally enqueue ships before host acceptance.");
 
+                Vector2 originalMovePosition = world.Ship.AI.MovePosition;
+                Vector2 destination = world.Ship.Position + new Vector2(8_000f, -3_000f);
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitMoveShip(world.Ship, destination,
+                        MoveOrder.StandGround | MoveOrder.AddWayPoint));
+                Assert.AreEqual(4, submitted.Count);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.MoveShip, submitted[3].Kind);
+                Assert.AreEqual(703, submitted[3].Sequence);
+                Assert.AreEqual(world.Ship.Id, submitted[3].SubjectId);
+                Assert.AreEqual(destination, submitted[3].Position);
+                Assert.AreEqual((int)(MoveOrder.StandGround | MoveOrder.AddWayPoint), submitted[3].TargetId);
+                Assert.AreEqual(originalMovePosition, world.Ship.AI.MovePosition,
+                    "Passive MP clients must not locally issue ship move orders before host acceptance.");
+
                 Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
                     Authoritative4XClientContext.TrySubmitQueueTroop(world.Planet, troop, repeat: 2));
-                Assert.AreEqual(5, submitted.Count);
-                Assert.IsTrue(submitted.Skip(3).All(c => c.Kind == AuthoritativePlayerCommandKind.QueueTroop));
-                Assert.AreEqual(703, submitted[3].Sequence);
+                Assert.AreEqual(6, submitted.Count);
+                Assert.IsTrue(submitted.Skip(4).All(c => c.Kind == AuthoritativePlayerCommandKind.QueueTroop));
                 Assert.AreEqual(704, submitted[4].Sequence);
-                Assert.IsTrue(submitted.Skip(3).All(c => c.SubjectId == world.Planet.Id && c.Text == troop.Name));
+                Assert.AreEqual(705, submitted[5].Sequence);
+                Assert.IsTrue(submitted.Skip(4).All(c => c.SubjectId == world.Planet.Id && c.Text == troop.Name));
                 Assert.IsFalse(world.Planet.Construction.GetConstructionQueueSnapshot()
                         .Any(q => q.isTroop && q.TroopType == troop.Name),
                     "Passive MP clients must not locally enqueue troops before host acceptance.");
@@ -317,17 +341,17 @@ public class Authoritative4XSessionTests : StarDriveTest
                     Planet.ColonyType.Research));
                 Assert.AreEqual(originalType, world.Planet.CType,
                     "The context should submit a colony-type request without directly mutating the replica.");
-                Assert.AreEqual(AuthoritativePlayerCommandKind.SetColonyType, submitted[5].Kind);
-                Assert.AreEqual(705, submitted[5].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetColonyType, submitted[6].Kind);
+                Assert.AreEqual(706, submitted[6].Sequence);
 
                 string originalTopic = world.Player.Research.Topic;
                 Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetResearchTopic(world.Player,
                     world.ResearchUid));
                 Assert.AreEqual(originalTopic, world.Player.Research.Topic,
                     "The context should submit a research request without directly mutating the replica.");
-                Assert.AreEqual(AuthoritativePlayerCommandKind.SetResearchTopic, submitted[6].Kind);
-                Assert.AreEqual(706, submitted[6].Sequence);
-                Assert.AreEqual(world.ResearchUid, submitted[6].Text);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetResearchTopic, submitted[7].Kind);
+                Assert.AreEqual(707, submitted[7].Sequence);
+                Assert.AreEqual(world.ResearchUid, submitted[7].Text);
 
                 int beforeWrongEmpire = submitted.Count;
                 Assert.IsFalse(Authoritative4XClientContext.TrySubmitQueueBuilding(world.EnemyPlanet, buildable.Name),
