@@ -4,6 +4,7 @@ using SDGraphics;
 using SDUtils;
 using Ship_Game.Audio;
 using Ship_Game.ExtensionMethods;
+using Ship_Game.Multiplayer.Authoritative;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
 using Ship_Game.UI;
@@ -91,6 +92,12 @@ namespace Ship_Game
             if (!entry.CanBeResearched || Screen.Player.Research.IsQueued(entry.UID))
             {
                 GameAudio.NegativeClick();
+                return;
+            }
+
+            if (Authoritative4XClientContext.TrySubmitSetResearchTopic(Screen.Player, entry.UID))
+            {
+                GameAudio.ResearchSelect();
                 return;
             }
 

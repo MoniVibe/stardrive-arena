@@ -81,6 +81,17 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static bool TrySubmitSetResearchTopic(Empire empire, string techUid)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return false;
+        if (string.IsNullOrEmpty(techUid))
+            return false;
+
+        context.Submit(AuthoritativePlayerCommand.SetResearchTopic(context.Next(), context.EmpireId, techUid));
+        return true;
+    }
+
     public static bool IsActiveFor(Empire empire)
         => TryGetFor(empire, out _);
 

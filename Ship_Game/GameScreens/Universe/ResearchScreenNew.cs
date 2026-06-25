@@ -3,6 +3,7 @@ using Color = Microsoft.Xna.Framework.Color;
 using Ship_Game.Audio;
 using System;
 using Ship_Game.GameScreens.Universe.Debug;
+using Ship_Game.Multiplayer.Authoritative;
 using SDGraphics;
 using SDUtils;
 using Vector2 = SDGraphics.Vector2;
@@ -355,7 +356,14 @@ namespace Ship_Game
                 GameAudio.NegativeClick();
                 return;
             }
-            
+
+            if (Authoritative4XClientContext.TrySubmitSetResearchTopic(Player, tech.UID))
+            {
+                GameAudio.ResearchSelect();
+                Queue.ReloadResearchQueue();
+                return;
+            }
+
             bool added = false;
             
             if (!Player.Research.IsQueued(tech.UID))

@@ -276,9 +276,21 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual(AuthoritativePlayerCommandKind.SetColonyType, submitted[3].Kind);
                 Assert.AreEqual(703, submitted[3].Sequence);
 
+                string originalTopic = world.Player.Research.Topic;
+                Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetResearchTopic(world.Player,
+                    world.ResearchUid));
+                Assert.AreEqual(originalTopic, world.Player.Research.Topic,
+                    "The context should submit a research request without directly mutating the replica.");
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetResearchTopic, submitted[4].Kind);
+                Assert.AreEqual(704, submitted[4].Sequence);
+                Assert.AreEqual(world.ResearchUid, submitted[4].Text);
+
                 int beforeWrongEmpire = submitted.Count;
                 Assert.IsFalse(Authoritative4XClientContext.TrySubmitQueueBuilding(world.EnemyPlanet, buildable.Name),
                     "An active client context must only handle its own empire's UI commands.");
+                Assert.AreEqual(beforeWrongEmpire, submitted.Count);
+                Assert.IsFalse(Authoritative4XClientContext.TrySubmitSetResearchTopic(world.Enemy,
+                    world.ResearchUid));
                 Assert.AreEqual(beforeWrongEmpire, submitted.Count);
             }
 
