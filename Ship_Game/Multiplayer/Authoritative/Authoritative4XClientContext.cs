@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading;
 using Ship_Game;
 using Ship_Game.AI;
@@ -95,6 +96,19 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitMoveShips(Ship[] ships, Vector2 destination, MoveOrder order)
+    {
+        if (!TryGetForBatch(ships, out Authoritative4XClientContext context, out Ship[] ownedShips))
+            return Authoritative4XUiCommandResult.NotActive;
+        if (ownedShips.Length == 0 || ownedShips.Any(s => !CanSubmitShipMove(s)))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        foreach (Ship ship in ownedShips)
+            context.Submit(AuthoritativePlayerCommand.MoveShip(context.Next(), context.EmpireId, ship.Id,
+                destination, order));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitAttackShip(Ship ship, Ship target, bool queue)
     {
         if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
@@ -111,6 +125,22 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitAttackShips(Ship[] ships, Ship target, bool queue)
+    {
+        if (!TryGetForBatch(ships, out Authoritative4XClientContext context, out Ship[] ownedShips))
+            return Authoritative4XUiCommandResult.NotActive;
+        if (target?.Active != true || target.Loyalty == null || ownedShips.Length == 0
+            || ownedShips.Any(s => !CanSubmitShipAttack(s, target)))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        foreach (Ship ship in ownedShips)
+            context.Submit(AuthoritativePlayerCommand.AttackShip(context.Next(), context.EmpireId, ship.Id,
+                target.Id, queue));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitShipPlanetOrder(Ship ship, Planet planet,
         AuthoritativeShipPlanetOrderType orderType, bool clearOrders, MoveOrder moveOrder)
     {
@@ -124,6 +154,23 @@ public sealed class Authoritative4XClientContext : IDisposable
 
         context.Submit(AuthoritativePlayerCommand.ShipPlanetOrder(context.Next(), context.EmpireId, ship.Id,
             planet.Id, orderType, clearOrders, moveOrder));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitShipPlanetOrders(Ship[] ships, Planet planet,
+        bool clearOrders, MoveOrder moveOrder, Func<Ship, AuthoritativeShipPlanetOrderType> orderFor)
+    {
+        if (!TryGetForBatch(ships, out Authoritative4XClientContext context, out Ship[] ownedShips))
+            return Authoritative4XUiCommandResult.NotActive;
+        if (planet == null || ownedShips.Length == 0 || orderFor == null
+            || ownedShips.Any(s => !CanSubmitShipPlanetOrder(s)))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        foreach (Ship ship in ownedShips)
+            context.Submit(AuthoritativePlayerCommand.ShipPlanetOrder(context.Next(), context.EmpireId,
+                ship.Id, planet.Id, orderFor(ship), clearOrders, moveOrder));
         return Authoritative4XUiCommandResult.Submitted;
     }
 
@@ -159,6 +206,31 @@ public sealed class Authoritative4XClientContext : IDisposable
         context = Active;
         return context != null && empire != null && empire.Id == context.EmpireId;
     }
+
+    static bool TryGetForBatch(Ship[] ships, out Authoritative4XClientContext context, out Ship[] ownedShips)
+    {
+        context = null;
+        ownedShips = Array.Empty<Ship>();
+        if (Active == null || ships == null || ships.Length == 0)
+            return false;
+
+        ownedShips = ships.Where(s => s?.Loyalty != null && s.Loyalty.Id == Active.EmpireId).ToArray();
+        if (ownedShips.Length == 0)
+            return false;
+
+        context = Active;
+        return true;
+    }
+
+    static bool CanSubmitShipMove(Ship ship)
+        => ship?.Active == true && !ship.IsPlatformOrStation;
+
+    static bool CanSubmitShipAttack(Ship ship, Ship target)
+        => CanSubmitShipMove(ship) && ship.ShipData.Role != RoleName.troop && ship != target
+           && target.Loyalty != ship.Loyalty;
+
+    static bool CanSubmitShipPlanetOrder(Ship ship)
+        => ship?.Active == true && !ship.IsConstructor && !ship.IsPlatformOrStation && !ship.IsSubspaceProjector;
 
     int Next() => Interlocked.Increment(ref NextSequence) - 1;
 

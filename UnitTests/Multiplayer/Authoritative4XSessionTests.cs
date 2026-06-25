@@ -27,6 +27,7 @@ public class Authoritative4XSessionTests : StarDriveTest
         public Planet Planet;
         public Planet EnemyPlanet;
         public Ship Ship;
+        public Ship WingShip;
         public Ship EnemyShip;
         public string ResearchUid;
     }
@@ -461,6 +462,72 @@ public class Authoritative4XSessionTests : StarDriveTest
 
             Assert.IsFalse(Authoritative4XClientContext.IsActive,
                 "Disposing the context should restore the single-player/no-context default.");
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsBatchFleetCommandsWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xF1EE7C0UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            var submitted = new List<AuthoritativePlayerCommand>();
+            Vector2 firstMove = world.Ship.AI.MovePosition;
+            Vector2 secondMove = world.WingShip.AI.MovePosition;
+            Ship firstTarget = world.Ship.AI.Target;
+            Ship secondTarget = world.WingShip.AI.Target;
+            int firstOrders = world.Ship.AI.OrderQueue.Count;
+            int secondOrders = world.WingShip.AI.OrderQueue.Count;
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 900))
+            {
+                Vector2 destination = world.Ship.Position + new Vector2(12_000f, 6_000f);
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitMoveShips(new[] { world.Ship, world.WingShip },
+                        destination, MoveOrder.Aggressive));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.IsTrue(submitted.All(c => c.Kind == AuthoritativePlayerCommandKind.MoveShip));
+                Assert.AreEqual(900, submitted[0].Sequence);
+                Assert.AreEqual(901, submitted[1].Sequence);
+                Assert.AreEqual(world.Ship.Id, submitted[0].SubjectId);
+                Assert.AreEqual(world.WingShip.Id, submitted[1].SubjectId);
+                Assert.AreEqual(destination, submitted[0].Position);
+                Assert.AreEqual(destination, submitted[1].Position);
+                Assert.AreEqual(firstMove, world.Ship.AI.MovePosition);
+                Assert.AreEqual(secondMove, world.WingShip.AI.MovePosition);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitAttackShips(new[] { world.Ship, world.WingShip },
+                        world.EnemyShip, queue: false));
+                Assert.AreEqual(4, submitted.Count);
+                Assert.IsTrue(submitted.Skip(2).All(c => c.Kind == AuthoritativePlayerCommandKind.AttackShip));
+                Assert.AreEqual(902, submitted[2].Sequence);
+                Assert.AreEqual(903, submitted[3].Sequence);
+                Assert.AreEqual(world.EnemyShip.Id, submitted[2].TargetId);
+                Assert.AreEqual(world.EnemyShip.Id, submitted[3].TargetId);
+                Assert.AreEqual(firstTarget, world.Ship.AI.Target);
+                Assert.AreEqual(secondTarget, world.WingShip.AI.Target);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitShipPlanetOrders(new[] { world.Ship, world.WingShip },
+                        world.Planet, clearOrders: true, MoveOrder.StandGround,
+                        _ => AuthoritativeShipPlanetOrderType.Orbit));
+                Assert.AreEqual(6, submitted.Count);
+                Assert.IsTrue(submitted.Skip(4).All(c => c.Kind == AuthoritativePlayerCommandKind.ShipPlanetOrder));
+                Assert.AreEqual(904, submitted[4].Sequence);
+                Assert.AreEqual(905, submitted[5].Sequence);
+                Assert.AreEqual(world.Planet.Id, submitted[4].TargetId);
+                Assert.AreEqual(world.Planet.Id, submitted[5].TargetId);
+                Assert.AreEqual(firstOrders, world.Ship.AI.OrderQueue.Count);
+                Assert.AreEqual(secondOrders, world.WingShip.AI.OrderQueue.Count);
+            }
         }
         finally
         {
@@ -1188,6 +1255,7 @@ public class Authoritative4XSessionTests : StarDriveTest
         Planet planet = AddDummyPlanetToEmpire(new Vector2(200_000, 200_000), Player, fertility: 1f, minerals: 1f, maxPop: 5f);
         Planet enemyPlanet = AddDummyPlanetToEmpire(new Vector2(-200_000, -200_000), Enemy, fertility: 1f, minerals: 1f, maxPop: 5f);
         Ship ship = SpawnShip("Vulcan Scout", Player, new Vector2(0, 0));
+        Ship wingShip = SpawnShip("Vulcan Scout", Player, new Vector2(2_000, 0));
         Ship enemyShip = SpawnShip("Vulcan Scout", Enemy, new Vector2(35_000, 0));
 
         Player.InitEmpireFromSave(UState);
@@ -1211,6 +1279,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             Planet = planet,
             EnemyPlanet = enemyPlanet,
             Ship = ship,
+            WingShip = wingShip,
             EnemyShip = enemyShip,
             ResearchUid = researchUid,
         };

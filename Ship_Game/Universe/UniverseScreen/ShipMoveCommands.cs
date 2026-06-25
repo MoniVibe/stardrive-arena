@@ -222,6 +222,20 @@ namespace Ship_Game.Universe
             if (planetClicked == null || fleet == null)
                 return false;
 
+            Ship[] actionable = fleet.Ships.Where(s => s.PlayerShipCanTakeFleetOrders(forAttack: false)).ToArray();
+            bool clearOrders = !Input.IsShiftKeyDown;
+            MoveOrder moveOrder = GetStanceType();
+            switch (Authoritative4XClientContext.TrySubmitShipPlanetOrders(actionable, planetClicked,
+                        clearOrders, moveOrder, ship => PlanetOrderFor(ship, planetClicked)))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.AffirmativeClick();
+                    return true;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return false;
+            }
+
             fleet.FinalPosition = planetClicked.Position; //fbedard: center fleet on planet
             foreach (Ship ship in fleet.Ships)
             {
@@ -279,6 +293,17 @@ namespace Ship_Game.Universe
 
         bool TryFleetAttackShip(ShipGroup fleet, Ship shipToAttack)
         {
+            Ship[] actionable = fleet.Ships.Where(s => s.PlayerShipCanTakeFleetOrders(forAttack: true)).ToArray();
+            switch (Authoritative4XClientContext.TrySubmitAttackShips(actionable, shipToAttack, Input.QueueAction))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.AffirmativeClick();
+                    return true;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return false;
+            }
+
             fleet.FinalPosition = shipToAttack.Position;
             fleet.AssignPositions(Vectors.Up);
             if (fleet.Ships.Any(s => s.Active
@@ -333,11 +358,22 @@ namespace Ship_Game.Universe
             if (MoveFleetToPlanet(planetClicked, fleet))
                 return;
 
+            Vector2 corrected = HelperFunctions.GetCorrectedMovePosWithAudio(fleet.Ships, enemyShips, movePosition);
+            Ship[] actionable = fleet.Ships.Where(s => s.PlayerShipCanTakeFleetOrders(forAttack: false)).ToArray();
+            switch (Authoritative4XClientContext.TrySubmitMoveShips(actionable, corrected, GetMoveOrderType()))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.AffirmativeClick();
+                    return;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return;
+            }
+
             GameAudio.AffirmativeClick();
             if (QueueFleetMovement(movePosition, facingDir, fleet))
                 return;
 
-            Vector2 corrected = HelperFunctions.GetCorrectedMovePosWithAudio(fleet.Ships, enemyShips, movePosition);
             // ForceReassembly so AssembleFleet rotates every ship's FleetOffset to the
             // new facingDir even for ships already moving; without it, AssembleFleet
             // only touches AwaitingOrders ships and the fleet keeps its old formation
