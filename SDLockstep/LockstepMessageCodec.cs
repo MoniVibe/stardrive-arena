@@ -19,6 +19,8 @@ public static class LockstepMessageCodec
     const byte SessionReady = 11;
     const byte SessionStart = 12;
     const byte SessionError = 13;
+    const byte SessionLobby = 14;
+    const byte SessionControl = 15;
 
     public static byte[] Encode(LockstepMessage message, int toPeer)
     {
@@ -58,6 +60,16 @@ public static class LockstepMessageCodec
                     WriteString(w, ready.BuildHash);
                     WriteString(w, ready.BuildSummary);
                     break;
+                case SessionLobbyMessage lobby:
+                    w.Write(SessionLobby);
+                    w.Write(lobby.PeerId);
+                    w.Write(lobby.Ready);
+                    WriteString(w, lobby.PlayerName);
+                    WriteString(w, lobby.RacePreference);
+                    WriteString(w, lobby.LoadoutTrait);
+                    WriteString(w, lobby.BuildHash);
+                    WriteString(w, lobby.BuildSummary);
+                    break;
                 case SessionStartMessage start:
                     w.Write(SessionStart);
                     w.Write(start.ProtocolVersion);
@@ -65,11 +77,23 @@ public static class LockstepMessageCodec
                     w.Write(start.RngSeed);
                     w.Write(start.InputDelay);
                     w.Write(start.MaxTurns);
+                    w.Write(start.CommandEveryTurns);
+                    w.Write(start.GameSpeed);
+                    w.Write(start.StartPaused);
                     WriteString(w, start.SettingsHash);
+                    WriteString(w, start.HostRacePreference);
+                    WriteString(w, start.JoinRacePreference);
+                    WriteString(w, start.HostLoadoutTrait);
+                    WriteString(w, start.JoinLoadoutTrait);
                     WriteString(w, start.HostFleet);
                     WriteString(w, start.JoinFleet);
                     WriteString(w, start.BuildHash);
                     WriteString(w, start.BuildSummary);
+                    break;
+                case SessionControlMessage control:
+                    w.Write(SessionControl);
+                    w.Write(control.Paused);
+                    w.Write(control.GameSpeed);
                     break;
                 case SessionErrorMessage error:
                     w.Write(SessionError);
@@ -120,19 +144,62 @@ public static class LockstepMessageCodec
                     BuildSummary = ReadOptionalString(r),
                 };
                 break;
-            case SessionStart:
-                message = new SessionStartMessage
+            case SessionLobby:
+                message = new SessionLobbyMessage
                 {
-                    ProtocolVersion = r.ReadInt32(),
-                    MatchSeed = r.ReadInt32(),
-                    RngSeed = r.ReadUInt32(),
-                    InputDelay = r.ReadInt32(),
-                    MaxTurns = r.ReadInt32(),
-                    SettingsHash = ReadString(r),
-                    HostFleet = ReadString(r),
-                    JoinFleet = ReadString(r),
+                    PeerId = r.ReadInt32(),
+                    Ready = r.ReadBoolean(),
+                    PlayerName = ReadString(r),
+                    RacePreference = ReadString(r),
+                    LoadoutTrait = ReadString(r),
                     BuildHash = ReadOptionalString(r),
                     BuildSummary = ReadOptionalString(r),
+                };
+                break;
+            case SessionStart:
+                int protocolVersion = r.ReadInt32();
+                int matchSeed = r.ReadInt32();
+                uint rngSeed = r.ReadUInt32();
+                int inputDelay = r.ReadInt32();
+                int maxTurns = r.ReadInt32();
+                int commandEveryTurns = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 1;
+                float gameSpeed = r.BaseStream.Position < r.BaseStream.Length ? r.ReadSingle() : 1f;
+                bool startPaused = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
+                string settingsHash = ReadString(r);
+                string hostRace = ReadOptionalString(r);
+                string joinRace = ReadOptionalString(r);
+                string hostTrait = ReadOptionalString(r);
+                string joinTrait = ReadOptionalString(r);
+                string hostFleet = ReadOptionalString(r);
+                string joinFleet = ReadOptionalString(r);
+                string buildHash = ReadOptionalString(r);
+                string buildSummary = ReadOptionalString(r);
+                message = new SessionStartMessage
+                {
+                    ProtocolVersion = protocolVersion,
+                    MatchSeed = matchSeed,
+                    RngSeed = rngSeed,
+                    InputDelay = inputDelay,
+                    MaxTurns = maxTurns,
+                    CommandEveryTurns = commandEveryTurns,
+                    GameSpeed = gameSpeed,
+                    StartPaused = startPaused,
+                    SettingsHash = settingsHash,
+                    HostRacePreference = hostRace,
+                    JoinRacePreference = joinRace,
+                    HostLoadoutTrait = hostTrait,
+                    JoinLoadoutTrait = joinTrait,
+                    HostFleet = hostFleet,
+                    JoinFleet = joinFleet,
+                    BuildHash = buildHash,
+                    BuildSummary = buildSummary,
+                };
+                break;
+            case SessionControl:
+                message = new SessionControlMessage
+                {
+                    Paused = r.ReadBoolean(),
+                    GameSpeed = r.ReadSingle(),
                 };
                 break;
             case SessionError:

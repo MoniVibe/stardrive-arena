@@ -36,9 +36,16 @@ public class LockstepNetworkTransportTests
             RngSeed = 0xA12EA000u,
             InputDelay = 3,
             MaxTurns = 400,
+            CommandEveryTurns = 2,
+            GameSpeed = 2f,
+            StartPaused = true,
             SettingsHash = "arena-phase1",
             BuildHash = "env-plus-settings",
             BuildSummary = "Jupiter 045; CA; settings arena-phase1",
+            HostRacePreference = "United",
+            JoinRacePreference = "Kulrathi",
+            HostLoadoutTrait = "Ace",
+            JoinLoadoutTrait = "Swarm",
             HostFleet = "Fang Strafer\u001fFang Strafer",
             JoinFleet = "Vulcan Scout",
         }, decoded =>
@@ -48,9 +55,16 @@ public class LockstepNetworkTransportTests
             Assert.AreEqual(0x5EED, msg.MatchSeed);
             Assert.AreEqual(0xA12EA000u, msg.RngSeed);
             Assert.AreEqual(3, msg.InputDelay);
+            Assert.AreEqual(2, msg.CommandEveryTurns);
+            Assert.AreEqual(2f, msg.GameSpeed);
+            Assert.IsTrue(msg.StartPaused);
             Assert.AreEqual("arena-phase1", msg.SettingsHash);
             Assert.AreEqual("env-plus-settings", msg.BuildHash);
             Assert.AreEqual("Jupiter 045; CA; settings arena-phase1", msg.BuildSummary);
+            Assert.AreEqual("United", msg.HostRacePreference);
+            Assert.AreEqual("Kulrathi", msg.JoinRacePreference);
+            Assert.AreEqual("Ace", msg.HostLoadoutTrait);
+            Assert.AreEqual("Swarm", msg.JoinLoadoutTrait);
             Assert.AreEqual("Fang Strafer\u001fFang Strafer", msg.HostFleet);
             Assert.AreEqual("Vulcan Scout", msg.JoinFleet);
         });
@@ -70,6 +84,36 @@ public class LockstepNetworkTransportTests
             Assert.AreEqual(2, msg.PeerId);
             Assert.AreEqual("env", msg.BuildHash);
             Assert.AreEqual("Jupiter 045; CA", msg.BuildSummary);
+        });
+
+        RoundTrip(0, new SessionLobbyMessage
+        {
+            FromPeer = 2,
+            PeerId = 2,
+            Ready = true,
+            PlayerName = "Join",
+            RacePreference = "Kulrathi",
+            LoadoutTrait = "Swarm",
+            BuildHash = "env",
+            BuildSummary = "Jupiter 045; CA",
+        }, decoded =>
+        {
+            var msg = (SessionLobbyMessage)decoded.Message;
+            Assert.AreEqual(2, msg.FromPeer);
+            Assert.AreEqual(2, msg.PeerId);
+            Assert.IsTrue(msg.Ready);
+            Assert.AreEqual("Join", msg.PlayerName);
+            Assert.AreEqual("Kulrathi", msg.RacePreference);
+            Assert.AreEqual("Swarm", msg.LoadoutTrait);
+            Assert.AreEqual("env", msg.BuildHash);
+        });
+
+        RoundTrip(2, new SessionControlMessage { FromPeer = 0, Paused = true, GameSpeed = 0.5f }, decoded =>
+        {
+            var msg = (SessionControlMessage)decoded.Message;
+            Assert.AreEqual(0, msg.FromPeer);
+            Assert.IsTrue(msg.Paused);
+            Assert.AreEqual(0.5f, msg.GameSpeed);
         });
     }
 

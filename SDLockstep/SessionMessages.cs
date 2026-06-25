@@ -23,6 +23,17 @@ public sealed class SessionReadyMessage : LockstepMessage
     public string BuildSummary = "";
 }
 
+public sealed class SessionLobbyMessage : LockstepMessage
+{
+    public int PeerId;
+    public bool Ready;
+    public string PlayerName = "";
+    public string RacePreference = "";
+    public string LoadoutTrait = "";
+    public string BuildHash = "";
+    public string BuildSummary = "";
+}
+
 public sealed class SessionStartMessage : LockstepMessage
 {
     public int ProtocolVersion;
@@ -30,11 +41,24 @@ public sealed class SessionStartMessage : LockstepMessage
     public uint RngSeed;
     public int InputDelay;
     public int MaxTurns;
+    public int CommandEveryTurns;
+    public float GameSpeed;
+    public bool StartPaused;
     public string SettingsHash = "";
     public string BuildHash = "";
     public string BuildSummary = "";
+    public string HostRacePreference = "";
+    public string JoinRacePreference = "";
+    public string HostLoadoutTrait = "";
+    public string JoinLoadoutTrait = "";
     public string HostFleet = "";
     public string JoinFleet = "";
+}
+
+public sealed class SessionControlMessage : LockstepMessage
+{
+    public bool Paused;
+    public float GameSpeed;
 }
 
 public sealed class SessionErrorMessage : LockstepMessage

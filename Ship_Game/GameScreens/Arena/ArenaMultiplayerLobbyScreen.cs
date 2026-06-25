@@ -1,8 +1,8 @@
 using System;
 using System.Linq;
-using System.Threading.Tasks;
 using Microsoft.Xna.Framework.Graphics;
 using SDGraphics;
+using SDLockstep;
 using Ship_Game.Audio;
 using Ship_Game.UI;
 using Vector2 = SDGraphics.Vector2;
@@ -15,14 +15,31 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     public const int DefaultPort = 47377;
     public const int DefaultTurns = 600;
     const string DefaultHost = "127.0.0.1";
+    static readonly string[] LoadoutTraits =
+    {
+        ArenaStartArchetype.Ace.ToString(),
+        ArenaStartArchetype.Wingmates.ToString(),
+        ArenaStartArchetype.Swarm.ToString(),
+    };
 
     readonly object Sync = new();
     UITextEntry HostEntry;
     UITextEntry PortEntry;
     UITextEntry TurnsEntry;
-    Task<ArenaMultiplayerRunResult> ActiveRun;
+    UITextEntry SeedEntry;
+    UITextEntry SpeedEntry;
+    TcpLockstepTransport Transport;
+    ArenaMultiplayerRole? LocalRole;
+    LobbyPeer LocalPeer = new() { PlayerName = "Local", RacePreference = "United", LoadoutTrait = "Wingmates" };
+    LobbyPeer RemotePeer = new() { PlayerName = "Remote", RacePreference = "-", LoadoutTrait = "-", Ready = false };
+    ArenaMultiplayerSettings PendingLaunchSettings;
     ArenaMultiplayerRunResult LastResult;
-    string StatusText = "Idle. Host on one machine, join from the other.";
+    string StatusText = "Idle. Host, join, ready up, then host launches.";
+    string[] RaceOptions = Array.Empty<string>();
+    int RaceIndex;
+    int TraitIndex = 1;
+    bool StartPaused;
+    bool Launching;
 
     public ArenaMultiplayerLobbyScreen() : base(null, toPause: null)
     {
@@ -36,65 +53,87 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         get { lock (Sync) return StatusText; }
     }
 
-    public bool IsRunning
-    {
-        get { lock (Sync) return ActiveRun != null; }
-    }
-
+    public bool IsRunning => Launching;
     public ArenaMultiplayerRunResult LatestResult => LastResult;
+    public bool LocalReady => LocalPeer.Ready;
+    public bool RemoteReady => RemotePeer.Ready;
+    public string LocalRace => LocalPeer.RacePreference;
+    public string LocalLoadoutTrait => LocalPeer.LoadoutTrait;
+    public string RemoteRace => RemotePeer.RacePreference;
+    public string RemoteLoadoutTrait => RemotePeer.LoadoutTrait;
 
     public override void LoadContent()
     {
         RemoveAll();
+        RaceOptions = AvailableRacePreferences();
+        RaceIndex = Math.Max(0, Array.IndexOf(RaceOptions, LocalPeer.RacePreference));
+        TraitIndex = Math.Max(0, Array.IndexOf(LoadoutTraits, LocalPeer.LoadoutTrait));
+        ApplyLocalSelection();
 
         Vector2 c = ScreenCenter;
-        var panel = new RectF(c.X - 390, c.Y - 255, 780, 510);
+        var panel = new RectF(c.X - 440, c.Y - 295, 880, 590);
         Add(ArenaTheme.Panel(panel));
-        Add(ArenaTheme.ArenaTitle(new Vector2(panel.X + 24, panel.Y + 26), "STAR GLADIATOR"));
-        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 76), "MULTIPLAYER LOCKSTEP"));
+        Add(ArenaTheme.ArenaTitle(new Vector2(panel.X + 24, panel.Y + 24), "STAR GLADIATOR"));
+        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 74), "MULTIPLAYER LOBBY"));
 
-        AddField(panel.X + 24, panel.Y + 120, "HOST", DefaultHost, out HostEntry, allowPeriod: true, "arena_mp_host_entry");
-        AddField(panel.X + 24, panel.Y + 178, "PORT", DefaultPort.ToString(), out PortEntry, allowPeriod: false, "arena_mp_port_entry");
-        AddField(panel.X + 224, panel.Y + 178, "TURNS", DefaultTurns.ToString(), out TurnsEntry, allowPeriod: false, "arena_mp_turns_entry");
+        AddField(panel.X + 24, panel.Y + 108, "HOST", DefaultHost, out HostEntry, allowPeriod: true, maxChars: 64, "arena_mp_host_entry");
+        AddField(panel.X + 24, panel.Y + 164, "PORT", DefaultPort.ToString(), out PortEntry, allowPeriod: false, maxChars: 6, "arena_mp_port_entry");
+        AddField(panel.X + 210, panel.Y + 164, "TURNS", DefaultTurns.ToString(), out TurnsEntry, allowPeriod: false, maxChars: 6, "arena_mp_turns_entry");
+        AddField(panel.X + 396, panel.Y + 164, "SEED", "24237", out SeedEntry, allowPeriod: false, maxChars: 9, "arena_mp_seed_entry");
+        AddField(panel.X + 582, panel.Y + 164, "SPEED", "1", out SpeedEntry, allowPeriod: true, maxChars: 4, "arena_mp_speed_entry");
 
-        Add(ArenaTheme.StatChip(new RectF(panel.X + 24, panel.Y + 236, 170, 54),
-            "ROLE", () => IsRunning ? "RUNNING" : "READY", IsRunning ? ArenaTheme.Cyan : ArenaTheme.Green));
-        Add(ArenaTheme.StatChip(new RectF(panel.X + 210, panel.Y + 236, 220, 54),
-            "LAST HASH", () => LastResult?.FinalHash.NotEmpty() == true ? LastResult.FinalHash : "-", ArenaTheme.Amber));
-        Add(ArenaTheme.StatChip(new RectF(panel.X + 446, panel.Y + 236, 170, 54),
-            "WINNER", () => LastResult == null || !LastResult.MatchEnded ? "-" : LastResult.WinnerPeerId.ToString(), ArenaTheme.Magenta));
+        AddPeerCard(new RectF(panel.X + 24, panel.Y + 222, 392, 126), "YOU", () => LocalPeer);
+        AddPeerCard(new RectF(panel.X + 440, panel.Y + 222, 392, 126), "REMOTE", () => RemotePeer);
 
-        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 318), "STATUS"));
-        for (int i = 0; i < 4; ++i)
+        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 372), "SETUP"));
+        UIList setup = AddList(new Vector2(panel.X + 24, panel.Y + 400));
+        setup.Direction = new Vector2(1f, 0f);
+        setup.Padding = new Vector2(8f, 8f);
+        setup.LayoutStyle = ListLayoutStyle.ResizeList;
+        UIButton race = ArenaTheme.AddPillButton(setup, "", _ => CycleRace(), 176f);
+        race.Name = "arena_mp_race";
+        race.DynamicText = () => $"RACE {LocalPeer.RacePreference}";
+        UIButton trait = ArenaTheme.AddPillButton(setup, "", _ => CycleTrait(), 176f);
+        trait.Name = "arena_mp_trait";
+        trait.DynamicText = () => $"LOADOUT {LocalPeer.LoadoutTrait.ToUpperInvariant()}";
+        UIButton pause = ArenaTheme.AddPillButton(setup, "", _ => ToggleStartPaused(), 126f);
+        pause.Name = "arena_mp_start_paused";
+        pause.DynamicText = () => StartPaused ? "START PAUSED" : "START LIVE";
+
+        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 458), "STATUS"));
+        for (int i = 0; i < 3; ++i)
         {
             int line = i;
-            Add(new UILabel(new Vector2(panel.X + 24, panel.Y + 346 + i * 20),
+            Add(new UILabel(new Vector2(panel.X + 24, panel.Y + 486 + i * 20),
                 StatusLine(line), ArenaTheme.BodySmallFont, ArenaTheme.TextSecondary)
             {
                 DynamicText = _ => StatusLine(line),
             });
         }
 
-        UIList actions = AddList(new Vector2(panel.X + 24, panel.Bottom - 58));
+        UIList actions = AddList(new Vector2(panel.X + 24, panel.Bottom - 52));
         actions.Direction = new Vector2(1f, 0f);
         actions.Padding = new Vector2(8f, 8f);
         actions.LayoutStyle = ListLayoutStyle.ResizeList;
-        ArenaTheme.AddPrimaryButton(actions, "HOST", _ => StartHost(), 118f).Name = "arena_mp_host";
-        ArenaTheme.AddPillButton(actions, "JOIN", _ => StartJoin(), 118f).Name = "arena_mp_join";
-        ArenaTheme.AddPillButton(actions, "SELF TEST", _ => StartSelfTest(), 136f).Name = "arena_mp_self_test";
-        ArenaTheme.AddPillButton(actions, "BACK", _ => ExitScreen(), 100f).Name = "arena_mp_back";
+        ArenaTheme.AddPrimaryButton(actions, "HOST", _ => StartHost(), 96f).Name = "arena_mp_host";
+        ArenaTheme.AddPillButton(actions, "JOIN", _ => StartJoin(), 96f).Name = "arena_mp_join";
+        ArenaTheme.AddPillButton(actions, "READY", _ => ToggleReady(), 96f).Name = "arena_mp_ready";
+        ArenaTheme.AddPrimaryButton(actions, "LAUNCH", _ => LaunchAsHost(), 112f).Name = "arena_mp_launch";
+        ArenaTheme.AddPillButton(actions, "SELF TEST", _ => StartSelfTest(), 126f).Name = "arena_mp_self_test";
+        ArenaTheme.AddPillButton(actions, "BACK", _ => ExitScreen(), 90f).Name = "arena_mp_back";
     }
 
-    void AddField(float x, float y, string label, string value, out UITextEntry entry, bool allowPeriod, string name)
+    void AddField(float x, float y, string label, string value, out UITextEntry entry,
+        bool allowPeriod, int maxChars, string name)
     {
         Add(ArenaTheme.Label(new Vector2(x, y), label));
-        var bg = new Submenu(new RectF(x, y + 18, label == "HOST" ? 360 : 160, 26));
+        var bg = new Submenu(new RectF(x, y + 18, label == "HOST" ? 340 : 142, 26));
         entry = new UITextEntry(new Rectangle((int)x + 6, (int)y + 20, (int)bg.Width - 12, 24),
             ArenaTheme.BodyFont, value)
         {
             Name = name,
             AllowPeriod = allowPeriod,
-            MaxCharacters = label == "HOST" ? 64 : 6,
+            MaxCharacters = maxChars,
             DrawUnderline = true,
             AutoCaptureOnHover = true,
             Color = ArenaTheme.TextPrimary,
@@ -105,73 +144,274 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         Add(entry);
     }
 
+    void AddPeerCard(RectF rect, string title, Func<LobbyPeer> peer)
+    {
+        Add(ArenaTheme.Card(rect));
+        Add(ArenaTheme.SectionHeader(new Vector2(rect.X + 14, rect.Y + 12), title));
+        Add(new UILabel(new Vector2(rect.X + 14, rect.Y + 42), "", ArenaTheme.BodyFont, ArenaTheme.TextPrimary)
+        {
+            DynamicText = _ => $"{peer().PlayerName} | {(peer().Ready ? "READY" : "NOT READY")}",
+        });
+        Add(new UILabel(new Vector2(rect.X + 14, rect.Y + 70), "", ArenaTheme.BodySmallFont, ArenaTheme.TextSecondary)
+        {
+            DynamicText = _ => $"Race: {peer().RacePreference}  Loadout: {peer().LoadoutTrait}",
+        });
+        Add(new UILabel(new Vector2(rect.X + 14, rect.Y + 94), "", ArenaTheme.BodySmallFont, ArenaTheme.TextMuted)
+        {
+            DynamicText = _ => peer().Summary,
+        });
+    }
+
     void StartSelfTest()
     {
-        int turns = ParseTurns();
-        StartRun("SELF TEST", () => RunLocalSelfTestForHeadless(turns));
+        LastResult = RunLocalSelfTestForHeadless(ParseTurns());
+        SetStatus(Summarize(LastResult));
+        GameAudio.AffirmativeClick();
     }
 
     void StartHost()
     {
-        int port = ParsePort();
-        int turns = ParseTurns();
-        ArenaMultiplayerSettings settings = CreateDefaultSettings(turns);
-        StartRun("HOST", () => ArenaMultiplayerSession.RunNetworkHost(settings, port, AppendLog));
+        if (Transport != null)
+        {
+            SetStatus("Already hosting or joined. Back out to reset the socket.");
+            GameAudio.NegativeClick();
+            return;
+        }
+
+        LocalRole = ArenaMultiplayerRole.Host;
+        LocalPeer.PlayerName = "Host";
+        ApplyLocalSelection();
+        Transport = TcpLockstepTransport.Host(ParsePort(), ArenaMultiplayerSession.JoinPlayerPeerId);
+        Transport.AddObserver(LockstepHost.HostPeerId, OnHostMessage);
+        SendLocalLobby();
+        SetStatus($"HOST listening on port {ParsePort()}\nPick setup, ready, then launch when remote is ready.");
+        GameAudio.AffirmativeClick();
     }
 
     void StartJoin()
     {
+        if (Transport != null)
+        {
+            SetStatus("Already hosting or joined. Back out to reset the socket.");
+            GameAudio.NegativeClick();
+            return;
+        }
+
         string host = HostEntry?.Text?.Trim();
         if (host.IsEmpty())
             host = DefaultHost;
-        int port = ParsePort();
-        StartRun("JOIN", () => ArenaMultiplayerSession.RunNetworkJoin(host, port, AppendLog));
-    }
-
-    void StartRun(string mode, Func<ArenaMultiplayerRunResult> run)
-    {
-        lock (Sync)
+        LocalRole = ArenaMultiplayerRole.Join;
+        LocalPeer.PlayerName = "Join";
+        ApplyLocalSelection();
+        Transport = TcpLockstepTransport.Join(host, ParsePort(), LockstepHost.HostPeerId);
+        Transport.AddObserver(ArenaMultiplayerSession.JoinPlayerPeerId, OnJoinMessage);
+        Transport.Send(LockstepHost.HostPeerId, new SessionHelloMessage
         {
-            if (ActiveRun != null)
-            {
-                GameAudio.NegativeClick();
-                StatusText = "A multiplayer run is already active.";
-                return;
-            }
-
-            StatusText = $"{mode}: starting...";
-            LastResult = null;
-            ActiveRun = Task.Run(run);
-        }
+            FromPeer = ArenaMultiplayerSession.JoinPlayerPeerId,
+            PeerId = ArenaMultiplayerSession.JoinPlayerPeerId,
+            ProtocolVersion = ArenaMultiplayerSettings.ProtocolVersion,
+            PlayerName = LocalPeer.PlayerName,
+            BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
+            BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
+        });
+        SendLocalLobby();
+        SetStatus($"JOIN connected to {host}:{ParsePort()}\nPress ready; host launches the match.");
         GameAudio.AffirmativeClick();
     }
+
+    void ToggleReady()
+    {
+        if (LocalRole == null || Transport == null)
+        {
+            SetStatus("Host or join first, then ready up.");
+            GameAudio.NegativeClick();
+            return;
+        }
+        LocalPeer.Ready = !LocalPeer.Ready;
+        SendLocalLobby();
+        SetStatus(LocalPeer.Ready ? "Local player ready." : "Local player un-ready.");
+        GameAudio.AffirmativeClick();
+    }
+
+    void LaunchAsHost()
+    {
+        if (LocalRole != ArenaMultiplayerRole.Host || Transport == null)
+        {
+            SetStatus("Only the host can launch.");
+            GameAudio.NegativeClick();
+            return;
+        }
+        if (!Transport.IsConnected)
+        {
+            SetStatus("Waiting for a client connection.");
+            GameAudio.NegativeClick();
+            return;
+        }
+        if (!LocalPeer.Ready || !RemotePeer.Ready)
+        {
+            SetStatus("Both players must be ready before launch.");
+            GameAudio.NegativeClick();
+            return;
+        }
+
+        ArenaMultiplayerSettings settings = BuildHostSettings().WithResolvedFleets();
+        string error = ArenaMultiplayerPeerSignature.ValidateEnvironment(RemotePeer.BuildHash, RemotePeer.BuildSummary, "remote");
+        if (error.NotEmpty())
+        {
+            Transport.Send(ArenaMultiplayerSession.JoinPlayerPeerId,
+                new SessionErrorMessage { FromPeer = LockstepHost.HostPeerId, Error = error });
+            SetStatus(error);
+            GameAudio.NegativeClick();
+            return;
+        }
+
+        Transport.Send(ArenaMultiplayerSession.JoinPlayerPeerId, settings.ToStartMessage());
+        LaunchVisibleMatch(ArenaMultiplayerRole.Host, settings);
+    }
+
+    void OnHostMessage(LockstepMessage message)
+    {
+        if (message is SessionHelloMessage h && h.PeerId == ArenaMultiplayerSession.JoinPlayerPeerId)
+        {
+            string error = h.ProtocolVersion != ArenaMultiplayerSettings.ProtocolVersion
+                ? $"Arena multiplayer protocol mismatch. Local {ArenaMultiplayerSettings.ProtocolVersion}, remote {h.ProtocolVersion}."
+                : ArenaMultiplayerPeerSignature.ValidateEnvironment(h.BuildHash, h.BuildSummary, "remote");
+            if (error.NotEmpty())
+                SetStatus(error);
+        }
+        if (message is SessionLobbyMessage lobby && lobby.PeerId == ArenaMultiplayerSession.JoinPlayerPeerId)
+        {
+            RemotePeer = LobbyPeer.From(lobby, "Join");
+            SetStatus($"Remote lobby updated.\n{RemotePeer.Summary}");
+        }
+        if (message is SessionErrorMessage e)
+            SetStatus(e.Error);
+    }
+
+    void OnJoinMessage(LockstepMessage message)
+    {
+        if (message is SessionLobbyMessage lobby && lobby.PeerId == ArenaMultiplayerSession.HostPlayerPeerId)
+            RemotePeer = LobbyPeer.From(lobby, "Host");
+        if (message is SessionStartMessage start)
+        {
+            ArenaMultiplayerSettings settings = ArenaMultiplayerSettings.FromStartMessage(start).WithResolvedFleets();
+            string error = start.ProtocolVersion != ArenaMultiplayerSettings.ProtocolVersion
+                ? $"Arena multiplayer protocol mismatch. Local {ArenaMultiplayerSettings.ProtocolVersion}, host {start.ProtocolVersion}."
+                : !string.Equals(start.SettingsHash, settings.SettingsHash, StringComparison.Ordinal)
+                    ? $"Arena multiplayer settings mismatch. Host {start.SettingsHash}, local {settings.SettingsHash}."
+                    : ArenaMultiplayerPeerSignature.ValidateSession(start.BuildHash, start.BuildSummary, settings, "host");
+            if (error.NotEmpty())
+            {
+                SetStatus(error);
+                return;
+            }
+            PendingLaunchSettings = settings;
+        }
+        if (message is SessionErrorMessage e)
+            SetStatus(e.Error);
+    }
+
+    void SendLocalLobby()
+    {
+        if (Transport == null || LocalRole == null)
+            return;
+        int peerId = LocalRole == ArenaMultiplayerRole.Host
+            ? ArenaMultiplayerSession.HostPlayerPeerId
+            : ArenaMultiplayerSession.JoinPlayerPeerId;
+        int toPeer = LocalRole == ArenaMultiplayerRole.Host
+            ? ArenaMultiplayerSession.JoinPlayerPeerId
+            : LockstepHost.HostPeerId;
+        Transport.Send(toPeer, new SessionLobbyMessage
+        {
+            FromPeer = peerId,
+            PeerId = peerId,
+            Ready = LocalPeer.Ready,
+            PlayerName = LocalPeer.PlayerName,
+            RacePreference = LocalPeer.RacePreference,
+            LoadoutTrait = LocalPeer.LoadoutTrait,
+            BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
+            BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
+        });
+    }
+
+    void LaunchVisibleMatch(ArenaMultiplayerRole role, ArenaMultiplayerSettings settings)
+    {
+        if (Transport == null)
+            return;
+        Launching = true;
+        TcpLockstepTransport transport = Transport;
+        Transport = null;
+        var live = new ArenaMultiplayerLiveSession(role, transport, settings);
+        ArenaFightScreen screen = ArenaFightScreen.Create(settings.HostRacePreference, settings.MatchSeed,
+            startAtHub: false, opponentPreference: settings.JoinRacePreference);
+        screen.ArmMultiplayerLive(live);
+        ScreenManager.GoToScreen(screen, clear3DObjects: true);
+    }
+
+    ArenaMultiplayerSettings BuildHostSettings()
+        => new()
+        {
+            MatchSeed = ParseSeed(),
+            RngSeed = (uint)ParseSeed() ^ 0xA12EA000u,
+            InputDelay = 3,
+            MaxTurns = ParseTurns(),
+            CommandEveryTurns = 1,
+            HostRacePreference = LocalPeer.RacePreference,
+            JoinRacePreference = RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference,
+            PlayerPreference = LocalPeer.RacePreference,
+            HostLoadoutTrait = LocalPeer.LoadoutTrait,
+            JoinLoadoutTrait = RemotePeer.LoadoutTrait == "-" ? ArenaStartArchetype.Wingmates.ToString() : RemotePeer.LoadoutTrait,
+            GameSpeed = ParseSpeed(),
+            StartPaused = StartPaused,
+        };
 
     public override void Update(float fixedDeltaTime)
     {
         base.Update(fixedDeltaTime);
-
-        Task<ArenaMultiplayerRunResult> completed = null;
-        lock (Sync)
+        if (Transport != null)
         {
-            if (ActiveRun?.IsCompleted == true)
-            {
-                completed = ActiveRun;
-                ActiveRun = null;
-            }
+            Transport.Poll();
+            if (Transport.LastError.NotEmpty())
+                SetStatus("NETWORK: " + Transport.LastError);
+            if (LocalRole == ArenaMultiplayerRole.Host && Transport.IsConnected && CurrentStatus.StartsWith("HOST listening", StringComparison.Ordinal))
+                SetStatus("Client connected. Ready up and launch when both sides are ready.");
         }
+        if (PendingLaunchSettings != null)
+        {
+            ArenaMultiplayerSettings settings = PendingLaunchSettings;
+            PendingLaunchSettings = null;
+            LaunchVisibleMatch(ArenaMultiplayerRole.Join, settings);
+        }
+    }
 
-        if (completed == null)
+    void CycleRace()
+    {
+        if (RaceOptions.Length == 0)
             return;
+        RaceIndex = (RaceIndex + 1) % RaceOptions.Length;
+        ApplyLocalSelection();
+        LocalPeer.Ready = false;
+        SendLocalLobby();
+    }
 
-        try
-        {
-            LastResult = completed.GetAwaiter().GetResult();
-            SetStatus(Summarize(LastResult));
-        }
-        catch (Exception e)
-        {
-            SetStatus("FAILED: " + e.GetBaseException().Message);
-        }
+    void CycleTrait()
+    {
+        TraitIndex = (TraitIndex + 1) % LoadoutTraits.Length;
+        ApplyLocalSelection();
+        LocalPeer.Ready = false;
+        SendLocalLobby();
+    }
+
+    void ToggleStartPaused()
+    {
+        StartPaused = !StartPaused;
+        SendLocalLobby();
+    }
+
+    void ApplyLocalSelection()
+    {
+        LocalPeer.RacePreference = RaceOptions.Length == 0 ? "United" : RaceOptions[RaceIndex.Clamped(0, RaceOptions.Length - 1)];
+        LocalPeer.LoadoutTrait = LoadoutTraits[TraitIndex.Clamped(0, LoadoutTraits.Length - 1)];
     }
 
     int ParsePort()
@@ -180,12 +420,13 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     int ParseTurns()
         => int.TryParse(TurnsEntry?.Text, out int turns) ? turns.Clamped(30, 2000) : DefaultTurns;
 
-    void AppendLog(string text)
-    {
-        if (text.IsEmpty())
-            return;
-        SetStatus(text);
-    }
+    int ParseSeed()
+        => int.TryParse(SeedEntry?.Text, out int seed) ? seed : 0x5EED;
+
+    float ParseSpeed()
+        => float.TryParse(SpeedEntry?.Text, out float speed)
+            ? ArenaMultiplayerSettings.ClampGameSpeed(speed)
+            : 1f;
 
     void SetStatus(string text)
     {
@@ -220,29 +461,38 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             InputDelay = 3,
             MaxTurns = turns.Clamped(30, 2000),
             CommandEveryTurns = 1,
-            HostFleetDesignNames = DefaultFleetNames(0x1001ul),
-            JoinFleetDesignNames = DefaultFleetNames(0x2002ul),
+            HostRacePreference = "United",
+            JoinRacePreference = "",
+            HostLoadoutTrait = ArenaStartArchetype.Wingmates.ToString(),
+            JoinLoadoutTrait = ArenaStartArchetype.Wingmates.ToString(),
+            GameSpeed = 1f,
         };
 
     public static ArenaMultiplayerRunResult RunLocalSelfTestForHeadless(int turns = 90)
         => ArenaMultiplayerSession.RunInProcess(CreateDefaultSettings(turns));
 
-    static string[] DefaultFleetNames(ulong seed)
+    static string[] AvailableRacePreferences()
     {
         try
         {
-            return CareerManager.StartingRosterDesigns(ArenaStartArchetype.Wingmates, seed)
-                .Select(d => d.Name)
+            string[] races = ResourceManager.MajorRaces
+                .Select(r => r.ArchetypeName.NotEmpty() ? r.ArchetypeName : r.Name)
+                .Where(r => r.NotEmpty())
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(r => r, StringComparer.Ordinal)
                 .ToArray();
+            return races.Length > 0 ? races : new[] { "United" };
         }
         catch
         {
-            return Array.Empty<string>();
+            return new[] { "United" };
         }
     }
 
     public override void ExitScreen()
     {
+        Transport?.Dispose();
+        Transport = null;
         base.ExitScreen();
         ScreenManager.GoToScreen(new Ship_Game.GameScreens.MainMenu.MainMenuScreen(), clear3DObjects: true);
     }
@@ -253,5 +503,30 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         batch.SafeBegin();
         base.Draw(batch, elapsed);
         batch.SafeEnd();
+    }
+
+    sealed class LobbyPeer
+    {
+        public bool Ready;
+        public string PlayerName = "";
+        public string RacePreference = "";
+        public string LoadoutTrait = "";
+        public string BuildHash = "";
+        public string BuildSummary = "";
+
+        public string Summary => BuildHash.NotEmpty()
+            ? $"{BuildHash} | {ArenaMultiplayerSettings.NormalizeLoadoutTrait(LoadoutTrait)}"
+            : "No peer data yet.";
+
+        public static LobbyPeer From(SessionLobbyMessage message, string fallbackName)
+            => new()
+            {
+                Ready = message.Ready,
+                PlayerName = message.PlayerName.NotEmpty() ? message.PlayerName : fallbackName,
+                RacePreference = message.RacePreference.NotEmpty() ? message.RacePreference : "United",
+                LoadoutTrait = ArenaMultiplayerSettings.NormalizeLoadoutTrait(message.LoadoutTrait),
+                BuildHash = message.BuildHash ?? "",
+                BuildSummary = message.BuildSummary ?? "",
+            };
     }
 }

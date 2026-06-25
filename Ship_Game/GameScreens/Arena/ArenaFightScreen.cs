@@ -658,7 +658,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
     /// matchup always resolves within budget regardless of test order; production passes 0.
     /// </param>
     public static ArenaFightScreen Create(string playerPreference = "United", int generationSeed = 0,
-        bool startAtHub = false)
+        bool startAtHub = false, string opponentPreference = "")
     {
         var s = Stopwatch.StartNew();
         ScreenManager.Instance.ClearScene();
@@ -677,6 +677,12 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         IEmpireData[] candidates = ResourceManager.MajorRaces.Filter(d => PlayerFilter(d, playerPreference));
         IEmpireData player = candidates[0];
         IEmpireData[] opponents = ResourceManager.MajorRaces.Filter(d => d.ArchetypeName != player.ArchetypeName);
+        if (opponentPreference.NotEmpty())
+        {
+            IEmpireData[] preferredOpponents = opponents.Filter(d => PlayerFilter(d, opponentPreference));
+            if (preferredOpponents.Length > 0)
+                opponents = preferredOpponents;
+        }
 
         var races = new Array<IEmpireData>(opponents);
         races.Shuffle(generationSeed); // seed==0 -> clock-random (live); non-zero -> reproducible opponent
@@ -833,6 +839,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         if (HasPendingMultiplayerPvPSetup)
         {
             StartMultiplayerPvPMatch();
+            InitializeMultiplayerLiveIfNeeded();
         }
         else if (StartAtHub)
         {
@@ -1972,6 +1979,15 @@ public sealed partial class ArenaFightScreen : UniverseScreen
 
     public override void Update(float fixedDeltaTime)
     {
+        if (MultiplayerLiveActive)
+        {
+            UState.Paused = true;
+            base.Update(fixedDeltaTime);
+            UpdateMultiplayerLive(fixedDeltaTime);
+            UState.Paused = MultiplayerLiveDisplayPaused;
+            return;
+        }
+
         // base.Update ticks the sim AND drives the 3D render — the normal path.
         base.Update(fixedDeltaTime);
 

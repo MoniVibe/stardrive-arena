@@ -47,12 +47,36 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
                 "The multiplayer lobby must expose a Host action.");
             Assert.IsTrue(lobby.Find("arena_mp_join", out UIButton _),
                 "The multiplayer lobby must expose a Join action.");
+            Assert.IsTrue(lobby.Find("arena_mp_ready", out UIButton _),
+                "The multiplayer lobby must expose an explicit Ready action.");
+            Assert.IsTrue(lobby.Find("arena_mp_launch", out UIButton _),
+                "The multiplayer lobby must expose a host Launch action.");
             Assert.IsTrue(lobby.Find("arena_mp_self_test", out UIButton _),
                 "The multiplayer lobby must expose a local self-test action.");
+            Assert.IsTrue(lobby.Find("arena_mp_race", out UIButton _),
+                "The multiplayer lobby must expose a race selector.");
+            Assert.IsTrue(lobby.Find("arena_mp_trait", out UIButton _),
+                "The multiplayer lobby must expose a loadout trait selector.");
             Assert.IsTrue(lobby.Find("arena_mp_host_entry", out UITextEntry _),
                 "The multiplayer lobby must expose a host/IP entry.");
             Assert.IsTrue(lobby.Find("arena_mp_port_entry", out UITextEntry _),
                 "The multiplayer lobby must expose a port entry.");
+            Assert.IsTrue(lobby.Find("arena_mp_seed_entry", out UITextEntry _),
+                "The multiplayer lobby must expose a host-controlled match seed.");
+            Assert.IsTrue(lobby.Find("arena_mp_speed_entry", out UITextEntry _),
+                "The multiplayer lobby must expose a host-controlled game speed.");
+
+            ArenaMultiplayerSettings defaultSettings = ArenaMultiplayerLobbyScreen.CreateDefaultSettings(60).WithResolvedFleets();
+            Assert.AreEqual("United", defaultSettings.HostRacePreference,
+                "The lobby default settings should make host race explicit for preflight hashing.");
+            Assert.AreEqual(ArenaStartArchetype.Wingmates.ToString(), defaultSettings.HostLoadoutTrait,
+                "The lobby default settings should include the host loadout trait.");
+            Assert.AreEqual(ArenaStartArchetype.Wingmates.ToString(), defaultSettings.JoinLoadoutTrait,
+                "The lobby default settings should include the join loadout trait.");
+            Assert.AreEqual(1f, defaultSettings.GameSpeed,
+                "The lobby default settings should include the synchronized starting speed.");
+            Assert.IsFalse(defaultSettings.StartPaused,
+                "The lobby default settings should include the synchronized pause state.");
 
             ArenaMultiplayerRunResult result = ArenaMultiplayerLobbyScreen.RunLocalSelfTestForHeadless(60);
             Assert.IsFalse(result.Desynced,
