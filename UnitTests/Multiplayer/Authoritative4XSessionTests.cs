@@ -3,6 +3,7 @@ using SDGraphics;
 using SDLockstep;
 using Ship_Game;
 using Ship_Game.AI;
+using Ship_Game.GameScreens.DiplomacyScreen;
 using Ship_Game.Gameplay;
 using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
@@ -180,6 +181,9 @@ public class Authoritative4XSessionTests : StarDriveTest
                 new Authoritative4XClientSpec(PeerA, empireA, clientA.Screen),
                 new Authoritative4XClientSpec(PeerB, empireB, clientB.Screen),
             });
+            authority.UState.CanShowDiplomacyScreen = true;
+            clientA.UState.CanShowDiplomacyScreen = true;
+            clientB.UState.CanShowDiplomacyScreen = true;
 
             session.SubmitFromClient(PeerA, AuthoritativePlayerCommand.DiplomacyProposal(1, empireA, empireB,
                 AuthoritativeDiplomacyProposalType.TradeDeal, "first offer"));
@@ -199,13 +203,16 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsFalse(authority.Player.IsTradeTreaty(authority.Enemy));
             AssertAllSynced(session, PeerA, PeerB);
 
-            session.SubmitFromClient(PeerA, AuthoritativePlayerCommand.DiplomacyProposal(3, empireA, empireB,
+            DiplomacyScreen.DebugResetScreensShown();
+            session.SubmitFromClient(PeerB, AuthoritativePlayerCommand.DiplomacyProposal(3, empireB, empireA,
                 AuthoritativeDiplomacyProposalType.DeclareWar, "border dispute"));
-            AssertAccepted(session, PeerA);
+            AssertAccepted(session, PeerB);
             Assert.IsTrue(authority.Player.IsAtWarWith(authority.Enemy));
             Assert.IsTrue(clientA.Player.IsAtWarWith(clientA.Enemy));
             Assert.IsTrue(clientB.Player.IsAtWarWith(clientB.Enemy));
-            AuthoritativeDiplomacyPopup warNotice = LastPopup(session, PeerB,
+            Assert.AreEqual(0, DiplomacyScreen.DebugScreensShown,
+                "Human-vs-human authoritative declare-war must not route through stock AI DiplomacyScreen.Show.");
+            AuthoritativeDiplomacyPopup warNotice = LastPopup(session, PeerA,
                 AuthoritativeDiplomacyProposalType.DeclareWar, requiresResponse: false);
             Assert.AreEqual("War declared.", warNotice.Message);
             AssertAllSynced(session, PeerA, PeerB);

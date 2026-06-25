@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using SDLockstep;
 using Ship_Game.AI.StrategyAI;
+using Ship_Game.AI.StrategyAI.WarGoals;
 using Ship_Game.Gameplay;
 using Ship_Game.Universe;
 
@@ -194,9 +195,34 @@ public sealed class AuthoritativeDiplomacyManager
 
     static void ApplyDeclareWar(Empire proposer, Empire target)
     {
-        if (!proposer.IsAtWarWith(target))
-            proposer.AI.DeclareWarOn(target, WarType.ImperialistWar);
+        if (proposer.IsAtWarWith(target))
+            return;
+
+        Relationship usToThem = proposer.GetRelations(target);
+        usToThem.CancelPrepareForWar();
+        if (proposer.IsFaction || proposer.IsDefeated || target.IsFaction || target.IsDefeated)
+            return;
+
+        usToThem.FedQuest = null;
+        if (usToThem.Treaty_Alliance)
+            MarkDeclaredWarOnAlly(proposer);
+
+        usToThem.AtWar = true;
+        usToThem.ChangeToHostile();
+        usToThem.ActiveWar = War.CreateInstance(proposer, target, WarType.ImperialistWar);
+        usToThem.Trust = 0f;
+        proposer.BreakAllTreatiesWith(target, includingPeace: true);
+        target.AI.GetWarDeclaredOnUs(proposer, WarType.ImperialistWar);
         Empire.UpdateBilateralRelations(proposer, target);
+    }
+
+    static void MarkDeclaredWarOnAlly(Empire proposer)
+    {
+        foreach (Empire empire in proposer.Universe.ActiveMajorEmpires)
+        {
+            if (empire != proposer)
+                empire.GetRelations(proposer).SetDeclaredWarOnAlly();
+        }
     }
 
     static void EndWarBetween(Empire a, Empire b)

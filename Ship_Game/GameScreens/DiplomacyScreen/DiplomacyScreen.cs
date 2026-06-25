@@ -186,7 +186,14 @@ namespace Ship_Game.GameScreens.DiplomacyScreen
         }
 
         // The screen is loaded during next frame by using deferred add
-        static void AddScreen(GameScreen screen) => ScreenManager.Instance.AddScreen(screen);
+        internal static int DebugScreensShown { get; private set; }
+        internal static void DebugResetScreensShown() => DebugScreensShown = 0;
+
+        static void AddScreen(GameScreen screen)
+        {
+            ++DebugScreensShown;
+            ScreenManager.Instance.AddScreen(screen);
+        }
 
         public static void Show(Empire them, string which, GameScreen parent)
         {

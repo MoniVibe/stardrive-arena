@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using Ship_Game.Universe;
 
 namespace Ship_Game.Multiplayer.Authoritative;
@@ -10,7 +11,17 @@ namespace Ship_Game.Multiplayer.Authoritative;
 public static class AuthoritativeHumanPlayers
 {
     static readonly object Sync = new();
-    static readonly Dictionary<UniverseState, HashSet<int>> HumansByUniverse = new();
+    static readonly ConditionalWeakTable<UniverseState, HumanEmpireSet> HumansByUniverse = new();
+
+    sealed class HumanEmpireSet
+    {
+        public readonly HashSet<int> EmpireIds;
+
+        public HumanEmpireSet(HashSet<int> empireIds)
+        {
+            EmpireIds = empireIds;
+        }
+    }
 
     public static void SetHumanControlledEmpires(UniverseState universe, params int[] empireIds)
     {
@@ -24,7 +35,8 @@ public static class AuthoritativeHumanPlayers
                 foreach (int id in empireIds)
                     if (id > 0)
                         set.Add(id);
-            HumansByUniverse[universe] = set;
+            HumansByUniverse.Remove(universe);
+            HumansByUniverse.Add(universe, new HumanEmpireSet(set));
         }
     }
 
@@ -48,8 +60,8 @@ public static class AuthoritativeHumanPlayers
             return false;
 
         lock (Sync)
-            return HumansByUniverse.TryGetValue(universe, out HashSet<int> humans)
-                   && humans.Contains(empire.Id);
+            return HumansByUniverse.TryGetValue(universe, out HumanEmpireSet humans)
+                   && humans.EmpireIds.Contains(empire.Id);
     }
 
     public static bool IsHumanVsHuman(Empire a, Empire b)
