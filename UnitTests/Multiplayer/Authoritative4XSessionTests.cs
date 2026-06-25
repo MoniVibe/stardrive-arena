@@ -318,6 +318,78 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XNetworkTcpMultiClient_BroadcastsCommandsToEveryReplica_Headless()
+    {
+        const ulong Seed = 0x4E7C3EEUL;
+        const int PeerA = 2;
+        const int PeerB = 3;
+        const int SharedLocalSequence = 300;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld clientA = BuildWorld(Seed);
+        BuiltWorld clientB = BuildWorld(Seed);
+
+        try
+        {
+            int empireA = authority.Player.Id;
+            int empireB = authority.Enemy.Id;
+            int port = FreeTcpPort();
+
+            TcpLockstepTransport hostTransport = TcpLockstepTransport.HostMulti(port);
+            TcpLockstepTransport clientATransport = TcpLockstepTransport.JoinAsPeer("127.0.0.1", port,
+                PeerA, Authoritative4XNetworkHost.HostPeerId);
+            TcpLockstepTransport clientBTransport = TcpLockstepTransport.JoinAsPeer("127.0.0.1", port,
+                PeerB, Authoritative4XNetworkHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnections(2, TimeSpan.FromSeconds(3)),
+                "Authoritative TCP host did not accept both loopback clients.");
+            Assert.IsTrue(WaitForMappedPeers(hostTransport, PeerA, PeerB),
+                "Authoritative TCP host did not map both announced client peer ids.");
+
+            using var host = new Authoritative4XNetworkHost(authority.Screen, hostTransport,
+                new Dictionary<int, int> { [PeerA] = empireA, [PeerB] = empireB },
+                new[] { empireA, empireB });
+            using var networkA = new Authoritative4XNetworkClient(clientA.Screen, clientATransport, PeerA,
+                new[] { empireA, empireB });
+            using var networkB = new Authoritative4XNetworkClient(clientB.Screen, clientBTransport, PeerB,
+                new[] { empireA, empireB });
+
+            networkA.Submit(AuthoritativePlayerCommand.SetColonyType(SharedLocalSequence, empireA,
+                authority.Planet.Id, Planet.ColonyType.Research));
+            PumpTcpUntil(() => NetworkClientCaughtUp(networkA, PeerA, SharedLocalSequence)
+                               && NetworkClientCaughtUp(networkB, PeerA, SharedLocalSequence),
+                host, networkA, networkB);
+            Assert.IsTrue(networkA.LastResult.Accepted, networkA.LastResult.Reason);
+            Assert.IsTrue(networkB.LastResult.Accepted, networkB.LastResult.Reason);
+            Assert.AreEqual(PeerA, networkA.LastResult.OriginPeer);
+            Assert.AreEqual(PeerA, networkB.LastResult.OriginPeer);
+            Assert.AreEqual(Planet.ColonyType.Research, authority.Planet.CType);
+            Assert.AreEqual(Planet.ColonyType.Research, clientA.UState.GetPlanet(authority.Planet.Id).CType);
+            Assert.AreEqual(Planet.ColonyType.Research, clientB.UState.GetPlanet(authority.Planet.Id).CType);
+            AssertNetworkSynced(networkA, networkB);
+
+            networkB.Submit(AuthoritativePlayerCommand.SetColonyType(SharedLocalSequence, empireB,
+                authority.EnemyPlanet.Id, Planet.ColonyType.Military));
+            PumpTcpUntil(() => NetworkClientCaughtUp(networkA, PeerB, SharedLocalSequence)
+                               && NetworkClientCaughtUp(networkB, PeerB, SharedLocalSequence),
+                host, networkA, networkB);
+            Assert.IsTrue(networkA.LastResult.Accepted, networkA.LastResult.Reason);
+            Assert.IsTrue(networkB.LastResult.Accepted, networkB.LastResult.Reason);
+            Assert.AreEqual(PeerB, networkA.LastResult.OriginPeer,
+                "TCP broadcast must preserve the peer that originated a local sequence number.");
+            Assert.AreEqual(PeerB, networkB.LastResult.OriginPeer);
+            Assert.AreEqual(Planet.ColonyType.Military, authority.EnemyPlanet.CType);
+            Assert.AreEqual(Planet.ColonyType.Military, clientA.UState.GetPlanet(authority.EnemyPlanet.Id).CType);
+            Assert.AreEqual(Planet.ColonyType.Military, clientB.UState.GetPlanet(authority.EnemyPlanet.Id).CType);
+            AssertNetworkSynced(networkA, networkB);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            clientA.Screen.Dispose();
+            clientB.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XMultiClient_BroadcastsAcceptedCommandsToEveryReplica_Headless()
     {
         const ulong Seed = 0xBADC0DEUL;
@@ -645,11 +717,58 @@ public class Authoritative4XSessionTests : StarDriveTest
             $"Timed out waiting for authoritative TCP loopback. host='{host.LastError}' client='{client.LastError}'");
     }
 
+    static void PumpTcpUntil(Func<bool> done, Authoritative4XNetworkHost host,
+        params Authoritative4XNetworkClient[] clients)
+    {
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!done() && DateTime.UtcNow < deadline)
+        {
+            host.Poll();
+            foreach (Authoritative4XNetworkClient client in clients)
+                client.Poll();
+            System.Threading.Thread.Sleep(5);
+        }
+        string clientErrors = string.Join("; ", clients.Select(c => c.LastError));
+        Assert.IsTrue(done(),
+            $"Timed out waiting for authoritative TCP multi-client loopback. host='{host.LastError}' clients='{clientErrors}'");
+    }
+
     static bool NetworkClientCaughtUp(Authoritative4XNetworkClient client, int sequence)
     {
         return client.LastResult?.Sequence == sequence
                && client.LastClientSnapshot != null
                && client.LastClientSnapshot.Tick == client.LastResult.Tick;
+    }
+
+    static bool NetworkClientCaughtUp(Authoritative4XNetworkClient client, int originPeer, int sequence)
+    {
+        return client.LastResult?.Sequence == sequence
+               && client.LastResult.OriginPeer == originPeer
+               && client.LastClientSnapshot != null
+               && client.LastClientSnapshot.Tick == client.LastResult.Tick;
+    }
+
+    static bool WaitForMappedPeers(TcpLockstepTransport hostTransport, params int[] peers)
+    {
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        while (DateTime.UtcNow < deadline)
+        {
+            int[] mapped = hostTransport.ConnectedRemotePeerIds;
+            if (peers.All(peer => mapped.Contains(peer)))
+                return true;
+            System.Threading.Thread.Sleep(5);
+        }
+        return peers.All(peer => hostTransport.ConnectedRemotePeerIds.Contains(peer));
+    }
+
+    static void AssertNetworkSynced(params Authoritative4XNetworkClient[] clients)
+    {
+        foreach (Authoritative4XNetworkClient client in clients)
+        {
+            Assert.AreEqual(client.LastAuthoritySnapshot.HashLo, client.LastClientSnapshot.HashLo);
+            Assert.AreEqual(client.LastAuthoritySnapshot.HashHi, client.LastClientSnapshot.HashHi);
+            Assert.AreEqual(client.LastAuthoritySnapshot.SyncDigest, client.LastClientSnapshot.SyncDigest);
+        }
     }
 
     static int FreeTcpPort()

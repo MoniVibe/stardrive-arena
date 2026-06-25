@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -9,11 +10,13 @@ using System.Threading.Tasks;
 namespace SDLockstep;
 
 /// <summary>
-/// Reliable ordered TCP transport for the 2-player lockstep MVP. It deliberately keeps the
+/// Reliable ordered TCP transport for lockstep sessions. It deliberately keeps the
 /// <see cref="ILockstepTransport"/> surface: peers register local receivers, <see cref="Send"/>
 /// delivers to local receivers when present, otherwise frames the message onto the TCP stream.
 /// Host mode can therefore run peer 0 (coordinator) and peer 1 (local player) in the same process
-/// while remote peer 2 is carried over the socket.
+/// while remote peers are carried over sockets. The original <see cref="Host(int,int)"/> path is
+/// still a single fixed remote peer for Arena MP; <see cref="HostMulti(int)"/> accepts multiple
+/// announced peers for the authoritative 4X host.
 /// </summary>
 public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
 {
@@ -22,15 +25,15 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
     readonly Dictionary<int, Queue<LockstepMessage>> LocalInbox = new();
     readonly Queue<RemoteEnvelope> PendingRemote = new();
     readonly Queue<RemoteEnvelope> InboundRemote = new();
+    readonly List<RemoteConnection> Connections = new();
+    readonly Dictionary<int, RemoteConnection> ConnectionsByPeer = new();
     readonly object Gate = new();
     readonly ManualResetEventSlim ConnectedEvent = new(false);
 
     TcpListener Listener;
-    TcpClient Client;
-    NetworkStream Stream;
     Task AcceptTask;
-    Task ReadTask;
     bool Disposed;
+    readonly bool MultiRemote;
 
     public int RemotePeerId { get; }
     public bool IsConnected { get; private set; }
@@ -39,11 +42,24 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
     public int LocalMessageCount { get; private set; }
     public int RemoteMessageCount { get; private set; }
 
-    TcpLockstepTransport(int remotePeerId) => RemotePeerId = remotePeerId;
+    TcpLockstepTransport(int remotePeerId, bool multiRemote = false)
+    {
+        RemotePeerId = remotePeerId;
+        MultiRemote = multiRemote;
+    }
 
     public static TcpLockstepTransport Host(int port, int remotePeerId = 2)
     {
         var transport = new TcpLockstepTransport(remotePeerId);
+        transport.Listener = new TcpListener(IPAddress.Any, port);
+        transport.Listener.Start();
+        transport.AcceptTask = Task.Run(transport.AcceptLoop);
+        return transport;
+    }
+
+    public static TcpLockstepTransport HostMulti(int port)
+    {
+        var transport = new TcpLockstepTransport(remotePeerId: 0, multiRemote: true);
         transport.Listener = new TcpListener(IPAddress.Any, port);
         transport.Listener.Start();
         transport.AcceptTask = Task.Run(transport.AcceptLoop);
@@ -55,11 +71,49 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
         var transport = new TcpLockstepTransport(remotePeerId);
         var client = new TcpClient { NoDelay = true };
         client.Connect(host, port);
-        transport.Attach(client);
+        transport.Attach(client, remotePeerId);
+        return transport;
+    }
+
+    public static TcpLockstepTransport JoinAsPeer(string host, int port, int localPeerId,
+        int remotePeerId = LockstepHost.HostPeerId)
+    {
+        var transport = Join(host, port, remotePeerId);
+        transport.Send(remotePeerId, new SessionHelloMessage
+        {
+            FromPeer = localPeerId,
+            PeerId = localPeerId,
+            ProtocolVersion = 1,
+            PlayerName = $"Peer {localPeerId}",
+        });
         return transport;
     }
 
     public bool WaitForConnection(TimeSpan timeout) => ConnectedEvent.Wait(timeout);
+    public bool WaitForConnections(int count, TimeSpan timeout)
+    {
+        DateTime deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            lock (Gate)
+            {
+                if (Connections.Count(c => c.Connected) >= count)
+                    return true;
+            }
+            Thread.Sleep(5);
+        }
+        lock (Gate)
+            return Connections.Count(c => c.Connected) >= count;
+    }
+
+    public int[] ConnectedRemotePeerIds
+    {
+        get
+        {
+            lock (Gate)
+                return ConnectionsByPeer.Keys.OrderBy(peer => peer).ToArray();
+        }
+    }
 
     public void Register(int peerId, Action<LockstepMessage> onReceive)
     {
@@ -127,8 +181,14 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
         if (Disposed)
             return;
         Disposed = true;
-        try { Stream?.Dispose(); } catch { }
-        try { Client?.Close(); } catch { }
+        RemoteConnection[] connections;
+        lock (Gate)
+            connections = Connections.ToArray();
+        foreach (RemoteConnection connection in connections)
+        {
+            try { connection.Stream?.Dispose(); } catch { }
+            try { connection.Client?.Close(); } catch { }
+        }
         try { Listener?.Stop(); } catch { }
         ConnectedEvent.Dispose();
     }
@@ -137,8 +197,13 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
     {
         try
         {
-            TcpClient client = Listener.AcceptTcpClient();
-            Attach(client);
+            while (!Disposed)
+            {
+                TcpClient client = Listener.AcceptTcpClient();
+                Attach(client, MultiRemote ? 0 : RemotePeerId);
+                if (!MultiRemote)
+                    return;
+            }
         }
         catch (ObjectDisposedException) { }
         catch (Exception ex)
@@ -147,43 +212,47 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
         }
     }
 
-    void Attach(TcpClient client)
+    void Attach(TcpClient client, int remotePeerId)
     {
         client.NoDelay = true;
+        var connection = new RemoteConnection(client, remotePeerId);
         lock (Gate)
         {
-            Client = client;
-            Stream = client.GetStream();
+            Connections.Add(connection);
+            if (remotePeerId > 0)
+                ConnectionsByPeer[remotePeerId] = connection;
             IsConnected = true;
             LastError = "";
         }
         ConnectedEvent.Set();
         FlushPendingRemote();
-        ReadTask = Task.Run(ReadLoop);
+        connection.ReadTask = Task.Run(() => ReadLoop(connection));
     }
 
-    void ReadLoop()
+    void ReadLoop(RemoteConnection connection)
     {
         try
         {
             while (!Disposed)
             {
-                byte[] lengthBytes = ReadExact(4);
+                byte[] lengthBytes = ReadExact(connection, 4);
                 if (lengthBytes == null)
                     break;
                 int length = BitConverter.ToInt32(lengthBytes, 0);
                 if (length <= 0 || length > 1_048_576)
                     throw new InvalidDataException($"Invalid lockstep packet length {length}");
-                byte[] payload = ReadExact(length);
+                byte[] payload = ReadExact(connection, length);
                 if (payload == null)
                     break;
 
                 DecodedLockstepMessage decoded = LockstepMessageCodec.Decode(payload);
                 lock (Gate)
                 {
+                    MapConnection(decoded.Message.FromPeer, connection);
                     InboundRemote.Enqueue(new RemoteEnvelope(decoded.ToPeer, decoded.Message));
                     RemoteMessageCount++;
                 }
+                FlushPendingRemote();
             }
         }
         catch (ObjectDisposedException) { }
@@ -197,17 +266,25 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
         }
         finally
         {
-            lock (Gate) IsConnected = false;
+            lock (Gate)
+            {
+                connection.Connected = false;
+                if (connection.PeerId > 0
+                    && ConnectionsByPeer.TryGetValue(connection.PeerId, out RemoteConnection current)
+                    && ReferenceEquals(current, connection))
+                    ConnectionsByPeer.Remove(connection.PeerId);
+                IsConnected = Connections.Any(c => c.Connected);
+            }
         }
     }
 
-    byte[] ReadExact(int length)
+    byte[] ReadExact(RemoteConnection connection, int length)
     {
         byte[] bytes = new byte[length];
         int offset = 0;
         while (offset < length)
         {
-            int read = Stream.Read(bytes, offset, length - offset);
+            int read = connection.Stream.Read(bytes, offset, length - offset);
             if (read == 0)
                 return null;
             offset += read;
@@ -217,48 +294,68 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
 
     void SendRemote(RemoteEnvelope envelope)
     {
+        RemoteConnection connection;
         lock (Gate)
         {
-            if (!IsConnected || Stream == null)
+            if (!TryGetConnectionLocked(envelope.ToPeer, out connection))
             {
                 PendingRemote.Enqueue(envelope);
                 return;
             }
         }
-        WriteRemote(envelope);
+        WriteRemote(envelope, connection);
     }
 
     void FlushPendingRemote()
     {
         while (true)
         {
-            RemoteEnvelope envelope;
+            RemoteEnvelope[] pending;
             lock (Gate)
             {
                 if (PendingRemote.Count == 0)
                     return;
-                envelope = PendingRemote.Dequeue();
+                pending = PendingRemote.ToArray();
+                PendingRemote.Clear();
             }
-            WriteRemote(envelope);
+
+            bool wroteAny = false;
+            foreach (RemoteEnvelope envelope in pending)
+            {
+                RemoteConnection connection;
+                lock (Gate)
+                {
+                    if (!TryGetConnectionLocked(envelope.ToPeer, out connection))
+                    {
+                        PendingRemote.Enqueue(envelope);
+                        continue;
+                    }
+                }
+                WriteRemote(envelope, connection);
+                wroteAny = true;
+            }
+            if (!wroteAny)
+                return;
         }
     }
 
-    void WriteRemote(RemoteEnvelope envelope)
+    void WriteRemote(RemoteEnvelope envelope, RemoteConnection connection)
     {
         try
         {
             byte[] payload = LockstepMessageCodec.Encode(envelope.Message, envelope.ToPeer);
             byte[] length = BitConverter.GetBytes(payload.Length);
-            lock (Gate)
+            lock (connection.WriteGate)
             {
-                if (Stream == null)
+                if (!connection.Connected || connection.Stream == null)
                 {
-                    PendingRemote.Enqueue(envelope);
+                    lock (Gate)
+                        PendingRemote.Enqueue(envelope);
                     return;
                 }
-                Stream.Write(length, 0, length.Length);
-                Stream.Write(payload, 0, payload.Length);
-                Stream.Flush();
+                connection.Stream.Write(length, 0, length.Length);
+                connection.Stream.Write(payload, 0, payload.Length);
+                connection.Stream.Flush();
             }
         }
         catch (Exception ex)
@@ -266,7 +363,8 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
             lock (Gate)
             {
                 LastError = ex.Message;
-                IsConnected = false;
+                connection.Connected = false;
+                IsConnected = Connections.Any(c => c.Connected);
                 PendingRemote.Enqueue(envelope);
             }
         }
@@ -287,6 +385,25 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
                 LocalInbox[envelope.ToPeer].Enqueue(envelope.Message);
             }
         }
+    }
+
+    void MapConnection(int peerId, RemoteConnection connection)
+    {
+        if (peerId <= 0)
+            return;
+        connection.PeerId = peerId;
+        ConnectionsByPeer[peerId] = connection;
+    }
+
+    bool TryGetConnectionLocked(int peerId, out RemoteConnection connection)
+    {
+        if (ConnectionsByPeer.TryGetValue(peerId, out connection) && connection.Connected)
+            return true;
+
+        connection = null;
+        if (RemotePeerId == peerId)
+            connection = Connections.FirstOrDefault(c => c.Connected);
+        return connection != null;
     }
 
     void Deliver(int peerId, LockstepMessage message)
@@ -325,6 +442,23 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
         {
             PeerId = peerId;
             Message = message;
+        }
+    }
+
+    sealed class RemoteConnection
+    {
+        public readonly TcpClient Client;
+        public readonly NetworkStream Stream;
+        public readonly object WriteGate = new();
+        public Task ReadTask;
+        public int PeerId;
+        public bool Connected = true;
+
+        public RemoteConnection(TcpClient client, int peerId)
+        {
+            Client = client;
+            Stream = client.GetStream();
+            PeerId = peerId;
         }
     }
 }
