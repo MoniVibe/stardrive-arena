@@ -13,6 +13,7 @@ public enum AuthoritativePlayerCommandKind : byte
     DiplomacyResponse = 5,
     DesignShip = 6,
     QueueBuild = 7,
+    QueueBuilding = 8,
 }
 
 public enum AuthoritativeDiplomacyProposalType : byte
@@ -115,6 +116,16 @@ public sealed class AuthoritativePlayerCommand
             Kind = AuthoritativePlayerCommandKind.QueueBuild,
             SubjectId = planetId,
             Text = designName ?? "",
+        };
+
+    public static AuthoritativePlayerCommand QueueBuilding(int sequence, int empireId, int planetId, string buildingName)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.QueueBuilding,
+            SubjectId = planetId,
+            Text = buildingName ?? "",
         };
 
     public AuthoritativeCommandRequestMessage ToMessage(int fromPeer)

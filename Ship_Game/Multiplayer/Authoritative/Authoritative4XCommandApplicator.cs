@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Ship_Game.AI;
 using Ship_Game.Determinism.Lockstep;
 using Ship_Game.Ships;
@@ -42,6 +43,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.DiplomacyResponse => ApplyDiplomacy(command, empire, result),
                 AuthoritativePlayerCommandKind.DesignShip => ApplyDesignShip(command, empire, result),
                 AuthoritativePlayerCommandKind.QueueBuild => ApplyQueueBuild(command, empire, result),
+                AuthoritativePlayerCommandKind.QueueBuilding => ApplyQueueBuilding(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
             };
         }
@@ -172,6 +174,32 @@ public sealed class Authoritative4XCommandApplicator
 
         planet.Construction.Enqueue(design, QueueTypeFor(design), notifyOnEmpty: false);
         return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyQueueBuilding(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} not found.");
+        if (planet.Owner != empire)
+            return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
+
+        string buildingName = command.Text ?? "";
+        if (buildingName.IsEmpty())
+            return Reject(result, "Building name is empty.");
+        if (!ResourceManager.GetBuilding(buildingName, out Building template))
+            return Reject(result, $"Building {buildingName} not found.");
+
+        planet.RefreshBuildingsWeCanBuildHere();
+        Building buildable = planet.GetBuildingsCanBuild()
+            .FirstOrDefault(b => b.BID == template.BID || string.Equals(b.Name, buildingName, StringComparison.Ordinal));
+        if (buildable == null)
+            return Reject(result, $"Empire {empire.Id} cannot build {buildingName} at planet {planet.Id}.");
+
+        return planet.Construction.Enqueue(buildable, where: null, playerAdded: true)
+            ? Accept(result)
+            : Reject(result, $"No valid tile was available for {buildingName} at planet {planet.Id}.");
     }
 
     static IShipDesign RegisterPlayerDesign(ShipDesign design, out string rejectReason)

@@ -119,6 +119,8 @@ public sealed class AuthoritativeStateSnapshot
                   .Append('|').Append(q.ShipData?.Name ?? "")
                   .Append('|').Append(q.Building?.Name ?? "")
                   .Append('|').Append(q.TroopType ?? "")
+                  .Append('|').Append(q.pgs?.X ?? -1)
+                  .Append('|').Append(q.pgs?.Y ?? -1)
                   .Append('|').Append(FloatBits(q.Cost))
                   .Append('|').Append(FloatBits(q.ProductionSpent))
                   .AppendLine();

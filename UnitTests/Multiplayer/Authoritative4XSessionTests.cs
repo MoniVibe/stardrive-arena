@@ -64,6 +64,14 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(123, copy.SubjectId);
         Assert.AreEqual("MP Frigate", copy.Text);
 
+        var buildingRequest = AuthoritativePlayerCommand.QueueBuilding(10, 2, 456, "Factory")
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(buildingRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.QueueBuilding, copy.Kind);
+        Assert.AreEqual(456, copy.SubjectId);
+        Assert.AreEqual("Factory", copy.Text);
+
         var snapshot = new AuthoritativeStateSnapshotMessage
         {
             FromPeer = 1,
@@ -169,6 +177,56 @@ public class Authoritative4XSessionTests : StarDriveTest
         finally
         {
             authority.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XColonyBuildQueue_QueuesBuildingsAndSyncsPlacement_Headless()
+    {
+        const ulong Seed = 0xB411D01UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+            EnsureSingleBuildTile(authority.Planet);
+            EnsureSingleBuildTile(client.Planet);
+            Building buildable = PickBuildableBuilding(authority.Planet);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueBuilding(30, authority.Player.Id,
+                authority.Planet.Id, buildable.Name));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+
+            QueueItem authorityItem = LastQueuedBuilding(authority.Planet, buildable.Name);
+            QueueItem clientItem = LastQueuedBuilding(client.Planet, buildable.Name);
+            Assert.IsNotNull(authorityItem.pgs, "Queued buildings must reserve a deterministic planet tile.");
+            Assert.IsNotNull(clientItem.pgs, "Client replica should reserve the same deterministic planet tile.");
+            Assert.AreEqual(authorityItem.pgs.X, clientItem.pgs.X);
+            Assert.AreEqual(authorityItem.pgs.Y, clientItem.pgs.Y);
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The canonical sync digest must cover real building queue mutations.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload,
+                $"|{buildable.Name}|");
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueBuilding(31, authority.Player.Id,
+                authority.EnemyPlanet.Id, buildable.Name));
+            Assert.IsFalse(session.LastResult.Accepted, "A player must not queue buildings at another empire's planet.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueBuilding(32, authority.Player.Id,
+                authority.Planet.Id, "Definitely Missing MP Building"));
+            Assert.IsFalse(session.LastResult.Accepted, "Unknown buildings must not be queued.");
+            StringAssert.Contains(session.LastResult.Reason, "not found");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
         }
     }
 
@@ -769,6 +827,33 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(client.LastAuthoritySnapshot.HashHi, client.LastClientSnapshot.HashHi);
             Assert.AreEqual(client.LastAuthoritySnapshot.SyncDigest, client.LastClientSnapshot.SyncDigest);
         }
+    }
+
+    static Building PickBuildableBuilding(Planet planet)
+    {
+        planet.RefreshBuildingsWeCanBuildHere();
+        Building building = planet.GetBuildingsCanBuild()
+            .Where(b => planet.TilesList.Any(tile => tile.CanEnqueueBuildingHere(b)))
+            .OrderBy(b => b.ActualCost(planet.Owner))
+            .ThenBy(b => b.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(building, $"Planet {planet.Id} needs at least one buildable building for the authoritative queue proof.");
+        return building;
+    }
+
+    static void EnsureSingleBuildTile(Planet planet)
+    {
+        planet.TilesList.Clear();
+        planet.TilesList.Add(new PlanetGridSquare(planet, 0, 0, b: null, hab: true, terraformable: false));
+        planet.RefreshBuildingsWeCanBuildHere();
+    }
+
+    static QueueItem LastQueuedBuilding(Planet planet, string buildingName)
+    {
+        QueueItem item = planet.Construction.GetConstructionQueueSnapshot()
+            .LastOrDefault(q => q.isBuilding && q.Building?.Name == buildingName);
+        Assert.IsNotNull(item, $"Planet {planet.Id} did not queue building {buildingName}.");
+        return item;
     }
 
     static int FreeTcpPort()
