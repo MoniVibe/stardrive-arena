@@ -44,6 +44,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.DesignShip => ApplyDesignShip(command, empire, result),
                 AuthoritativePlayerCommandKind.QueueBuild => ApplyQueueBuild(command, empire, result),
                 AuthoritativePlayerCommandKind.QueueBuilding => ApplyQueueBuilding(command, empire, result),
+                AuthoritativePlayerCommandKind.QueueTroop => ApplyQueueTroop(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
             };
         }
@@ -200,6 +201,29 @@ public sealed class Authoritative4XCommandApplicator
         return planet.Construction.Enqueue(buildable, where: null, playerAdded: true)
             ? Accept(result)
             : Reject(result, $"No valid tile was available for {buildingName} at planet {planet.Id}.");
+    }
+
+    AuthoritativeCommandResult ApplyQueueTroop(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} not found.");
+        if (planet.Owner != empire)
+            return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
+        if (!planet.HasSpacePort)
+            return Reject(result, $"Planet {command.SubjectId} has no spaceport for troop training.");
+
+        string troopName = command.Text ?? "";
+        if (troopName.IsEmpty())
+            return Reject(result, "Troop name is empty.");
+        if (!ResourceManager.GetTroopTemplate(troopName, out Troop template))
+            return Reject(result, $"Troop {troopName} not found.");
+        if (!empire.WeCanBuildTroop(template.Name))
+            return Reject(result, $"Empire {empire.Id} cannot build troop {template.Name}.");
+
+        planet.Construction.Enqueue(template, QueueItemType.Troop);
+        return Accept(result);
     }
 
     static IShipDesign RegisterPlayerDesign(ShipDesign design, out string rejectReason)

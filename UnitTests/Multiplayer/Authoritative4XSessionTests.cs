@@ -72,6 +72,14 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(456, copy.SubjectId);
         Assert.AreEqual("Factory", copy.Text);
 
+        var troopRequest = AuthoritativePlayerCommand.QueueTroop(11, 2, 789, "Marine")
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(troopRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.QueueTroop, copy.Kind);
+        Assert.AreEqual(789, copy.SubjectId);
+        Assert.AreEqual("Marine", copy.Text);
+
         var snapshot = new AuthoritativeStateSnapshotMessage
         {
             FromPeer = 1,
@@ -194,6 +202,9 @@ public class Authoritative4XSessionTests : StarDriveTest
             EnsureSingleBuildTile(authority.Planet);
             EnsureSingleBuildTile(client.Planet);
             Building buildable = PickBuildableBuilding(authority.Planet);
+            Troop troop = PickBuildableTroop(authority.Player);
+            authority.Planet.HasSpacePort = true;
+            client.Planet.HasSpacePort = true;
 
             session.SubmitFromClient(AuthoritativePlayerCommand.QueueBuilding(30, authority.Player.Id,
                 authority.Planet.Id, buildable.Name));
@@ -211,6 +222,15 @@ public class Authoritative4XSessionTests : StarDriveTest
             StringAssert.Contains(session.LastAuthoritySnapshot.Payload,
                 $"|{buildable.Name}|");
 
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueTroop(33, authority.Player.Id,
+                authority.Planet.Id, troop.Name));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            QueueItem authorityTroop = LastQueuedTroop(authority.Planet, troop.Name);
+            QueueItem clientTroop = LastQueuedTroop(client.Planet, troop.Name);
+            Assert.AreEqual(authorityTroop.TroopType, clientTroop.TroopType);
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, $"|{troop.Name}|");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
             session.SubmitFromClient(AuthoritativePlayerCommand.QueueBuilding(31, authority.Player.Id,
                 authority.EnemyPlanet.Id, buildable.Name));
             Assert.IsFalse(session.LastResult.Accepted, "A player must not queue buildings at another empire's planet.");
@@ -220,6 +240,18 @@ public class Authoritative4XSessionTests : StarDriveTest
             session.SubmitFromClient(AuthoritativePlayerCommand.QueueBuilding(32, authority.Player.Id,
                 authority.Planet.Id, "Definitely Missing MP Building"));
             Assert.IsFalse(session.LastResult.Accepted, "Unknown buildings must not be queued.");
+            StringAssert.Contains(session.LastResult.Reason, "not found");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueTroop(34, authority.Player.Id,
+                authority.EnemyPlanet.Id, troop.Name));
+            Assert.IsFalse(session.LastResult.Accepted, "A player must not queue troops at another empire's planet.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueTroop(35, authority.Player.Id,
+                authority.Planet.Id, "Definitely Missing MP Troop"));
+            Assert.IsFalse(session.LastResult.Accepted, "Unknown troops must not be queued.");
             StringAssert.Contains(session.LastResult.Reason, "not found");
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
         }
@@ -241,6 +273,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             EnsureSingleBuildTile(world.Planet);
             Building buildable = PickBuildableBuilding(world.Planet);
             IShipDesign mobileShip = PickMobileBuildableShip(world.Player);
+            Troop troop = PickBuildableTroop(world.Player);
             var submitted = new List<AuthoritativePlayerCommand>();
             using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
                        submitted.Add, firstSequence: 700))
@@ -268,22 +301,33 @@ public class Authoritative4XSessionTests : StarDriveTest
                         .Any(q => q.isShip && q.ShipData?.Name == mobileShip.Name),
                     "Passive MP clients must not locally enqueue ships before host acceptance.");
 
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitQueueTroop(world.Planet, troop, repeat: 2));
+                Assert.AreEqual(5, submitted.Count);
+                Assert.IsTrue(submitted.Skip(3).All(c => c.Kind == AuthoritativePlayerCommandKind.QueueTroop));
+                Assert.AreEqual(703, submitted[3].Sequence);
+                Assert.AreEqual(704, submitted[4].Sequence);
+                Assert.IsTrue(submitted.Skip(3).All(c => c.SubjectId == world.Planet.Id && c.Text == troop.Name));
+                Assert.IsFalse(world.Planet.Construction.GetConstructionQueueSnapshot()
+                        .Any(q => q.isTroop && q.TroopType == troop.Name),
+                    "Passive MP clients must not locally enqueue troops before host acceptance.");
+
                 Planet.ColonyType originalType = world.Planet.CType;
                 Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetColonyType(world.Planet,
                     Planet.ColonyType.Research));
                 Assert.AreEqual(originalType, world.Planet.CType,
                     "The context should submit a colony-type request without directly mutating the replica.");
-                Assert.AreEqual(AuthoritativePlayerCommandKind.SetColonyType, submitted[3].Kind);
-                Assert.AreEqual(703, submitted[3].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetColonyType, submitted[5].Kind);
+                Assert.AreEqual(705, submitted[5].Sequence);
 
                 string originalTopic = world.Player.Research.Topic;
                 Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetResearchTopic(world.Player,
                     world.ResearchUid));
                 Assert.AreEqual(originalTopic, world.Player.Research.Topic,
                     "The context should submit a research request without directly mutating the replica.");
-                Assert.AreEqual(AuthoritativePlayerCommandKind.SetResearchTopic, submitted[4].Kind);
-                Assert.AreEqual(704, submitted[4].Sequence);
-                Assert.AreEqual(world.ResearchUid, submitted[4].Text);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetResearchTopic, submitted[6].Kind);
+                Assert.AreEqual(706, submitted[6].Sequence);
+                Assert.AreEqual(world.ResearchUid, submitted[6].Text);
 
                 int beforeWrongEmpire = submitted.Count;
                 Assert.IsFalse(Authoritative4XClientContext.TrySubmitQueueBuilding(world.EnemyPlanet, buildable.Name),
@@ -925,6 +969,16 @@ public class Authoritative4XSessionTests : StarDriveTest
         return ship;
     }
 
+    static Troop PickBuildableTroop(Empire empire)
+    {
+        Troop troop = ResourceManager.GetTroopTemplatesFor(empire)
+            .OrderBy(t => t.ActualCost(empire))
+            .ThenBy(t => t.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(troop, $"Empire {empire.Id} needs at least one buildable troop for the authoritative queue proof.");
+        return troop;
+    }
+
     static void EnsureSingleBuildTile(Planet planet)
     {
         planet.TilesList.Clear();
@@ -937,6 +991,14 @@ public class Authoritative4XSessionTests : StarDriveTest
         QueueItem item = planet.Construction.GetConstructionQueueSnapshot()
             .LastOrDefault(q => q.isBuilding && q.Building?.Name == buildingName);
         Assert.IsNotNull(item, $"Planet {planet.Id} did not queue building {buildingName}.");
+        return item;
+    }
+
+    static QueueItem LastQueuedTroop(Planet planet, string troopName)
+    {
+        QueueItem item = planet.Construction.GetConstructionQueueSnapshot()
+            .LastOrDefault(q => q.isTroop && q.TroopType == troopName);
+        Assert.IsNotNull(item, $"Planet {planet.Id} did not queue troop {troopName}.");
         return item;
     }
 

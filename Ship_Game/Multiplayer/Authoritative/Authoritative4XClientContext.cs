@@ -92,6 +92,19 @@ public sealed class Authoritative4XClientContext : IDisposable
         return true;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitQueueTroop(Planet planet, Troop troop, int repeat)
+    {
+        if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
+            return Authoritative4XUiCommandResult.NotActive;
+        if (troop == null || string.IsNullOrEmpty(troop.Name))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        int count = Math.Max(1, repeat);
+        for (int i = 0; i < count; ++i)
+            context.Submit(AuthoritativePlayerCommand.QueueTroop(context.Next(), context.EmpireId, planet.Id, troop.Name));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static bool IsActiveFor(Empire empire)
         => TryGetFor(empire, out _);
 

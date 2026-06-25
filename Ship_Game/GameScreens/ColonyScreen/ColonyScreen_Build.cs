@@ -307,10 +307,14 @@ namespace Ship_Game
 
         public void Build(Troop troop, int repeat = 1)
         {
-            if (Authoritative4XClientContext.IsActiveFor(P.Owner))
+            switch (Authoritative4XClientContext.TrySubmitQueueTroop(P, troop, repeat))
             {
-                GameAudio.NegativeClick();
-                return;
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.AcceptClick();
+                    return;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return;
             }
 
             for (int i = 0; i < repeat; i++)
