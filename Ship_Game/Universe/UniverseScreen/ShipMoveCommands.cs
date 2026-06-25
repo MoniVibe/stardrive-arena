@@ -101,10 +101,22 @@ namespace Ship_Game.Universe
                 GameAudio.AffirmativeClick();
 
             bool clearOrders = !Input.IsShiftKeyDown;
+            MoveOrder moveOrder = GetStanceType();
+
+            switch (Authoritative4XClientContext.TrySubmitShipPlanetOrder(ship, planet,
+                        PlanetOrderFor(ship, planet), clearOrders, moveOrder))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    return;
+                case Authoritative4XUiCommandResult.Blocked:
+                    if (audio)
+                        GameAudio.NegativeClick();
+                    return;
+            }
 
             // if ALT key is down, always Orbit the planet
             if (Input.IsAltKeyDown)
-                ship.OrderToOrbit(planet, clearOrders, GetStanceType());
+                ship.OrderToOrbit(planet, clearOrders, moveOrder);
             else if (ship.ShipData.IsColonyShip)
                 PlanetRightClickColonyShip(ship, planet, clearOrders); // This ship can colonize planets
             else if (ship.Carrier.AnyAssaultOpsAvailable)
@@ -112,7 +124,37 @@ namespace Ship_Game.Universe
             else if (ship.HasBombs)
                 PlanetRightClickBomber(ship, planet, clearOrders); // This ship can bomb planets
             else
-                ship.OrderToOrbit(planet, clearOrders, GetStanceType()); // Default logic of right clicking
+                ship.OrderToOrbit(planet, clearOrders, moveOrder); // Default logic of right clicking
+        }
+
+        AuthoritativeShipPlanetOrderType PlanetOrderFor(Ship ship, Planet planet)
+        {
+            if (Input.IsAltKeyDown)
+                return AuthoritativeShipPlanetOrderType.Orbit;
+            if (ship.ShipData.IsColonyShip)
+                return planet.Owner == null && planet.Habitable
+                    ? AuthoritativeShipPlanetOrderType.Colonize
+                    : AuthoritativeShipPlanetOrderType.Orbit;
+            if (ship.Carrier.AnyAssaultOpsAvailable)
+            {
+                if (planet.Owner == ship.Loyalty)
+                    return planet.ForeignTroopHere(ship.Loyalty)
+                        ? AuthoritativeShipPlanetOrderType.LandTroops
+                        : AuthoritativeShipPlanetOrderType.Orbit;
+                if (planet.Habitable && (planet.Owner == null || ship.Loyalty.IsAtWarWith(planet.Owner)))
+                    return AuthoritativeShipPlanetOrderType.LandTroops;
+                return AuthoritativeShipPlanetOrderType.Orbit;
+            }
+            if (ship.HasBombs)
+            {
+                if (planet.Owner != null && planet.Owner != ship.Loyalty
+                                         && ship.Loyalty.IsEmpireAttackable(planet.Owner))
+                {
+                    return AuthoritativeShipPlanetOrderType.Bombard;
+                }
+                return AuthoritativeShipPlanetOrderType.Orbit;
+            }
+            return AuthoritativeShipPlanetOrderType.Orbit;
         }
 
         void PlanetRightClickColonyShip(Ship ship, Planet planet, bool clearOrders)

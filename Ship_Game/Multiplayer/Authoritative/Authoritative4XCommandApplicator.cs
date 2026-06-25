@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using Ship_Game.AI;
+using Ship_Game.Commands.Goals;
 using Ship_Game.Determinism.Lockstep;
 using Ship_Game.Ships;
 using Ship_Game.Universe;
@@ -46,6 +47,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.QueueBuilding => ApplyQueueBuilding(command, empire, result),
                 AuthoritativePlayerCommandKind.QueueTroop => ApplyQueueTroop(command, empire, result),
                 AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
+                AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
             };
         }
@@ -109,6 +111,74 @@ public sealed class Authoritative4XCommandApplicator
         else
             ship.AI.OrderAttackSpecificTarget(target);
         return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyShipPlanetOrder(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (!TryParsePlanetOrder(command.Text, out AuthoritativeShipPlanetOrderType orderType,
+                out bool clearOrders, out MoveOrder moveOrder))
+        {
+            return Reject(result, $"Invalid ship planet order payload '{command.Text}'.");
+        }
+
+        Ship ship = UState.Objects.FindShip(command.SubjectId);
+        if (ship == null)
+            return Reject(result, $"Ship {command.SubjectId} not found.");
+        if (!ship.Active)
+            return Reject(result, $"Ship {command.SubjectId} is inactive.");
+        if (ship.Loyalty != empire)
+            return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
+        if (ship.IsConstructor || ship.IsPlatformOrStation || ship.IsSubspaceProjector)
+            return Reject(result, $"Ship {command.SubjectId} cannot receive authoritative planet orders.");
+
+        Planet planet = UState.GetPlanet(command.TargetId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.TargetId} not found.");
+
+        const MoveOrder Allowed = MoveOrder.Regular | MoveOrder.Aggressive | MoveOrder.StandGround;
+        if ((moveOrder & ~Allowed) != 0)
+            return Reject(result, $"Planet move order {moveOrder} is not supported by authoritative MP.");
+
+        switch (orderType)
+        {
+            case AuthoritativeShipPlanetOrderType.Orbit:
+                ship.OrderToOrbit(planet, clearOrders, moveOrder);
+                return Accept(result);
+
+            case AuthoritativeShipPlanetOrderType.Colonize:
+                if (!ship.ShipData.IsColonyShip)
+                    return Reject(result, $"Ship {ship.Id} is not a colony ship.");
+                if (!planet.Habitable || planet.Owner != null)
+                    return Reject(result, $"Planet {planet.Id} is not a legal colonization target.");
+                empire.AI.AddGoalAndEvaluate(new MarkForColonization(ship, planet, empire));
+                return Accept(result);
+
+            case AuthoritativeShipPlanetOrderType.Bombard:
+                if (!ship.HasBombs)
+                    return Reject(result, $"Ship {ship.Id} cannot bombard planets.");
+                if (planet.Owner == null || planet.Owner == empire || !empire.IsEmpireAttackable(planet.Owner))
+                    return Reject(result, $"Empire {empire.Id} cannot bombard planet {planet.Id}.");
+                ship.AI.OrderBombardPlanet(planet, clearOrders);
+                return Accept(result);
+
+            case AuthoritativeShipPlanetOrderType.LandTroops:
+                if (!ship.Carrier.AnyAssaultOpsAvailable)
+                    return Reject(result, $"Ship {ship.Id} has no assault troops available.");
+                if (!planet.Habitable)
+                    return Reject(result, $"Planet {planet.Id} is not habitable.");
+                bool legalLanding = planet.Owner == null
+                                    || planet.Owner == empire && planet.ForeignTroopHere(empire)
+                                    || planet.Owner != empire && empire.IsAtWarWith(planet.Owner);
+                if (!legalLanding)
+                    return Reject(result, $"Empire {empire.Id} cannot land troops on planet {planet.Id}.");
+                return ship.AI.OrderLandAllTroops(planet, clearOrders)
+                    ? Accept(result)
+                    : Reject(result, $"Ship {ship.Id} could not receive troop landing order.");
+
+            default:
+                return Reject(result, $"Unsupported planet order {orderType}.");
+        }
     }
 
     AuthoritativeCommandResult ApplyColonyType(AuthoritativePlayerCommand command, Empire empire, AuthoritativeCommandResult result)
@@ -313,6 +383,33 @@ public sealed class Authoritative4XCommandApplicator
         if (design.IsFreighter) return QueueItemType.Freighter;
         if (design.Role == RoleName.scout) return QueueItemType.Scout;
         return QueueItemType.CombatShip;
+    }
+
+    static bool TryParsePlanetOrder(string text, out AuthoritativeShipPlanetOrderType orderType,
+        out bool clearOrders, out MoveOrder moveOrder)
+    {
+        orderType = default;
+        clearOrders = true;
+        moveOrder = MoveOrder.Regular;
+        string[] parts = (text ?? "").Split('|');
+        if (parts.Length != 3)
+            return false;
+        if (!int.TryParse(parts[0], out int orderValue)
+            || orderValue < byte.MinValue || orderValue > byte.MaxValue
+            || !Enum.IsDefined(typeof(AuthoritativeShipPlanetOrderType),
+                (AuthoritativeShipPlanetOrderType)orderValue))
+        {
+            return false;
+        }
+        if (!int.TryParse(parts[1], out int clearValue) || clearValue is not (0 or 1))
+            return false;
+        if (!int.TryParse(parts[2], out int moveValue))
+            return false;
+
+        orderType = (AuthoritativeShipPlanetOrderType)orderValue;
+        clearOrders = clearValue == 1;
+        moveOrder = (MoveOrder)moveValue;
+        return true;
     }
 
     static AuthoritativeCommandResult Accept(AuthoritativeCommandResult result)

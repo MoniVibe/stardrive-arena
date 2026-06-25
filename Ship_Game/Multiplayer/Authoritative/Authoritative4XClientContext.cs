@@ -111,6 +111,22 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitShipPlanetOrder(Ship ship, Planet planet,
+        AuthoritativeShipPlanetOrderType orderType, bool clearOrders, MoveOrder moveOrder)
+    {
+        if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
+            return Authoritative4XUiCommandResult.NotActive;
+        if (ship?.Active != true || planet == null
+            || ship.IsConstructor || ship.IsPlatformOrStation || ship.IsSubspaceProjector)
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.ShipPlanetOrder(context.Next(), context.EmpireId, ship.Id,
+            planet.Id, orderType, clearOrders, moveOrder));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static bool TrySubmitSetResearchTopic(Empire empire, string techUid)
     {
         if (!TryGetFor(empire, out Authoritative4XClientContext context))

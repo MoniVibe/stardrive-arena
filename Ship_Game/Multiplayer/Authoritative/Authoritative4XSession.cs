@@ -138,6 +138,7 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(s.AI.Target?.Id ?? 0)
               .Append('|').Append(s.AI.HasPriorityTarget ? 1 : 0)
               .Append('|').Append(TargetQueueSignature(s))
+              .Append('|').Append(ShipOrderQueueSignature(s))
               .AppendLine();
 
         return sb.ToString();
@@ -173,6 +174,14 @@ public sealed class AuthoritativeStateSnapshot
 
     static string TargetQueueSignature(Ship ship)
         => string.Join(",", ship.AI.TargetQueue.Select(s => s?.Id ?? 0));
+
+    static string ShipOrderQueueSignature(Ship ship)
+    {
+        ShipAI.ShipGoal[] goals = ship.AI.OrderQueue.ToArray();
+        return string.Join(";", goals.Select(g =>
+            $"{(int)g.Plan},{g.TargetPlanet?.Id ?? 0},{g.TargetShip?.Id ?? 0}," +
+            $"{FloatBits(g.MovePosition.X):X8},{FloatBits(g.MovePosition.Y):X8},{(int)g.MoveOrder}"));
+    }
 
     static uint FloatBits(float value) => System.BitConverter.SingleToUInt32Bits(value);
 }
