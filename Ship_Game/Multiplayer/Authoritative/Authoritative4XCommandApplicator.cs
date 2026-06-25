@@ -14,8 +14,13 @@ namespace Ship_Game.Multiplayer.Authoritative;
 public sealed class Authoritative4XCommandApplicator
 {
     readonly UniverseState UState;
+    readonly AuthoritativeDiplomacyManager Diplomacy;
 
-    public Authoritative4XCommandApplicator(UniverseState universe) => UState = universe;
+    public Authoritative4XCommandApplicator(UniverseState universe, AuthoritativeDiplomacyManager diplomacy = null)
+    {
+        UState = universe;
+        Diplomacy = diplomacy;
+    }
 
     public AuthoritativeCommandResult Apply(AuthoritativePlayerCommand command, uint tick)
     {
@@ -32,9 +37,19 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.MoveShip => ApplyMove(command, empire, result),
                 AuthoritativePlayerCommandKind.SetColonyType => ApplyColonyType(command, empire, result),
                 AuthoritativePlayerCommandKind.SetResearchTopic => ApplyResearchTopic(command, empire, result),
+                AuthoritativePlayerCommandKind.DiplomacyProposal => ApplyDiplomacy(command, empire, result),
+                AuthoritativePlayerCommandKind.DiplomacyResponse => ApplyDiplomacy(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
             };
         }
+    }
+
+    AuthoritativeCommandResult ApplyDiplomacy(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        return Diplomacy != null
+            ? Diplomacy.Apply(command, empire, result)
+            : Reject(result, "Authoritative diplomacy is not enabled for this session.");
     }
 
     AuthoritativeCommandResult ApplyMove(AuthoritativePlayerCommand command, Empire empire, AuthoritativeCommandResult result)

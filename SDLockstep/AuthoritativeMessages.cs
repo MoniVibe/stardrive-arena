@@ -32,3 +32,14 @@ public sealed class AuthoritativeStateSnapshotMessage : LockstepMessage
     public string SyncDigest = "";
     public string Payload = "";
 }
+
+public sealed class AuthoritativeDiplomacyPopupMessage : LockstepMessage
+{
+    public int ProposalId;
+    public int ProposerEmpireId;
+    public int TargetEmpireId;
+    public byte ProposalType;
+    public string Terms = "";
+    public bool RequiresResponse;
+    public string Message = "";
+}

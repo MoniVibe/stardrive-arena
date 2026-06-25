@@ -1,11 +1,13 @@
 using System.Globalization;
 using System.Linq;
 using System.Text;
+using System.Collections.Generic;
 using SDLockstep;
 using SDUtils;
 using SDUtils.Deterministic;
 using Ship_Game.AI;
 using Ship_Game.Determinism;
+using Ship_Game.Gameplay;
 using Ship_Game.Ships;
 using Ship_Game.Universe;
 
@@ -64,6 +66,21 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(FloatBits(e.Money))
               .AppendLine();
 
+        foreach (Empire e in us.Empires.OrderBy(e => e.Id))
+        {
+            foreach (Relationship rel in e.AllRelations.OrderBy(r => r.Them.Id))
+                sb.Append("R|").Append(e.Id)
+                  .Append('|').Append(rel.Them.Id)
+                  .Append('|').Append(rel.Known ? 1 : 0)
+                  .Append('|').Append(rel.AtWar ? 1 : 0)
+                  .Append('|').Append(rel.Treaty_NAPact ? 1 : 0)
+                  .Append('|').Append(rel.Treaty_Trade ? 1 : 0)
+                  .Append('|').Append(rel.Treaty_OpenBorders ? 1 : 0)
+                  .Append('|').Append(rel.Treaty_Alliance ? 1 : 0)
+                  .Append('|').Append(rel.Treaty_Peace ? 1 : 0)
+                  .AppendLine();
+        }
+
         foreach (Planet p in us.Planets.OrderBy(p => p.Id))
             sb.Append("P|").Append(p.Id)
               .Append('|').Append(p.Owner?.Id ?? 0)
@@ -99,24 +116,47 @@ public sealed class Authoritative4XAuthority
     readonly UniverseScreen Universe;
     readonly FixedSimTime Step;
     readonly Authoritative4XCommandApplicator Applicator;
+    readonly AuthoritativeDiplomacyManager Diplomacy;
 
     public uint Tick { get; private set; }
 
-    public Authoritative4XAuthority(UniverseScreen universe, float dt = 1f / 60f)
+    public Authoritative4XAuthority(UniverseScreen universe, float dt = 1f / 60f, int[] humanEmpireIds = null)
     {
         Universe = universe;
         Step = new FixedSimTime(dt);
-        Applicator = new Authoritative4XCommandApplicator(universe.UState);
+        if (humanEmpireIds != null)
+            AuthoritativeHumanPlayers.SetHumanControlledEmpires(universe.UState, humanEmpireIds);
+        Diplomacy = new AuthoritativeDiplomacyManager(universe.UState);
+        Applicator = new Authoritative4XCommandApplicator(universe.UState, Diplomacy);
     }
 
     public (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot)
         Process(AuthoritativePlayerCommand command)
     {
         AuthoritativeCommandResult result = Applicator.Apply(command, Tick + 1);
+        return Advance(result);
+    }
+
+    public (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot)
+        RejectAndAdvance(int sequence, string reason)
+    {
+        return Advance(new AuthoritativeCommandResult
+        {
+            Sequence = sequence,
+            Accepted = false,
+            Tick = Tick + 1,
+            Reason = reason ?? "",
+        });
+    }
+
+    (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) Advance(AuthoritativeCommandResult result)
+    {
         Universe.SingleSimulationStep(Step);
         Tick++;
         return (result, AuthoritativeStateSnapshot.Capture(Universe, Tick));
     }
+
+    public AuthoritativeDiplomacyPopup[] DrainDiplomacyPopups() => Diplomacy.DrainPopups();
 }
 
 public sealed class Authoritative4XClientReplica
@@ -124,15 +164,19 @@ public sealed class Authoritative4XClientReplica
     readonly UniverseScreen Universe;
     readonly FixedSimTime Step;
     readonly Authoritative4XCommandApplicator Applicator;
+    readonly AuthoritativeDiplomacyManager Diplomacy;
 
     public uint Tick { get; private set; }
     public AuthoritativeStateSnapshot LastSnapshot { get; private set; }
 
-    public Authoritative4XClientReplica(UniverseScreen universe, float dt = 1f / 60f)
+    public Authoritative4XClientReplica(UniverseScreen universe, float dt = 1f / 60f, int[] humanEmpireIds = null)
     {
         Universe = universe;
         Step = new FixedSimTime(dt);
-        Applicator = new Authoritative4XCommandApplicator(universe.UState);
+        if (humanEmpireIds != null)
+            AuthoritativeHumanPlayers.SetHumanControlledEmpires(universe.UState, humanEmpireIds);
+        Diplomacy = new AuthoritativeDiplomacyManager(universe.UState);
+        Applicator = new Authoritative4XCommandApplicator(universe.UState, Diplomacy);
     }
 
     public void ApplyAuthoritativeResult(AuthoritativePlayerCommand command, AuthoritativeCommandResult result,
@@ -156,6 +200,20 @@ public sealed class Authoritative4XClientReplica
                 $"0x{authoritySnapshot.HashLo:X16}:0x{authoritySnapshot.HashHi:X16}/{authoritySnapshot.SyncDigest}, " +
                 $"client 0x{LastSnapshot.HashLo:X16}:0x{LastSnapshot.HashHi:X16}/{LastSnapshot.SyncDigest}");
         }
+    }
+}
+
+public readonly struct Authoritative4XClientSpec
+{
+    public readonly int PeerId;
+    public readonly int EmpireId;
+    public readonly UniverseScreen Universe;
+
+    public Authoritative4XClientSpec(int peerId, int empireId, UniverseScreen universe)
+    {
+        PeerId = peerId;
+        EmpireId = empireId;
+        Universe = universe;
     }
 }
 
@@ -230,6 +288,118 @@ public sealed class Authoritative4XInProcessSession
                     throw new System.InvalidOperationException("Received authoritative snapshot without a matching command result.");
                 Pending.Remove(LastResult.Sequence);
                 Client.ApplyAuthoritativeResult(command, LastResult, LastAuthoritySnapshot);
+                break;
+        }
+    }
+}
+
+/// <summary>
+/// Multi-client in-process harness for Phase-A authoritative MP features that need targeted routing,
+/// such as human-to-human diplomacy popups.
+/// </summary>
+public sealed class Authoritative4XInProcessMultiClientSession
+{
+    const int HostPeer = 1;
+
+    readonly ILockstepTransport Transport;
+    readonly Authoritative4XAuthority Authority;
+    readonly Dictionary<int, Authoritative4XClientReplica> Clients = new();
+    readonly Dictionary<int, int> EmpireByPeer = new();
+    readonly Dictionary<int, int> PeerByEmpire = new();
+    readonly Dictionary<int, AuthoritativePlayerCommand> Pending = new();
+    readonly Dictionary<int, AuthoritativeCommandResult> LastResults = new();
+    readonly Dictionary<int, AuthoritativeStateSnapshot> LastSnapshots = new();
+    readonly Dictionary<int, List<AuthoritativeDiplomacyPopup>> Popups = new();
+
+    public AuthoritativeStateSnapshot LastAuthoritySnapshot { get; private set; }
+
+    public Authoritative4XInProcessMultiClientSession(UniverseScreen authorityUniverse,
+        Authoritative4XClientSpec[] clients, ILockstepTransport transport = null)
+    {
+        Transport = transport ?? new FakeTransport();
+        int[] humanEmpireIds = clients.Select(c => c.EmpireId).ToArray();
+        AuthoritativeHumanPlayers.SetHumanControlledEmpires(authorityUniverse.UState, humanEmpireIds);
+        Authority = new Authoritative4XAuthority(authorityUniverse, humanEmpireIds: humanEmpireIds);
+        Transport.Register(HostPeer, OnHostMessage);
+
+        foreach (Authoritative4XClientSpec spec in clients)
+        {
+            AuthoritativeHumanPlayers.SetHumanControlledEmpires(spec.Universe.UState, humanEmpireIds);
+            Clients[spec.PeerId] = new Authoritative4XClientReplica(spec.Universe, humanEmpireIds: humanEmpireIds);
+            EmpireByPeer[spec.PeerId] = spec.EmpireId;
+            PeerByEmpire[spec.EmpireId] = spec.PeerId;
+            Popups[spec.PeerId] = new List<AuthoritativeDiplomacyPopup>();
+            int peer = spec.PeerId;
+            Transport.Register(peer, message => OnClientMessage(peer, message));
+        }
+    }
+
+    public void SubmitFromClient(int peerId, AuthoritativePlayerCommand command)
+    {
+        Pending[command.Sequence] = command;
+        Transport.Send(HostPeer, command.ToMessage(peerId));
+        Pump();
+    }
+
+    public AuthoritativeCommandResult LastResultFor(int peerId) => LastResults[peerId];
+    public AuthoritativeStateSnapshot LastClientSnapshotFor(int peerId) => LastSnapshots[peerId];
+    public AuthoritativeDiplomacyPopup[] PopupsFor(int peerId) => Popups[peerId].ToArray();
+
+    void Pump()
+    {
+        for (int i = 0; i < 4; ++i)
+            Transport.Poll();
+    }
+
+    void OnHostMessage(LockstepMessage message)
+    {
+        if (message is not AuthoritativeCommandRequestMessage request)
+            return;
+
+        AuthoritativePlayerCommand command = AuthoritativePlayerCommand.FromMessage(request);
+        (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) =
+            !EmpireByPeer.TryGetValue(request.FromPeer, out int allowedEmpire) || allowedEmpire != command.EmpireId
+                ? Authority.RejectAndAdvance(command.Sequence,
+                    $"Peer {request.FromPeer} does not control empire {command.EmpireId}.")
+                : Authority.Process(command);
+        LastAuthoritySnapshot = snapshot;
+
+        foreach (int peer in Clients.Keys)
+        {
+            Transport.Send(peer, result.ToMessage(HostPeer));
+            Transport.Send(peer, snapshot.ToMessage(HostPeer));
+        }
+
+        foreach (AuthoritativeDiplomacyPopup popup in Authority.DrainDiplomacyPopups())
+        {
+            if (PeerByEmpire.TryGetValue(popup.TargetEmpireId, out int targetPeer))
+                Transport.Send(targetPeer, popup.ToMessage(HostPeer));
+        }
+    }
+
+    void OnClientMessage(int peerId, LockstepMessage message)
+    {
+        switch (message)
+        {
+            case AuthoritativeCommandResultMessage resultMessage:
+                LastResults[peerId] = new AuthoritativeCommandResult
+                {
+                    Sequence = resultMessage.Sequence,
+                    Accepted = resultMessage.Accepted,
+                    Tick = resultMessage.Tick,
+                    Reason = resultMessage.Reason ?? "",
+                };
+                break;
+            case AuthoritativeStateSnapshotMessage snapshotMessage:
+                AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.FromMessage(snapshotMessage);
+                if (!LastResults.TryGetValue(peerId, out AuthoritativeCommandResult result)
+                    || !Pending.TryGetValue(result.Sequence, out AuthoritativePlayerCommand command))
+                    throw new System.InvalidOperationException("Received authoritative snapshot without a matching command result.");
+                Clients[peerId].ApplyAuthoritativeResult(command, result, authoritySnapshot);
+                LastSnapshots[peerId] = Clients[peerId].LastSnapshot;
+                break;
+            case AuthoritativeDiplomacyPopupMessage popupMessage:
+                Popups[peerId].Add(AuthoritativeDiplomacyPopup.FromMessage(popupMessage));
                 break;
         }
     }

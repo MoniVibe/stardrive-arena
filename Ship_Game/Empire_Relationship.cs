@@ -6,6 +6,7 @@ using Ship_Game.AI;
 using Ship_Game.AI.StrategyAI.WarGoals;
 using Ship_Game.Data.Serialization;
 using Ship_Game.Gameplay;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Utils;
 
 namespace Ship_Game
@@ -147,7 +148,7 @@ namespace Ship_Game
                 if (rel.Known || isPlayer)
                 {
                     rel.UpdateRelationship(this, rel.Them);
-                    if (takeTurn && !IsFaction)
+                    if (takeTurn && !IsFaction && !AuthoritativeHumanPlayers.IsHumanVsHuman(this, rel.Them))
                     {
                         rel.AdvanceRelationshipTurn(this, rel.Them);
                     }

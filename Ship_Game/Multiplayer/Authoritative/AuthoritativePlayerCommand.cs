@@ -9,6 +9,24 @@ public enum AuthoritativePlayerCommandKind : byte
     MoveShip = 1,
     SetColonyType = 2,
     SetResearchTopic = 3,
+    DiplomacyProposal = 4,
+    DiplomacyResponse = 5,
+}
+
+public enum AuthoritativeDiplomacyProposalType : byte
+{
+    DeclareWar = 1,
+    Alliance = 2,
+    Peace = 3,
+    TradeDeal = 4,
+    NonAggression = 5,
+}
+
+public enum AuthoritativeDiplomacyResponseKind : byte
+{
+    Accept = 1,
+    Reject = 2,
+    Counter = 3,
 }
 
 /// <summary>
@@ -52,6 +70,30 @@ public sealed class AuthoritativePlayerCommand
             EmpireId = empireId,
             Kind = AuthoritativePlayerCommandKind.SetResearchTopic,
             Text = techUid ?? "",
+        };
+
+    public static AuthoritativePlayerCommand DiplomacyProposal(int sequence, int proposerEmpireId, int targetEmpireId,
+        AuthoritativeDiplomacyProposalType proposalType, string terms = "")
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = proposerEmpireId,
+            Kind = AuthoritativePlayerCommandKind.DiplomacyProposal,
+            SubjectId = targetEmpireId,
+            TargetId = (int)proposalType,
+            Text = terms ?? "",
+        };
+
+    public static AuthoritativePlayerCommand DiplomacyResponse(int sequence, int responderEmpireId, int proposalId,
+        AuthoritativeDiplomacyResponseKind response, string terms = "")
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = responderEmpireId,
+            Kind = AuthoritativePlayerCommandKind.DiplomacyResponse,
+            SubjectId = proposalId,
+            TargetId = (int)response,
+            Text = terms ?? "",
         };
 
     public AuthoritativeCommandRequestMessage ToMessage(int fromPeer)

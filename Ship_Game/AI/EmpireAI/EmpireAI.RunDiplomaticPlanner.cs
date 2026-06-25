@@ -3,6 +3,7 @@ using System.Threading;
 using SDGraphics;
 using SDUtils;
 using Ship_Game.Gameplay;
+using Ship_Game.Multiplayer.Authoritative;
 
 namespace Ship_Game.AI 
 {
@@ -27,7 +28,8 @@ namespace Ship_Game.AI
 
             foreach (Relationship rel in OwnerEmpire.AllRelations)
             {
-                if (!rel.Them.IsFaction && !OwnerEmpire.IsFaction && !rel.Them.IsDefeated)
+                if (!rel.Them.IsFaction && !OwnerEmpire.IsFaction && !rel.Them.IsDefeated
+                    && !AuthoritativeHumanPlayers.IsHumanVsHuman(OwnerEmpire, rel.Them))
                 {
                     CheckColonizationClaims(rel.Them, rel);
                     rel.ActiveWar?.MonitorPlayerContribution();
@@ -147,6 +149,7 @@ namespace Ship_Game.AI
             return !relations.Known
                    || them.IsFaction
                    || them.IsDefeated
+                   || AuthoritativeHumanPlayers.IsHumanVsHuman(OwnerEmpire, them)
                    || GlobalStats.RestrictAIPlayerInteraction && Player == them;
         }
 

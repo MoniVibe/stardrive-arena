@@ -758,6 +758,8 @@
     <Compile Include="Ship_Game\Determinism\Lockstep\StarDriveEntityResolver.cs" />
     <Compile Include="Ship_Game\Determinism\Lockstep\StarDriveCommandApplicator.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\AuthoritativePlayerCommand.cs" />
+    <Compile Include="Ship_Game\Multiplayer\Authoritative\AuthoritativeHumanPlayers.cs" />
+    <Compile Include="Ship_Game\Multiplayer\Authoritative\AuthoritativeDiplomacy.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XCommandApplicator.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XSession.cs" />
     <Compile Include="Ship_Game\Determinism\ReplayValidationResult.cs" />

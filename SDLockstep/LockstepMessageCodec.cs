@@ -24,6 +24,7 @@ public static class LockstepMessageCodec
     const byte AuthoritativeCommandRequest = 20;
     const byte AuthoritativeCommandResult = 21;
     const byte AuthoritativeStateSnapshot = 22;
+    const byte AuthoritativeDiplomacyPopup = 23;
 
     public static byte[] Encode(LockstepMessage message, int toPeer)
     {
@@ -127,6 +128,16 @@ public static class LockstepMessageCodec
                     w.Write(snapshot.HashHi);
                     WriteString(w, snapshot.SyncDigest);
                     WriteString(w, snapshot.Payload);
+                    break;
+                case AuthoritativeDiplomacyPopupMessage popup:
+                    w.Write(AuthoritativeDiplomacyPopup);
+                    w.Write(popup.ProposalId);
+                    w.Write(popup.ProposerEmpireId);
+                    w.Write(popup.TargetEmpireId);
+                    w.Write(popup.ProposalType);
+                    WriteString(w, popup.Terms);
+                    w.Write(popup.RequiresResponse);
+                    WriteString(w, popup.Message);
                     break;
                 default:
                     throw new InvalidDataException($"Unsupported lockstep message type {message.GetType().FullName}");
@@ -264,6 +275,18 @@ public static class LockstepMessageCodec
                     HashHi = r.ReadUInt64(),
                     SyncDigest = ReadString(r),
                     Payload = ReadString(r),
+                };
+                break;
+            case AuthoritativeDiplomacyPopup:
+                message = new AuthoritativeDiplomacyPopupMessage
+                {
+                    ProposalId = r.ReadInt32(),
+                    ProposerEmpireId = r.ReadInt32(),
+                    TargetEmpireId = r.ReadInt32(),
+                    ProposalType = r.ReadByte(),
+                    Terms = ReadString(r),
+                    RequiresResponse = r.ReadBoolean(),
+                    Message = ReadString(r),
                 };
                 break;
             default:
