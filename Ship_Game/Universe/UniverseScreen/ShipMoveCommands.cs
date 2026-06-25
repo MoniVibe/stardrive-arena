@@ -45,6 +45,15 @@ namespace Ship_Game.Universe
                 return false; 
             }
 
+            switch (Authoritative4XClientContext.TrySubmitAttackShip(selectedShip, targetShip, Input.QueueAction))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    return true;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return false;
+            }
+
             if (targetShip.Loyalty.isPlayer)
             {
                 if (!HelperFunctions.CanExitWarpForChangingDirectionByCommand([selectedShip], selectedShip.AI.PotentialTargets))
@@ -188,6 +197,16 @@ namespace Ship_Game.Universe
             {
                 GameAudio.NegativeClick();
                 return false;
+            }
+
+            switch (Authoritative4XClientContext.TrySubmitAttackShip(ship, target, Input.QueueAction))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.AffirmativeClick();
+                    return true;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return false;
             }
 
             GameAudio.AffirmativeClick();

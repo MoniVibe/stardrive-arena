@@ -27,6 +27,7 @@ public class Authoritative4XSessionTests : StarDriveTest
         public Planet Planet;
         public Planet EnemyPlanet;
         public Ship Ship;
+        public Ship EnemyShip;
         public string ResearchUid;
     }
 
@@ -87,6 +88,15 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual((byte)AuthoritativePlayerCommandKind.QueueTroop, copy.Kind);
         Assert.AreEqual(789, copy.SubjectId);
         Assert.AreEqual("Marine", copy.Text);
+
+        var attackRequest = AuthoritativePlayerCommand.AttackShip(12, 2, 99, 100, queue: true)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(attackRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.AttackShip, copy.Kind);
+        Assert.AreEqual(99, copy.SubjectId);
+        Assert.AreEqual(100, copy.TargetId);
+        Assert.AreEqual("queue", copy.Text);
 
         var snapshot = new AuthoritativeStateSnapshotMessage
         {
@@ -184,17 +194,43 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
                 "The sync digest must change after real authoritative commands mutate the game state.");
 
-            var illegal = AuthoritativePlayerCommand.SetColonyType(4, authority.Enemy.Id, authority.Planet.Id,
+            MakeAtWar(authority.Player, authority.Enemy);
+            MakeAtWar(client.Player, client.Enemy);
+            string beforeAttackDigest = session.LastAuthoritySnapshot.SyncDigest;
+            var attack = AuthoritativePlayerCommand.AttackShip(4, authority.Player.Id, authority.Ship.Id,
+                authority.EnemyShip.Id);
+            session.SubmitFromClient(attack);
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(AIState.AttackTarget, authority.Ship.AI.State);
+            Assert.AreEqual(authority.EnemyShip, authority.Ship.AI.Target);
+            Assert.AreEqual(client.EnemyShip, client.Ship.AI.Target);
+            Assert.IsTrue(authority.Ship.AI.HasPriorityTarget);
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload,
+                $"S|{authority.Ship.Id}|{authority.Player.Id}|{(int)AIState.AttackTarget}|");
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, $"|{authority.EnemyShip.Id}|1|{authority.EnemyShip.Id}");
+            Assert.AreNotEqual(beforeAttackDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover accepted ship target orders.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            var illegal = AuthoritativePlayerCommand.SetColonyType(5, authority.Enemy.Id, authority.Planet.Id,
                 Planet.ColonyType.Military);
             session.SubmitFromClient(illegal);
             Assert.IsFalse(session.LastResult.Accepted, "Enemy must not be able to mutate the player's planet.");
             StringAssert.Contains(session.LastResult.Reason, "not owned");
             Assert.AreEqual(Planet.ColonyType.Research, authority.Planet.CType);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            var illegalAttack = AuthoritativePlayerCommand.AttackShip(6, authority.Enemy.Id,
+                authority.Ship.Id, authority.EnemyShip.Id);
+            session.SubmitFromClient(illegalAttack);
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not issue attack orders for ships it does not own.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
         }
         finally
         {
             authority.Screen.Dispose();
+            client.Screen.Dispose();
         }
     }
 
@@ -325,13 +361,25 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual(originalMovePosition, world.Ship.AI.MovePosition,
                     "Passive MP clients must not locally issue ship move orders before host acceptance.");
 
+                Ship originalTarget = world.Ship.AI.Target;
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitAttackShip(world.Ship, world.EnemyShip, queue: true));
+                Assert.AreEqual(5, submitted.Count);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.AttackShip, submitted[4].Kind);
+                Assert.AreEqual(704, submitted[4].Sequence);
+                Assert.AreEqual(world.Ship.Id, submitted[4].SubjectId);
+                Assert.AreEqual(world.EnemyShip.Id, submitted[4].TargetId);
+                Assert.AreEqual("queue", submitted[4].Text);
+                Assert.AreEqual(originalTarget, world.Ship.AI.Target,
+                    "Passive MP clients must not locally issue ship attack orders before host acceptance.");
+
                 Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
                     Authoritative4XClientContext.TrySubmitQueueTroop(world.Planet, troop, repeat: 2));
-                Assert.AreEqual(6, submitted.Count);
-                Assert.IsTrue(submitted.Skip(4).All(c => c.Kind == AuthoritativePlayerCommandKind.QueueTroop));
-                Assert.AreEqual(704, submitted[4].Sequence);
+                Assert.AreEqual(7, submitted.Count);
+                Assert.IsTrue(submitted.Skip(5).All(c => c.Kind == AuthoritativePlayerCommandKind.QueueTroop));
                 Assert.AreEqual(705, submitted[5].Sequence);
-                Assert.IsTrue(submitted.Skip(4).All(c => c.SubjectId == world.Planet.Id && c.Text == troop.Name));
+                Assert.AreEqual(706, submitted[6].Sequence);
+                Assert.IsTrue(submitted.Skip(5).All(c => c.SubjectId == world.Planet.Id && c.Text == troop.Name));
                 Assert.IsFalse(world.Planet.Construction.GetConstructionQueueSnapshot()
                         .Any(q => q.isTroop && q.TroopType == troop.Name),
                     "Passive MP clients must not locally enqueue troops before host acceptance.");
@@ -341,17 +389,17 @@ public class Authoritative4XSessionTests : StarDriveTest
                     Planet.ColonyType.Research));
                 Assert.AreEqual(originalType, world.Planet.CType,
                     "The context should submit a colony-type request without directly mutating the replica.");
-                Assert.AreEqual(AuthoritativePlayerCommandKind.SetColonyType, submitted[6].Kind);
-                Assert.AreEqual(706, submitted[6].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetColonyType, submitted[7].Kind);
+                Assert.AreEqual(707, submitted[7].Sequence);
 
                 string originalTopic = world.Player.Research.Topic;
                 Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetResearchTopic(world.Player,
                     world.ResearchUid));
                 Assert.AreEqual(originalTopic, world.Player.Research.Topic,
                     "The context should submit a research request without directly mutating the replica.");
-                Assert.AreEqual(AuthoritativePlayerCommandKind.SetResearchTopic, submitted[7].Kind);
-                Assert.AreEqual(707, submitted[7].Sequence);
-                Assert.AreEqual(world.ResearchUid, submitted[7].Text);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetResearchTopic, submitted[8].Kind);
+                Assert.AreEqual(708, submitted[8].Sequence);
+                Assert.AreEqual(world.ResearchUid, submitted[8].Text);
 
                 int beforeWrongEmpire = submitted.Count;
                 Assert.IsFalse(Authoritative4XClientContext.TrySubmitQueueBuilding(world.EnemyPlanet, buildable.Name),
@@ -1091,6 +1139,7 @@ public class Authoritative4XSessionTests : StarDriveTest
         Planet planet = AddDummyPlanetToEmpire(new Vector2(200_000, 200_000), Player, fertility: 1f, minerals: 1f, maxPop: 5f);
         Planet enemyPlanet = AddDummyPlanetToEmpire(new Vector2(-200_000, -200_000), Enemy, fertility: 1f, minerals: 1f, maxPop: 5f);
         Ship ship = SpawnShip("Vulcan Scout", Player, new Vector2(0, 0));
+        Ship enemyShip = SpawnShip("Vulcan Scout", Enemy, new Vector2(35_000, 0));
 
         Player.InitEmpireFromSave(UState);
         Enemy.InitEmpireFromSave(UState);
@@ -1113,8 +1162,17 @@ public class Authoritative4XSessionTests : StarDriveTest
             Planet = planet,
             EnemyPlanet = enemyPlanet,
             Ship = ship,
+            EnemyShip = enemyShip,
             ResearchUid = researchUid,
         };
+    }
+
+    static void MakeAtWar(Empire a, Empire b)
+    {
+        if (!a.IsAtWarWith(b))
+            a.AI.DeclareWarOn(b, WarType.BorderConflict);
+        Assert.IsTrue(a.IsAtWarWith(b), $"Empire {a.Id} should be at war with {b.Id}.");
+        Assert.IsTrue(b.IsAtWarWith(a), $"Empire {b.Id} should be at war with {a.Id}.");
     }
 
     static string RacePreference(IEmpireData race)

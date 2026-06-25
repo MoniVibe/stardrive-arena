@@ -45,6 +45,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.QueueBuild => ApplyQueueBuild(command, empire, result),
                 AuthoritativePlayerCommandKind.QueueBuilding => ApplyQueueBuilding(command, empire, result),
                 AuthoritativePlayerCommandKind.QueueTroop => ApplyQueueTroop(command, empire, result),
+                AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
             };
         }
@@ -76,6 +77,37 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, $"Move order {order} is not supported by authoritative MP.");
 
         ship.AI.OrderMoveTo(command.Position, dir, AIState.AwaitingOrders, order);
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyAttackShip(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Ship ship = UState.Objects.FindShip(command.SubjectId);
+        if (ship == null)
+            return Reject(result, $"Ship {command.SubjectId} not found.");
+        if (!ship.Active)
+            return Reject(result, $"Ship {command.SubjectId} is inactive.");
+        if (ship.Loyalty != empire)
+            return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
+        if (ship.ShipData.Role == RoleName.troop)
+            return Reject(result, "Authoritative attack MVP does not support troop boarding orders.");
+
+        Ship target = UState.Objects.FindShip(command.TargetId);
+        if (target == null)
+            return Reject(result, $"Target ship {command.TargetId} not found.");
+        if (!target.Active)
+            return Reject(result, $"Target ship {command.TargetId} is inactive.");
+        if (target == ship)
+            return Reject(result, "A ship cannot attack itself.");
+        if (target.Loyalty == null || !empire.IsEmpireAttackable(target.Loyalty, target))
+            return Reject(result, $"Empire {empire.Id} cannot attack ship {target.Id}.");
+
+        bool queue = string.Equals(command.Text, "queue", StringComparison.Ordinal);
+        if (queue)
+            ship.AI.OrderQueueSpecificTarget(target);
+        else
+            ship.AI.OrderAttackSpecificTarget(target);
         return Accept(result);
     }
 

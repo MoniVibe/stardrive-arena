@@ -95,6 +95,22 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitAttackShip(Ship ship, Ship target, bool queue)
+    {
+        if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
+            return Authoritative4XUiCommandResult.NotActive;
+        if (ship?.Active != true || target?.Active != true || ship == target
+            || ship.IsPlatformOrStation || ship.ShipData.Role == RoleName.troop
+            || target.Loyalty == null || target.Loyalty == ship.Loyalty)
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.AttackShip(context.Next(), context.EmpireId, ship.Id,
+            target.Id, queue));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static bool TrySubmitSetResearchTopic(Empire empire, string techUid)
     {
         if (!TryGetFor(empire, out Authoritative4XClientContext context))

@@ -135,6 +135,9 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(FloatBits(s.Position.Y))
               .Append('|').Append(FloatBits(s.AI.MovePosition.X))
               .Append('|').Append(FloatBits(s.AI.MovePosition.Y))
+              .Append('|').Append(s.AI.Target?.Id ?? 0)
+              .Append('|').Append(s.AI.HasPriorityTarget ? 1 : 0)
+              .Append('|').Append(TargetQueueSignature(s))
               .AppendLine();
 
         return sb.ToString();
@@ -167,6 +170,9 @@ public sealed class AuthoritativeStateSnapshot
         }
         return sb.ToString();
     }
+
+    static string TargetQueueSignature(Ship ship)
+        => string.Join(",", ship.AI.TargetQueue.Select(s => s?.Id ?? 0));
 
     static uint FloatBits(float value) => System.BitConverter.SingleToUInt32Bits(value);
 }
