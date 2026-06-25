@@ -368,7 +368,7 @@ namespace Ship_Game
             for (int i = 0; i < ships.Length; ++i)
             {
                 Ship ship = ships[i];
-                if (ship.InPlayerSensorRange)
+                if (IsKnownToLocalPlayerForUi(ship))
                 {
                     ship.RenderThrusters(ref View, ref Projection);
                 }
@@ -455,7 +455,7 @@ namespace Ship_Game
                 {
                     SceneObjBackQueue.RemoveAtSwapLast(i);
                 }
-                else if (ship.IsVisibleToPlayer)
+                else if (IsVisibleToLocalPlayerForUi(ship))
                 {
                     ship.CreateSceneObject();
                     SceneObjBackQueue.RemoveAtSwapLast(i);
@@ -620,7 +620,7 @@ namespace Ship_Game
 
             bool ShouldDrawGoalsAndWayPoints(Ship ship)
             {
-                return ship.Loyalty.isPlayer
+                return IsLocalShipForUi(ship)
                         || Player.IsAlliedWith(ship.Loyalty)
                         || Debug
                         || !Player.DifficultyModifiers.HideTacticalData
@@ -631,7 +631,7 @@ namespace Ship_Game
             {
                 return fleet != null 
                        && fleet.HasPatrolPlan
-                       && (fleet.Owner.isPlayer || Player.IsAlliedWith(fleet.Owner) || Debug);
+                       && (IsLocalEmpireForUi(fleet.Owner) || Player.IsAlliedWith(fleet.Owner) || Debug);
             }
         }
     }

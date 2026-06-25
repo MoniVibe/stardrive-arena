@@ -38,7 +38,7 @@ namespace Ship_Game
                 return;
 
             shipMenu.Children?.Clear();
-            if (s.Loyalty.isPlayer)
+            if (IsLocalShipForUi(s))
             {
                 var orders = new PieMenuNode(GameText.Orders2, ResourceManager.Texture("UI/OrdersIcon"), null);
                 orders.Add(new(GameText.GoExploring, ResourceManager.Texture("UI/marketIcon"), () => DoExplore(s)));

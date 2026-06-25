@@ -636,7 +636,7 @@ namespace Ship_Game
                 var shipRangeTex = ResourceManager.Texture("UI/node_shiprange");
                 foreach (Ship ship in UState.Objects.VisibleShips)
                 {
-                    if (ship is { WeaponsMaxRange: > 0f, IsVisibleToPlayer: true })
+                    if (ship is { WeaponsMaxRange: > 0f } && IsVisibleToLocalPlayerForUi(ship))
                     {
                         Color baseTint = ship.Loyalty == Player ? new Color(0, 200, 0) : new Color(200, 0, 0);
                         Color color = new Color(baseTint, (byte)30).Premultiplied();
@@ -656,7 +656,7 @@ namespace Ship_Game
                     {
                         if (SelectedShip == ship)
                         {
-                            Color color = (ship.Loyalty.isPlayer)
+                            Color color = IsLocalShipForUi(ship)
                                 ? new Color(0, 100, 200, 20).Premultiplied()
                                 : new Color(200, 0, 0, 10).Premultiplied();
                             float sensorRange = ship.AI.GetSensorRadius();
@@ -690,7 +690,7 @@ namespace Ship_Game
 
                     foreach (Ship ship in UState.Objects.VisibleShips)
                     {
-                        if (ship is { InhibitionRadius: > 0f, IsVisibleToPlayer: true })
+                        if (ship is { InhibitionRadius: > 0f } && IsVisibleToLocalPlayerForUi(ship))
                         {
                             DrawCircleProjected(ship.Position, ship.InhibitionRadius,
                                                 new Color(255, 50, 0, 150).Premultiplied(), 1f, inhibit, new Color(200, 0, 0, 40).Premultiplied());
@@ -817,7 +817,7 @@ namespace Ship_Game
 
                 batch.Draw(icon, commandShipCenterOnScreen, fleet.Owner.EmpireColor, 0.0f, icon.CenterF, 0.35f, SpriteEffects.None, 1f);
                 
-                if (!Player.DifficultyModifiers.HideTacticalData || debug || fleet.Owner.isPlayer || fleet.Owner.AlliedWithPlayer)
+                if (!Player.DifficultyModifiers.HideTacticalData || debug || IsLocalEmpireForUi(fleet.Owner) || fleet.Owner.IsAlliedWith(Player))
                 {
                     batch.DrawDropShadowText(fleet.Name, commandShipCenterOnScreen + FleetNameOffset, Fonts.Arial8Bold);
                 }
@@ -839,7 +839,7 @@ namespace Ship_Game
                 if (ship == null || !ship.Active)
                     continue;
 
-                if (Debug || ship.Loyalty.isPlayer || ship.Loyalty.IsAlliedWith(Player) || !Player.DifficultyModifiers.HideTacticalData)
+                if (Debug || IsLocalShipForUi(ship) || ship.Loyalty.IsAlliedWith(Player) || !Player.DifficultyModifiers.HideTacticalData)
                 {
                     Vector2 shipScreenPos = ProjectToScreenPosition(ship.Position).ToVec2fRounded();
                     batch.DrawLine(shipScreenPos, fleetCenterOnScreen, FleetLineColor);
@@ -930,7 +930,7 @@ namespace Ship_Game
             for (int i = 0; i < ships.Length; ++i)
             {
                 Ship ship = ships[i];
-                if (ship.InFrustum && ship.InPlayerSensorRange)
+                if (IsVisibleToLocalPlayerInMapForUi(ship))
                 {
                         if (!IsCinematicModeEnabled)
                             DrawTacticalIcon(ship);

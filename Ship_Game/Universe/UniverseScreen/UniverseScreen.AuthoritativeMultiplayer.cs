@@ -30,6 +30,15 @@ public partial class UniverseScreen
     public bool IsLocalShipForUi(Ship ship)
         => ship?.Loyalty != null && IsLocalEmpireForUi(ship.Loyalty);
 
+    public bool IsKnownToLocalPlayerForUi(Ship ship)
+        => ship?.KnownByEmpires.KnownBy(Player) == true;
+
+    public bool IsVisibleToLocalPlayerInMapForUi(Ship ship)
+        => ship?.InFrustum == true && IsKnownToLocalPlayerForUi(ship);
+
+    public bool IsVisibleToLocalPlayerForUi(Ship ship)
+        => IsVisibleToLocalPlayerInMapForUi(ship) && UState.IsSystemViewOrCloser;
+
     public bool LocalShipCanTakeFleetOrders(Ship ship, bool forAttack = false)
     {
         if (!IsLocalShipForUi(ship))

@@ -497,7 +497,7 @@ namespace Ship_Game
             for (int i = 0; i < ships.Length; i++)
             {
                 Ship ship = ships[i];
-                if (ship.Active && ship.ShieldMax > 0f && ship.IsVisibleToPlayerInMap && !ship.IsLaunching)
+                if (ship.Active && ship.ShieldMax > 0f && IsVisibleToLocalPlayerInMapForUi(ship) && !ship.IsLaunching)
                 {
                     shields.AddRange(ship.GetActiveShields().Select(s => s.Shield));
                 }
@@ -523,7 +523,7 @@ namespace Ship_Game
 
         bool CanClickOnShip(SpatialObjectBase go)
         {
-            return go is Ship { InPlayerSensorRange: true } ship
+            return go is Ship ship && IsKnownToLocalPlayerForUi(ship)
                 // feature: if we're zoomed OUT a lot, ignore subspace projector clicks
                 && (!ship.IsSubspaceProjector || CamPos.Z <= 1_200_000.0);
         }
@@ -579,7 +579,7 @@ namespace Ship_Game
             for (int i = 0; i < ships.Length; i++)
             {
                 Ship ship = ships[i];
-                if (!ship.Active || !ship.InPlayerSensorRange)
+                if (!ship.Active || !IsKnownToLocalPlayerForUi(ship))
                     continue;
                 if (ship.IsSubspaceProjector && CamPos.Z > 1_200_000.0)
                     continue;
@@ -1090,7 +1090,7 @@ namespace Ship_Game
                     {
                         if (p.IsExploredBy(Player) && p.RecentCombat)
                         {
-                            if (p.Owner?.isPlayer == true || p.Troops.WeHaveTroopsHere(UState.Player))
+                            if (IsLocalEmpireForUi(p.Owner) || p.Troops.WeHaveTroopsHere(Player))
                             {
                                 if (planetIdx == nextPlanetCombat)
                                     planetToView = p;
