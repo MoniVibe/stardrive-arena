@@ -1138,6 +1138,71 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XLobby_StartGeneratedGameHandoff_Headless()
+    {
+        LoadAllGameData();
+
+        try
+        {
+            IEmpireData[] races = ResourceManager.MajorRaces
+                .Where(r => !r.IsFactionOrMinorRace)
+                .OrderBy(r => RacePreference(r), StringComparer.Ordinal)
+                .Take(2)
+                .ToArray();
+            Assert.IsTrue(races.Length >= 2, "The generated-game handoff proof needs two playable major races.");
+
+            var settings = new Authoritative4XGameSettings
+            {
+                GenerationSeed = 0x4B1B4B2,
+                GalaxySize = GalSize.Tiny,
+                StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+                Mode = RaceDesignScreen.GameMode.Sandbox,
+                Difficulty = GameDifficulty.Normal,
+                NumOpponents = 1,
+                Pace = 1.5f,
+                TurnTimer = 4,
+                ExtraPlanets = 1,
+                StartingPlanetRichnessBonus = 1f,
+                GameSpeed = 2f,
+                StartPaused = true,
+            };
+
+            var lobby = new Authoritative4XLobby(hostPlayerPeerId: 2, hostName: "Host");
+            lobby.Join(3, "Client");
+            Assert.IsTrue(lobby.SetSettings(2, settings).Valid);
+            Assert.IsTrue(lobby.SetPlayerSelection(2, RacePreference(races[0]), OneAffordableTrait()).Valid);
+            Assert.IsTrue(lobby.SetPlayerSelection(3, RacePreference(races[1]), Array.Empty<string>()).Valid);
+            Assert.IsTrue(lobby.SetReady(2, true).Valid);
+            Assert.IsTrue(lobby.SetReady(3, true).Valid);
+
+            using Authoritative4XGeneratedGameStart generated = lobby.StartGeneratedGame();
+            UniverseState us = generated.AuthorityUniverse.UState;
+            Assert.AreEqual(settings.GenerationSeed, generated.Settings.GenerationSeed);
+            Assert.AreEqual(settings.GenerationSeed, us.P.GenerationSeed);
+            Assert.AreEqual(settings.GameSpeed, us.GameSpeed);
+            Assert.IsTrue(us.Paused, "The generated live handoff should preserve the host pause setting.");
+            Assert.AreEqual(2, generated.HumanEmpireIds.Length);
+            Assert.AreEqual(2, generated.EmpireIdByPeer.Count);
+
+            Empire hostEmpire = us.GetEmpireById(generated.EmpireIdForPeer(2));
+            Empire clientEmpire = us.GetEmpireById(generated.EmpireIdForPeer(3));
+            Assert.IsNotNull(hostEmpire);
+            Assert.IsNotNull(clientEmpire);
+            Assert.AreNotEqual(hostEmpire.Id, clientEmpire.Id);
+            Assert.IsTrue(SameRace(hostEmpire.data, races[0]));
+            Assert.IsTrue(SameRace(clientEmpire.data, races[1]));
+            Assert.IsTrue(AuthoritativeHumanPlayers.IsHumanControlled(hostEmpire));
+            Assert.IsTrue(AuthoritativeHumanPlayers.IsHumanControlled(clientEmpire));
+            Assert.IsTrue(hostEmpire.GetPlanets().Count > 0);
+            Assert.IsTrue(clientEmpire.GetPlanets().Count > 0);
+        }
+        finally
+        {
+            // StarDriveTest.Cleanup unloads extra data; this keeps the intent explicit for future test edits.
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XLobby_StartsGeneratedGameWithHumanRosterAndSettings_Headless()
     {
         LoadAllGameData();

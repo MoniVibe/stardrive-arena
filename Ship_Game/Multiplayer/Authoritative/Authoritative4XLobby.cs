@@ -105,23 +105,21 @@ public sealed class Authoritative4XLobbyPlayer
     }
 }
 
-public sealed class Authoritative4XLobbyStartResult : IDisposable
+public sealed class Authoritative4XGeneratedGameStart : IDisposable
 {
     public readonly UniverseScreen AuthorityUniverse;
-    public readonly Authoritative4XInProcessMultiClientSession Session;
-    public readonly Authoritative4XClientSpec[] Clients;
     public readonly int[] HumanEmpireIds;
     public readonly IReadOnlyDictionary<int, int> EmpireIdByPeer;
+    public readonly Authoritative4XGameSettings Settings;
 
-    public Authoritative4XLobbyStartResult(UniverseScreen authorityUniverse,
-        Authoritative4XInProcessMultiClientSession session, Authoritative4XClientSpec[] clients,
-        int[] humanEmpireIds, IReadOnlyDictionary<int, int> empireIdByPeer)
+    public Authoritative4XGeneratedGameStart(UniverseScreen authorityUniverse,
+        int[] humanEmpireIds, IReadOnlyDictionary<int, int> empireIdByPeer,
+        Authoritative4XGameSettings settings)
     {
         AuthorityUniverse = authorityUniverse;
-        Session = session;
-        Clients = clients;
         HumanEmpireIds = humanEmpireIds;
         EmpireIdByPeer = empireIdByPeer;
+        Settings = settings;
     }
 
     public int EmpireIdForPeer(int peerId) => EmpireIdByPeer[peerId];
@@ -129,9 +127,35 @@ public sealed class Authoritative4XLobbyStartResult : IDisposable
     public void Dispose()
     {
         AuthoritativeHumanPlayers.Clear(AuthorityUniverse.UState);
+        AuthorityUniverse.Dispose();
+    }
+}
+
+public sealed class Authoritative4XLobbyStartResult : IDisposable
+{
+    public readonly Authoritative4XGeneratedGameStart GeneratedGame;
+    public UniverseScreen AuthorityUniverse => GeneratedGame.AuthorityUniverse;
+    public int[] HumanEmpireIds => GeneratedGame.HumanEmpireIds;
+    public IReadOnlyDictionary<int, int> EmpireIdByPeer => GeneratedGame.EmpireIdByPeer;
+
+    public readonly Authoritative4XInProcessMultiClientSession Session;
+    public readonly Authoritative4XClientSpec[] Clients;
+
+    public Authoritative4XLobbyStartResult(Authoritative4XGeneratedGameStart generatedGame,
+        Authoritative4XInProcessMultiClientSession session, Authoritative4XClientSpec[] clients)
+    {
+        GeneratedGame = generatedGame;
+        Session = session;
+        Clients = clients;
+    }
+
+    public int EmpireIdForPeer(int peerId) => EmpireIdByPeer[peerId];
+
+    public void Dispose()
+    {
         foreach (Authoritative4XClientSpec client in Clients)
             AuthoritativeHumanPlayers.Clear(client.Universe.UState);
-        AuthorityUniverse.Dispose();
+        GeneratedGame.Dispose();
         foreach (Authoritative4XClientSpec client in Clients)
             client.Universe.Dispose();
     }
@@ -240,6 +264,33 @@ public sealed class Authoritative4XLobby
 
     public Authoritative4XLobbyStartResult StartInProcess()
     {
+        Authoritative4XGeneratedGameStart generated = StartGeneratedGame();
+        try
+        {
+            Authoritative4XLobbyPlayer[] players = Roster;
+            Authoritative4XGameSettings settings = generated.Settings;
+            int[] humanEmpireIds = generated.HumanEmpireIds;
+            IReadOnlyDictionary<int, int> empireIdByPeer = generated.EmpireIdByPeer;
+
+            var specs = new Authoritative4XClientSpec[players.Length];
+            for (int i = 0; i < players.Length; ++i)
+            {
+                UniverseScreen clientUniverse = CreateUniverse(players, settings);
+                specs[i] = new Authoritative4XClientSpec(players[i].PeerId, empireIdByPeer[players[i].PeerId], clientUniverse);
+            }
+
+            var session = new Authoritative4XInProcessMultiClientSession(generated.AuthorityUniverse, specs);
+            return new Authoritative4XLobbyStartResult(generated, session, specs);
+        }
+        catch
+        {
+            generated.Dispose();
+            throw;
+        }
+    }
+
+    public Authoritative4XGeneratedGameStart StartGeneratedGame()
+    {
         Authoritative4XLobbyValidation canStart = CanStart();
         if (!canStart.Valid)
             throw new InvalidOperationException(canStart.Reason);
@@ -250,16 +301,7 @@ public sealed class Authoritative4XLobby
         Dictionary<int, int> empireIdByPeer = MapHumanEmpires(players, authority);
         int[] humanEmpireIds = players.Select(p => empireIdByPeer[p.PeerId]).ToArray();
         AuthoritativeHumanPlayers.SetHumanControlledEmpires(authority.UState, humanEmpireIds);
-
-        var specs = new Authoritative4XClientSpec[players.Length];
-        for (int i = 0; i < players.Length; ++i)
-        {
-            UniverseScreen clientUniverse = CreateUniverse(players, settings);
-            specs[i] = new Authoritative4XClientSpec(players[i].PeerId, empireIdByPeer[players[i].PeerId], clientUniverse);
-        }
-
-        var session = new Authoritative4XInProcessMultiClientSession(authority, specs);
-        return new Authoritative4XLobbyStartResult(authority, session, specs, humanEmpireIds, empireIdByPeer);
+        return new Authoritative4XGeneratedGameStart(authority, humanEmpireIds, empireIdByPeer, settings);
     }
 
     public static Authoritative4XLobbyValidation ValidateRaceAndTraits(string raceName,
