@@ -6,6 +6,7 @@ using SDGraphics;
 using SDUtils.Deterministic;
 using Ship_Game.Determinism;
 using Ship_Game.Determinism.Lockstep;
+using Ship_Game.Gameplay;
 using Ship_Game.Ships;
 using Ship_Game.UI;
 using Vector2 = SDGraphics.Vector2;
@@ -220,6 +221,7 @@ public sealed partial class ArenaFightScreen
         RunStarted = PlayerShips.Count > 0 && EnemyShips.Count > 0;
         if (!RunStarted)
             throw new InvalidOperationException("Arena PvP lockstep failed to spawn both fleets.");
+        StabilizeMultiplayerArenaViewAndVisibility();
         MultiplayerTelemetry?.Event("PVP_SPAWNED",
             $"hostDesigns=[{string.Join(",", hostDesigns.Select(d => d.Name))}] "
             + $"joinDesigns=[{string.Join(",", joinDesigns.Select(d => d.Name))}] "
@@ -297,14 +299,18 @@ public sealed partial class ArenaFightScreen
 
             MultiplayerLiveHost.CommitTick(turn);
             MultiplayerLiveSession.Transport.Poll();
+            StabilizeMultiplayerArenaViewAndVisibility();
             MultiplayerLiveClient.Pump();
+            StabilizeMultiplayerArenaViewAndVisibility();
             MultiplayerLiveSession.Transport.Poll();
 
             RecordMultiplayerLiveTurn(turn, MultiplayerLiveSim.Hash(), MultiplayerLiveHost.Desync);
         }
         else
         {
+            StabilizeMultiplayerArenaViewAndVisibility();
             MultiplayerLiveClient.Pump();
+            StabilizeMultiplayerArenaViewAndVisibility();
             MultiplayerLiveSession.Transport.Poll();
             if (MultiplayerLiveSim.Tick <= turn)
             {
@@ -410,6 +416,60 @@ public sealed partial class ArenaFightScreen
                 Paused = MultiplayerLivePaused,
                 GameSpeed = MultiplayerLiveSpeed,
             });
+    }
+
+    public void StabilizeMultiplayerArenaViewAndVisibility()
+    {
+        if (UState?.Objects == null || UState.Player == null)
+            return;
+
+        // The base engine uses screen-local frustum/visibility flags inside a few combat and FX
+        // branches. In network lockstep those flags must not depend on each peer's resolution,
+        // camera, or local role. Keep the Arena view deterministic and reveal Arena objects to the
+        // authoritative player empire on both peers.
+        UState.CamPos = new Vector3d(ArenaCenter.X, ArenaCenter.Y, 12000.0);
+        CamDestination = UState.CamPos;
+        LookingAtPlanet = false;
+
+        Empire viewer = UState.Player;
+        StabilizeMultiplayerShips(PlayerShips, viewer);
+        StabilizeMultiplayerShips(EnemyShips, viewer);
+
+        Ship[] ships = UState.Objects.GetShips();
+        for (int i = 0; i < ships.Length; ++i)
+        {
+            Ship ship = ships[i];
+            if (ship == null || !ship.Active)
+                continue;
+
+            StabilizeMultiplayerShip(ship, viewer);
+        }
+
+        Projectile[] projectiles = UState.Objects.GetProjectiles();
+        for (int i = 0; i < projectiles.Length; ++i)
+        {
+            Projectile projectile = projectiles[i];
+            if (projectile == null || !projectile.Active)
+                continue;
+
+            projectile.InFrustum = true;
+        }
+    }
+
+    static void StabilizeMultiplayerShips(List<Ship> ships, Empire viewer)
+    {
+        if (ships == null)
+            return;
+        for (int i = 0; i < ships.Count; ++i)
+            StabilizeMultiplayerShip(ships[i], viewer);
+    }
+
+    static void StabilizeMultiplayerShip(Ship ship, Empire viewer)
+    {
+        if (ship == null || !ship.Active)
+            return;
+        ship.InFrustum = true;
+        ship.KnownByEmpires?.SetSeen(viewer);
     }
 
     void RecordMultiplayerLiveTurn(uint turn, (ulong lo, ulong hi) hash, DesyncDetector desync)

@@ -160,6 +160,62 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
     }
 
     [TestMethod]
+    public void ArenaMultiplayerLiveStabilizesVisibilityForBothFleets_Headless()
+    {
+        LoadAllGameData();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_mp_visibility_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempPath;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+        ArenaFightScreen screen = null;
+
+        try
+        {
+            var settings = new ArenaMultiplayerSettings
+            {
+                MatchSeed = 0x5EED,
+                RngSeed = 0xA12EA000u,
+                InputDelay = 3,
+                MaxTurns = 60,
+                CommandEveryTurns = 1,
+                HostFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x1001ul),
+                JoinFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x2002ul),
+            }.WithResolvedFleets();
+
+            screen = ArenaFightScreen.Create(settings.HostRacePreference, settings.MatchSeed,
+                startAtHub: false, opponentPreference: settings.JoinRacePreference);
+            screen.ConfigureMultiplayerPvP(settings);
+            screen.LoadContent();
+
+            ArenaMultiplayerShipSnapshot snapshot = screen.MultiplayerSnapshot();
+            int[] ids = snapshot.PlayerShipIds.Concat(snapshot.EnemyShipIds).ToArray();
+            Assert.IsTrue(ids.Length >= 2, "The live PvP setup must spawn both fleets.");
+
+            foreach (int id in ids)
+            {
+                Ship ship = screen.UState.Objects.FindShip(id);
+                Assert.IsNotNull(ship, $"Spawned ship id {id} should resolve in the universe.");
+                ship.InFrustum = false;
+            }
+
+            screen.StabilizeMultiplayerArenaViewAndVisibility();
+
+            foreach (int id in ids)
+            {
+                Ship ship = screen.UState.Objects.FindShip(id);
+                Assert.IsTrue(ship.InFrustum,
+                    $"Arena multiplayer stabilization must not let local camera/resolution hide ship {id} from the sim.");
+                Assert.IsTrue(ship.InPlayerSensorRange,
+                    $"Arena multiplayer stabilization must make ship {id} visible to the shared viewer for icons/rendering.");
+            }
+        }
+        finally
+        {
+            try { screen?.ExitScreen(); } catch { }
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+        }
+    }
+
+    [TestMethod]
     public void ArenaMultiplayerLockstep_ForcedDivergenceTripsDetector_Headless()
     {
         LoadAllGameData();
