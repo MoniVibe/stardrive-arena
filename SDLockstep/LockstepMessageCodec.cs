@@ -21,6 +21,9 @@ public static class LockstepMessageCodec
     const byte SessionError = 13;
     const byte SessionLobby = 14;
     const byte SessionControl = 15;
+    const byte AuthoritativeCommandRequest = 20;
+    const byte AuthoritativeCommandResult = 21;
+    const byte AuthoritativeStateSnapshot = 22;
 
     public static byte[] Encode(LockstepMessage message, int toPeer)
     {
@@ -98,6 +101,32 @@ public static class LockstepMessageCodec
                 case SessionErrorMessage error:
                     w.Write(SessionError);
                     WriteString(w, error.Error);
+                    break;
+                case AuthoritativeCommandRequestMessage request:
+                    w.Write(AuthoritativeCommandRequest);
+                    w.Write(request.Sequence);
+                    w.Write(request.EmpireId);
+                    w.Write(request.Kind);
+                    w.Write(request.SubjectId);
+                    w.Write(request.TargetId);
+                    w.Write(request.X);
+                    w.Write(request.Y);
+                    WriteString(w, request.Text);
+                    break;
+                case AuthoritativeCommandResultMessage result:
+                    w.Write(AuthoritativeCommandResult);
+                    w.Write(result.Sequence);
+                    w.Write(result.Accepted);
+                    w.Write(result.Tick);
+                    WriteString(w, result.Reason);
+                    break;
+                case AuthoritativeStateSnapshotMessage snapshot:
+                    w.Write(AuthoritativeStateSnapshot);
+                    w.Write(snapshot.Tick);
+                    w.Write(snapshot.HashLo);
+                    w.Write(snapshot.HashHi);
+                    WriteString(w, snapshot.SyncDigest);
+                    WriteString(w, snapshot.Payload);
                     break;
                 default:
                     throw new InvalidDataException($"Unsupported lockstep message type {message.GetType().FullName}");
@@ -204,6 +233,38 @@ public static class LockstepMessageCodec
                 break;
             case SessionError:
                 message = new SessionErrorMessage { Error = ReadString(r) };
+                break;
+            case AuthoritativeCommandRequest:
+                message = new AuthoritativeCommandRequestMessage
+                {
+                    Sequence = r.ReadInt32(),
+                    EmpireId = r.ReadInt32(),
+                    Kind = r.ReadByte(),
+                    SubjectId = r.ReadInt32(),
+                    TargetId = r.ReadInt32(),
+                    X = r.ReadSingle(),
+                    Y = r.ReadSingle(),
+                    Text = ReadString(r),
+                };
+                break;
+            case AuthoritativeCommandResult:
+                message = new AuthoritativeCommandResultMessage
+                {
+                    Sequence = r.ReadInt32(),
+                    Accepted = r.ReadBoolean(),
+                    Tick = r.ReadUInt32(),
+                    Reason = ReadString(r),
+                };
+                break;
+            case AuthoritativeStateSnapshot:
+                message = new AuthoritativeStateSnapshotMessage
+                {
+                    Tick = r.ReadUInt32(),
+                    HashLo = r.ReadUInt64(),
+                    HashHi = r.ReadUInt64(),
+                    SyncDigest = ReadString(r),
+                    Payload = ReadString(r),
+                };
                 break;
             default:
                 throw new InvalidDataException($"Unsupported lockstep wire message type {type}");
