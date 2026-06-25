@@ -53,6 +53,25 @@ public sealed class SessionStartMessage : LockstepMessage
     public string JoinLoadoutTrait = "";
     public string HostFleet = "";
     public string JoinFleet = "";
+
+    // Optional authoritative 4X launch payload. Arena/skirmish sessions leave this false
+    // and ignore the fields; 4X lobby handoff uses it to generate the same real galaxy on
+    // host and clients before attaching the authoritative session.
+    public bool IsAuthoritative4X;
+    public int AuthoritativeHostPeerId;
+    public int AuthoritativeJoinPeerId;
+    public int GenerationSeed;
+    public int GalaxySize;
+    public int StarsCount;
+    public int GameMode;
+    public int Difficulty;
+    public int NumOpponents;
+    public float Pace;
+    public int TurnTimer;
+    public int ExtraPlanets;
+    public float StartingPlanetRichnessBonus;
+    public string HostTraitOptions = "";
+    public string JoinTraitOptions = "";
 }
 
 public sealed class SessionControlMessage : LockstepMessage

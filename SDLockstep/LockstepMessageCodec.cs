@@ -93,6 +93,21 @@ public static class LockstepMessageCodec
                     WriteString(w, start.JoinFleet);
                     WriteString(w, start.BuildHash);
                     WriteString(w, start.BuildSummary);
+                    w.Write(start.IsAuthoritative4X);
+                    w.Write(start.AuthoritativeHostPeerId);
+                    w.Write(start.AuthoritativeJoinPeerId);
+                    w.Write(start.GenerationSeed);
+                    w.Write(start.GalaxySize);
+                    w.Write(start.StarsCount);
+                    w.Write(start.GameMode);
+                    w.Write(start.Difficulty);
+                    w.Write(start.NumOpponents);
+                    w.Write(start.Pace);
+                    w.Write(start.TurnTimer);
+                    w.Write(start.ExtraPlanets);
+                    w.Write(start.StartingPlanetRichnessBonus);
+                    WriteString(w, start.HostTraitOptions);
+                    WriteString(w, start.JoinTraitOptions);
                     break;
                 case SessionControlMessage control:
                     w.Write(SessionControl);
@@ -215,6 +230,21 @@ public static class LockstepMessageCodec
                 string joinFleet = ReadOptionalString(r);
                 string buildHash = ReadOptionalString(r);
                 string buildSummary = ReadOptionalString(r);
+                bool isAuthoritative4X = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
+                int authoritativeHostPeerId = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
+                int authoritativeJoinPeerId = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
+                int generationSeed = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
+                int galaxySize = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
+                int starsCount = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
+                int gameMode = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
+                int difficulty = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
+                int numOpponents = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
+                float pace = r.BaseStream.Position < r.BaseStream.Length ? r.ReadSingle() : 0f;
+                int turnTimer = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
+                int extraPlanets = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
+                float richness = r.BaseStream.Position < r.BaseStream.Length ? r.ReadSingle() : 0f;
+                string hostTraitOptions = ReadOptionalString(r);
+                string joinTraitOptions = ReadOptionalString(r);
                 message = new SessionStartMessage
                 {
                     ProtocolVersion = protocolVersion,
@@ -234,6 +264,21 @@ public static class LockstepMessageCodec
                     JoinFleet = joinFleet,
                     BuildHash = buildHash,
                     BuildSummary = buildSummary,
+                    IsAuthoritative4X = isAuthoritative4X,
+                    AuthoritativeHostPeerId = authoritativeHostPeerId,
+                    AuthoritativeJoinPeerId = authoritativeJoinPeerId,
+                    GenerationSeed = generationSeed,
+                    GalaxySize = galaxySize,
+                    StarsCount = starsCount,
+                    GameMode = gameMode,
+                    Difficulty = difficulty,
+                    NumOpponents = numOpponents,
+                    Pace = pace,
+                    TurnTimer = turnTimer,
+                    ExtraPlanets = extraPlanets,
+                    StartingPlanetRichnessBonus = richness,
+                    HostTraitOptions = hostTraitOptions,
+                    JoinTraitOptions = joinTraitOptions,
                 };
                 break;
             case SessionControl:

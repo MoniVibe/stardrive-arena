@@ -127,6 +127,76 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(snapshot.SyncDigest, snapshotCopy.SyncDigest);
         Assert.AreEqual(snapshot.Payload, snapshotCopy.Payload);
 
+        var start = new SessionStartMessage
+        {
+            FromPeer = 1,
+            ProtocolVersion = 7,
+            MatchSeed = 12345,
+            RngSeed = 67890,
+            InputDelay = 3,
+            MaxTurns = 600,
+            CommandEveryTurns = 2,
+            GameSpeed = 1.5f,
+            StartPaused = true,
+            SettingsHash = "0xSTART",
+            HostRacePreference = "United",
+            JoinRacePreference = "Draylok",
+            HostLoadoutTrait = "unused-host",
+            JoinLoadoutTrait = "unused-join",
+            HostFleet = "arena-host",
+            JoinFleet = "arena-join",
+            BuildHash = "0xBUILD",
+            BuildSummary = "summary",
+            IsAuthoritative4X = true,
+            AuthoritativeHostPeerId = 2,
+            AuthoritativeJoinPeerId = 3,
+            GenerationSeed = 0x4B1B4B2,
+            GalaxySize = (int)GalSize.Tiny,
+            StarsCount = (int)RaceDesignScreen.StarsAbundance.Rare,
+            GameMode = (int)RaceDesignScreen.GameMode.Sandbox,
+            Difficulty = (int)GameDifficulty.Hard,
+            NumOpponents = 1,
+            Pace = 2.5f,
+            TurnTimer = 4,
+            ExtraPlanets = 1,
+            StartingPlanetRichnessBonus = 1.25f,
+            HostTraitOptions = "Brutal|Cybernetic",
+            JoinTraitOptions = "Aquatic",
+        };
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(start, toPeer: 3));
+        var startCopy = (SessionStartMessage)decoded.Message;
+        Assert.AreEqual(3, decoded.ToPeer);
+        Assert.IsTrue(startCopy.IsAuthoritative4X);
+        Assert.AreEqual(start.ProtocolVersion, startCopy.ProtocolVersion);
+        Assert.AreEqual(start.MatchSeed, startCopy.MatchSeed);
+        Assert.AreEqual(start.RngSeed, startCopy.RngSeed);
+        Assert.AreEqual(start.InputDelay, startCopy.InputDelay);
+        Assert.AreEqual(start.MaxTurns, startCopy.MaxTurns);
+        Assert.AreEqual(start.CommandEveryTurns, startCopy.CommandEveryTurns);
+        Assert.AreEqual(start.GameSpeed, startCopy.GameSpeed);
+        Assert.AreEqual(start.StartPaused, startCopy.StartPaused);
+        Assert.AreEqual(start.SettingsHash, startCopy.SettingsHash);
+        Assert.AreEqual(start.HostRacePreference, startCopy.HostRacePreference);
+        Assert.AreEqual(start.JoinRacePreference, startCopy.JoinRacePreference);
+        Assert.AreEqual(start.HostFleet, startCopy.HostFleet);
+        Assert.AreEqual(start.JoinFleet, startCopy.JoinFleet);
+        Assert.AreEqual(start.BuildHash, startCopy.BuildHash);
+        Assert.AreEqual(start.BuildSummary, startCopy.BuildSummary);
+        Assert.AreEqual(start.AuthoritativeHostPeerId, startCopy.AuthoritativeHostPeerId);
+        Assert.AreEqual(start.AuthoritativeJoinPeerId, startCopy.AuthoritativeJoinPeerId);
+        Assert.AreEqual(start.GenerationSeed, startCopy.GenerationSeed);
+        Assert.AreEqual(start.GalaxySize, startCopy.GalaxySize);
+        Assert.AreEqual(start.StarsCount, startCopy.StarsCount);
+        Assert.AreEqual(start.GameMode, startCopy.GameMode);
+        Assert.AreEqual(start.Difficulty, startCopy.Difficulty);
+        Assert.AreEqual(start.NumOpponents, startCopy.NumOpponents);
+        Assert.AreEqual(start.Pace, startCopy.Pace);
+        Assert.AreEqual(start.TurnTimer, startCopy.TurnTimer);
+        Assert.AreEqual(start.ExtraPlanets, startCopy.ExtraPlanets);
+        Assert.AreEqual(start.StartingPlanetRichnessBonus, startCopy.StartingPlanetRichnessBonus);
+        Assert.AreEqual(start.HostTraitOptions, startCopy.HostTraitOptions);
+        Assert.AreEqual(start.JoinTraitOptions, startCopy.JoinTraitOptions);
+
         var result = new AuthoritativeCommandResultMessage
         {
             FromPeer = 1,
