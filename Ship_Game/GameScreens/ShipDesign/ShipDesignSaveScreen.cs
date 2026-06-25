@@ -7,6 +7,7 @@ using SDGraphics;
 using SDUtils;
 using Ship_Game.Audio;
 using Ship_Game.GameScreens.ShipDesign;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Ship_Game.UI;
 using Vector2 = SDGraphics.Vector2;
@@ -165,9 +166,15 @@ namespace Ship_Game
             }
             else
             {
-                Screen.SaveShipDesign(shipOrHullName, overwriteProtected);
+                if (!Screen.SaveShipDesign(shipOrHullName, overwriteProtected))
+                    return;
                 if (BaseWIPName.NotEmpty())
                     ShipDesignWIP.RemoveRelatedWiPs(Universe, BaseWIPName);
+                if (Authoritative4XClientContext.IsActiveFor(Screen.Player))
+                {
+                    ExitScreen();
+                    return;
+                }
                 if (!ResourceManager.GetShipTemplate(shipOrHullName, out Ship ship))
                 {
                     Log.Error($"Failed to get Ship Template after Save: {shipOrHullName}");

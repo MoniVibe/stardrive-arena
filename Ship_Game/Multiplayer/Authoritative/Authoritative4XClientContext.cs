@@ -185,6 +185,18 @@ public sealed class Authoritative4XClientContext : IDisposable
         return true;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitDesignShip(Empire empire, ShipDesign design)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Authoritative4XUiCommandResult.NotActive;
+        if (design == null || string.IsNullOrEmpty(design.Name))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.DesignShip(context.Next(), context.EmpireId,
+            design.GetBase64DesignString()));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitQueueTroop(Planet planet, Troop troop, int repeat)
     {
         if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))

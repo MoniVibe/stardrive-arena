@@ -536,6 +536,45 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XClientContext_SubmitsShipDesignWithoutLocalRegistration_Headless()
+    {
+        const ulong Seed = 0xDE516EUL;
+        const string DesignName = "Authoritative MP UI Dispatch Design";
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            ResourceManager.Ships.Delete(DesignName);
+            ShipDesign design = BuildLegalPlayerDesign(world.Player, DesignName);
+            Assert.IsFalse(ResourceManager.Ships.GetDesign(DesignName, out _),
+                "The dispatch proof starts from an unregistered design name.");
+
+            var submitted = new List<AuthoritativePlayerCommand>();
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 1000))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitDesignShip(world.Player, design));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(1000, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.DesignShip, submitted[0].Kind);
+                Assert.AreEqual(world.Player.Id, submitted[0].EmpireId);
+
+                ShipDesign decoded = ShipDesign.FromBytes(Convert.FromBase64String(submitted[0].Text));
+                Assert.AreEqual(DesignName, decoded.Name);
+                Assert.AreEqual(design.Hull, decoded.Hull);
+                Assert.IsFalse(ResourceManager.Ships.GetDesign(DesignName, out _),
+                    "A passive MP client must not locally register the design before host acceptance.");
+            }
+        }
+        finally
+        {
+            ResourceManager.Ships.Delete(DesignName);
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XShipyard_DesignAndQueueBuildCommandsSync_Headless()
     {
         const ulong Seed = 0x51F7A11UL;

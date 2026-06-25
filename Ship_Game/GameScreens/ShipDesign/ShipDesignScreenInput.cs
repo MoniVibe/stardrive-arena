@@ -6,6 +6,7 @@ using Ship_Game.Audio;
 using Ship_Game.Gameplay;
 using Ship_Game.GameScreens;
 using Ship_Game.GameScreens.ShipDesign;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Vector2 = SDGraphics.Vector2;
 using Vector3 = SDGraphics.Vector3;
@@ -669,9 +670,20 @@ namespace Ship_Game
             }
         }
 
-        public void SaveShipDesign(string name, FileInfo overwriteProtected)
+        public bool SaveShipDesign(string name, FileInfo overwriteProtected)
         {
             ShipDesign toSave = CloneCurrentDesign(name);
+            switch (Authoritative4XClientContext.TrySubmitDesignShip(Player, toSave))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    ShipSaved = true;
+                    CurrentDesign.Name = toSave.Name;
+                    return true;
+                case Authoritative4XUiCommandResult.Blocked:
+                    Log.Warning($"Authoritative MP rejected local ship-design submission for '{name}'.");
+                    return false;
+            }
+
             SaveDesign(toSave, overwriteProtected ?? new FileInfo($"{Dir.StarDriveAppData}/Saved Designs/{name}.design"));
 
             bool playerDesign = overwriteProtected == null;
@@ -690,6 +702,7 @@ namespace Ship_Game
             if (!UnlockAllFactionDesigns && !Player.WeCanBuildThis(toSave.Name))
                 Log.Error("WeCanBuildThis check failed after SaveShipDesign");
             ChangeHull(toSave);
+            return true;
         }
 
         public ShipHull SaveHullDesign(string hullName, FileInfo overwriteProtected)
