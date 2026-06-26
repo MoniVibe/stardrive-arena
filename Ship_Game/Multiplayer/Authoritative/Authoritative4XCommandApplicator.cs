@@ -85,6 +85,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.ShipSpecialOrder => ApplyShipSpecialOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipLifecycleOrder => ApplyShipLifecycleOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.SetShipCombatStance => ApplyShipCombatStance(command, empire, result),
+                AuthoritativePlayerCommandKind.SetShipTradePolicy => ApplyShipTradePolicy(command, empire, result),
                 AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
@@ -314,6 +315,48 @@ public sealed class Authoritative4XCommandApplicator
 
         ship.SetCombatStance((CombatState)command.TargetId);
         return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyShipTradePolicy(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
+            || !Enum.IsDefined(typeof(AuthoritativeShipTradePolicyKind),
+                (AuthoritativeShipTradePolicyKind)(byte)command.TargetId))
+        {
+            return Reject(result, $"Unsupported ship trade policy {command.TargetId}.");
+        }
+        if (command.Text is not ("0" or "1"))
+            return Reject(result, "Ship trade policy enabled flag must be 0 or 1.");
+
+        Ship ship = UState.Objects.FindShip(command.SubjectId);
+        if (ship == null)
+            return Reject(result, $"Ship {command.SubjectId} not found.");
+        if (!ship.Active)
+            return Reject(result, $"Ship {command.SubjectId} is inactive.");
+        if (ship.Loyalty != empire)
+            return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
+        if (!ship.IsFreighter)
+            return Reject(result, $"Ship {ship.Id} is not a freighter.");
+
+        bool enabled = command.Text == "1";
+        switch ((AuthoritativeShipTradePolicyKind)command.TargetId)
+        {
+            case AuthoritativeShipTradePolicyKind.Food:
+                ship.TransportingFood = enabled;
+                return Accept(result);
+            case AuthoritativeShipTradePolicyKind.Production:
+                ship.TransportingProduction = enabled;
+                return Accept(result);
+            case AuthoritativeShipTradePolicyKind.Colonists:
+                ship.TransportingColonists = enabled;
+                return Accept(result);
+            case AuthoritativeShipTradePolicyKind.InterEmpire:
+                ship.AllowInterEmpireTrade = enabled;
+                return Accept(result);
+            default:
+                return Reject(result, $"Unsupported ship trade policy {command.TargetId}.");
+        }
     }
 
     AuthoritativeCommandResult ApplyAttackShip(AuthoritativePlayerCommand command, Empire empire,

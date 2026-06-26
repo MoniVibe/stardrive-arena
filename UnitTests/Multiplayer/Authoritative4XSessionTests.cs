@@ -36,6 +36,7 @@ public class Authoritative4XSessionTests : StarDriveTest
         public Ship EnemyShip;
         public Ship PlatformShip;
         public Ship ColonyShip;
+        public Ship FreighterShip;
         public string ResearchUid;
     }
 
@@ -525,6 +526,16 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetShipCombatStance, copy.Kind);
         Assert.AreEqual(99, copy.SubjectId);
         Assert.AreEqual((int)CombatState.HoldPosition, copy.TargetId);
+
+        var tradePolicyRequest = AuthoritativePlayerCommand.SetShipTradePolicy(35, 2, 99,
+                AuthoritativeShipTradePolicyKind.Food, enabled: false)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(tradePolicyRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetShipTradePolicy, copy.Kind);
+        Assert.AreEqual(99, copy.SubjectId);
+        Assert.AreEqual((int)AuthoritativeShipTradePolicyKind.Food, copy.TargetId);
+        Assert.AreEqual("0", copy.Text);
 
         var attackRequest = AuthoritativePlayerCommand.AttackShip(12, 2, 99, 100, queue: true)
             .ToMessage(fromPeer: 2);
@@ -3559,6 +3570,78 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XShipTradePolicy_SyncsAndRejectsInvalidRequests_Headless()
+    {
+        const ulong Seed = 0x71ADE001UL;
+        BuiltWorld authority = BuildWorld(Seed, includeFreighter: true);
+        BuiltWorld client = BuildWorld(Seed, includeFreighter: true);
+
+        try
+        {
+            Assert.IsTrue(authority.FreighterShip.IsFreighter,
+                "The trade-policy proof must operate on a real freighter.");
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+            bool nextFoodPolicy = !authority.FreighterShip.TransportingFood;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipTradePolicy(160,
+                authority.Player.Id, authority.FreighterShip.Id, AuthoritativeShipTradePolicyKind.Food,
+                enabled: nextFoodPolicy));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(nextFoodPolicy, authority.FreighterShip.TransportingFood);
+            Assert.AreEqual(nextFoodPolicy, client.FreighterShip.TransportingFood);
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover freighter trade-policy flags.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeInterTradeDigest = session.LastAuthoritySnapshot.SyncDigest;
+            bool nextInterTradePolicy = !authority.FreighterShip.AllowInterEmpireTrade;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipTradePolicy(161,
+                authority.Player.Id, authority.FreighterShip.Id,
+                AuthoritativeShipTradePolicyKind.InterEmpire, enabled: nextInterTradePolicy));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(nextInterTradePolicy, authority.FreighterShip.AllowInterEmpireTrade);
+            Assert.AreEqual(nextInterTradePolicy, client.FreighterShip.AllowInterEmpireTrade);
+            Assert.AreNotEqual(beforeInterTradeDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipTradePolicy(162,
+                authority.Player.Id, authority.Ship.Id, AuthoritativeShipTradePolicyKind.Production, enabled: false));
+            Assert.IsFalse(session.LastResult.Accepted, "Non-freighter trade-policy changes must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "not a freighter");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipTradePolicy(163,
+                authority.Enemy.Id, authority.FreighterShip.Id, AuthoritativeShipTradePolicyKind.Colonists, enabled: false));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not change another empire's freighter policy.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(new AuthoritativePlayerCommand
+            {
+                Sequence = 164,
+                EmpireId = authority.Player.Id,
+                Kind = AuthoritativePlayerCommandKind.SetShipTradePolicy,
+                SubjectId = authority.FreighterShip.Id,
+                TargetId = 255,
+                Text = "1",
+            });
+            Assert.IsFalse(session.LastResult.Accepted, "Unknown trade-policy kinds must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "Unsupported");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientContext_SubmitsShipSpecialOrderWithoutLocalMutation_Headless()
     {
         const ulong Seed = 0xE7010CUL;
@@ -3674,6 +3757,66 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual(2, submitted.Count,
                     "A passive client must not submit or locally apply ship-info orders for another empire.");
                 Assert.AreEqual(enemyOriginalState, world.EnemyShip.AI.State);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsShipTradePolicyWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0x71ADE002UL;
+        BuiltWorld world = BuildWorld(Seed, includeFreighter: true);
+
+        try
+        {
+            Assert.IsTrue(world.FreighterShip.IsFreighter,
+                "The passive trade-policy proof must operate on a real freighter.");
+            bool originalFood = world.FreighterShip.TransportingFood;
+            bool originalProduction = world.FreighterShip.TransportingProduction;
+            bool originalColonists = world.FreighterShip.TransportingColonists;
+            bool originalInterTrade = world.FreighterShip.AllowInterEmpireTrade;
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2270))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetShipTradePolicy(world.FreighterShip,
+                        AuthoritativeShipTradePolicyKind.Food, enabled: !originalFood));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2270, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetShipTradePolicy, submitted[0].Kind);
+                Assert.AreEqual(world.FreighterShip.Id, submitted[0].SubjectId);
+                Assert.AreEqual((int)AuthoritativeShipTradePolicyKind.Food, submitted[0].TargetId);
+                Assert.AreEqual(!originalFood ? "1" : "0", submitted[0].Text);
+                Assert.AreEqual(originalFood, world.FreighterShip.TransportingFood,
+                    "Passive MP clients must not locally change freighter food policy before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetShipTradePolicy(world.FreighterShip,
+                        AuthoritativeShipTradePolicyKind.InterEmpire, enabled: !originalInterTrade));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(2271, submitted[1].Sequence);
+                Assert.AreEqual((int)AuthoritativeShipTradePolicyKind.InterEmpire, submitted[1].TargetId);
+                Assert.AreEqual(originalInterTrade, world.FreighterShip.AllowInterEmpireTrade,
+                    "Passive MP clients must not locally change inter-empire trade policy before host acceptance.");
+
+                Assert.AreEqual(originalProduction, world.FreighterShip.TransportingProduction);
+                Assert.AreEqual(originalColonists, world.FreighterShip.TransportingColonists);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetShipTradePolicy(world.Ship,
+                        AuthoritativeShipTradePolicyKind.Production, enabled: false));
+                Assert.AreEqual(2, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetShipTradePolicy(world.FreighterShip,
+                        (AuthoritativeShipTradePolicyKind)255, enabled: true));
+                Assert.AreEqual(2, submitted.Count);
             }
         }
         finally
@@ -4975,6 +5118,9 @@ public class Authoritative4XSessionTests : StarDriveTest
                 AuthoritativePlayerCommand.ShipPlanetOrder(2, 1, shipId: 77, planetId: 88,
                     AuthoritativeShipPlanetOrderType.Colonize, clearOrders: false, MoveOrder.Aggressive));
             telemetry.Command("unit", 9,
+                AuthoritativePlayerCommand.SetShipTradePolicy(7, 1, shipId: 77,
+                    AuthoritativeShipTradePolicyKind.InterEmpire, enabled: true));
+            telemetry.Command("unit", 9,
                 AuthoritativePlayerCommand.SetPlanetManualTradeSlots(3, 1, planetId: 88,
                     foodImport: 1, prodImport: 2, coloImport: 3, foodExport: 4, prodExport: 5, coloExport: 6));
             telemetry.Command("unit", 9,
@@ -4992,6 +5138,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             StringAssert.Contains(text, "summary='payload=EmpireAutomation flags=AutoExplore, AutoFreighters");
             StringAssert.Contains(text, "freighter=\\'Freighter\\'");
             StringAssert.Contains(text, "summary='payload=ShipPlanetOrder order=Colonize clear=False move=Aggressive'");
+            StringAssert.Contains(text, "summary='payload=ShipTradePolicy kind=InterEmpire enabled=True'");
             StringAssert.Contains(text, "summary='payload=ManualTradeSlots import=1,2,3 export=4,5,6'");
             StringAssert.Contains(text, "summary='payload=Blueprints name=\\'MP Core\\' type=Core buildings=1'");
             StringAssert.Contains(text, "summary='payload=DesignShip encodedChars=320'");
@@ -6458,7 +6605,7 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     BuiltWorld BuildWorld(ulong seed, bool extraPlayerPlanet = false, bool includePlatform = false,
-        bool includeNeutralPlanet = false, bool includeColonyShip = false)
+        bool includeNeutralPlanet = false, bool includeColonyShip = false, bool includeFreighter = false)
     {
         if (includePlatform)
             LoadStarterShips("Platform Base mk1-a");
@@ -6484,6 +6631,10 @@ public class Authoritative4XSessionTests : StarDriveTest
         Ship colonyShip = includeColonyShip
             ? SpawnShip(PickBuildableColonyShip(Player).Name, Player, new Vector2(12_000, 4_000))
             : null;
+        Ship freighterShip = includeFreighter
+            ? SpawnShip(PickBuildableAutomationDesign(Player, s => s.IsFreighter, "freighter").Name,
+                Player, new Vector2(14_000, 4_000))
+            : null;
         UState.Paused = false;
         UState.NoEliminationVictory = true;
         UState.Objects.EnableParallelUpdate = false;
@@ -6508,6 +6659,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             EnemyShip = enemyShip,
             PlatformShip = platformShip,
             ColonyShip = colonyShip,
+            FreighterShip = freighterShip,
             ResearchUid = researchUid,
         };
     }

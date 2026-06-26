@@ -60,6 +60,7 @@ public enum AuthoritativePlayerCommandKind : byte
     ClearColonyBlueprints = 45,
     ScrapColonyTile = 46,
     SetEmpireAutomation = 47,
+    SetShipTradePolicy = 48,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -166,6 +167,14 @@ public enum AuthoritativeShipSpecialOrderType : byte
     Explore = 1,
     ClearOrders = 2,
     Resupply = 3,
+}
+
+public enum AuthoritativeShipTradePolicyKind : byte
+{
+    Food = 1,
+    Production = 2,
+    Colonists = 3,
+    InterEmpire = 4,
 }
 
 public enum AuthoritativeShipLifecycleOrderType : byte
@@ -742,6 +751,18 @@ public sealed class AuthoritativePlayerCommand
             Kind = AuthoritativePlayerCommandKind.SetShipCombatStance,
             SubjectId = shipId,
             TargetId = (int)stance,
+        };
+
+    public static AuthoritativePlayerCommand SetShipTradePolicy(int sequence, int empireId, int shipId,
+        AuthoritativeShipTradePolicyKind policy, bool enabled)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.SetShipTradePolicy,
+            SubjectId = shipId,
+            TargetId = (int)policy,
+            Text = enabled ? "1" : "0",
         };
 
     public static AuthoritativePlayerCommand AttackShip(int sequence, int empireId, int shipId, int targetShipId,

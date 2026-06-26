@@ -564,6 +564,22 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitSetShipTradePolicy(Ship ship,
+        AuthoritativeShipTradePolicyKind policy, bool enabled)
+    {
+        if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!Enum.IsDefined(typeof(AuthoritativeShipTradePolicyKind), policy)
+            || !CanSubmitShipTradePolicy(ship))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.SetShipTradePolicy(context.Next(), context.EmpireId,
+            ship.Id, policy, enabled));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitAttackShip(Ship ship, Ship target, bool queue)
     {
         if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
@@ -994,6 +1010,9 @@ public sealed class Authoritative4XClientContext : IDisposable
            && !ship.IsMiningShip
            && !ship.IsSupplyShuttle
            && ship.DesignRole != RoleName.ssp;
+
+    static bool CanSubmitShipTradePolicy(Ship ship)
+        => ship?.Active == true && ship.IsFreighter;
 
     static bool IsLegalCombatStance(CombatState stance)
         => Enum.IsDefined(typeof(CombatState), stance);

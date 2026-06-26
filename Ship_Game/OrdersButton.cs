@@ -153,10 +153,22 @@ namespace Ship_Game
                     switch (OrderType)
                     {
                         case OrderType.Patrol:             OnPatrolClicked(input);                                 return true;
-                        case OrderType.TradeFood:          ship.TransportingFood         = !input.RightMouseClick; break;
-                        case OrderType.TradeProduction:    ship.TransportingProduction   = !input.RightMouseClick; break;
-                        case OrderType.TransportColonists: ship.TransportingColonists    = !input.RightMouseClick; break;
-                        case OrderType.AllowInterTrade:    ship.AllowInterEmpireTrade    = !input.RightMouseClick; break;
+                        case OrderType.TradeFood:
+                            SetTradePolicy(ship, AuthoritativeShipTradePolicyKind.Food,
+                                !input.RightMouseClick, x => ship.TransportingFood = x);
+                            break;
+                        case OrderType.TradeProduction:
+                            SetTradePolicy(ship, AuthoritativeShipTradePolicyKind.Production,
+                                !input.RightMouseClick, x => ship.TransportingProduction = x);
+                            break;
+                        case OrderType.TransportColonists:
+                            SetTradePolicy(ship, AuthoritativeShipTradePolicyKind.Colonists,
+                                !input.RightMouseClick, x => ship.TransportingColonists = x);
+                            break;
+                        case OrderType.AllowInterTrade:
+                            SetTradePolicy(ship, AuthoritativeShipTradePolicyKind.InterEmpire,
+                                !input.RightMouseClick, x => ship.AllowInterEmpireTrade = x);
+                            break;
                         case OrderType.FighterToggle:      ship.Carrier.FightersOut      = !input.RightMouseClick; break;
                         case OrderType.TroopToggle:        ship.Carrier.TroopsOut        = !input.RightMouseClick; break;
                         case OrderType.Explore:
@@ -220,6 +232,20 @@ namespace Ship_Game
                 return true;
             }
             return Hovering;
+        }
+
+        static void SetTradePolicy(Ship ship, AuthoritativeShipTradePolicyKind policy, bool enabled,
+            Action<bool> applyLocal)
+        {
+            switch (Authoritative4XClientContext.TrySubmitSetShipTradePolicy(ship, policy, enabled))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    break;
+                default:
+                    applyLocal(enabled);
+                    break;
+            }
         }
 
         void OnPatrolClicked(InputState input)

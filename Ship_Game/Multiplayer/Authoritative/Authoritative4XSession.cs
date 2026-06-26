@@ -272,6 +272,11 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(s.AI.HasPriorityTarget ? 1 : 0)
               .Append('|').Append(TargetQueueSignature(s))
               .Append('|').Append(ShipOrderQueueSignature(s))
+              .Append('|').Append(s.IsFreighter ? 1 : 0)
+              .Append('|').Append(s.TransportingFood ? 1 : 0)
+              .Append('|').Append(s.TransportingProduction ? 1 : 0)
+              .Append('|').Append(s.TransportingColonists ? 1 : 0)
+              .Append('|').Append(s.AllowInterEmpireTrade ? 1 : 0)
               .AppendLine();
 
         return sb.ToString();

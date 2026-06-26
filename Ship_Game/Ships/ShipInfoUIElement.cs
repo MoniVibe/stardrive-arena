@@ -638,22 +638,30 @@ namespace Ship_Game.Ships
                 Orders.Add(ao);
                 var tradeFood = new OrdersButton(s, OrderType.TradeFood, GameText.ManualTradeOrdersThisFreighter2)
                 {
-                    ValueToModify = new(() => s.TransportingFood),
+                    ValueToModify = new(() => s.TransportingFood,
+                        x => SetTradePolicy(s, AuthoritativeShipTradePolicyKind.Food,
+                            x, v => s.TransportingFood = v)),
                 };
                 Orders.Add(tradeFood);
                 var tradeProduction = new OrdersButton(s, OrderType.TradeProduction, GameText.ManualTradeOrdersThisFreighter3)
                 {
-                    ValueToModify = new(() => s.TransportingProduction)
+                    ValueToModify = new(() => s.TransportingProduction,
+                        x => SetTradePolicy(s, AuthoritativeShipTradePolicyKind.Production,
+                            x, v => s.TransportingProduction = v))
                 };
                 Orders.Add(tradeProduction);
                 var transportColonists = new OrdersButton(s, OrderType.TransportColonists, GameText.ManualTradeOrdersThisFreighter)
                 {
-                    ValueToModify = new(() => s.TransportingColonists)
+                    ValueToModify = new(() => s.TransportingColonists,
+                        x => SetTradePolicy(s, AuthoritativeShipTradePolicyKind.Colonists,
+                            x, v => s.TransportingColonists = v))
                 };
                 Orders.Add(transportColonists);
                 var allowInterEmpireTrade = new OrdersButton(s, OrderType.AllowInterTrade, GameText.ManualTradeAllowSelectedFreighters)
                 {
-                    ValueToModify = new(() => s.AllowInterEmpireTrade)
+                    ValueToModify = new(() => s.AllowInterEmpireTrade,
+                        x => SetTradePolicy(s, AuthoritativeShipTradePolicyKind.InterEmpire,
+                            x, v => s.AllowInterEmpireTrade = v))
                 };
                 Orders.Add(allowInterEmpireTrade);
                 var tradeRoutes = new OrdersButton(s, OrderType.DefineTradeRoutes, GameText.ChooseAListOfPlanets)
@@ -748,6 +756,20 @@ namespace Ship_Game.Ships
                 ob.ClickRect.X = ElementRect.X + ElementRect.Width + 2 + 52 * ex;
                 ob.ClickRect.Y = SlidingElement.Housing.Y + 15 + y * 52;
                 y++;
+            }
+        }
+
+        static void SetTradePolicy(Ship ship, AuthoritativeShipTradePolicyKind policy, bool enabled,
+            Action<bool> applyLocal)
+        {
+            switch (Authoritative4XClientContext.TrySubmitSetShipTradePolicy(ship, policy, enabled))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    break;
+                default:
+                    applyLocal(enabled);
+                    break;
             }
         }
 
