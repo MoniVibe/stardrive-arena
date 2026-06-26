@@ -99,8 +99,9 @@ public sealed class Authoritative4XLiveSession : IDisposable
             {
                 Host.Poll();
                 RecordNetworkError();
-                RecordLastResult();
+                RecordProcessedCommands();
                 SubmitHeartbeat();
+                RecordProcessedCommands();
                 EnqueuePopups(Host.DrainLocalPopups());
             }
             else
@@ -194,7 +195,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
         if (Role == Authoritative4XLiveRole.Host)
         {
             Host.SubmitLocal(LocalPeerId, command);
-            RecordLastResult(force: true);
+            RecordProcessedCommands(force: true);
         }
         else
             Client.Submit(command);
@@ -223,7 +224,6 @@ public sealed class Authoritative4XLiveSession : IDisposable
             return;
 
         Host.SubmitLocal(LocalPeerId, AuthoritativePlayerCommand.NoOp(HeartbeatSequence--, LocalEmpireId));
-        RecordLastResult();
     }
 
     void RecordNetworkError()
@@ -250,6 +250,36 @@ public sealed class Authoritative4XLiveSession : IDisposable
 
         LastTelemetryResultKey = key;
         Telemetry?.Result(result, LastSnapshot);
+    }
+
+    void RecordProcessedCommands(bool force = false)
+    {
+        if (Role != Authoritative4XLiveRole.Host)
+            return;
+
+        foreach (Authoritative4XProcessedCommand processed in Host.DrainProcessedCommands())
+        {
+            if (processed.Result == null)
+                continue;
+
+            bool remote = processed.PeerId != LocalPeerId;
+            if (remote)
+                Telemetry?.Command("network", processed.PeerId, processed.Command);
+
+            bool heartbeat = processed.Command?.Kind == AuthoritativePlayerCommandKind.NoOp
+                             && processed.Command.Sequence < 0;
+            if (!force && heartbeat && processed.Result.Tick % 300 != 0)
+                continue;
+
+            string key = $"{processed.Result.OriginPeer}:{processed.Result.Sequence}:"
+                         + $"{processed.Result.Tick}:{processed.Result.Accepted}:"
+                         + $"{processed.Snapshot?.SyncDigest}";
+            if (!force && string.Equals(key, LastTelemetryResultKey, StringComparison.Ordinal))
+                continue;
+
+            LastTelemetryResultKey = key;
+            Telemetry?.Result(processed.Result, processed.Snapshot);
+        }
     }
 
     public void Dispose()

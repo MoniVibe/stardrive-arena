@@ -621,6 +621,7 @@ public sealed class Authoritative4XNetworkHost : IDisposable
     readonly int[] PeerIds;
     readonly int LocalPeerId;
     readonly List<AuthoritativeDiplomacyPopup> LocalPopups = new();
+    readonly List<Authoritative4XProcessedCommand> ProcessedCommands = new();
 
     public AuthoritativeCommandResult LastResult { get; private set; }
     public AuthoritativeStateSnapshot LastAuthoritySnapshot { get; private set; }
@@ -630,6 +631,13 @@ public sealed class Authoritative4XNetworkHost : IDisposable
         AuthoritativeDiplomacyPopup[] popups = LocalPopups.ToArray();
         LocalPopups.Clear();
         return popups;
+    }
+
+    public Authoritative4XProcessedCommand[] DrainProcessedCommands()
+    {
+        Authoritative4XProcessedCommand[] processed = ProcessedCommands.ToArray();
+        ProcessedCommands.Clear();
+        return processed;
     }
 
     public Authoritative4XNetworkHost(UniverseScreen authorityUniverse, TcpLockstepTransport transport,
@@ -688,6 +696,7 @@ public sealed class Authoritative4XNetworkHost : IDisposable
 
         LastResult = result;
         LastAuthoritySnapshot = snapshot;
+        ProcessedCommands.Add(new Authoritative4XProcessedCommand(fromPeer, command, result, snapshot));
         foreach (int peer in PeerIds)
         {
             if (peer == LocalPeerId)
@@ -706,6 +715,23 @@ public sealed class Authoritative4XNetworkHost : IDisposable
             else
                 Transport.Send(targetPeer, popup.ToMessage(HostPeerId));
         }
+    }
+}
+
+public sealed class Authoritative4XProcessedCommand
+{
+    public readonly int PeerId;
+    public readonly AuthoritativePlayerCommand Command;
+    public readonly AuthoritativeCommandResult Result;
+    public readonly AuthoritativeStateSnapshot Snapshot;
+
+    public Authoritative4XProcessedCommand(int peerId, AuthoritativePlayerCommand command,
+        AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot)
+    {
+        PeerId = peerId;
+        Command = command;
+        Result = result;
+        Snapshot = snapshot;
     }
 }
 

@@ -2904,6 +2904,15 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsTrue(liveHost.TrySetGameSpeed(2f));
             PumpLiveTcpUntil(() => Math.Abs(client.UState.GameSpeed - 2f) < 0.001f,
                 liveHost, networkClient);
+            Planet.ColonyType remoteType = authority.EnemyPlanet.CType == Planet.ColonyType.Research
+                ? Planet.ColonyType.Military
+                : Planet.ColonyType.Research;
+            networkClient.Submit(AuthoritativePlayerCommand.SetColonyType(600, client.Enemy.Id,
+                client.EnemyPlanet.Id, remoteType));
+            PumpLiveTcpUntil(() => authority.EnemyPlanet.CType == remoteType
+                                    && client.EnemyPlanet.CType == remoteType,
+                liveHost, networkClient);
+            Assert.AreEqual(remoteType, authority.EnemyPlanet.CType);
 
             string path = liveHost.TelemetrySessionPath;
             liveHost.Dispose();
@@ -2914,6 +2923,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             StringAssert.Contains(text, "COMMAND source=ui");
             StringAssert.Contains(text, $"peer={HostPeer}");
             StringAssert.Contains(text, "kind=SetColonyType");
+            StringAssert.Contains(text, $"COMMAND source=network peer={RemotePeer}");
+            StringAssert.Contains(text, "seq=600");
             StringAssert.Contains(text, "RESULT origin=");
             StringAssert.Contains(text, "accepted=True");
             StringAssert.Contains(text, "CONTROL source=host");
