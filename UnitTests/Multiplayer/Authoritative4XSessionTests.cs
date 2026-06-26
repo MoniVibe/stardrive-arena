@@ -12,6 +12,7 @@ using Ship_Game.Ships;
 using Ship_Game.Universe;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 namespace UnitTests.Multiplayer;
@@ -2708,6 +2709,76 @@ public class Authoritative4XSessionTests : StarDriveTest
         {
             authority.Screen.Dispose();
             client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XLiveTelemetry_WritesSessionCommandAndControlEvidence_Headless()
+    {
+        const ulong Seed = 0x41E40059UL;
+        const int HostPeer = 2;
+        const int RemotePeer = 3;
+        string dir = Path.Combine(Path.GetTempPath(), $"auth4x_live_telemetry_{Guid.NewGuid():N}");
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+        string oldOutput = Authoritative4XLiveTelemetry.OutputDirectoryOverride;
+        bool? oldEnabled = Authoritative4XLiveTelemetry.EnabledOverride;
+
+        try
+        {
+            Authoritative4XLiveTelemetry.OutputDirectoryOverride = dir;
+            Authoritative4XLiveTelemetry.EnabledOverride = true;
+            int port = FreeTcpPort();
+            TcpLockstepTransport hostTransport = TcpLockstepTransport.Host(port, RemotePeer);
+            TcpLockstepTransport clientTransport = TcpLockstepTransport.Join("127.0.0.1", port,
+                Authoritative4XNetworkHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(3)),
+                "Authoritative live telemetry proof did not connect to the loopback client.");
+
+            using var networkClient = new Authoritative4XNetworkClient(client.Screen, clientTransport, RemotePeer,
+                new[] { client.Player.Id, client.Enemy.Id });
+            Authoritative4XLiveSession liveHost = Authoritative4XLiveSession.HostGame(authority.Screen,
+                hostTransport, HostPeer, new Dictionary<int, int>
+                {
+                    [HostPeer] = authority.Player.Id,
+                    [RemotePeer] = authority.Enemy.Id,
+                },
+                new[] { authority.Player.Id, authority.Enemy.Id });
+            authority.Screen.AttachAuthoritative4XMultiplayer(liveHost);
+            Assert.IsFalse(string.IsNullOrWhiteSpace(liveHost.TelemetrySessionPath),
+                "The live session should expose the telemetry session path when telemetry is enabled.");
+
+            Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetColonyType(authority.Planet,
+                    Planet.ColonyType.Military),
+                "The visible live host should route UI commands through the authoritative context.");
+            PumpLiveTcpUntil(() => networkClient.LastAuthoritySnapshot != null
+                                    && networkClient.LastClientSnapshot != null,
+                liveHost, networkClient);
+            Assert.IsTrue(liveHost.TrySetGameSpeed(2f));
+            PumpLiveTcpUntil(() => Math.Abs(client.UState.GameSpeed - 2f) < 0.001f,
+                liveHost, networkClient);
+
+            string path = liveHost.TelemetrySessionPath;
+            liveHost.Dispose();
+            string text = File.ReadAllText(path);
+            StringAssert.Contains(text, "BEGIN role=Host");
+            StringAssert.Contains(text, "ENV game=");
+            StringAssert.Contains(text, "PEERS empireByPeer=");
+            StringAssert.Contains(text, "COMMAND source=ui");
+            StringAssert.Contains(text, $"peer={HostPeer}");
+            StringAssert.Contains(text, "kind=SetColonyType");
+            StringAssert.Contains(text, "RESULT origin=");
+            StringAssert.Contains(text, "accepted=True");
+            StringAssert.Contains(text, "CONTROL source=host");
+            StringAssert.Contains(text, "END utc=");
+        }
+        finally
+        {
+            Authoritative4XLiveTelemetry.OutputDirectoryOverride = oldOutput;
+            Authoritative4XLiveTelemetry.EnabledOverride = oldEnabled;
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
         }
     }
 
