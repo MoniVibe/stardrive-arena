@@ -700,7 +700,7 @@ namespace Ship_Game.Ships
             {
                 var exp = new OrdersButton(s, OrderType.Explore, GameText.OrdersThisShipToExplore)
                 {
-                    ValueToModify = new(() => s.DoingExplore, x => s.DoingExplore = x)
+                    ValueToModify = new(() => s.DoingExplore, x => SubmitOrApplyExplore(s, x))
                 };
                 Orders.Add(exp);
             }
@@ -750,6 +750,24 @@ namespace Ship_Game.Ships
             }
 
             ship.DoingScrap = true;
+        }
+
+        static void SubmitOrApplyExplore(Ship ship, bool shouldExplore)
+        {
+            var orderType = shouldExplore
+                ? AuthoritativeShipSpecialOrderType.Explore
+                : AuthoritativeShipSpecialOrderType.ClearOrders;
+            switch (Authoritative4XClientContext.TrySubmitShipSpecialOrder(ship, orderType))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    return;
+            }
+
+            if (shouldExplore)
+                ship.DoingExplore = true;
+            else
+                ship.AI.ClearOrders();
         }
     }
 }

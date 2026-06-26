@@ -3520,6 +3520,59 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void ShipInfoExploreButton_SubmitsAuthoritativeCommandWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xE7010DUL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            var submitted = new List<AuthoritativePlayerCommand>();
+            var method = typeof(ShipInfoUIElement).GetMethod("SubmitOrApplyExplore",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            Assert.IsNotNull(method,
+                "The ship info Explore button should route through a small authoritative helper.");
+            AIState originalState = world.Ship.AI.State;
+            int originalOrders = world.Ship.AI.OrderQueue.Count;
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2180))
+            {
+                method.Invoke(null, new object[] { world.Ship, true });
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.ShipSpecialOrder, submitted[0].Kind);
+                Assert.AreEqual(world.Ship.Id, submitted[0].SubjectId);
+                Assert.AreEqual((int)AuthoritativeShipSpecialOrderType.Explore, submitted[0].TargetId);
+                Assert.AreEqual(originalState, world.Ship.AI.State,
+                    "The ship info Explore button must not locally start exploration before host acceptance.");
+                Assert.AreEqual(originalOrders, world.Ship.AI.OrderQueue.Count);
+
+                world.Ship.AI.OrderExplore();
+                AIState exploringState = world.Ship.AI.State;
+                int exploringOrders = world.Ship.AI.OrderQueue.Count;
+                method.Invoke(null, new object[] { world.Ship, false });
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.ShipSpecialOrder, submitted[1].Kind);
+                Assert.AreEqual(world.Ship.Id, submitted[1].SubjectId);
+                Assert.AreEqual((int)AuthoritativeShipSpecialOrderType.ClearOrders, submitted[1].TargetId);
+                Assert.AreEqual(exploringState, world.Ship.AI.State,
+                    "The ship info Explore off-click must not locally clear orders before host acceptance.");
+                Assert.AreEqual(exploringOrders, world.Ship.AI.OrderQueue.Count);
+
+                AIState enemyOriginalState = world.EnemyShip.AI.State;
+                method.Invoke(null, new object[] { world.EnemyShip, true });
+                Assert.AreEqual(2, submitted.Count,
+                    "A passive client must not submit or locally apply ship-info orders for another empire.");
+                Assert.AreEqual(enemyOriginalState, world.EnemyShip.AI.State);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientContext_SubmitsShipLifecycleOrderWithoutLocalMutation_Headless()
     {
         const ulong Seed = 0x5C4A9910UL;
