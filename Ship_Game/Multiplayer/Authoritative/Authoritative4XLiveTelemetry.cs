@@ -234,6 +234,15 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
                            out float taxRate, out float treasuryGoal, out bool autoTaxes)
                     ? $"payload=EmpireBudget tax={taxRate:0.###} treasury={treasuryGoal:0.###} auto={autoTaxes}"
                     : "payload=EmpireBudget invalid=true";
+            case AuthoritativePlayerCommandKind.SetEmpireAutomation:
+                return AuthoritativePlayerCommand.TryParseEmpireAutomationPayload(command.Text,
+                           out string freighter, out string colony, out string scout,
+                           out string constructor, out string researchStation, out string miningStation)
+                    ? $"payload=EmpireAutomation flags={(AuthoritativeEmpireAutomationFlags)command.TargetId} "
+                      + $"freighter='{OneLine(freighter)}' colony='{OneLine(colony)}' "
+                      + $"scout='{OneLine(scout)}' constructor='{OneLine(constructor)}' "
+                      + $"researchStation='{OneLine(researchStation)}' miningStation='{OneLine(miningStation)}'"
+                    : "payload=EmpireAutomation invalid=true";
             case AuthoritativePlayerCommandKind.SetPlanetGoodsState:
                 return $"payload=PlanetGoods kind={(AuthoritativePlanetGoodsKind)command.TargetId} state={command.Text}";
             case AuthoritativePlayerCommandKind.SetPlanetPrioritizedPort:

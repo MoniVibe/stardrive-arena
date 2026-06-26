@@ -5,6 +5,7 @@ using Microsoft.Xna.Framework.Graphics;
 using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
@@ -77,18 +78,18 @@ namespace Ship_Game
 
             UIList rest = AddList(new(win.X + 10f, win.Y + 290));
             rest.Padding = new(2f, 10f);
-            rest.AddCheckbox(() => UState.Player.AutoPickConstructors,  title: GameText.AutoPickConstructorsName, tooltip: GameText.AutoPickConstructorsTip);
-            rest.AddCheckbox(() => UState.Player.AutoPickBestColonizer, title: GameText.AutoPickColonyShip, tooltip: GameText.TheBestColonyShipWill);
-            rest.AddCheckbox(() => UState.Player.AutoPickBestFreighter, title: GameText.AutoPickFreighter, tooltip: GameText.IfAutoTradeIsChecked);
-            rest.AddCheckbox(() => UState.Player.AutoResearch,          title: GameText.AutoResearch, tooltip: GameText.YourEmpireWillAutomaticallySelect);
-            rest.AddCheckbox(() => UState.Player.AutoBuildTerraformers, title: GameText.AutoBuildTerraformers, tooltip: GameText.AutoBuildTerraformersTip);
-            rest.AddCheckbox(() => UState.Player.AutoTaxes,             title: GameText.AutoTaxes, tooltip: GameText.YourEmpireWillAutomaticallyManage3);
+            rest.AddCheckbox(() => Screen.Player.AutoPickConstructors,  title: GameText.AutoPickConstructorsName, tooltip: GameText.AutoPickConstructorsTip);
+            rest.AddCheckbox(() => Screen.Player.AutoPickBestColonizer, title: GameText.AutoPickColonyShip, tooltip: GameText.TheBestColonyShipWill);
+            rest.AddCheckbox(() => Screen.Player.AutoPickBestFreighter, title: GameText.AutoPickFreighter, tooltip: GameText.IfAutoTradeIsChecked);
+            rest.AddCheckbox(() => Screen.Player.AutoResearch,          title: GameText.AutoResearch, tooltip: GameText.YourEmpireWillAutomaticallySelect);
+            rest.AddCheckbox(() => Screen.Player.AutoBuildTerraformers, title: GameText.AutoBuildTerraformers, tooltip: GameText.AutoBuildTerraformersTip);
+            rest.AddCheckbox(() => Screen.Player.AutoTaxes,             title: GameText.AutoTaxes, tooltip: GameText.YourEmpireWillAutomaticallyManage3);
 
             if (ResearchStationsEnabled && Screen.Player.CanBuildResearchStations)
-                rest.AddCheckbox(() => UState.Player.AutoPickBestResearchStation, title: GameText.AutoPickResearchStation, tooltip: GameText.AutoPickResearchStationTip);
+                rest.AddCheckbox(() => Screen.Player.AutoPickBestResearchStation, title: GameText.AutoPickResearchStation, tooltip: GameText.AutoPickResearchStationTip);
 
             if (MiningOpsEnabled && Screen.Player.CanBuildMiningStations)
-                rest.AddCheckbox(() => UState.Player.AutoPickBestMiningStation, title: GameText.AutoPickMiningStation, tooltip: GameText.AutoPickMiningStationTip);
+                rest.AddCheckbox(() => Screen.Player.AutoPickBestMiningStation, title: GameText.AutoPickMiningStation, tooltip: GameText.AutoPickMiningStationTip);
 
             rest.AddCheckbox(() => RushConstruction,                      title: GameText.RushAllConstruction, tooltip: GameText.RushAllConstructionTip);
             rest.AddCheckbox(() => UState.P.AllowPlayerInterTrade,        title: GameText.AllowPlayerInterTradeTitle, tooltip: GameText.AllowPlayerInterTradeTip);
@@ -187,22 +188,174 @@ namespace Ship_Game
             if (!IsOpen)
                 return false;
 
+            bool authoritative = Authoritative4XClientContext.IsActive;
+            AutomationSnapshot before = authoritative ? CaptureAutomationSnapshot() : default;
+
             if (base.HandleInput(input))
             {
-                EmpireData playerData = Screen.Player.data;
-                playerData.CurrentAutoFreighter   = FreighterDropDown.ActiveName;
-                playerData.CurrentAutoColony      = ColonyShipDropDown.ActiveName;
-                playerData.CurrentConstructor     = ConstructorDropDown.ActiveName;
-                playerData.CurrentAutoScout       = ScoutDropDown.ActiveName;
-
-                if (ResearchStationsEnabled && Screen.Player.CanBuildResearchStations)
-                    playerData.CurrentResearchStation = ResearchStationDropDown.ActiveName;
-                if (MiningOpsEnabled && Screen.Player.CanBuildMiningStations)
-                    playerData.CurrentMiningStation   = MiningStationDropDown.ActiveName;
+                CopyDropDownsToPlayerData();
+                if (authoritative)
+                {
+                    AutomationSnapshot after = CaptureAutomationSnapshot();
+                    RestoreAutomationSnapshot(before);
+                    SetDropDownsToSnapshot(before);
+                    if (after.DiffersFrom(before))
+                    {
+                        Authoritative4XClientContext.TrySubmitEmpireAutomation(Screen.Player, after.Flags,
+                            after.Freighter, after.Colony, after.Scout, after.Constructor,
+                            after.ResearchStation, after.MiningStation);
+                    }
+                }
 
                 return true;
             }
             return false;
+        }
+
+        void CopyDropDownsToPlayerData()
+        {
+            EmpireData playerData = Screen.Player.data;
+            playerData.CurrentAutoFreighter   = ActiveNameOrEmpty(FreighterDropDown);
+            playerData.CurrentAutoColony      = ActiveNameOrEmpty(ColonyShipDropDown);
+            playerData.CurrentConstructor     = ActiveNameOrEmpty(ConstructorDropDown);
+            playerData.CurrentAutoScout       = ActiveNameOrEmpty(ScoutDropDown);
+
+            if (ResearchStationsEnabled && Screen.Player.CanBuildResearchStations)
+                playerData.CurrentResearchStation = ActiveNameOrEmpty(ResearchStationDropDown);
+            if (MiningOpsEnabled && Screen.Player.CanBuildMiningStations)
+                playerData.CurrentMiningStation = ActiveNameOrEmpty(MiningStationDropDown);
+        }
+
+        static string ActiveNameOrEmpty(DropOptions<int> options)
+            => options != null && options.Count > 0 ? options.ActiveName ?? "" : "";
+
+        AutomationSnapshot CaptureAutomationSnapshot()
+        {
+            Empire player = Screen.Player;
+            EmpireData data = player.data;
+            return new AutomationSnapshot
+            {
+                Flags = AutomationFlags(player),
+                Freighter = data.CurrentAutoFreighter ?? "",
+                Colony = data.CurrentAutoColony ?? "",
+                Scout = data.CurrentAutoScout ?? "",
+                Constructor = data.CurrentConstructor ?? "",
+                ResearchStation = data.CurrentResearchStation ?? "",
+                MiningStation = data.CurrentMiningStation ?? "",
+                AllowPlayerInterTrade = UState.P.AllowPlayerInterTrade,
+                SuppressOnBuildNotifications = UState.P.SuppressOnBuildNotifications,
+                DisableInhibitionWarning = UState.P.DisableInhibitionWarning,
+                DisableVolcanoWarning = UState.P.DisableVolcanoWarning,
+                DisableCrashSiteWarning = UState.P.DisableCrashSiteWarning,
+                EnableStarvationWarning = UState.P.EnableStarvationWarning,
+                PrioitizeProjectors = UState.P.PrioitizeProjectors,
+            };
+        }
+
+        void RestoreAutomationSnapshot(AutomationSnapshot snapshot)
+        {
+            Empire player = Screen.Player;
+            EmpireData data = player.data;
+            ApplyAutomationFlags(player, snapshot.Flags);
+            data.CurrentAutoFreighter = snapshot.Freighter;
+            data.CurrentAutoColony = snapshot.Colony;
+            data.CurrentAutoScout = snapshot.Scout;
+            data.CurrentConstructor = snapshot.Constructor;
+            data.CurrentResearchStation = snapshot.ResearchStation;
+            data.CurrentMiningStation = snapshot.MiningStation;
+
+            UState.P.AllowPlayerInterTrade = snapshot.AllowPlayerInterTrade;
+            UState.P.SuppressOnBuildNotifications = snapshot.SuppressOnBuildNotifications;
+            UState.P.DisableInhibitionWarning = snapshot.DisableInhibitionWarning;
+            UState.P.DisableVolcanoWarning = snapshot.DisableVolcanoWarning;
+            UState.P.DisableCrashSiteWarning = snapshot.DisableCrashSiteWarning;
+            UState.P.EnableStarvationWarning = snapshot.EnableStarvationWarning;
+            UState.P.PrioitizeProjectors = snapshot.PrioitizeProjectors;
+        }
+
+        void SetDropDownsToSnapshot(AutomationSnapshot snapshot)
+        {
+            SetActiveEntry(FreighterDropDown, snapshot.Freighter);
+            SetActiveEntry(ColonyShipDropDown, snapshot.Colony);
+            SetActiveEntry(ScoutDropDown, snapshot.Scout);
+            SetActiveEntry(ConstructorDropDown, snapshot.Constructor);
+            SetActiveEntry(ResearchStationDropDown, snapshot.ResearchStation);
+            SetActiveEntry(MiningStationDropDown, snapshot.MiningStation);
+        }
+
+        static void SetActiveEntry(DropOptions<int> options, string name)
+        {
+            if (options != null && !string.IsNullOrEmpty(name))
+                options.SetActiveEntry(name);
+        }
+
+        void ApplyAutomationFlags(Empire player, AuthoritativeEmpireAutomationFlags flags)
+        {
+            player.AutoPickConstructors = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickConstructors);
+            player.AutoPickBestColonizer = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestColonizer);
+            player.AutoPickBestFreighter = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter);
+            player.AutoResearch = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoResearch);
+            player.AutoBuildTerraformers = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildTerraformers);
+            player.AutoTaxes = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoTaxes);
+            player.AutoPickBestResearchStation = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation);
+            player.AutoPickBestMiningStation = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation);
+            player.AutoExplore = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoExplore);
+            player.AutoColonize = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoColonize);
+            player.AutoBuildSpaceRoads = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildSpaceRoads);
+            player.AutoFreighters = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoFreighters);
+            player.AutoBuildResearchStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations);
+            player.AutoBuildMiningStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations);
+            bool rushAll = flags.HasFlag(AuthoritativeEmpireAutomationFlags.RushAllConstruction);
+            player.RushAllConstruction = rushAll;
+            Screen.RunOnSimThread(() => player.SwitchRushAllConstruction(rushAll));
+        }
+
+        static AuthoritativeEmpireAutomationFlags AutomationFlags(Empire player)
+        {
+            var flags = AuthoritativeEmpireAutomationFlags.None;
+            if (player.AutoPickConstructors) flags |= AuthoritativeEmpireAutomationFlags.AutoPickConstructors;
+            if (player.AutoPickBestColonizer) flags |= AuthoritativeEmpireAutomationFlags.AutoPickBestColonizer;
+            if (player.AutoPickBestFreighter) flags |= AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter;
+            if (player.AutoResearch) flags |= AuthoritativeEmpireAutomationFlags.AutoResearch;
+            if (player.AutoBuildTerraformers) flags |= AuthoritativeEmpireAutomationFlags.AutoBuildTerraformers;
+            if (player.AutoTaxes) flags |= AuthoritativeEmpireAutomationFlags.AutoTaxes;
+            if (player.AutoPickBestResearchStation) flags |= AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation;
+            if (player.AutoPickBestMiningStation) flags |= AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation;
+            if (player.AutoExplore) flags |= AuthoritativeEmpireAutomationFlags.AutoExplore;
+            if (player.AutoColonize) flags |= AuthoritativeEmpireAutomationFlags.AutoColonize;
+            if (player.AutoBuildSpaceRoads) flags |= AuthoritativeEmpireAutomationFlags.AutoBuildSpaceRoads;
+            if (player.AutoFreighters) flags |= AuthoritativeEmpireAutomationFlags.AutoFreighters;
+            if (player.AutoBuildResearchStations) flags |= AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations;
+            if (player.AutoBuildMiningStations) flags |= AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations;
+            if (player.RushAllConstruction) flags |= AuthoritativeEmpireAutomationFlags.RushAllConstruction;
+            return flags;
+        }
+
+        struct AutomationSnapshot
+        {
+            public AuthoritativeEmpireAutomationFlags Flags;
+            public string Freighter;
+            public string Colony;
+            public string Scout;
+            public string Constructor;
+            public string ResearchStation;
+            public string MiningStation;
+            public bool AllowPlayerInterTrade;
+            public bool SuppressOnBuildNotifications;
+            public bool DisableInhibitionWarning;
+            public bool DisableVolcanoWarning;
+            public bool DisableCrashSiteWarning;
+            public bool EnableStarvationWarning;
+            public bool PrioitizeProjectors;
+
+            public bool DiffersFrom(AutomationSnapshot other)
+                => Flags != other.Flags
+                   || Freighter != other.Freighter
+                   || Colony != other.Colony
+                   || Scout != other.Scout
+                   || Constructor != other.Constructor
+                   || ResearchStation != other.ResearchStation
+                   || MiningStation != other.MiningStation;
         }
 
         void WarnBuildableShips()

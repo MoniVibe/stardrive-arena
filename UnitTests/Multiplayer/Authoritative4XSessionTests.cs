@@ -128,6 +128,28 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(0.45f, treasuryGoal);
         Assert.IsTrue(autoTaxes);
 
+        var automationFlags = AuthoritativeEmpireAutomationFlags.AutoExplore
+                              | AuthoritativeEmpireAutomationFlags.AutoColonize
+                              | AuthoritativeEmpireAutomationFlags.AutoFreighters
+                              | AuthoritativeEmpireAutomationFlags.RushAllConstruction;
+        var automationRequest = AuthoritativePlayerCommand.SetEmpireAutomation(117, 2,
+                automationFlags, "Freighter", "Colony", "Scout", "Constructor",
+                "Research Station", "Mining Station")
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(automationRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetEmpireAutomation, copy.Kind);
+        Assert.AreEqual((int)automationFlags, copy.TargetId);
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParseEmpireAutomationPayload(copy.Text,
+            out string freighter, out string colony, out string scout, out string constructor,
+            out string researchStation, out string miningStation));
+        Assert.AreEqual("Freighter", freighter);
+        Assert.AreEqual("Colony", colony);
+        Assert.AreEqual("Scout", scout);
+        Assert.AreEqual("Constructor", constructor);
+        Assert.AreEqual("Research Station", researchStation);
+        Assert.AreEqual("Mining Station", miningStation);
+
         var queueResearchRequest = AuthoritativePlayerCommand.QueueResearch(18, 2, "Research UID")
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(queueResearchRequest, toPeer: 1));
@@ -4019,6 +4041,69 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XEmpireAutomation_SyncsAndRejectsInvalidDesigns_Headless()
+    {
+        const ulong Seed = 0xA470A11UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            ClearEmpireAutomation(authority.Player);
+            ClearEmpireAutomation(client.Player);
+
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string freighter = PickBuildableAutomationDesign(authority.Player, s => s.IsFreighter, "freighter").Name;
+            string colony = PickBuildableColonyShip(authority.Player).Name;
+            string scout = PickBuildableAutomationDesign(authority.Player,
+                s => s.Role == RoleName.scout || s.Role == RoleName.fighter || s.ShipCategory == ShipCategory.Recon,
+                "scout").Name;
+            string constructor = PickOptionalAutomationDesign(authority.Player, s => s.IsConstructor);
+            string researchStation = PickOptionalAutomationDesign(authority.Player, s => s.IsResearchStation);
+            string miningStation = PickOptionalAutomationDesign(authority.Player, s => s.IsMiningStation);
+            var flags = AuthoritativeEmpireAutomationFlags.AutoExplore
+                        | AuthoritativeEmpireAutomationFlags.AutoColonize
+                        | AuthoritativeEmpireAutomationFlags.AutoFreighters
+                        | AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter
+                        | AuthoritativeEmpireAutomationFlags.AutoResearch
+                        | AuthoritativeEmpireAutomationFlags.AutoTaxes
+                        | AuthoritativeEmpireAutomationFlags.RushAllConstruction;
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetEmpireAutomation(63, authority.Player.Id,
+                flags, freighter, colony, scout, constructor, researchStation, miningStation));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            AssertEmpireAutomation(authority.Player, flags, freighter, colony, scout, constructor,
+                researchStation, miningStation);
+            AssertEmpireAutomation(client.Player, flags, freighter, colony, scout, constructor,
+                researchStation, miningStation);
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover empire automation flags and selected automation designs.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string acceptedDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetEmpireAutomation(64, authority.Player.Id,
+                flags, freighter, colony, "Missing Authoritative Scout", constructor, researchStation, miningStation));
+            Assert.IsFalse(session.LastResult.Accepted, "Missing automation designs must be rejected by the host.");
+            StringAssert.Contains(session.LastResult.Reason, "scout");
+            Assert.AreEqual(acceptedDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            var illegalFlags = flags | (AuthoritativeEmpireAutomationFlags)(1 << 20);
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetEmpireAutomation(65, authority.Player.Id,
+                illegalFlags, freighter, colony, scout, constructor, researchStation, miningStation));
+            Assert.IsFalse(session.LastResult.Accepted, "Unsupported automation flag bits must be rejected.");
+            Assert.AreEqual(acceptedDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientContext_SubmitsEmpireBudgetWithoutLocalMutation_Headless()
     {
         const ulong Seed = 0xB0D6ECUL;
@@ -4054,6 +4139,63 @@ public class Authoritative4XSessionTests : StarDriveTest
 
                 Assert.IsFalse(Authoritative4XClientContext.TrySubmitSetEmpireBudget(world.Enemy,
                     taxRate: 0.2f, treasuryGoal: 0.3f, autoTaxes: true));
+                Assert.AreEqual(1, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsEmpireAutomationWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xA470A12UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            ClearEmpireAutomation(world.Player);
+            var submitted = new List<AuthoritativePlayerCommand>();
+            string freighter = PickBuildableAutomationDesign(world.Player, s => s.IsFreighter, "freighter").Name;
+            string colony = PickBuildableColonyShip(world.Player).Name;
+            string scout = PickBuildableAutomationDesign(world.Player,
+                s => s.Role == RoleName.scout || s.Role == RoleName.fighter || s.ShipCategory == ShipCategory.Recon,
+                "scout").Name;
+            string constructor = PickOptionalAutomationDesign(world.Player, s => s.IsConstructor);
+            var flags = AuthoritativeEmpireAutomationFlags.AutoExplore
+                        | AuthoritativeEmpireAutomationFlags.AutoColonize
+                        | AuthoritativeEmpireAutomationFlags.AutoFreighters
+                        | AuthoritativeEmpireAutomationFlags.RushAllConstruction;
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 1850))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitEmpireAutomation(world.Player, flags,
+                        freighter, colony, scout, constructor, "", ""));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(1850, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetEmpireAutomation, submitted[0].Kind);
+                Assert.AreEqual(world.Player.Id, submitted[0].EmpireId);
+                Assert.AreEqual((int)flags, submitted[0].TargetId);
+                Assert.IsTrue(AuthoritativePlayerCommand.TryParseEmpireAutomationPayload(submitted[0].Text,
+                    out string parsedFreighter, out string parsedColony, out string parsedScout,
+                    out string parsedConstructor, out string parsedResearchStation, out string parsedMiningStation));
+                Assert.AreEqual(freighter, parsedFreighter);
+                Assert.AreEqual(colony, parsedColony);
+                Assert.AreEqual(scout, parsedScout);
+                Assert.AreEqual(constructor, parsedConstructor);
+                Assert.AreEqual("", parsedResearchStation);
+                Assert.AreEqual("", parsedMiningStation);
+                AssertEmpireAutomation(world.Player, AuthoritativeEmpireAutomationFlags.None,
+                    "", "", "", "", "", "",
+                    "Passive MP clients must not locally change automation before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitEmpireAutomation(world.Enemy, flags,
+                        freighter, colony, scout, constructor, "", ""));
                 Assert.AreEqual(1, submitted.Count);
             }
         }
@@ -4801,6 +4943,11 @@ public class Authoritative4XSessionTests : StarDriveTest
                 AuthoritativePlayerCommand.SetEmpireBudget(1, 1, taxRate: 0.25f,
                     treasuryGoal: 0.5f, autoTaxes: true));
             telemetry.Command("unit", 9,
+                AuthoritativePlayerCommand.SetEmpireAutomation(6, 1,
+                    AuthoritativeEmpireAutomationFlags.AutoExplore
+                    | AuthoritativeEmpireAutomationFlags.AutoFreighters,
+                    "Freighter", "Colony", "Scout", "Constructor", "", ""));
+            telemetry.Command("unit", 9,
                 AuthoritativePlayerCommand.ShipPlanetOrder(2, 1, shipId: 77, planetId: 88,
                     AuthoritativeShipPlanetOrderType.Colonize, clearOrders: false, MoveOrder.Aggressive));
             telemetry.Command("unit", 9,
@@ -4818,6 +4965,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             string text = File.ReadAllText(path);
             StringAssert.Contains(text, "textHash=0x");
             StringAssert.Contains(text, "summary='payload=EmpireBudget tax=0.25 treasury=0.5 auto=True'");
+            StringAssert.Contains(text, "summary='payload=EmpireAutomation flags=AutoExplore, AutoFreighters");
+            StringAssert.Contains(text, "freighter=\\'Freighter\\'");
             StringAssert.Contains(text, "summary='payload=ShipPlanetOrder order=Colonize clear=False move=Aggressive'");
             StringAssert.Contains(text, "summary='payload=ManualTradeSlots import=1,2,3 export=4,5,6'");
             StringAssert.Contains(text, "summary='payload=Blueprints name=\\'MP Core\\' type=Core buildings=1'");
@@ -6064,6 +6213,95 @@ public class Authoritative4XSessionTests : StarDriveTest
             .FirstOrDefault();
         Assert.IsNotNull(ship, $"Empire {empire.Id} needs at least one buildable colony ship for the authoritative colonize proof.");
         return ship;
+    }
+
+    static IShipDesign PickBuildableAutomationDesign(Empire empire, Func<IShipDesign, bool> predicate, string label)
+    {
+        IShipDesign ship = empire.ShipsWeCanBuildSnapshot
+            .Where(s => s.IsShipGoodToBuild(empire) && predicate(s))
+            .OrderBy(s => s.BaseCost)
+            .ThenBy(s => s.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(ship, $"Empire {empire.Id} needs at least one buildable {label} design for the authoritative automation proof.");
+        return ship;
+    }
+
+    static string PickOptionalAutomationDesign(Empire empire, Func<IShipDesign, bool> predicate)
+    {
+        return empire.ShipsWeCanBuildSnapshot
+            .Where(s => s.IsShipGoodToBuild(empire) && predicate(s))
+            .OrderBy(s => s.BaseCost)
+            .ThenBy(s => s.Name, StringComparer.Ordinal)
+            .Select(s => s.Name)
+            .FirstOrDefault() ?? "";
+    }
+
+    static void ClearEmpireAutomation(Empire empire)
+    {
+        empire.AutoPickConstructors = false;
+        empire.AutoPickBestColonizer = false;
+        empire.AutoPickBestFreighter = false;
+        empire.AutoResearch = false;
+        empire.AutoBuildTerraformers = false;
+        empire.AutoTaxes = false;
+        empire.AutoPickBestResearchStation = false;
+        empire.AutoPickBestMiningStation = false;
+        empire.AutoExplore = false;
+        empire.AutoColonize = false;
+        empire.AutoBuildSpaceRoads = false;
+        empire.AutoFreighters = false;
+        empire.AutoBuildResearchStations = false;
+        empire.AutoBuildMiningStations = false;
+        empire.RushAllConstruction = false;
+        empire.SwitchRushAllConstruction(false);
+        empire.data.CurrentAutoFreighter = "";
+        empire.data.CurrentAutoColony = "";
+        empire.data.CurrentAutoScout = "";
+        empire.data.CurrentConstructor = "";
+        empire.data.CurrentResearchStation = "";
+        empire.data.CurrentMiningStation = "";
+    }
+
+    static void AssertEmpireAutomation(Empire empire, AuthoritativeEmpireAutomationFlags flags,
+        string freighter, string colony, string scout, string constructor,
+        string researchStation, string miningStation, string message = "")
+    {
+        Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickConstructors),
+            empire.AutoPickConstructors, message);
+        Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestColonizer),
+            empire.AutoPickBestColonizer, message);
+        Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter),
+            empire.AutoPickBestFreighter, message);
+        Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoResearch),
+            empire.AutoResearch, message);
+        Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildTerraformers),
+            empire.AutoBuildTerraformers, message);
+        Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoTaxes),
+            empire.AutoTaxes, message);
+        Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation),
+            empire.AutoPickBestResearchStation, message);
+        Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation),
+            empire.AutoPickBestMiningStation, message);
+        Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoExplore),
+            empire.AutoExplore, message);
+        Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoColonize),
+            empire.AutoColonize, message);
+        Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildSpaceRoads),
+            empire.AutoBuildSpaceRoads, message);
+        Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoFreighters),
+            empire.AutoFreighters, message);
+        Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations),
+            empire.AutoBuildResearchStations, message);
+        Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations),
+            empire.AutoBuildMiningStations, message);
+        Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.RushAllConstruction),
+            empire.RushAllConstruction, message);
+        Assert.AreEqual(freighter, empire.data.CurrentAutoFreighter ?? "", message);
+        Assert.AreEqual(colony, empire.data.CurrentAutoColony ?? "", message);
+        Assert.AreEqual(scout, empire.data.CurrentAutoScout ?? "", message);
+        Assert.AreEqual(constructor, empire.data.CurrentConstructor ?? "", message);
+        Assert.AreEqual(researchStation, empire.data.CurrentResearchStation ?? "", message);
+        Assert.AreEqual(miningStation, empire.data.CurrentMiningStation ?? "", message);
     }
 
     static IShipDesign PickBuildableDeepSpacePlatform(Empire empire)

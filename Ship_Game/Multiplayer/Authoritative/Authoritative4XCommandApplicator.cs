@@ -49,6 +49,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.RemoveResearchQueueItem => ApplyRemoveResearchQueueItem(command, empire, result),
                 AuthoritativePlayerCommandKind.MoveResearchQueueItem => ApplyMoveResearchQueueItem(command, empire, result),
                 AuthoritativePlayerCommandKind.SetEmpireBudget => ApplyEmpireBudget(command, empire, result),
+                AuthoritativePlayerCommandKind.SetEmpireAutomation => ApplyEmpireAutomation(command, empire, result),
                 AuthoritativePlayerCommandKind.DiplomacyProposal => ApplyDiplomacy(command, empire, result),
                 AuthoritativePlayerCommandKind.DiplomacyResponse => ApplyDiplomacy(command, empire, result),
                 AuthoritativePlayerCommandKind.DesignShip => ApplyDesignShip(command, empire, result),
@@ -117,6 +118,60 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, $"Move order {order} is not supported by authoritative MP.");
 
         ship.AI.OrderMoveTo(command.Position, dir, AIState.AwaitingOrders, order);
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyEmpireAutomation(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        var flags = (AuthoritativeEmpireAutomationFlags)command.TargetId;
+        if ((flags & ~AuthoritativeEmpireAutomationFlags.All) != 0)
+            return Reject(result, $"Unsupported empire automation flags {command.TargetId}.");
+
+        if (!AuthoritativePlayerCommand.TryParseEmpireAutomationPayload(command.Text,
+                out string freighter, out string colony, out string scout, out string constructor,
+                out string researchStation, out string miningStation))
+        {
+            return Reject(result, $"Invalid empire automation payload '{command.Text}'.");
+        }
+
+        if (!IsAutomationDesignValid(empire, freighter, d => d.IsFreighter, "freighter", out string reason)
+            || !IsAutomationDesignValid(empire, colony, d => d.IsColonyShip, "colony ship", out reason)
+            || !IsAutomationDesignValid(empire, scout,
+                d => d.Role == RoleName.scout || d.Role == RoleName.fighter || d.ShipCategory == ShipCategory.Recon,
+                "scout", out reason)
+            || !IsAutomationDesignValid(empire, constructor, d => d.IsConstructor, "constructor", out reason)
+            || !IsAutomationDesignValid(empire, researchStation, d => d.IsResearchStation, "research station", out reason)
+            || !IsAutomationDesignValid(empire, miningStation, d => d.IsMiningStation, "mining station", out reason))
+        {
+            return Reject(result, reason);
+        }
+
+        empire.AutoPickConstructors = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickConstructors);
+        empire.AutoPickBestColonizer = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestColonizer);
+        empire.AutoPickBestFreighter = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter);
+        empire.AutoResearch = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoResearch);
+        empire.AutoBuildTerraformers = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildTerraformers);
+        empire.AutoTaxes = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoTaxes);
+        empire.AutoPickBestResearchStation = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation);
+        empire.AutoPickBestMiningStation = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation);
+        empire.AutoExplore = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoExplore);
+        empire.AutoColonize = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoColonize);
+        empire.AutoBuildSpaceRoads = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildSpaceRoads);
+        empire.AutoFreighters = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoFreighters);
+        empire.AutoBuildResearchStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations);
+        empire.AutoBuildMiningStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations);
+
+        bool rushAll = flags.HasFlag(AuthoritativeEmpireAutomationFlags.RushAllConstruction);
+        empire.RushAllConstruction = rushAll;
+        empire.SwitchRushAllConstruction(rushAll);
+
+        empire.data.CurrentAutoFreighter = freighter;
+        empire.data.CurrentAutoColony = colony;
+        empire.data.CurrentAutoScout = scout;
+        empire.data.CurrentConstructor = constructor;
+        empire.data.CurrentResearchStation = researchStation;
+        empire.data.CurrentMiningStation = miningStation;
         return Accept(result);
     }
 
@@ -1713,6 +1768,25 @@ public sealed class Authoritative4XCommandApplicator
         orderType = (AuthoritativeShipPlanetOrderType)orderValue;
         clearOrders = clearValue == 1;
         moveOrder = (MoveOrder)moveValue;
+        return true;
+    }
+
+    static bool IsAutomationDesignValid(Empire empire, string designName, Func<IShipDesign, bool> predicate,
+        string label, out string reason)
+    {
+        reason = "";
+        if (string.IsNullOrWhiteSpace(designName))
+            return true;
+        if (!ResourceManager.Ships.GetDesign(designName, out IShipDesign design))
+        {
+            reason = $"Automation {label} design '{designName}' was not found.";
+            return false;
+        }
+        if (!design.IsShipGoodToBuild(empire) || !predicate(design))
+        {
+            reason = $"Automation {label} design '{designName}' is not buildable by empire {empire.Id}.";
+            return false;
+        }
         return true;
     }
 

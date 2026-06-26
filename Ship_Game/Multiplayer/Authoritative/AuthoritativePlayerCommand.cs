@@ -59,6 +59,7 @@ public enum AuthoritativePlayerCommandKind : byte
     ApplyColonyBlueprints = 44,
     ClearColonyBlueprints = 45,
     ScrapColonyTile = 46,
+    SetEmpireAutomation = 47,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -91,6 +92,32 @@ public enum AuthoritativeResearchQueueMove : byte
     Down = 2,
     ToTopOrPrereq = 3,
     ToTopWithPrereqs = 4,
+}
+
+[Flags]
+public enum AuthoritativeEmpireAutomationFlags
+{
+    None = 0,
+    AutoPickConstructors = 1 << 0,
+    AutoPickBestColonizer = 1 << 1,
+    AutoPickBestFreighter = 1 << 2,
+    AutoResearch = 1 << 3,
+    AutoBuildTerraformers = 1 << 4,
+    AutoTaxes = 1 << 5,
+    AutoPickBestResearchStation = 1 << 6,
+    AutoPickBestMiningStation = 1 << 7,
+    AutoExplore = 1 << 8,
+    AutoColonize = 1 << 9,
+    AutoBuildSpaceRoads = 1 << 10,
+    AutoFreighters = 1 << 11,
+    AutoBuildResearchStations = 1 << 12,
+    AutoBuildMiningStations = 1 << 13,
+    RushAllConstruction = 1 << 14,
+    All = AutoPickConstructors | AutoPickBestColonizer | AutoPickBestFreighter
+        | AutoResearch | AutoBuildTerraformers | AutoTaxes | AutoPickBestResearchStation
+        | AutoPickBestMiningStation | AutoExplore | AutoColonize | AutoBuildSpaceRoads
+        | AutoFreighters | AutoBuildResearchStations | AutoBuildMiningStations
+        | RushAllConstruction,
 }
 
 public enum AuthoritativePlanetGoodsKind : byte
@@ -195,6 +222,7 @@ public sealed class AuthoritativePlayerCommand
     public const int MaxWantedShipyards = 3;
     public const int MaxWantedStations = 10;
     public const int MaxColonyBlueprintBuildings = 256;
+    public const int MaxAutomationDesignNameLength = 128;
 
     public int Sequence;
     public int EmpireId;
@@ -372,6 +400,19 @@ public sealed class AuthoritativePlayerCommand
             EmpireId = empireId,
             Kind = AuthoritativePlayerCommandKind.SetEmpireBudget,
             Text = EncodeEmpireBudgetPayload(taxRate, treasuryGoal, autoTaxes),
+        };
+
+    public static AuthoritativePlayerCommand SetEmpireAutomation(int sequence, int empireId,
+        AuthoritativeEmpireAutomationFlags flags, string freighter, string colony, string scout,
+        string constructor, string researchStation, string miningStation)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.SetEmpireAutomation,
+            TargetId = (int)flags,
+            Text = EncodeEmpireAutomationPayload(freighter, colony, scout, constructor,
+                researchStation, miningStation),
         };
 
     public static AuthoritativePlayerCommand DiplomacyProposal(int sequence, int proposerEmpireId, int targetEmpireId,
@@ -813,6 +854,46 @@ public sealed class AuthoritativePlayerCommand
         autoTaxes = autoValue == 1;
         return true;
     }
+
+    public static string EncodeEmpireAutomationPayload(string freighter, string colony, string scout,
+        string constructor, string researchStation, string miningStation)
+        => string.Join("|",
+            EncodeText(freighter ?? ""),
+            EncodeText(colony ?? ""),
+            EncodeText(scout ?? ""),
+            EncodeText(constructor ?? ""),
+            EncodeText(researchStation ?? ""),
+            EncodeText(miningStation ?? ""));
+
+    public static bool TryParseEmpireAutomationPayload(string payload, out string freighter,
+        out string colony, out string scout, out string constructor, out string researchStation,
+        out string miningStation)
+    {
+        freighter = colony = scout = constructor = researchStation = miningStation = "";
+
+        string[] parts = (payload ?? "").Split('|');
+        if (parts.Length != 6
+            || !TryDecodeText(parts[0], out freighter)
+            || !TryDecodeText(parts[1], out colony)
+            || !TryDecodeText(parts[2], out scout)
+            || !TryDecodeText(parts[3], out constructor)
+            || !TryDecodeText(parts[4], out researchStation)
+            || !TryDecodeText(parts[5], out miningStation))
+        {
+            return false;
+        }
+
+        return IsLegalAutomationDesignName(freighter)
+               && IsLegalAutomationDesignName(colony)
+               && IsLegalAutomationDesignName(scout)
+               && IsLegalAutomationDesignName(constructor)
+               && IsLegalAutomationDesignName(researchStation)
+               && IsLegalAutomationDesignName(miningStation);
+    }
+
+    public static bool IsLegalAutomationDesignName(string name)
+        => (name ?? "").Length <= MaxAutomationDesignNameLength
+           && (name ?? "").All(c => !char.IsControl(c));
 
     public static string EncodeManualTradeSlotsPayload(int foodImport, int prodImport, int coloImport,
         int foodExport, int prodExport, int coloExport)

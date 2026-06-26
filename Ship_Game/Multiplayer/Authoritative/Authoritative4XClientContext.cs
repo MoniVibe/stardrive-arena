@@ -682,6 +682,28 @@ public sealed class Authoritative4XClientContext : IDisposable
         return true;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitEmpireAutomation(Empire empire,
+        AuthoritativeEmpireAutomationFlags flags, string freighter, string colony, string scout,
+        string constructor, string researchStation, string miningStation)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if ((flags & ~AuthoritativeEmpireAutomationFlags.All) != 0
+            || !AuthoritativePlayerCommand.IsLegalAutomationDesignName(freighter)
+            || !AuthoritativePlayerCommand.IsLegalAutomationDesignName(colony)
+            || !AuthoritativePlayerCommand.IsLegalAutomationDesignName(scout)
+            || !AuthoritativePlayerCommand.IsLegalAutomationDesignName(constructor)
+            || !AuthoritativePlayerCommand.IsLegalAutomationDesignName(researchStation)
+            || !AuthoritativePlayerCommand.IsLegalAutomationDesignName(miningStation))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.SetEmpireAutomation(context.Next(), context.EmpireId,
+            flags, freighter, colony, scout, constructor, researchStation, miningStation));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitDesignShip(Empire empire, ShipDesign design)
     {
         if (!TryGetFor(empire, out Authoritative4XClientContext context))

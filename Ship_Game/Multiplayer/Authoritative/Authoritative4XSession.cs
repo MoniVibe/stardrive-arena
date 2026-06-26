@@ -73,6 +73,13 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(FloatBits(e.data.TaxRate))
               .Append('|').Append(FloatBits(e.data.treasuryGoal))
               .Append('|').Append(e.AutoTaxes ? 1 : 0)
+              .Append('|').Append((int)AutomationFlags(e))
+              .Append('|').Append(e.data.CurrentAutoFreighter ?? "")
+              .Append('|').Append(e.data.CurrentAutoColony ?? "")
+              .Append('|').Append(e.data.CurrentAutoScout ?? "")
+              .Append('|').Append(e.data.CurrentConstructor ?? "")
+              .Append('|').Append(e.data.CurrentResearchStation ?? "")
+              .Append('|').Append(e.data.CurrentMiningStation ?? "")
               .AppendLine();
 
         foreach (Empire e in us.Empires.OrderBy(e => e.Id))
@@ -324,6 +331,27 @@ public sealed class AuthoritativeStateSnapshot
 
     static string ResearchQueueSignature(Empire empire)
         => string.Join(",", empire.data.ResearchQueue);
+
+    static AuthoritativeEmpireAutomationFlags AutomationFlags(Empire e)
+    {
+        var flags = AuthoritativeEmpireAutomationFlags.None;
+        if (e.AutoPickConstructors) flags |= AuthoritativeEmpireAutomationFlags.AutoPickConstructors;
+        if (e.AutoPickBestColonizer) flags |= AuthoritativeEmpireAutomationFlags.AutoPickBestColonizer;
+        if (e.AutoPickBestFreighter) flags |= AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter;
+        if (e.AutoResearch) flags |= AuthoritativeEmpireAutomationFlags.AutoResearch;
+        if (e.AutoBuildTerraformers) flags |= AuthoritativeEmpireAutomationFlags.AutoBuildTerraformers;
+        if (e.AutoTaxes) flags |= AuthoritativeEmpireAutomationFlags.AutoTaxes;
+        if (e.AutoPickBestResearchStation) flags |= AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation;
+        if (e.AutoPickBestMiningStation) flags |= AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation;
+        if (e.AutoExplore) flags |= AuthoritativeEmpireAutomationFlags.AutoExplore;
+        if (e.AutoColonize) flags |= AuthoritativeEmpireAutomationFlags.AutoColonize;
+        if (e.AutoBuildSpaceRoads) flags |= AuthoritativeEmpireAutomationFlags.AutoBuildSpaceRoads;
+        if (e.AutoFreighters) flags |= AuthoritativeEmpireAutomationFlags.AutoFreighters;
+        if (e.AutoBuildResearchStations) flags |= AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations;
+        if (e.AutoBuildMiningStations) flags |= AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations;
+        if (e.RushAllConstruction) flags |= AuthoritativeEmpireAutomationFlags.RushAllConstruction;
+        return flags;
+    }
 
     static bool IsDeepSpaceBuildStateGoal(Goal goal)
         => goal is DeepSpaceBuildGoal or ProcessResearchStation or MiningOps;
