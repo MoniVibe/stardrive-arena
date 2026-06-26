@@ -14,6 +14,7 @@ using Ship_Game.Gameplay;
 using Ship_Game.Ships;
 using Ship_Game.Ships.AI;
 using Ship_Game.Universe;
+using Vector2 = SDGraphics.Vector2;
 
 namespace Ship_Game.Multiplayer.Authoritative;
 
@@ -116,6 +117,33 @@ public sealed class AuthoritativeStateSnapshot
                   .Append('|').Append(goal.TargetPlanet?.Id ?? 0)
                   .Append('|').Append(goal.IsManualColonizationOrder ? 1 : 0)
                   .Append('|').Append(goal.FinishedShip?.Id ?? 0)
+                  .AppendLine();
+            }
+
+            foreach (Goal goal in e.AI.Goals
+                         .Where(IsDeepSpaceBuildStateGoal)
+                         .OrderBy(g => (int)g.Type)
+                         .ThenBy(g => g.ToBuild?.Name ?? "", StringComparer.Ordinal)
+                         .ThenBy(g => g.TargetPlanet?.Id ?? 0)
+                         .ThenBy(g => DeepSpaceGoalSystem(g)?.Id ?? 0)
+                         .ThenBy(g => g.BuildPosition.X)
+                         .ThenBy(g => g.BuildPosition.Y))
+            {
+                Vector2 buildPosition = goal.BuildPosition;
+                Vector2 movePosition = goal.MovePosition;
+                sb.Append("G|").Append(e.Id)
+                  .Append("|DeepSpace")
+                  .Append('|').Append((int)goal.Type)
+                  .Append('|').Append(goal.Step)
+                  .Append('|').Append(goal.ToBuild?.Name ?? "")
+                  .Append('|').Append(goal.TargetPlanet?.Id ?? 0)
+                  .Append('|').Append(DeepSpaceGoalSystem(goal)?.Id ?? 0)
+                  .Append('|').Append(goal.TargetShip?.Id ?? 0)
+                  .Append('|').Append(goal.PlanetBuildingAt?.Id ?? 0)
+                  .Append('|').Append(FloatBits(buildPosition.X))
+                  .Append('|').Append(FloatBits(buildPosition.Y))
+                  .Append('|').Append(FloatBits(movePosition.X))
+                  .Append('|').Append(FloatBits(movePosition.Y))
                   .AppendLine();
             }
 
@@ -237,6 +265,18 @@ public sealed class AuthoritativeStateSnapshot
 
     static string ResearchQueueSignature(Empire empire)
         => string.Join(",", empire.data.ResearchQueue);
+
+    static bool IsDeepSpaceBuildStateGoal(Goal goal)
+        => goal is DeepSpaceBuildGoal or ProcessResearchStation or MiningOps;
+
+    static SolarSystem DeepSpaceGoalSystem(Goal goal)
+        => goal switch
+        {
+            DeepSpaceBuildGoal deepSpace => deepSpace.TargetSystem,
+            ProcessResearchStation research => research.TargetSystem,
+            MiningOps mining => mining.TargetSystem,
+            _ => null,
+        };
 
     static string FleetShipSignature(Fleet fleet)
         => string.Join(",", fleet.Ships.OrderBy(s => s.Id).Select(s => s.Id.ToString(CultureInfo.InvariantCulture)));

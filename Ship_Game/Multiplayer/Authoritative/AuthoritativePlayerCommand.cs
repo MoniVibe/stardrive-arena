@@ -45,6 +45,7 @@ public enum AuthoritativePlayerCommandKind : byte
     LoadFleetPatrol = 31,
     SetColonizationGoal = 32,
     SetFleetLayout = 33,
+    QueueDeepSpaceBuild = 34,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -198,6 +199,19 @@ public sealed class AuthoritativePlayerCommand
             Kind = AuthoritativePlayerCommandKind.SetColonizationGoal,
             SubjectId = planetId,
             TargetId = enabled ? 1 : 0,
+        };
+
+    public static AuthoritativePlayerCommand QueueDeepSpaceBuild(int sequence, int empireId, string designName,
+        Vector2 buildPosition, int targetPlanetId = 0, int targetSystemId = 0, Vector2 tetherOffset = default)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.QueueDeepSpaceBuild,
+            SubjectId = targetPlanetId,
+            TargetId = targetSystemId,
+            Position = buildPosition,
+            Text = EncodeDeepSpaceBuildPayload(designName, tetherOffset),
         };
 
     public static AuthoritativePlayerCommand SetColonyLabor(int sequence, int empireId, int planetId,
@@ -664,6 +678,30 @@ public sealed class AuthoritativePlayerCommand
 
         vector = new Vector2(FloatFromBits(xBits), FloatFromBits(yBits));
         return true;
+    }
+
+    public static string EncodeDeepSpaceBuildPayload(string designName, Vector2 tetherOffset)
+        => string.Join("|",
+            EncodeText(designName ?? ""),
+            Hex(FloatBits(tetherOffset.X)),
+            Hex(FloatBits(tetherOffset.Y)));
+
+    public static bool TryParseDeepSpaceBuildPayload(string payload, out string designName, out Vector2 tetherOffset)
+    {
+        designName = "";
+        tetherOffset = default;
+        string[] parts = (payload ?? "").Split('|');
+        if (parts.Length != 3
+            || !TryDecodeText(parts[0], out designName)
+            || string.IsNullOrWhiteSpace(designName)
+            || !uint.TryParse(parts[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint xBits)
+            || !uint.TryParse(parts[2], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint yBits))
+        {
+            return false;
+        }
+
+        tetherOffset = new Vector2(FloatFromBits(xBits), FloatFromBits(yBits));
+        return float.IsFinite(tetherOffset.X) && float.IsFinite(tetherOffset.Y);
     }
 
     public static string EncodeFleetLayout(IEnumerable<FleetDataNode> nodes)

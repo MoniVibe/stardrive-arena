@@ -75,6 +75,26 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitQueueDeepSpaceBuild(Empire empire, IShipDesign design,
+        Vector2 buildPosition, Planet targetPlanet, SolarSystem targetSystem, Vector2 tetherOffset)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (design == null || string.IsNullOrWhiteSpace(design.Name) || !empire.CanBuildStation(design))
+            return Authoritative4XUiCommandResult.Blocked;
+        if (!float.IsFinite(buildPosition.X) || !float.IsFinite(buildPosition.Y)
+            || !float.IsFinite(tetherOffset.X) || !float.IsFinite(tetherOffset.Y))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+        if (targetPlanet != null && targetSystem != null && targetPlanet.System != targetSystem)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.QueueDeepSpaceBuild(context.Next(), context.EmpireId,
+            design.Name, buildPosition, targetPlanet?.Id ?? 0, targetSystem?.Id ?? 0, tetherOffset));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static bool TrySubmitSetColonyLabor(Planet planet, float food, float production, float research,
         bool foodLocked, bool productionLocked, bool researchLocked)
     {

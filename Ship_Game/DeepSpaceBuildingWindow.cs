@@ -5,6 +5,7 @@ using SDUtils;
 using Ship_Game.Audio;
 using Ship_Game.Commands.Goals;
 using Ship_Game.GameScreens.ShipDesign;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Vector2 = SDGraphics.Vector2;
 using Ship_Game.UI;
@@ -154,6 +155,17 @@ namespace Ship_Game
             if (OkToBuild(TargetPlanet, TargetSystem))
             {
                 Vector2 worldPos = Screen.CursorWorldPosition2D;
+                switch (Authoritative4XClientContext.TrySubmitQueueDeepSpaceBuild(Player, ShipToBuild,
+                            worldPos, TargetPlanet, TargetSystem, TetherOffset))
+                {
+                    case Authoritative4XUiCommandResult.Submitted:
+                        GameAudio.EchoAffirmative();
+                        return;
+                    case Authoritative4XUiCommandResult.Blocked:
+                        GameAudio.NegativeClick();
+                        return;
+                }
+
                 if (ShipToBuild.IsResearchStation)
                 {
                     if (TargetPlanet != null)      Player.AI.AddGoalAndEvaluate(new ProcessResearchStation(Player, TargetPlanet, ShipToBuild, TetherOffset));

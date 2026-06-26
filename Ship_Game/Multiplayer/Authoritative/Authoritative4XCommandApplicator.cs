@@ -67,6 +67,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.AutoArrangeFleet => ApplyAutoArrangeFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.LoadFleetPatrol => ApplyLoadFleetPatrol(command, empire, result),
                 AuthoritativePlayerCommandKind.SetFleetLayout => ApplyFleetLayout(command, empire, result),
+                AuthoritativePlayerCommandKind.QueueDeepSpaceBuild => ApplyDeepSpaceBuild(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipSpecialOrder => ApplyShipSpecialOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipLifecycleOrder => ApplyShipLifecycleOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.SetShipCombatStance => ApplyShipCombatStance(command, empire, result),
@@ -376,6 +377,102 @@ public sealed class Authoritative4XCommandApplicator
         if (alreadyMarked)
             empire.AI.CancelColonization(planet);
         return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyDeepSpaceBuild(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (!AuthoritativePlayerCommand.TryParseDeepSpaceBuildPayload(command.Text,
+                out string designName, out Vector2 tetherOffset))
+        {
+            return Reject(result, "Invalid deep-space build payload.");
+        }
+        if (!float.IsFinite(command.Position.X) || !float.IsFinite(command.Position.Y))
+            return Reject(result, "Deep-space build position is not finite.");
+        if (!ResourceManager.Ships.GetDesign(designName, out IShipDesign design))
+            return Reject(result, $"Deep-space build design '{designName}' was not found.");
+        if (!empire.CanBuildStation(design))
+            return Reject(result, $"Empire {empire.Id} cannot build deep-space design '{designName}'.");
+
+        Planet targetPlanet = command.SubjectId == 0 ? null : UState.GetPlanet(command.SubjectId);
+        if (command.SubjectId != 0 && targetPlanet == null)
+            return Reject(result, $"Deep-space target planet {command.SubjectId} was not found.");
+
+        SolarSystem targetSystem = command.TargetId == 0 ? null : UState.Systems.FirstOrDefault(s => s.Id == command.TargetId);
+        if (command.TargetId != 0 && targetSystem == null)
+            return Reject(result, $"Deep-space target system {command.TargetId} was not found.");
+        targetSystem ??= targetPlanet?.System;
+        if (targetPlanet != null && targetSystem != targetPlanet.System)
+            return Reject(result, $"Deep-space target planet {targetPlanet.Id} is not in system {targetSystem?.Id ?? 0}.");
+
+        if (!CanQueueDeepSpaceBuild(empire, design, command.Position, targetPlanet, targetSystem))
+            return Reject(result, $"Deep-space build placement is not legal for '{designName}'.");
+
+        if (design.IsResearchStation)
+        {
+            if (targetPlanet != null)
+                empire.AI.AddGoalAndEvaluate(new ProcessResearchStation(empire, targetPlanet, design, tetherOffset));
+            else
+                empire.AI.AddGoalAndEvaluate(new ProcessResearchStation(empire, targetSystem, command.Position, design));
+        }
+        else if (design.IsMiningStation)
+        {
+            empire.AI.AddGoalAndEvaluate(new MiningOps(empire, targetPlanet, design, tetherOffset));
+        }
+        else if (targetPlanet != null)
+        {
+            empire.AI.AddGoalAndEvaluate(new BuildConstructionShip(command.Position, design.Name, empire,
+                targetPlanet, tetherOffset));
+        }
+        else
+        {
+            empire.AI.AddGoalAndEvaluate(new BuildConstructionShip(command.Position, design.Name, empire,
+                manualPlacement: true));
+        }
+
+        return Accept(result);
+    }
+
+    static bool CanQueueDeepSpaceBuild(Empire empire, IShipDesign design, Vector2 worldPos,
+        Planet targetPlanet, SolarSystem targetSystem)
+    {
+        const float MinimumBuildDistanceFromSun = 20_000f;
+
+        if (design == null)
+            return false;
+        if (targetSystem != null && (worldPos.InRadius(targetSystem.Position, MinimumBuildDistanceFromSun)
+                                     || !targetSystem.InSafeDistanceFromRadiation(worldPos)))
+        {
+            return false;
+        }
+        if (targetSystem != null && targetPlanet == null && design.IsMiningStation)
+            return false;
+
+        if (targetPlanet != null)
+        {
+            if (targetPlanet.IsOutOfOrbitalsLimit(design))
+                return false;
+            if (design.IsResearchStation && !targetPlanet.CanBeResearchedBy(empire))
+                return false;
+            if (design.IsMiningStation && (!targetPlanet.IsMineable || !targetPlanet.Mining.CanAddMiningStationFor(empire)))
+                return false;
+        }
+        else
+        {
+            if (design.IsShipyard || design.IsMiningStation)
+                return false;
+            if (targetSystem != null && design.IsResearchStation)
+            {
+                if (worldPos.OutsideRadius(targetSystem.Position, targetSystem.Radius * 0.3f))
+                    return false;
+                if (!targetSystem.CanBeResearchedBy(empire))
+                    return false;
+            }
+            if (targetSystem == null && design.IsResearchStation)
+                return false;
+        }
+
+        return true;
     }
 
     AuthoritativeCommandResult ApplyColonyLabor(AuthoritativePlayerCommand command, Empire empire,

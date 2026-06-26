@@ -3,6 +3,7 @@ using SDGraphics;
 using SDLockstep;
 using Ship_Game;
 using Ship_Game.AI;
+using Ship_Game.Commands.Goals;
 using Ship_Game.Data;
 using Ship_Game.GameScreens.DiplomacyScreen;
 using Ship_Game.Gameplay;
@@ -293,7 +294,23 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(CombatState.GuardMode, decodedLayout[1].CombatState);
         Assert.AreEqual(654_321f, decodedLayout[1].OrdersRadius);
 
-        var loadPatrolRequest = AuthoritativePlayerCommand.LoadFleetPatrol(33, 2, 7, "Alpha Patrol")
+        var deepSpaceBuildRequest = AuthoritativePlayerCommand.QueueDeepSpaceBuild(33, 2,
+                "Platform Base mk1-a", new Vector2(10_000f, -20_000f), targetPlanetId: 5,
+                targetSystemId: 6, tetherOffset: new Vector2(1_250f, -2_500f))
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(deepSpaceBuildRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.QueueDeepSpaceBuild, copy.Kind);
+        Assert.AreEqual(5, copy.SubjectId);
+        Assert.AreEqual(6, copy.TargetId);
+        Assert.AreEqual(10_000f, copy.X);
+        Assert.AreEqual(-20_000f, copy.Y);
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParseDeepSpaceBuildPayload(copy.Text,
+            out string buildDesign, out Vector2 tetherOffset));
+        Assert.AreEqual("Platform Base mk1-a", buildDesign);
+        Assert.AreEqual(new Vector2(1_250f, -2_500f), tetherOffset);
+
+        var loadPatrolRequest = AuthoritativePlayerCommand.LoadFleetPatrol(34, 2, 7, "Alpha Patrol")
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(loadPatrolRequest, toPeer: 1));
         copy = (AuthoritativeCommandRequestMessage)decoded.Message;
@@ -1528,6 +1545,50 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XDeepSpaceBuild_QueuesGoalAndSyncs_Headless()
+    {
+        const ulong Seed = 0xD3355A4CUL;
+        BuiltWorld authority = BuildWorld(Seed, includePlatform: true);
+        BuiltWorld client = BuildWorld(Seed, includePlatform: true);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            IShipDesign design = PickBuildableDeepSpacePlatform(authority.Player);
+            Vector2 buildPos = authority.Planet.Position + new Vector2(85_000f, 42_000f);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueDeepSpaceBuild(145,
+                authority.Player.Id, design.Name, buildPos));
+
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Goal authorityGoal = authority.Player.AI.Goals.FirstOrDefault(g =>
+                g is BuildConstructionShip && g.ToBuild?.Name == design.Name && g.BuildPosition == buildPos);
+            Goal clientGoal = client.Player.AI.Goals.FirstOrDefault(g =>
+                g is BuildConstructionShip && g.ToBuild?.Name == design.Name && g.BuildPosition == buildPos);
+            Assert.IsNotNull(authorityGoal, "Authority must queue the real deep-space construction goal.");
+            Assert.IsNotNull(clientGoal, "Replica must receive the same accepted deep-space construction goal.");
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "Deep-space build goals must be covered by the authoritative sync digest.");
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, "|DeepSpace|");
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, design.Name);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueDeepSpaceBuild(146,
+                authority.Player.Id, "missing-buildable-station", buildPos));
+            Assert.IsFalse(session.LastResult.Accepted, "Unknown deep-space designs must be rejected.");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XFleetLayout_ReplacesNodesAndSyncs_Headless()
     {
         const ulong Seed = 0xF1EE4A14UL;
@@ -2103,6 +2164,54 @@ public class Authoritative4XSessionTests : StarDriveTest
                 enemyFleet.AddShips(new[] { world.EnemyShip });
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitAutoArrangeFleet(enemyFleet));
+                Assert.AreEqual(1, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsDeepSpaceBuildWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xD3355A51UL;
+        BuiltWorld world = BuildWorld(Seed, includePlatform: true);
+
+        try
+        {
+            IShipDesign design = PickBuildableDeepSpacePlatform(world.Player);
+            Vector2 buildPos = world.Planet.Position + new Vector2(60_000f, 35_000f);
+            int initialGoals = world.Player.AI.Goals.Count;
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2160))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitQueueDeepSpaceBuild(world.Player, design,
+                        buildPos, targetPlanet: null, targetSystem: null, tetherOffset: Vector2.Zero));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2160, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.QueueDeepSpaceBuild, submitted[0].Kind);
+                Assert.AreEqual(buildPos, submitted[0].Position);
+                Assert.IsTrue(AuthoritativePlayerCommand.TryParseDeepSpaceBuildPayload(submitted[0].Text,
+                    out string designName, out Vector2 tetherOffset));
+                Assert.AreEqual(design.Name, designName);
+                Assert.AreEqual(Vector2.Zero, tetherOffset);
+                Assert.AreEqual(initialGoals, world.Player.AI.Goals.Count,
+                    "Passive MP clients must not add deep-space build goals before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitQueueDeepSpaceBuild(world.Player, design,
+                        new Vector2(float.NaN, 0f), targetPlanet: null, targetSystem: null,
+                        tetherOffset: Vector2.Zero));
+                Assert.AreEqual(1, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitQueueDeepSpaceBuild(world.Enemy, design,
+                        buildPos, targetPlanet: null, targetSystem: null, tetherOffset: Vector2.Zero));
                 Assert.AreEqual(1, submitted.Count);
             }
         }
@@ -4311,6 +4420,18 @@ public class Authoritative4XSessionTests : StarDriveTest
             .FirstOrDefault();
         Assert.IsNotNull(ship, $"Empire {empire.Id} needs at least one mobile buildable ship for the UI dispatch proof.");
         return ship;
+    }
+
+    static IShipDesign PickBuildableDeepSpacePlatform(Empire empire)
+    {
+        IShipDesign design = empire.SpaceStationsWeCanBuildSnapshot
+            .Where(s => !s.IsResearchStation && !s.IsMiningStation && !s.IsShipyard)
+            .OrderBy(s => s.BaseCost)
+            .ThenBy(s => s.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(design,
+            $"Empire {empire.Id} needs at least one buildable non-research/mining/shipyard station for deep-space build proofs.");
+        return design;
     }
 
     static Troop PickBuildableTroop(Empire empire)
