@@ -26,6 +26,8 @@ public sealed class Authoritative4XLiveSession : IDisposable
     readonly Authoritative4XNetworkClient Client;
     readonly Authoritative4XClientContext UiContext;
     readonly Authoritative4XLiveTelemetry Telemetry;
+    readonly string LiveSessionId;
+    readonly string LiveStartFingerprint;
     readonly Queue<AuthoritativeDiplomacyPopup> DiplomacyPopups = new();
     int HeartbeatSequence = FirstHeartbeatSequence;
     string LastTelemetryResultKey = "";
@@ -50,11 +52,14 @@ public sealed class Authoritative4XLiveSession : IDisposable
         : Client?.LastClientSnapshot;
 
     public string TelemetrySessionPath => Telemetry?.SessionPath ?? "";
+    public string TelemetrySessionId => LiveSessionId;
+    public string TelemetryStartFingerprint => LiveStartFingerprint;
 
     Authoritative4XLiveSession(UniverseScreen universe, Authoritative4XLiveRole role,
         int localPeerId, int localEmpireId, Authoritative4XNetworkHost host,
         Authoritative4XNetworkClient client, IReadOnlyDictionary<int, int> empireByPeer,
-        int[] humanEmpireIds)
+        int[] humanEmpireIds, string sessionId = "", string startFingerprint = "",
+        string startSummary = "")
     {
         Universe = universe ?? throw new ArgumentNullException(nameof(universe));
         Role = role;
@@ -62,30 +67,38 @@ public sealed class Authoritative4XLiveSession : IDisposable
         LocalEmpireId = localEmpireId;
         Host = host;
         Client = client;
+        LiveSessionId = sessionId ?? "";
+        LiveStartFingerprint = startFingerprint ?? "";
         Telemetry = Authoritative4XLiveTelemetry.Start(role, localPeerId, localEmpireId,
-            empireByPeer, humanEmpireIds);
+            empireByPeer, humanEmpireIds, LiveSessionId, LiveStartFingerprint, startSummary);
         UiContext = Authoritative4XClientContext.Begin(localPeerId, localEmpireId, SubmitFromUi);
     }
 
     public static Authoritative4XLiveSession HostGame(UniverseScreen universe,
         TcpLockstepTransport transport, int localPeerId, IReadOnlyDictionary<int, int> empireByPeer,
-        int[] humanEmpireIds)
+        int[] humanEmpireIds, string sessionId = "", string startFingerprint = "",
+        string startSummary = "")
     {
         if (empireByPeer == null || !empireByPeer.TryGetValue(localPeerId, out int localEmpireId))
             throw new ArgumentException($"Peer {localPeerId} is not mapped to an empire.", nameof(empireByPeer));
 
         var host = new Authoritative4XNetworkHost(universe, transport, empireByPeer, humanEmpireIds, localPeerId);
         return new Authoritative4XLiveSession(universe, Authoritative4XLiveRole.Host,
-            localPeerId, localEmpireId, host, client: null, empireByPeer, humanEmpireIds);
+            localPeerId, localEmpireId, host, client: null, empireByPeer, humanEmpireIds,
+            sessionId, startFingerprint, startSummary);
     }
 
     public static Authoritative4XLiveSession ClientGame(UniverseScreen universe,
-        TcpLockstepTransport transport, int localPeerId, int localEmpireId, int[] humanEmpireIds)
+        TcpLockstepTransport transport, int localPeerId, int localEmpireId, int[] humanEmpireIds,
+        string sessionId = "", string startFingerprint = "", string startSummary = "",
+        IReadOnlyDictionary<int, int> empireByPeerForTelemetry = null)
     {
         var client = new Authoritative4XNetworkClient(universe, transport, localPeerId, humanEmpireIds);
-        var empireByPeer = new Dictionary<int, int> { [localPeerId] = localEmpireId };
+        IReadOnlyDictionary<int, int> empireByPeer = empireByPeerForTelemetry
+            ?? new Dictionary<int, int> { [localPeerId] = localEmpireId };
         return new Authoritative4XLiveSession(universe, Authoritative4XLiveRole.Client,
-            localPeerId, localEmpireId, host: null, client, empireByPeer, humanEmpireIds);
+            localPeerId, localEmpireId, host: null, client, empireByPeer, humanEmpireIds,
+            sessionId, startFingerprint, startSummary);
     }
 
     public void Poll()
@@ -114,6 +127,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
         }
         catch (Authoritative4XSyncMismatchException e)
         {
+            RecordLastResult(force: true);
             Telemetry?.SyncMismatch(e);
             Telemetry?.Event("POLL_EXCEPTION", $"{e.GetType().Name}: {e.Message}");
             throw;

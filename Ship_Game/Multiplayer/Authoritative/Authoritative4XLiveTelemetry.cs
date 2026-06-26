@@ -10,20 +10,28 @@ namespace Ship_Game.Multiplayer.Authoritative;
 
 public sealed class Authoritative4XLiveTelemetry : IDisposable
 {
+    public const int RecentEventCapacity = 128;
+
     public static string OutputDirectoryOverride;
     public static bool? EnabledOverride;
 
     readonly object Sync = new();
     readonly StreamWriter SessionWriter;
     readonly StreamWriter LastWriter;
+    readonly Queue<string> RecentEvents = new();
 
     public readonly string SessionPath;
     public readonly string LastSessionPath;
+    public readonly string SessionId;
+    public readonly string StartFingerprint;
 
-    Authoritative4XLiveTelemetry(string sessionPath, string lastSessionPath)
+    Authoritative4XLiveTelemetry(string sessionPath, string lastSessionPath,
+        string sessionId, string startFingerprint)
     {
         SessionPath = sessionPath;
         LastSessionPath = lastSessionPath;
+        SessionId = sessionId ?? "";
+        StartFingerprint = startFingerprint ?? "";
         SessionWriter = new StreamWriter(new FileStream(sessionPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
         {
             AutoFlush = true
@@ -35,7 +43,8 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
     }
 
     public static Authoritative4XLiveTelemetry Start(Authoritative4XLiveRole role, int localPeerId,
-        int localEmpireId, IReadOnlyDictionary<int, int> empireByPeer, int[] humanEmpireIds)
+        int localEmpireId, IReadOnlyDictionary<int, int> empireByPeer, int[] humanEmpireIds,
+        string sessionId = "", string startFingerprint = "", string startSummary = "")
     {
         if (!IsEnabled())
             return null;
@@ -48,13 +57,22 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
         string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
         string roleText = role.ToString().ToLowerInvariant();
         string unique = Guid.NewGuid().ToString("N")[..8];
+        sessionId = string.IsNullOrWhiteSpace(sessionId) ? $"auth4x-local-{Environment.ProcessId}-{unique}" : sessionId.Trim();
+        startFingerprint = (startFingerprint ?? "").Trim();
         string sessionPath = Path.Combine(dir,
             $"authoritative-4x-{stamp}-{roleText}-peer{localPeerId}-{Environment.ProcessId}-{unique}.log");
         string lastPath = Path.Combine(dir, $"authoritative-4x-last-{roleText}.log");
-        var telemetry = new Authoritative4XLiveTelemetry(sessionPath, lastPath);
+        var telemetry = new Authoritative4XLiveTelemetry(sessionPath, lastPath, sessionId, startFingerprint);
         telemetry.Write("BEGIN",
-            $"role={role} peer={localPeerId} empire={localEmpireId} localTime={DateTime.Now:O} "
+            $"role={role} peer={localPeerId} empire={localEmpireId} sessionId={sessionId} "
+            + $"startFingerprint={startFingerprint} localTime={DateTime.Now:O} "
             + $"utc={DateTime.UtcNow:O} pid={Environment.ProcessId} machine={Environment.MachineName}");
+        string sessionDetails = string.IsNullOrWhiteSpace(startSummary)
+            ? $"sessionId={sessionId} startFingerprint={startFingerprint}"
+            : startSummary;
+        telemetry.Write("SESSION",
+            $"{sessionDetails} localPeer={localPeerId} localEmpire={localEmpireId} "
+            + $"empireByPeer='{PeerMap(empireByPeer)}' humanEmpires='{string.Join(",", humanEmpireIds ?? Array.Empty<int>())}'");
         telemetry.Write("ENV",
             $"game='{GlobalStats.ExtendedVersionNoHash}' mod='{GlobalStats.ModName}' "
             + $"modVersion='{GlobalStats.ModVersion}' runtime='{Environment.Version}' "
@@ -77,7 +95,8 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
             + $"kind={command.Kind} subject={command.SubjectId} target={command.TargetId} "
             + $"pos=({command.Position.X:0.###},{command.Position.Y:0.###}) "
             + $"textHash=0x{TextHash(command.Text):X16} textChars={(command.Text ?? "").Length} "
-            + $"summary='{OneLine(CommandSummary(command))}' name='{OneLine(TextPreview(command.Text))}'");
+            + $"summary='{OneLine(CommandSummary(command))}' name='{OneLine(TextPreview(command.Text))}'",
+            retainRecent: true);
     }
 
     public void Result(AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot)
@@ -88,7 +107,8 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
         Write("RESULT",
             $"origin={result.OriginPeer} seq={result.Sequence} tick={result.Tick} "
             + $"accepted={result.Accepted} reason='{result.Reason ?? ""}' hash={hash} "
-            + $"digest='{snapshot?.SyncDigest ?? ""}'");
+            + $"digest='{snapshot?.SyncDigest ?? ""}'",
+            retainRecent: true);
         Snapshot(snapshot);
     }
 
@@ -111,10 +131,13 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
 
         string authorityPayloadPath = WritePayloadArtifact("authority", mismatch.AuthoritySnapshot?.Payload);
         string clientPayloadPath = WritePayloadArtifact("client", mismatch.ClientSnapshot?.Payload);
+        string[] recentEvents = RecentEventsSnapshot();
+        string recentEventsPath = WriteRecentEventsArtifact(mismatch, recentEvents);
         AuthoritativePlayerCommand command = mismatch.Command;
         AuthoritativeCommandResult result = mismatch.Result;
         Write("SYNC_MISMATCH",
-            $"origin={result?.OriginPeer ?? 0} seq={result?.Sequence ?? 0} kind={command?.Kind.ToString() ?? ""} "
+            $"sessionId={SessionId} startFingerprint={StartFingerprint} "
+            + $"origin={result?.OriginPeer ?? 0} seq={result?.Sequence ?? 0} kind={command?.Kind.ToString() ?? ""} "
             + $"tick={mismatch.ClientSnapshot?.Tick ?? 0} accepted={result?.Accepted ?? false} "
             + $"authorityHash={SnapshotHash(mismatch.AuthoritySnapshot)} clientHash={SnapshotHash(mismatch.ClientSnapshot)} "
             + $"authorityDigest='{mismatch.AuthoritySnapshot?.SyncDigest ?? ""}' "
@@ -122,7 +145,9 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
             + $"authorityRows='{PayloadRowCounts(mismatch.AuthoritySnapshot?.Payload)}' "
             + $"clientRows='{PayloadRowCounts(mismatch.ClientSnapshot?.Payload)}' "
             + $"firstDiff='{OneLine(FirstPayloadDifference(mismatch.AuthoritySnapshot?.Payload, mismatch.ClientSnapshot?.Payload))}' "
-            + $"authorityPayload='{authorityPayloadPath}' clientPayload='{clientPayloadPath}'");
+            + $"authorityPayload='{authorityPayloadPath}' clientPayload='{clientPayloadPath}' "
+            + $"recentEvents='{recentEventsPath}' recentEventCount={recentEvents.Length} "
+            + $"recentEventCapacity={RecentEventCapacity}");
     }
 
     public void Control(string source, bool paused, float gameSpeed)
@@ -140,7 +165,7 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
     public void NetworkError(string error)
     {
         if (!string.IsNullOrWhiteSpace(error))
-            Write("NETWORK_ERROR", error);
+            Write("NETWORK_ERROR", error, retainRecent: true);
     }
 
     public void Dispose()
@@ -150,14 +175,29 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
         LastWriter.Dispose();
     }
 
-    void Write(string name, string details)
+    void Write(string name, string details, bool retainRecent = false)
     {
         string line = $"{DateTime.UtcNow:O} {name} {details ?? ""}".TrimEnd();
         lock (Sync)
         {
             SessionWriter.WriteLine(line);
             LastWriter.WriteLine(line);
+            if (retainRecent)
+                RetainRecent(line);
         }
+    }
+
+    void RetainRecent(string line)
+    {
+        while (RecentEvents.Count >= RecentEventCapacity)
+            RecentEvents.Dequeue();
+        RecentEvents.Enqueue(line);
+    }
+
+    string[] RecentEventsSnapshot()
+    {
+        lock (Sync)
+            return RecentEvents.ToArray();
     }
 
     static bool IsEnabled()
@@ -417,6 +457,35 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
         try
         {
             File.WriteAllText(path, payload);
+            return path;
+        }
+        catch (Exception e)
+        {
+            return $"write-failed:{e.GetType().Name}";
+        }
+    }
+
+    string WriteRecentEventsArtifact(Authoritative4XSyncMismatchException mismatch, string[] recentEvents)
+    {
+        if (string.IsNullOrWhiteSpace(SessionPath))
+            return "";
+
+        string dir = Path.GetDirectoryName(SessionPath);
+        string baseName = Path.GetFileNameWithoutExtension(SessionPath);
+        string path = Path.Combine(dir ?? "", $"{baseName}-sync-mismatch-recent-events.log");
+        try
+        {
+            var lines = new List<string>
+            {
+                $"sessionId={SessionId}",
+                $"startFingerprint={StartFingerprint}",
+                $"eventCapacity={RecentEventCapacity}",
+                $"mismatch origin={mismatch.Result?.OriginPeer ?? 0} seq={mismatch.Result?.Sequence ?? 0} "
+                + $"kind={mismatch.Command?.Kind.ToString() ?? ""} tick={mismatch.ClientSnapshot?.Tick ?? 0} "
+                + $"authorityHash={SnapshotHash(mismatch.AuthoritySnapshot)} clientHash={SnapshotHash(mismatch.ClientSnapshot)}",
+            };
+            lines.AddRange(recentEvents ?? Array.Empty<string>());
+            File.WriteAllLines(path, lines);
             return path;
         }
         catch (Exception e)

@@ -426,7 +426,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             return;
         }
         LobbyTelemetry?.Event("LAUNCH_HOST",
-            $"settingsHash={start.SettingsHash} mode=4x {Build4XStartDiagnostics(start)}");
+            $"mode=4x {Authoritative4XLobbyNetworkFlow.StartTelemetrySummary(start)}");
         Transport.Send(JoinPlayerPeerId4X, start);
         LaunchVisible4X(Authoritative4XLiveRole.Host, start);
     }
@@ -476,7 +476,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                 return;
             }
             LobbyTelemetry?.Event("START_RECEIVED",
-                $"settingsHash={start.SettingsHash} mode=4x");
+                $"mode=4x {Authoritative4XLobbyNetworkFlow.StartTelemetrySummary(start)}");
             Pending4XStart = start;
         }
         if (message is SessionErrorMessage e)
@@ -517,13 +517,18 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         Launching = true;
         TcpLockstepTransport transport = Transport;
         Transport = null;
-        LobbyTelemetry?.Event("LAUNCH_VISIBLE_4X", $"role={role}");
-        LobbyTelemetry?.Dispose();
-        LobbyTelemetry = null;
+        LobbyTelemetry?.Event("LAUNCH_VISIBLE_4X",
+            $"role={role} {Authoritative4XLobbyNetworkFlow.StartTelemetrySummary(start)}");
 
         Authoritative4XGeneratedGameStart generated = CreateGenerated4XGame(start);
         int localPeer = role == Authoritative4XLiveRole.Host ? HostPlayerPeerId4X : JoinPlayerPeerId4X;
-        LobbyFlow.AttachLiveSession(generated, transport, localPeer, role);
+        LobbyTelemetry?.Event("LIVE_ATTACH_4X",
+            $"role={role} localPeer={localPeer} localEmpire={generated.EmpireIdForPeer(localPeer)} "
+            + $"{Authoritative4XLobbyNetworkFlow.StartTelemetrySummary(start)} "
+            + $"{Authoritative4XLobbyNetworkFlow.EmpireMapTelemetrySummary(generated.EmpireIdByPeer, generated.HumanEmpireIds)}");
+        LobbyFlow.AttachLiveSession(generated, transport, localPeer, role, start);
+        LobbyTelemetry?.Dispose();
+        LobbyTelemetry = null;
         ScreenManager.GoToScreen(generated.AuthorityUniverse, clear3DObjects: true);
     }
 

@@ -6618,6 +6618,13 @@ public class Authoritative4XSessionTests : StarDriveTest
         const ulong Seed = 0x41E40059UL;
         const int HostPeer = 2;
         const int RemotePeer = 3;
+        const string SessionId = "auth4x-test-session";
+        const string StartFingerprint = "0x0123456789ABCDEF";
+        const string SessionIdField = "sessionId=" + SessionId;
+        const string StartFingerprintField = "startFingerprint=" + StartFingerprint;
+        const string StartSummary = SessionIdField + " " + StartFingerprintField
+            + " protocol=77 buildHash='0xTESTBUILD' buildSummary='unit-test' settingsHash=0xTESTSETTINGS "
+            + "seed=424242 hostPeer=2 joinPeer=3";
         string dir = Path.Combine(Path.GetTempPath(), $"auth4x_live_telemetry_{Guid.NewGuid():N}");
         BuiltWorld authority = BuildWorld(Seed);
         BuiltWorld client = BuildWorld(Seed);
@@ -6643,7 +6650,8 @@ public class Authoritative4XSessionTests : StarDriveTest
                     [HostPeer] = authority.Player.Id,
                     [RemotePeer] = authority.Enemy.Id,
                 },
-                new[] { authority.Player.Id, authority.Enemy.Id });
+                new[] { authority.Player.Id, authority.Enemy.Id },
+                SessionId, StartFingerprint, StartSummary);
             authority.Screen.AttachAuthoritative4XMultiplayer(liveHost);
             Assert.IsFalse(string.IsNullOrWhiteSpace(liveHost.TelemetrySessionPath),
                 "The live session should expose the telemetry session path when telemetry is enabled.");
@@ -6671,6 +6679,14 @@ public class Authoritative4XSessionTests : StarDriveTest
             liveHost.Dispose();
             string text = File.ReadAllText(path);
             StringAssert.Contains(text, "BEGIN role=Host");
+            StringAssert.Contains(text, SessionIdField);
+            StringAssert.Contains(text, StartFingerprintField);
+            StringAssert.Contains(text, "SESSION sessionId=");
+            StringAssert.Contains(text, "protocol=77");
+            StringAssert.Contains(text, "buildHash='0xTESTBUILD'");
+            StringAssert.Contains(text, "settingsHash=0xTESTSETTINGS");
+            StringAssert.Contains(text, "seed=424242");
+            StringAssert.Contains(text, "hostPeer=2 joinPeer=3");
             StringAssert.Contains(text, "ENV game=");
             StringAssert.Contains(text, "PEERS empireByPeer=");
             StringAssert.Contains(text, "COMMAND source=ui");
@@ -6788,6 +6804,10 @@ public class Authoritative4XSessionTests : StarDriveTest
     {
         const ulong Seed = 0x41E4005AUL;
         const int Peer = 2;
+        const string SessionId = "auth4x-mismatch-test";
+        const string StartFingerprint = "0x0BADF00D0BADF00D";
+        const string StartSummary = "sessionId=" + SessionId + " startFingerprint=" + StartFingerprint
+            + " protocol=77 buildHash='0xMISMATCH' settingsHash=0xMISMATCHSETTINGS seed=424243 hostPeer=2 joinPeer=3";
         string dir = Path.Combine(Path.GetTempPath(), $"auth4x_live_mismatch_{Guid.NewGuid():N}");
         BuiltWorld authority = BuildWorld(Seed);
         BuiltWorld client = BuildWorld(Seed);
@@ -6809,7 +6829,9 @@ public class Authoritative4XSessionTests : StarDriveTest
                 new Dictionary<int, int> { [Peer] = authority.Player.Id },
                 new[] { authority.Player.Id });
             Authoritative4XLiveSession liveClient = Authoritative4XLiveSession.ClientGame(client.Screen,
-                clientTransport, Peer, client.Player.Id, new[] { client.Player.Id });
+                clientTransport, Peer, client.Player.Id, new[] { client.Player.Id },
+                SessionId, StartFingerprint, StartSummary,
+                new Dictionary<int, int> { [Peer] = client.Player.Id });
             client.Screen.AttachAuthoritative4XMultiplayer(liveClient);
             string path = liveClient.TelemetrySessionPath;
 
@@ -6851,17 +6873,32 @@ public class Authoritative4XSessionTests : StarDriveTest
             liveClient.Dispose();
             string text = File.ReadAllText(path);
             StringAssert.Contains(text, "SYNC_MISMATCH");
+            StringAssert.Contains(text, $"sessionId={SessionId}");
+            StringAssert.Contains(text, $"startFingerprint={StartFingerprint}");
             StringAssert.Contains(text, "seq=1");
             StringAssert.Contains(text, "kind=SetColonyType");
             StringAssert.Contains(text, "firstDiff='");
             StringAssert.Contains(text, "authorityPayload='");
             StringAssert.Contains(text, "clientPayload='");
+            StringAssert.Contains(text, "recentEvents='");
+            StringAssert.Contains(text, $"recentEventCapacity={Authoritative4XLiveTelemetry.RecentEventCapacity}");
             string[] authorityPayloads = Directory.GetFiles(dir, "*sync-mismatch-authority.payload");
             string[] clientPayloads = Directory.GetFiles(dir, "*sync-mismatch-client.payload");
+            string[] recentEvents = Directory.GetFiles(dir, "*sync-mismatch-recent-events.log");
             Assert.AreEqual(1, authorityPayloads.Length, "Mismatch telemetry should persist the authority payload.");
             Assert.AreEqual(1, clientPayloads.Length, "Mismatch telemetry should persist the client payload.");
+            Assert.AreEqual(1, recentEvents.Length, "Mismatch telemetry should persist the recent event ring.");
             StringAssert.Contains(File.ReadAllText(authorityPayloads[0]), "P|");
             StringAssert.Contains(File.ReadAllText(clientPayloads[0]), "P|");
+            string recentText = File.ReadAllText(recentEvents[0]);
+            StringAssert.Contains(recentText, $"sessionId={SessionId}");
+            StringAssert.Contains(recentText, $"startFingerprint={StartFingerprint}");
+            StringAssert.Contains(recentText, $"eventCapacity={Authoritative4XLiveTelemetry.RecentEventCapacity}");
+            StringAssert.Contains(recentText, "mismatch origin=");
+            StringAssert.Contains(recentText, "COMMAND source=ui");
+            StringAssert.Contains(recentText, "RESULT origin=");
+            StringAssert.Contains(recentText, "seq=1");
+            StringAssert.Contains(recentText, "kind=SetColonyType");
         }
         finally
         {
@@ -7554,10 +7591,20 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsTrue(hostLobby.CanStart().Valid, hostLobby.CanStart().Reason);
             SessionStartMessage start = flow.BuildStartMessage(hostLobby, Protocol,
                 BuildHash, "loopback host", maxTurns: 600);
+            string sessionId = Authoritative4XLobbyNetworkFlow.SessionId(start);
+            string startFingerprint = Authoritative4XLobbyNetworkFlow.StartFingerprint(start);
+            Assert.IsTrue(sessionId.StartsWith("auth4x-", StringComparison.Ordinal));
+            Assert.IsTrue(startFingerprint.StartsWith("0x", StringComparison.Ordinal));
+            StringAssert.Contains(Authoritative4XLobbyNetworkFlow.StartTelemetrySummary(start),
+                $"sessionId={sessionId}");
+            StringAssert.Contains(Authoritative4XLobbyNetworkFlow.StartTelemetrySummary(start),
+                $"startFingerprint={startFingerprint}");
             hostTransport.Send(JoinPeer, start);
             PumpTransportUntil(() => receivedStart != null, hostTransport, joinTransport);
             Assert.AreEqual("", flow.ValidateStartMessage(receivedStart, Protocol, BuildHash));
             Assert.AreEqual(settings.Normalized(2).SettingsHash, receivedStart.SettingsHash);
+            Assert.AreEqual(sessionId, Authoritative4XLobbyNetworkFlow.SessionId(receivedStart));
+            Assert.AreEqual(startFingerprint, Authoritative4XLobbyNetworkFlow.StartFingerprint(receivedStart));
 
             hostGenerated = flow.CreateGeneratedGame(start);
             joinGenerated = flow.CreateGeneratedGame(receivedStart);
@@ -7567,11 +7614,15 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(hostGenerated.EmpireIdForPeer(JoinPeer), joinGenerated.EmpireIdForPeer(JoinPeer));
 
             liveHost = flow.AttachLiveSession(hostGenerated, hostTransport, HostPeer,
-                Authoritative4XLiveRole.Host);
+                Authoritative4XLiveRole.Host, start);
             liveJoin = flow.AttachLiveSession(joinGenerated, joinTransport, JoinPeer,
-                Authoritative4XLiveRole.Client);
+                Authoritative4XLiveRole.Client, receivedStart);
             Assert.IsTrue(hostGenerated.AuthorityUniverse.IsAuthoritative4XMultiplayer);
             Assert.IsTrue(joinGenerated.AuthorityUniverse.IsAuthoritative4XMultiplayer);
+            Assert.AreEqual(sessionId, liveHost.TelemetrySessionId);
+            Assert.AreEqual(sessionId, liveJoin.TelemetrySessionId);
+            Assert.AreEqual(startFingerprint, liveHost.TelemetryStartFingerprint);
+            Assert.AreEqual(startFingerprint, liveJoin.TelemetryStartFingerprint);
             Assert.AreEqual(hostGenerated.EmpireIdForPeer(HostPeer), liveHost.LocalEmpireId);
             Assert.AreEqual(joinGenerated.EmpireIdForPeer(JoinPeer), liveJoin.LocalEmpireId);
             Assert.IsTrue(hostGenerated.AuthorityUniverse.UState.Paused);

@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using SDLockstep;
+using SDUtils.Deterministic;
 
 namespace Ship_Game.Multiplayer.Authoritative;
 
@@ -140,6 +143,79 @@ public sealed class Authoritative4XLobbyNetworkFlow
         };
     }
 
+    public static string StartFingerprint(SessionStartMessage start)
+    {
+        if (start == null)
+            return "";
+
+        var h = DetHash.New();
+        h.AddInt(start.ProtocolVersion);
+        h.AddInt(start.MatchSeed);
+        h.AddUInt(start.RngSeed);
+        h.AddInt(start.InputDelay);
+        h.AddInt(start.MaxTurns);
+        h.AddInt(start.CommandEveryTurns);
+        h.AddFloat(start.GameSpeed);
+        h.AddBool(start.StartPaused);
+        h.AddString(start.SettingsHash ?? "");
+        h.AddString(start.BuildHash ?? "");
+        h.AddString(start.BuildSummary ?? "");
+        h.AddString(start.HostRacePreference ?? "");
+        h.AddString(start.JoinRacePreference ?? "");
+        h.AddString(start.HostTraitOptions ?? "");
+        h.AddString(start.JoinTraitOptions ?? "");
+        h.AddBool(start.IsAuthoritative4X);
+        h.AddInt(start.AuthoritativeHostPeerId);
+        h.AddInt(start.AuthoritativeJoinPeerId);
+        h.AddInt(start.GenerationSeed);
+        h.AddInt(start.GalaxySize);
+        h.AddInt(start.StarsCount);
+        h.AddInt(start.GameMode);
+        h.AddInt(start.Difficulty);
+        h.AddInt(start.NumOpponents);
+        h.AddFloat(start.Pace);
+        h.AddInt(start.TurnTimer);
+        h.AddInt(start.ExtraPlanets);
+        h.AddFloat(start.StartingPlanetRichnessBonus);
+        return "0x" + h.Value.ToString("X16", CultureInfo.InvariantCulture);
+    }
+
+    public static string SessionId(SessionStartMessage start)
+    {
+        string fingerprint = StartFingerprint(start);
+        if (fingerprint.IsEmpty())
+            return "";
+        return fingerprint.StartsWith("0x", StringComparison.Ordinal)
+            ? $"auth4x-{fingerprint[2..]}"
+            : $"auth4x-{fingerprint}";
+    }
+
+    public static string StartTelemetrySummary(SessionStartMessage start)
+    {
+        if (start == null)
+            return "sessionId= startFingerprint=";
+
+        string speed = start.GameSpeed.ToString("0.###", CultureInfo.InvariantCulture);
+        string pace = start.Pace.ToString("0.###", CultureInfo.InvariantCulture);
+        string richness = start.StartingPlanetRichnessBonus.ToString("0.###", CultureInfo.InvariantCulture);
+        return $"sessionId={SessionId(start)} startFingerprint={StartFingerprint(start)} "
+               + $"protocol={start.ProtocolVersion} buildHash='{OneLine(start.BuildHash)}' "
+               + $"buildSummary='{OneLine(start.BuildSummary)}' settingsHash={start.SettingsHash} "
+               + $"seed={start.GenerationSeed} matchSeed={start.MatchSeed} rngSeed={start.RngSeed} "
+               + $"hostPeer={start.AuthoritativeHostPeerId} joinPeer={start.AuthoritativeJoinPeerId} "
+               + $"maxTurns={start.MaxTurns} speed={speed} startPaused={start.StartPaused} "
+               + $"hostRace='{OneLine(start.HostRacePreference)}' joinRace='{OneLine(start.JoinRacePreference)}' "
+               + $"hostTraits='{OneLine(start.HostTraitOptions)}' joinTraits='{OneLine(start.JoinTraitOptions)}' "
+               + $"galaxy={start.GalaxySize} stars={start.StarsCount} mode={start.GameMode} "
+               + $"difficulty={start.Difficulty} opponents={start.NumOpponents} pace={pace} "
+               + $"turnTimer={start.TurnTimer} extraPlanets={start.ExtraPlanets} "
+               + $"richness={richness}";
+    }
+
+    public static string EmpireMapTelemetrySummary(IReadOnlyDictionary<int, int> empireByPeer,
+        int[] humanEmpireIds)
+        => $"empireByPeer='{PeerMap(empireByPeer)}' humanEmpires='{string.Join(",", humanEmpireIds ?? Array.Empty<int>())}'";
+
     public string ValidateStartMessage(SessionStartMessage start, int expectedProtocolVersion,
         string expectedBuildHash = "")
     {
@@ -189,20 +265,26 @@ public sealed class Authoritative4XLobbyNetworkFlow
     }
 
     public Authoritative4XLiveSession AttachLiveSession(Authoritative4XGeneratedGameStart generated,
-        TcpLockstepTransport transport, int localPeerId, Authoritative4XLiveRole role)
+        TcpLockstepTransport transport, int localPeerId, Authoritative4XLiveRole role,
+        SessionStartMessage start = null)
     {
         if (generated == null)
             throw new ArgumentNullException(nameof(generated));
+        string sessionId = SessionId(start);
+        string startFingerprint = StartFingerprint(start);
+        string startSummary = StartTelemetrySummary(start);
         if (role == Authoritative4XLiveRole.Host)
         {
             Authoritative4XLiveSession live = Authoritative4XLiveSession.HostGame(generated.AuthorityUniverse,
-                transport, localPeerId, generated.EmpireIdByPeer, generated.HumanEmpireIds);
+                transport, localPeerId, generated.EmpireIdByPeer, generated.HumanEmpireIds,
+                sessionId, startFingerprint, startSummary);
             generated.AuthorityUniverse.AttachAuthoritative4XMultiplayer(live);
             return live;
         }
 
         Authoritative4XLiveSession client = Authoritative4XLiveSession.ClientGame(generated.AuthorityUniverse,
-            transport, localPeerId, generated.EmpireIdForPeer(localPeerId), generated.HumanEmpireIds);
+            transport, localPeerId, generated.EmpireIdForPeer(localPeerId), generated.HumanEmpireIds,
+            sessionId, startFingerprint, startSummary, generated.EmpireIdByPeer);
         generated.AuthorityUniverse.AttachAuthoritative4XMultiplayer(client);
         return client;
     }
@@ -292,9 +374,9 @@ public sealed class Authoritative4XLobbyNetworkFlow
 
             step = "attach live sessions";
             liveHost = AttachLiveSession(hostGenerated, hostTransport, HostPeerId,
-                Authoritative4XLiveRole.Host);
+                Authoritative4XLiveRole.Host, start);
             liveJoin = AttachLiveSession(joinGenerated, joinTransport, JoinPeerId,
-                Authoritative4XLiveRole.Client);
+                Authoritative4XLiveRole.Client, receivedStart);
 
             step = "stabilize live sessions";
             if (!hostGenerated.AuthorityUniverse.UState.Paused)
@@ -446,6 +528,19 @@ public sealed class Authoritative4XLobbyNetworkFlow
 
     static string SnapshotHash(AuthoritativeStateSnapshot snapshot)
         => snapshot == null ? "" : $"0x{snapshot.HashHi:X16}:0x{snapshot.HashLo:X16}";
+
+    static string PeerMap(IReadOnlyDictionary<int, int> empireByPeer)
+    {
+        if (empireByPeer == null || empireByPeer.Count == 0)
+            return "";
+        return string.Join(",", empireByPeer.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key}:{kv.Value}"));
+    }
+
+    static string OneLine(string text)
+        => (text ?? "").Replace("\\", "\\\\")
+                       .Replace("'", "\\'")
+                       .Replace("\r", "\\r")
+                       .Replace("\n", "\\n");
 
     static int FreeTcpPort()
     {
