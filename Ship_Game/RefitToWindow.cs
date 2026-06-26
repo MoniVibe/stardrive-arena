@@ -6,6 +6,7 @@ using Ship_Game.Commands.Goals;
 using Ship_Game.Audio;
 using Ship_Game.Fleets;
 using Ship_Game.GameScreens.ShipDesign;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
@@ -157,6 +158,9 @@ namespace Ship_Game
 
         void OnRefitOneClicked(UIButton b)
         {
+            if (TrySubmitRefit(AuthoritativeShipRefitMode.One))
+                return;
+
             Player.AI.AddGoalAndEvaluate(GetRefitGoal(ShipToRefit));
             GameAudio.EchoAffirmative();
             ExitScreen();
@@ -164,6 +168,9 @@ namespace Ship_Game
 
         void OnRefitAllClicked(UIButton b)
         {
+            if (TrySubmitRefit(AuthoritativeShipRefitMode.All))
+                return;
+
             RefitAllShips();
             foreach (Fleet fleet in Player.AllFleets)
                 fleet.RefitNodeName(ShipToRefit.Name, RefitTo.Name);
@@ -187,10 +194,29 @@ namespace Ship_Game
 
         void OnRefitFleetClicked(UIButton b)
         {
+            if (TrySubmitRefit(AuthoritativeShipRefitMode.Fleet))
+                return;
+
             ShipToRefit.Fleet?.RefitNodeName(ShipToRefit.Name, RefitTo.Name);
             RefitAllShips(ShipToRefit.Fleet);
             GameAudio.EchoAffirmative();
             ExitScreen();
+        }
+
+        bool TrySubmitRefit(AuthoritativeShipRefitMode mode)
+        {
+            switch (Authoritative4XClientContext.TrySubmitShipRefit(ShipToRefit, RefitTo, mode, Rush))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.EchoAffirmative();
+                    ExitScreen();
+                    return true;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         Goal GetRefitGoal(Ship ship)

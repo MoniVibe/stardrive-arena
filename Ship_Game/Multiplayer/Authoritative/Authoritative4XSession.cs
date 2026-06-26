@@ -128,6 +128,24 @@ public sealed class AuthoritativeStateSnapshot
             }
 
             foreach (Goal goal in e.AI.Goals
+                         .Where(g => g is RefitShip)
+                         .OrderBy(g => g.OldShip?.Id ?? 0)
+                         .ThenBy(g => g.ToBuild?.Name ?? "", StringComparer.Ordinal))
+            {
+                var refitGoal = (RefitShip)goal;
+                sb.Append("G|").Append(e.Id)
+                  .Append("|Refit")
+                  .Append('|').Append(goal.Step)
+                  .Append('|').Append(goal.OldShip?.Id ?? 0)
+                  .Append('|').Append(goal.ToBuild?.Name ?? "")
+                  .Append('|').Append(goal.PlanetBuildingAt?.Id ?? 0)
+                  .Append('|').Append(refitGoal.Rush ? 1 : 0)
+                  .Append('|').Append(refitGoal.Fleet?.Id ?? 0)
+                  .Append('|').Append(refitGoal.Fleet?.Key ?? 0)
+                  .AppendLine();
+            }
+
+            foreach (Goal goal in e.AI.Goals
                          .Where(IsDeepSpaceBuildStateGoal)
                          .OrderBy(g => (int)g.Type)
                          .ThenBy(g => g.ToBuild?.Name ?? "", StringComparer.Ordinal)

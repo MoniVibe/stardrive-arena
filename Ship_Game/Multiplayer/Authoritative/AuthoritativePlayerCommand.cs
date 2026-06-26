@@ -65,6 +65,7 @@ public enum AuthoritativePlayerCommandKind : byte
     SetShipCarrierPolicy = 49,
     SetShipTradeRoute = 50,
     SetShipAreaOfOperation = 51,
+    RefitShip = 52,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -194,6 +195,13 @@ public enum AuthoritativeShipAreaOfOperationAction : byte
 {
     AddRectangle = 1,
     RemoveAtPoint = 2,
+}
+
+public enum AuthoritativeShipRefitMode : byte
+{
+    One = 1,
+    All = 2,
+    Fleet = 3,
 }
 
 public enum AuthoritativeShipLifecycleOrderType : byte
@@ -820,6 +828,18 @@ public sealed class AuthoritativePlayerCommand
             Text = EncodeRectanglePayload(areaOrPoint),
         };
 
+    public static AuthoritativePlayerCommand RefitShip(int sequence, int empireId, int shipId,
+        string designName, AuthoritativeShipRefitMode mode, bool rush)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.RefitShip,
+            SubjectId = shipId,
+            TargetId = (int)mode,
+            Text = EncodeShipRefitPayload(designName, rush),
+        };
+
     public static AuthoritativePlayerCommand AttackShip(int sequence, int empireId, int shipId, int targetShipId,
         bool queue = false)
         => new()
@@ -1170,6 +1190,26 @@ public sealed class AuthoritativePlayerCommand
         }
 
         rectangle = new Rectangle(x, y, width, height);
+        return true;
+    }
+
+    public static string EncodeShipRefitPayload(string designName, bool rush)
+        => string.Join("|", EncodeText(designName ?? ""), rush ? "1" : "0");
+
+    public static bool TryParseShipRefitPayload(string payload, out string designName, out bool rush)
+    {
+        designName = "";
+        rush = false;
+        string[] parts = (payload ?? "").Split('|');
+        if (parts.Length != 2
+            || !TryDecodeText(parts[0], out designName)
+            || string.IsNullOrWhiteSpace(designName)
+            || parts[1] is not ("0" or "1"))
+        {
+            return false;
+        }
+
+        rush = parts[1] == "1";
         return true;
     }
 

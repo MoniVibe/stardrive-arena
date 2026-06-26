@@ -90,6 +90,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.SetShipCarrierPolicy => ApplyShipCarrierPolicy(command, empire, result),
                 AuthoritativePlayerCommandKind.SetShipTradeRoute => ApplyShipTradeRoute(command, empire, result),
                 AuthoritativePlayerCommandKind.SetShipAreaOfOperation => ApplyShipAreaOfOperation(command, empire, result),
+                AuthoritativePlayerCommandKind.RefitShip => ApplyShipRefit(command, empire, result),
                 AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
@@ -361,6 +362,141 @@ public sealed class Authoritative4XCommandApplicator
             default:
                 return Reject(result, $"Unsupported ship trade policy {command.TargetId}.");
         }
+    }
+
+    AuthoritativeCommandResult ApplyShipRefit(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
+            || !Enum.IsDefined(typeof(AuthoritativeShipRefitMode),
+                (AuthoritativeShipRefitMode)(byte)command.TargetId))
+        {
+            return Reject(result, $"Unsupported ship refit mode {command.TargetId}.");
+        }
+
+        if (!AuthoritativePlayerCommand.TryParseShipRefitPayload(command.Text,
+                out string designName, out bool rush))
+        {
+            return Reject(result, $"Invalid ship refit payload '{command.Text}'.");
+        }
+
+        Ship ship = UState.Objects.FindShip(command.SubjectId);
+        if (ship == null)
+            return Reject(result, $"Ship {command.SubjectId} not found.");
+        if (!ship.Active)
+            return Reject(result, $"Ship {command.SubjectId} is inactive.");
+        if (ship.Loyalty != empire)
+            return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
+        if (!CanApplyShipRefit(ship))
+            return Reject(result, $"Ship {ship.Id} cannot be refitted.");
+
+        IShipDesign design = FindRefitDesign(ship, empire, designName);
+        if (design == null)
+            return Reject(result, $"Design '{designName}' is not a valid refit target for ship {ship.Id}.");
+        if (!CanFindRefitPlanet(ship, empire, design))
+            return Reject(result, $"Empire {empire.Id} has no valid refit yard for ship {ship.Id}.");
+
+        var mode = (AuthoritativeShipRefitMode)command.TargetId;
+        if (mode == AuthoritativeShipRefitMode.Fleet && ship.Fleet == null)
+            return Reject(result, $"Ship {ship.Id} is not assigned to a fleet.");
+
+        switch (mode)
+        {
+            case AuthoritativeShipRefitMode.One:
+                empire.AI.AddGoalAndEvaluate(CreateRefitGoal(ship, design, empire, rush));
+                return Accept(result);
+
+            case AuthoritativeShipRefitMode.All:
+                ApplyRefitAll(empire, ship, design, rush, specificFleet: null);
+                foreach (Fleet fleet in empire.AllFleets)
+                    fleet.RefitNodeName(ship.Name, design.Name);
+                return Accept(result);
+
+            case AuthoritativeShipRefitMode.Fleet:
+                Fleet refitFleet = ship.Fleet;
+                refitFleet.RefitNodeName(ship.Name, design.Name);
+                ApplyRefitAll(empire, ship, design, rush, refitFleet);
+                return Accept(result);
+
+            default:
+                return Reject(result, $"Unsupported ship refit mode {command.TargetId}.");
+        }
+    }
+
+    static bool CanApplyShipRefit(Ship ship)
+        => ship?.Active == true
+           && ship.CanBeRefitted
+           && !ship.IsSubspaceProjector
+           && ship.AI.State != AIState.Scrap
+           && ship.AI.State != AIState.Scuttle
+           && ship.ScuttleTimer < 0f;
+
+    static IShipDesign FindRefitDesign(Ship ship, Empire empire, string designName)
+    {
+        if (ship == null || empire == null || string.IsNullOrWhiteSpace(designName))
+            return null;
+
+        return empire.ShipsWeCanBuildSnapshot
+            .Where(design => empire.CanBuildShip(design) && IsValidRefitDesign(ship, design))
+            .OrderBy(design => design.Name, StringComparer.Ordinal)
+            .FirstOrDefault(design => string.Equals(design.Name, designName, StringComparison.Ordinal));
+    }
+
+    static bool IsValidRefitDesign(Ship ship, IShipDesign design)
+        => design != null
+           && (design.Hull == ship.ShipData.Hull || ship.IsResearchStation || ship.IsMiningStation)
+           && !string.Equals(design.Name, ship.ShipData.Name, StringComparison.Ordinal)
+           && !design.ShipRole.Protected
+           && ship.IsResearchStation == design.IsResearchStation
+           && ship.IsMiningStation == design.IsMiningStation;
+
+    static bool CanFindRefitPlanet(Ship ship, Empire empire, IShipDesign design)
+    {
+        float cost = ship.RefitCost(design);
+        return ship.IsPlatformOrStation
+            ? empire.FindPlanetToRefitAt(empire.SafeSpacePorts, cost, design, out _)
+            : empire.FindPlanetToRefitAt(empire.SafeSpacePorts, cost, ship, design,
+                ship.Fleet != null, out _);
+    }
+
+    static Goal CreateRefitGoal(Ship ship, IShipDesign design, Empire empire, bool rush)
+        => ship.IsPlatformOrStation
+            ? new RefitOrbital(ship, design, empire, rush)
+            : new RefitShip(ship, design, empire, rush);
+
+    void ApplyRefitAll(Empire empire, Ship templateShip, IShipDesign design, bool rush, Fleet specificFleet)
+    {
+        var queuedShipIds = new HashSet<int>();
+        if ((specificFleet == null || templateShip.Fleet == specificFleet)
+            && queuedShipIds.Add(templateShip.Id))
+        {
+            empire.AI.AddGoalAndEvaluate(CreateRefitGoal(templateShip, design, empire, rush));
+        }
+
+        foreach (Ship ship in UState.Objects.GetShips())
+        {
+            if (ship.Active
+                && ship.Loyalty == empire
+                && ship.Name == templateShip.Name
+                && (specificFleet == null || ship.Fleet == specificFleet)
+                && queuedShipIds.Add(ship.Id))
+            {
+                empire.AI.AddGoalAndEvaluate(CreateRefitGoal(ship, design, empire, rush));
+            }
+        }
+
+        foreach (Ship ship in empire.OwnedShips)
+        {
+            if (ship.Name == templateShip.Name
+                && (specificFleet == null || ship.Fleet == specificFleet)
+                && queuedShipIds.Add(ship.Id))
+            {
+                empire.AI.AddGoalAndEvaluate(CreateRefitGoal(ship, design, empire, rush));
+            }
+        }
+
+        foreach (Planet planet in empire.GetPlanets())
+            planet.Construction.RefitShipsBeingBuilt(templateShip, design);
     }
 
     AuthoritativeCommandResult ApplyShipTradeRoute(AuthoritativePlayerCommand command, Empire empire,

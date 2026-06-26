@@ -574,6 +574,19 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(area.Width, parsedArea.Width);
         Assert.AreEqual(area.Height, parsedArea.Height);
 
+        var refitRequest = AuthoritativePlayerCommand.RefitShip(39, 2, 99,
+                "MP Refit Corvette", AuthoritativeShipRefitMode.Fleet, rush: true)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(refitRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.RefitShip, copy.Kind);
+        Assert.AreEqual(99, copy.SubjectId);
+        Assert.AreEqual((int)AuthoritativeShipRefitMode.Fleet, copy.TargetId);
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParseShipRefitPayload(copy.Text,
+            out string refitDesign, out bool refitRush));
+        Assert.AreEqual("MP Refit Corvette", refitDesign);
+        Assert.IsTrue(refitRush);
+
         var attackRequest = AuthoritativePlayerCommand.AttackShip(12, 2, 99, 100, queue: true)
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(attackRequest, toPeer: 1));
@@ -3787,6 +3800,130 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XShipRefit_SyncsAndRejectsInvalidRequests_Headless()
+    {
+        const ulong Seed = 0x4EF17001UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            IShipDesign refitDesign = PickRefitTarget(authority.Ship);
+            EnableRefitYard(authority);
+            EnableRefitYard(client);
+            Assert.IsFalse(authority.Player.AI.HasGoal(g => g is RefitShip && g.OldShip == authority.Ship));
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.RefitShip(181,
+                authority.Player.Id, authority.Ship.Id, refitDesign.Name,
+                AuthoritativeShipRefitMode.One, rush: true));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            RefitShip authorityGoal = FindRefitGoal(authority.Player, authority.Ship);
+            RefitShip clientGoal = FindRefitGoal(client.Player, client.Ship);
+            Assert.IsNotNull(authorityGoal, "Accepted refit must add the real mobile refit goal.");
+            Assert.IsNotNull(clientGoal, "Accepted refit must replay on the client replica.");
+            Assert.AreEqual(refitDesign.Name, authorityGoal.ToBuild.Name);
+            Assert.IsTrue(authorityGoal.Rush);
+            Assert.AreEqual(AIState.Refit, authority.Ship.AI.State);
+            Assert.AreEqual(AIState.Refit, client.Ship.AI.State);
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover early mobile refit goals.");
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, "|Refit|",
+                "The canonical payload must expose mobile refit goals before queue items exist.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.RefitShip(182,
+                authority.Enemy.Id, authority.Ship.Id, refitDesign.Name,
+                AuthoritativeShipRefitMode.One, rush: false));
+            Assert.IsFalse(session.LastResult.Accepted,
+                "An empire must not refit another empire's ship.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.RefitShip(183,
+                authority.Player.Id, authority.Ship.Id, authority.Ship.ShipData.Name,
+                AuthoritativeShipRefitMode.One, rush: false));
+            Assert.IsFalse(session.LastResult.Accepted, "Refitting to the same design must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "not a valid refit target");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XShipRefit_AllAndFleetModesRespectScope_Headless()
+    {
+        const ulong AllSeed = 0x4EF17003UL;
+        BuiltWorld allAuthority = BuildWorld(AllSeed);
+        BuiltWorld allClient = BuildWorld(AllSeed);
+
+        try
+        {
+            IShipDesign refitDesign = PickRefitTarget(allAuthority.Ship);
+            EnableRefitYard(allAuthority);
+            EnableRefitYard(allClient);
+            var allSession = new Authoritative4XInProcessSession(allAuthority.Screen, allClient.Screen);
+
+            allSession.SubmitFromClient(AuthoritativePlayerCommand.RefitShip(191,
+                allAuthority.Player.Id, allAuthority.Ship.Id, refitDesign.Name,
+                AuthoritativeShipRefitMode.All, rush: false));
+
+            Assert.IsTrue(allSession.LastResult.Accepted, allSession.LastResult.Reason);
+            Assert.IsNotNull(FindRefitGoal(allAuthority.Player, allAuthority.Ship));
+            Assert.IsNotNull(FindRefitGoal(allClient.Player, allClient.Ship));
+            Assert.AreEqual(allSession.LastAuthoritySnapshot.SyncDigest, allSession.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            allAuthority.Screen.Dispose();
+            allClient.Screen.Dispose();
+        }
+
+        const ulong FleetSeed = 0x4EF17004UL;
+        BuiltWorld fleetAuthority = BuildWorld(FleetSeed);
+        BuiltWorld fleetClient = BuildWorld(FleetSeed);
+
+        try
+        {
+            IShipDesign refitDesign = PickRefitTarget(fleetAuthority.Ship);
+            EnableRefitYard(fleetAuthority);
+            EnableRefitYard(fleetClient);
+            Fleet authorityFleet = fleetAuthority.Player.CreateFleet(4, null);
+            Fleet clientFleet = fleetClient.Player.CreateFleet(4, null);
+            authorityFleet.AddShips(new[] { fleetAuthority.Ship });
+            clientFleet.AddShips(new[] { fleetClient.Ship });
+            authorityFleet.AutoArrange();
+            clientFleet.AutoArrange();
+            var fleetSession = new Authoritative4XInProcessSession(fleetAuthority.Screen, fleetClient.Screen);
+
+            fleetSession.SubmitFromClient(AuthoritativePlayerCommand.RefitShip(192,
+                fleetAuthority.Player.Id, fleetAuthority.Ship.Id, refitDesign.Name,
+                AuthoritativeShipRefitMode.Fleet, rush: true));
+
+            Assert.IsTrue(fleetSession.LastResult.Accepted, fleetSession.LastResult.Reason);
+            Assert.IsNotNull(FindRefitGoal(fleetAuthority.Player, fleetAuthority.Ship));
+            Assert.IsNull(FindRefitGoal(fleetAuthority.Player, fleetAuthority.WingShip),
+                "Fleet-mode refit must not touch same-design ships outside the selected fleet.");
+            Assert.IsNotNull(FindRefitGoal(fleetClient.Player, fleetClient.Ship));
+            Assert.IsNull(FindRefitGoal(fleetClient.Player, fleetClient.WingShip));
+            Assert.AreEqual(fleetSession.LastAuthoritySnapshot.SyncDigest, fleetSession.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            fleetAuthority.Screen.Dispose();
+            fleetClient.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XShipCarrierPolicy_SyncsAndRejectsInvalidRequests_Headless()
     {
         const ulong Seed = 0xCA441001UL;
@@ -4148,6 +4285,57 @@ public class Authoritative4XSessionTests : StarDriveTest
                         AuthoritativeShipAreaOfOperationAction.AddRectangle,
                         new Rectangle(0, 0, 4_000, 6_000)));
                 Assert.AreEqual(4, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsShipRefitWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0x4EF17002UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            IShipDesign refitDesign = PickRefitTarget(world.Ship);
+            AIState originalState = world.Ship.AI.State;
+            int originalOrders = world.Ship.AI.OrderQueue.Count;
+            int originalGoals = world.Player.AI.Goals.Count;
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2300))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitShipRefit(world.Ship, refitDesign,
+                        AuthoritativeShipRefitMode.One, rush: true));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2300, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.RefitShip, submitted[0].Kind);
+                Assert.AreEqual(world.Ship.Id, submitted[0].SubjectId);
+                Assert.AreEqual((int)AuthoritativeShipRefitMode.One, submitted[0].TargetId);
+                Assert.IsTrue(AuthoritativePlayerCommand.TryParseShipRefitPayload(submitted[0].Text,
+                    out string submittedDesign, out bool submittedRush));
+                Assert.AreEqual(refitDesign.Name, submittedDesign);
+                Assert.IsTrue(submittedRush);
+                Assert.AreEqual(originalState, world.Ship.AI.State,
+                    "Passive MP clients must not locally start refit before host acceptance.");
+                Assert.AreEqual(originalOrders, world.Ship.AI.OrderQueue.Count);
+                Assert.AreEqual(originalGoals, world.Player.AI.Goals.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitShipRefit(world.EnemyShip, refitDesign,
+                        AuthoritativeShipRefitMode.One, rush: false));
+                Assert.AreEqual(1, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitShipRefit(world.Ship, world.Ship.ShipData,
+                        AuthoritativeShipRefitMode.One, rush: false));
+                Assert.AreEqual(1, submitted.Count);
             }
         }
         finally
@@ -5610,6 +5798,9 @@ public class Authoritative4XSessionTests : StarDriveTest
                     AuthoritativeShipAreaOfOperationAction.AddRectangle,
                     new Rectangle(1000, 2000, 6000, 7000)));
             telemetry.Command("unit", 9,
+                AuthoritativePlayerCommand.RefitShip(11, 1, shipId: 77,
+                    "MP Refit Corvette", AuthoritativeShipRefitMode.All, rush: true));
+            telemetry.Command("unit", 9,
                 AuthoritativePlayerCommand.SetPlanetManualTradeSlots(3, 1, planetId: 88,
                     foodImport: 1, prodImport: 2, coloImport: 3, foodExport: 4, prodExport: 5, coloExport: 6));
             telemetry.Command("unit", 9,
@@ -5631,6 +5822,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             StringAssert.Contains(text, "summary='payload=ShipCarrierPolicy kind=FightersOut enabled=False'");
             StringAssert.Contains(text, "summary='payload=ShipTradeRoute planet=88 enabled=True'");
             StringAssert.Contains(text, "summary='payload=ShipAreaOfOperation action=AddRectangle rect=1000,2000,6000,7000'");
+            StringAssert.Contains(text, "summary='payload=ShipRefit mode=All design=\\'MP Refit Corvette\\' rush=True'");
             StringAssert.Contains(text, "summary='payload=ManualTradeSlots import=1,2,3 export=4,5,6'");
             StringAssert.Contains(text, "summary='payload=Blueprints name=\\'MP Core\\' type=Core buildings=1'");
             StringAssert.Contains(text, "summary='payload=DesignShip encodedChars=320'");
@@ -7013,6 +7205,32 @@ public class Authoritative4XSessionTests : StarDriveTest
                                                && area.Y == expected.Y
                                                && area.Width == expected.Width
                                                && area.Height == expected.Height);
+
+    static void EnableRefitYard(BuiltWorld world)
+    {
+        world.Planet.HasSpacePort = true;
+        world.Player.UpdateRallyPoints();
+    }
+
+    static IShipDesign PickRefitTarget(Ship ship)
+    {
+        IShipDesign design = ship.Loyalty.ShipsWeCanBuildSnapshot
+            .Where(d => ship.Loyalty.CanBuildShip(d)
+                        && (d.Hull == ship.ShipData.Hull || ship.IsResearchStation || ship.IsMiningStation)
+                        && !string.Equals(d.Name, ship.ShipData.Name, StringComparison.Ordinal)
+                        && !d.ShipRole.Protected
+                        && ship.IsResearchStation == d.IsResearchStation
+                        && ship.IsMiningStation == d.IsMiningStation)
+            .OrderBy(d => d.BaseCost)
+            .ThenBy(d => d.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(design,
+            $"Ship '{ship.Name}' needs at least one buildable same-hull refit target for the authoritative refit proof.");
+        return design;
+    }
+
+    static RefitShip FindRefitGoal(Empire empire, Ship ship)
+        => empire.AI.Goals.OfType<RefitShip>().FirstOrDefault(g => g.OldShip == ship);
 
     static Troop PickBuildableTroop(Empire empire)
     {

@@ -626,6 +626,22 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitShipRefit(Ship ship, IShipDesign design,
+        AuthoritativeShipRefitMode mode, bool rush)
+    {
+        if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!Enum.IsDefined(typeof(AuthoritativeShipRefitMode), mode)
+            || !CanSubmitShipRefit(ship, design, mode))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.RefitShip(context.Next(), context.EmpireId,
+            ship.Id, design.Name, mode, rush));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitAttackShip(Ship ship, Ship target, bool queue)
     {
         if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
@@ -1086,6 +1102,24 @@ public sealed class Authoritative4XClientContext : IDisposable
             AuthoritativeShipAreaOfOperationAction.RemoveAtPoint => true,
             _ => false,
         };
+    }
+
+    static bool CanSubmitShipRefit(Ship ship, IShipDesign design, AuthoritativeShipRefitMode mode)
+    {
+        if (ship?.Active != true || !ship.CanBeRefitted || ship.IsSubspaceProjector || design == null
+            || ship.AI.State == AIState.Scrap || ship.AI.State == AIState.Scuttle || ship.ScuttleTimer >= 0f)
+            return false;
+        if (mode == AuthoritativeShipRefitMode.Fleet && ship.Fleet == null)
+            return false;
+
+        return (design.Hull == ship.ShipData.Hull || ship.IsResearchStation || ship.IsMiningStation)
+               && !string.Equals(design.Name, ship.ShipData.Name, StringComparison.Ordinal)
+               && !design.ShipRole.Protected
+               && ship.IsResearchStation == design.IsResearchStation
+               && ship.IsMiningStation == design.IsMiningStation
+               && ship.Loyalty.CanBuildShip(design)
+               && ship.Loyalty.ShipsWeCanBuildSnapshot.Any(d =>
+                   string.Equals(d.Name, design.Name, StringComparison.Ordinal));
     }
 
     static bool CanSubmitShipCarrierPolicy(Ship ship, AuthoritativeShipCarrierPolicyKind policy)
