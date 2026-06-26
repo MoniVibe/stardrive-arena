@@ -115,6 +115,10 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(p.Res.PercentLock ? 1 : 0)
               .Append('|').Append((int)p.FS)
               .Append('|').Append((int)p.PS)
+              .Append('|').Append(p.PrioritizedPort ? 1 : 0)
+              .Append('|').Append(FloatBits(p.ManualCivilianBudget))
+              .Append('|').Append(FloatBits(p.ManualGrdDefBudget))
+              .Append('|').Append(FloatBits(p.ManualSpcDefBudget))
               .Append('|').Append(p.ConstructionQueue.Count)
               .AppendLine();
 

@@ -30,6 +30,8 @@ public enum AuthoritativePlayerCommandKind : byte
     RushConstructionQueueItem = 19,
     ToggleConstructionRush = 20,
     SetPlanetGoodsState = 21,
+    SetPlanetPrioritizedPort = 22,
+    SetPlanetManualBudget = 23,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -68,6 +70,13 @@ public enum AuthoritativePlanetGoodsKind : byte
 {
     Food = 1,
     Production = 2,
+}
+
+public enum AuthoritativePlanetBudgetKind : byte
+{
+    Civilian = 1,
+    GroundDefense = 2,
+    SpaceDefense = 3,
 }
 
 /// <summary>
@@ -292,6 +301,29 @@ public sealed class AuthoritativePlayerCommand
             SubjectId = planetId,
             TargetId = (int)goods,
             Position = new Vector2((int)state, 0f),
+        };
+
+    public static AuthoritativePlayerCommand SetPlanetPrioritizedPort(int sequence, int empireId, int planetId,
+        bool prioritized)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.SetPlanetPrioritizedPort,
+            SubjectId = planetId,
+            TargetId = prioritized ? 1 : 0,
+        };
+
+    public static AuthoritativePlayerCommand SetPlanetManualBudget(int sequence, int empireId, int planetId,
+        AuthoritativePlanetBudgetKind budget, float value)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.SetPlanetManualBudget,
+            SubjectId = planetId,
+            TargetId = (int)budget,
+            Position = new Vector2(value, 0f),
         };
 
     public static AuthoritativePlayerCommand AttackShip(int sequence, int empireId, int shipId, int targetShipId,

@@ -66,6 +66,7 @@ namespace Ship_Game
         private Graphics.Font FontBig;
         private bool OverrideCivBudget, OverrideGrdBudget, OverrideSpcBudget;
         private bool BudgetLimitWarningVisible;
+        float? PendingCivBudget, PendingGrdBudget, PendingSpcBudget;
 
         Rectangle CivBudgetRect;
         Rectangle GrdBudgetRect;
@@ -350,21 +351,52 @@ namespace Ship_Game
 
             OverrideCiv.OnChange = cb =>
             {
-                Planet.SetManualCivBudget(cb.Checked ? Planet.Budget.CivilianAlloc : 0);
+                float value = cb.Checked ? Planet.Budget.CivilianAlloc : 0;
+                if (TrySubmitAuthoritativeManualBudget(AuthoritativePlanetBudgetKind.Civilian, value,
+                        ref PendingCivBudget))
+                {
+                    OverrideCivBudget = !cb.Checked;
+                    return;
+                }
+
+                Planet.SetManualCivBudget(value);
             };
 
             OverrideGrd.OnChange = cb =>
             {
-                Planet.SetManualGroundDefBudget(cb.Checked ? Planet.Budget.GrdDefAlloc : 0);
+                float value = cb.Checked ? Planet.Budget.GrdDefAlloc : 0;
+                if (TrySubmitAuthoritativeManualBudget(AuthoritativePlanetBudgetKind.GroundDefense, value,
+                        ref PendingGrdBudget))
+                {
+                    OverrideGrdBudget = !cb.Checked;
+                    return;
+                }
+
+                Planet.SetManualGroundDefBudget(value);
             };
 
             OverrideSpc.OnChange = cb =>
             {
-                Planet.SetManualSpaceDefBudget(cb.Checked ? Planet.Budget.SpcDefAlloc : 0);
+                float value = cb.Checked ? Planet.Budget.SpcDefAlloc : 0;
+                if (TrySubmitAuthoritativeManualBudget(AuthoritativePlanetBudgetKind.SpaceDefense, value,
+                        ref PendingSpcBudget))
+                {
+                    OverrideSpcBudget = !cb.Checked;
+                    return;
+                }
+
+                Planet.SetManualSpaceDefBudget(value);
             };
 
             Prioritized.OnChange = cb =>
             {
+                if (HandleAuthoritativeGovernorResult(
+                        Authoritative4XClientContext.TrySubmitSetPlanetPrioritizedPort(Planet, cb.Checked)))
+                {
+                    Planet.SetPrioritizedPort(!cb.Checked);
+                    return;
+                }
+
                 Universe.RunOnSimThread(() =>
                 {
                     Planet.SetPrioritizedPort(cb.Checked);
@@ -788,6 +820,12 @@ namespace Ship_Game
                 && float.TryParse(ManualCivBudget.Text, out float value)
                 && value > 0 && value < 250)
             {
+                if (TrySubmitAuthoritativeManualBudget(AuthoritativePlanetBudgetKind.Civilian, value,
+                        ref PendingCivBudget))
+                {
+                    return;
+                }
+
                 Planet.SetManualCivBudget(value);
             }
             else
@@ -805,6 +843,12 @@ namespace Ship_Game
                 && float.TryParse(ManualGrdBudget.Text, out float value)
                 && value > 0 && value < 250)
             {
+                if (TrySubmitAuthoritativeManualBudget(AuthoritativePlanetBudgetKind.GroundDefense, value,
+                        ref PendingGrdBudget))
+                {
+                    return;
+                }
+
                 Planet.SetManualGroundDefBudget(value);
             }
             else
@@ -822,12 +866,73 @@ namespace Ship_Game
                 && float.TryParse(ManualSpcBudget.Text, out float value)
                 && value > 0 && value < 250)
             {
+                if (TrySubmitAuthoritativeManualBudget(AuthoritativePlanetBudgetKind.SpaceDefense, value,
+                        ref PendingSpcBudget))
+                {
+                    return;
+                }
+
                 Planet.SetManualSpaceDefBudget(value);
             }
             else
             {
                 ManualSpcBudget.Text = budget.SpcDefAlloc.String(2);
             }
+        }
+
+        bool TrySubmitAuthoritativeManualBudget(AuthoritativePlanetBudgetKind budget, float value,
+            ref float? pending)
+        {
+            if (!Authoritative4XClientContext.IsActive)
+                return false;
+
+            float current = CurrentManualBudget(budget);
+            if (pending.HasValue && NearlyEqual(current, pending.Value))
+                pending = null;
+            if (NearlyEqual(current, value))
+                return true;
+            if (pending.HasValue && NearlyEqual(pending.Value, value))
+                return true;
+
+            switch (Authoritative4XClientContext.TrySubmitSetPlanetManualBudget(Planet, budget, value))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    pending = value;
+                    return true;
+                case Authoritative4XUiCommandResult.Blocked:
+                    return true;
+                case Authoritative4XUiCommandResult.NotActive:
+                    return Authoritative4XClientContext.IsActive;
+                default:
+                    return false;
+            }
+        }
+
+        float CurrentManualBudget(AuthoritativePlanetBudgetKind budget)
+        {
+            return budget switch
+            {
+                AuthoritativePlanetBudgetKind.Civilian => Planet.ManualCivilianBudget,
+                AuthoritativePlanetBudgetKind.GroundDefense => Planet.ManualGrdDefBudget,
+                AuthoritativePlanetBudgetKind.SpaceDefense => Planet.ManualSpcDefBudget,
+                _ => 0f,
+            };
+        }
+
+        static bool HandleAuthoritativeGovernorResult(Authoritative4XUiCommandResult result)
+        {
+            return result switch
+            {
+                Authoritative4XUiCommandResult.Submitted => true,
+                Authoritative4XUiCommandResult.Blocked => true,
+                Authoritative4XUiCommandResult.NotActive => Authoritative4XClientContext.IsActive,
+                _ => false,
+            };
+        }
+
+        static bool NearlyEqual(float a, float b)
+        {
+            return Math.Abs(a - b) <= 0.0001f;
         }
 
         void UpdateBlueprintsStats()

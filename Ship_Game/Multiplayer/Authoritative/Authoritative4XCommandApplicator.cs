@@ -56,6 +56,8 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.RushConstructionQueueItem => ApplyRushConstructionQueueItem(command, empire, result),
                 AuthoritativePlayerCommandKind.ToggleConstructionRush => ApplyToggleConstructionRush(command, empire, result),
                 AuthoritativePlayerCommandKind.SetPlanetGoodsState => ApplyPlanetGoodsState(command, empire, result),
+                AuthoritativePlayerCommandKind.SetPlanetPrioritizedPort => ApplyPlanetPrioritizedPort(command, empire, result),
+                AuthoritativePlayerCommandKind.SetPlanetManualBudget => ApplyPlanetManualBudget(command, empire, result),
                 AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
@@ -577,6 +579,58 @@ public sealed class Authoritative4XCommandApplicator
 
             default:
                 return Reject(result, $"Unsupported planet goods kind {command.TargetId}.");
+        }
+    }
+
+    AuthoritativeCommandResult ApplyPlanetPrioritizedPort(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} not found.");
+        if (planet.Owner != empire)
+            return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
+
+        bool prioritized = command.TargetId != 0;
+        if (prioritized && !planet.HasSpacePort)
+            return Reject(result, $"Planet {planet.Id} cannot be a prioritized port without a space port.");
+
+        planet.SetPrioritizedPort(prioritized);
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyPlanetManualBudget(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} not found.");
+        if (planet.Owner != empire)
+            return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
+        if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
+            || !Enum.IsDefined(typeof(AuthoritativePlanetBudgetKind),
+                (AuthoritativePlanetBudgetKind)(byte)command.TargetId))
+        {
+            return Reject(result, $"Unsupported planet budget kind {command.TargetId}.");
+        }
+
+        float value = command.Position.X;
+        if (!float.IsFinite(value) || value < 0f)
+            return Reject(result, $"Planet manual budget must be a finite non-negative value, got {value}.");
+
+        switch ((AuthoritativePlanetBudgetKind)command.TargetId)
+        {
+            case AuthoritativePlanetBudgetKind.Civilian:
+                planet.SetManualCivBudget(value);
+                return Accept(result);
+            case AuthoritativePlanetBudgetKind.GroundDefense:
+                planet.SetManualGroundDefBudget(value);
+                return Accept(result);
+            case AuthoritativePlanetBudgetKind.SpaceDefense:
+                planet.SetManualSpaceDefBudget(value);
+                return Accept(result);
+            default:
+                return Reject(result, $"Unsupported planet budget kind {command.TargetId}.");
         }
     }
 

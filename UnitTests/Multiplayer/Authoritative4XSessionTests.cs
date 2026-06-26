@@ -172,6 +172,24 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual((int)AuthoritativePlanetGoodsKind.Production, copy.TargetId);
         Assert.AreEqual((int)Planet.GoodState.EXPORT, (int)copy.X);
 
+        var prioritizedRequest = AuthoritativePlayerCommand.SetPlanetPrioritizedPort(24, 2, 789, true)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(prioritizedRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetPlanetPrioritizedPort, copy.Kind);
+        Assert.AreEqual(789, copy.SubjectId);
+        Assert.AreEqual(1, copy.TargetId);
+
+        var planetBudgetRequest = AuthoritativePlayerCommand.SetPlanetManualBudget(25, 2, 789,
+                AuthoritativePlanetBudgetKind.GroundDefense, 17.25f)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(planetBudgetRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetPlanetManualBudget, copy.Kind);
+        Assert.AreEqual(789, copy.SubjectId);
+        Assert.AreEqual((int)AuthoritativePlanetBudgetKind.GroundDefense, copy.TargetId);
+        Assert.AreEqual(17.25f, copy.X);
+
         var attackRequest = AuthoritativePlayerCommand.AttackShip(12, 2, 99, 100, queue: true)
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(attackRequest, toPeer: 1));
@@ -812,6 +830,132 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitSetPlanetGoodsState(world.EnemyPlanet,
                         AuthoritativePlanetGoodsKind.Production, Planet.GoodState.IMPORT));
+                Assert.AreEqual(2, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XPlanetGovernorSettings_SyncsAndRejectsIllegalChanges_Headless()
+    {
+        const ulong Seed = 0xB0D6E701UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            authority.Planet.HasSpacePort = true;
+            client.Planet.HasSpacePort = true;
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualBudget(90,
+                authority.Player.Id, authority.Planet.Id, AuthoritativePlanetBudgetKind.Civilian, 12.5f));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(12.5f, authority.Planet.ManualCivilianBudget);
+            Assert.AreEqual(12.5f, client.Planet.ManualCivilianBudget);
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover manual colony budget overrides.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualBudget(91,
+                authority.Player.Id, authority.Planet.Id, AuthoritativePlanetBudgetKind.GroundDefense, 3.25f));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualBudget(92,
+                authority.Player.Id, authority.Planet.Id, AuthoritativePlanetBudgetKind.SpaceDefense, 4.5f));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(3.25f, authority.Planet.ManualGrdDefBudget);
+            Assert.AreEqual(4.5f, authority.Planet.ManualSpcDefBudget);
+            Assert.AreEqual(authority.Planet.ManualGrdDefBudget, client.Planet.ManualGrdDefBudget);
+            Assert.AreEqual(authority.Planet.ManualSpcDefBudget, client.Planet.ManualSpcDefBudget);
+
+            string beforePortDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetPrioritizedPort(93,
+                authority.Player.Id, authority.Planet.Id, true));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.Planet.PrioritizedPort);
+            Assert.IsTrue(client.Planet.PrioritizedPort);
+            Assert.IsTrue(authority.Player.PlayerPrioritizedPorts.Contains(authority.Planet));
+            Assert.AreNotEqual(beforePortDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover prioritized-port changes.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualBudget(94,
+                authority.Enemy.Id, authority.Planet.Id, AuthoritativePlanetBudgetKind.Civilian, 1f));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not change another empire's governor budget.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(12.5f, authority.Planet.ManualCivilianBudget);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualBudget(95,
+                authority.Player.Id, authority.Planet.Id, AuthoritativePlanetBudgetKind.Civilian, -1f));
+            Assert.IsFalse(session.LastResult.Accepted, "Negative manual budgets must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "finite non-negative");
+            Assert.AreEqual(12.5f, authority.Planet.ManualCivilianBudget);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            authority.Planet.HasSpacePort = false;
+            client.Planet.HasSpacePort = false;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetPrioritizedPort(96,
+                authority.Player.Id, authority.Planet.Id, true));
+            Assert.IsFalse(session.LastResult.Accepted,
+                "A planet without a space port must not be marked as a prioritized port.");
+            StringAssert.Contains(session.LastResult.Reason, "space port");
+            Assert.IsTrue(authority.Planet.PrioritizedPort,
+                "Rejected prioritized-port requests must not mutate the existing port preference.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsGovernorSettingsWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xB0D6E7C1UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            world.Planet.HasSpacePort = true;
+            float originalCivilian = world.Planet.ManualCivilianBudget;
+            bool originalPrioritized = world.Planet.PrioritizedPort;
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2050))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetPlanetManualBudget(world.Planet,
+                        AuthoritativePlanetBudgetKind.Civilian, 9.75f));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2050, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetPlanetManualBudget, submitted[0].Kind);
+                Assert.AreEqual(world.Planet.Id, submitted[0].SubjectId);
+                Assert.AreEqual((int)AuthoritativePlanetBudgetKind.Civilian, submitted[0].TargetId);
+                Assert.AreEqual(9.75f, submitted[0].Position.X);
+                Assert.AreEqual(originalCivilian, world.Planet.ManualCivilianBudget,
+                    "Passive MP clients must not locally change manual governor budgets before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetPlanetPrioritizedPort(world.Planet, true));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(2051, submitted[1].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetPlanetPrioritizedPort, submitted[1].Kind);
+                Assert.AreEqual(1, submitted[1].TargetId);
+                Assert.AreEqual(originalPrioritized, world.Planet.PrioritizedPort,
+                    "Passive MP clients must not locally change prioritized-port state before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetPlanetManualBudget(world.EnemyPlanet,
+                        AuthoritativePlanetBudgetKind.Civilian, 1f));
                 Assert.AreEqual(2, submitted.Count);
             }
         }

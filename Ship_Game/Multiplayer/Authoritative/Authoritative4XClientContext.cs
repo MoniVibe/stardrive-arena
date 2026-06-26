@@ -384,6 +384,32 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitSetPlanetPrioritizedPort(Planet planet,
+        bool prioritized)
+    {
+        if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (prioritized && !planet.HasSpacePort)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.SetPlanetPrioritizedPort(context.Next(), context.EmpireId,
+            planet.Id, prioritized));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitSetPlanetManualBudget(Planet planet,
+        AuthoritativePlanetBudgetKind budget, float value)
+    {
+        if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!Enum.IsDefined(typeof(AuthoritativePlanetBudgetKind), budget) || !float.IsFinite(value) || value < 0f)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.SetPlanetManualBudget(context.Next(), context.EmpireId,
+            planet.Id, budget, value));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static bool IsActiveFor(Empire empire)
         => TryGetFor(empire, out _);
 
