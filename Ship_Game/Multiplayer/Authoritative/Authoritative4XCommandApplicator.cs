@@ -68,6 +68,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.LoadFleetPatrol => ApplyLoadFleetPatrol(command, empire, result),
                 AuthoritativePlayerCommandKind.SetFleetLayout => ApplyFleetLayout(command, empire, result),
                 AuthoritativePlayerCommandKind.QueueDeepSpaceBuild => ApplyDeepSpaceBuild(command, empire, result),
+                AuthoritativePlayerCommandKind.CancelDeepSpaceBuild => ApplyCancelDeepSpaceBuild(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipSpecialOrder => ApplyShipSpecialOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipLifecycleOrder => ApplyShipLifecycleOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.SetShipCombatStance => ApplyShipCombatStance(command, empire, result),
@@ -432,6 +433,72 @@ public sealed class Authoritative4XCommandApplicator
 
         return Accept(result);
     }
+
+    AuthoritativeCommandResult ApplyCancelDeepSpaceBuild(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (!AuthoritativePlayerCommand.TryParseDeepSpaceCancelPayload(command.Text,
+                out string designName, out GoalType goalType))
+        {
+            return Reject(result, "Invalid deep-space cancel payload.");
+        }
+        if (!float.IsFinite(command.Position.X) || !float.IsFinite(command.Position.Y))
+            return Reject(result, "Deep-space cancel position is not finite.");
+
+        Goal goal = empire.AI.Goals.FirstOrDefault(g => IsDeepSpaceBuildStateGoal(g)
+            && g.Type == goalType
+            && string.Equals(g.ToBuild?.Name, designName, StringComparison.Ordinal)
+            && (g.TargetPlanet?.Id ?? 0) == command.SubjectId
+            && (DeepSpaceGoalSystem(g)?.Id ?? 0) == command.TargetId
+            && g.BuildPosition.AlmostEqual(command.Position, 1f));
+        if (goal == null)
+            return Reject(result, $"Deep-space build goal '{designName}' was not found.");
+
+        CancelDeepSpaceBuildGoal(empire, goal);
+        return Accept(result);
+    }
+
+    static void CancelDeepSpaceBuildGoal(Empire empire, Goal goal)
+    {
+        empire.AI.RemoveGoal(goal);
+
+        bool foundConstructor = false;
+        foreach (Ship ship in empire.OwnedShips)
+        {
+            if (!ship.IsConstructor || ship.AI.OrderQueue.IsEmpty)
+                continue;
+
+            for (int i = 0; i < ship.AI.OrderQueue.Count; ++i)
+            {
+                if (ship.AI.OrderQueue[i].Goal != goal)
+                    continue;
+
+                foundConstructor = true;
+                ship.AI.OrderScrapShip();
+                break;
+            }
+        }
+
+        if (foundConstructor)
+            return;
+
+        foreach (Planet planet in empire.GetPlanets())
+            foreach (QueueItem item in planet.ConstructionQueue)
+                if (item.Goal == goal)
+                    item.IsCancelled = true;
+    }
+
+    static bool IsDeepSpaceBuildStateGoal(Goal goal)
+        => goal is DeepSpaceBuildGoal or ProcessResearchStation or MiningOps;
+
+    static SolarSystem DeepSpaceGoalSystem(Goal goal)
+        => goal switch
+        {
+            DeepSpaceBuildGoal deepSpace => deepSpace.TargetSystem,
+            ProcessResearchStation research => research.TargetSystem,
+            MiningOps mining => mining.TargetSystem,
+            _ => null,
+        };
 
     static bool CanQueueDeepSpaceBuild(Empire empire, IShipDesign design, Vector2 worldPos,
         Planet targetPlanet, SolarSystem targetSystem)

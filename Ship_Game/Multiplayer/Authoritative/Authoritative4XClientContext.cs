@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using Ship_Game;
 using Ship_Game.AI;
+using Ship_Game.Commands.Goals;
 using Ship_Game.Fleets;
 using Ship_Game.Ships;
 using Vector2 = SDGraphics.Vector2;
@@ -94,6 +95,36 @@ public sealed class Authoritative4XClientContext : IDisposable
             design.Name, buildPosition, targetPlanet?.Id ?? 0, targetSystem?.Id ?? 0, tetherOffset));
         return Authoritative4XUiCommandResult.Submitted;
     }
+
+    public static Authoritative4XUiCommandResult TrySubmitCancelDeepSpaceBuild(Empire empire, Goal goal)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!IsDeepSpaceBuildStateGoal(goal)
+            || string.IsNullOrWhiteSpace(goal.ToBuild?.Name)
+            || !float.IsFinite(goal.BuildPosition.X)
+            || !float.IsFinite(goal.BuildPosition.Y))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.CancelDeepSpaceBuild(context.Next(), context.EmpireId,
+            goal.ToBuild.Name, goal.Type, goal.BuildPosition, goal.TargetPlanet?.Id ?? 0,
+            DeepSpaceGoalSystem(goal)?.Id ?? 0));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    static bool IsDeepSpaceBuildStateGoal(Goal goal)
+        => goal is DeepSpaceBuildGoal or ProcessResearchStation or MiningOps;
+
+    static SolarSystem DeepSpaceGoalSystem(Goal goal)
+        => goal switch
+        {
+            DeepSpaceBuildGoal deepSpace => deepSpace.TargetSystem,
+            ProcessResearchStation research => research.TargetSystem,
+            MiningOps mining => mining.TargetSystem,
+            _ => null,
+        };
 
     public static bool TrySubmitSetColonyLabor(Planet planet, float food, float production, float research,
         bool foodLocked, bool productionLocked, bool researchLocked)

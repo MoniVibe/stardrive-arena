@@ -310,7 +310,23 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual("Platform Base mk1-a", buildDesign);
         Assert.AreEqual(new Vector2(1_250f, -2_500f), tetherOffset);
 
-        var loadPatrolRequest = AuthoritativePlayerCommand.LoadFleetPatrol(34, 2, 7, "Alpha Patrol")
+        var cancelDeepSpaceBuildRequest = AuthoritativePlayerCommand.CancelDeepSpaceBuild(34, 2,
+                "Platform Base mk1-a", GoalType.DeepSpaceConstruction, new Vector2(10_000f, -20_000f),
+                targetPlanetId: 5, targetSystemId: 6)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(cancelDeepSpaceBuildRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.CancelDeepSpaceBuild, copy.Kind);
+        Assert.AreEqual(5, copy.SubjectId);
+        Assert.AreEqual(6, copy.TargetId);
+        Assert.AreEqual(10_000f, copy.X);
+        Assert.AreEqual(-20_000f, copy.Y);
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParseDeepSpaceCancelPayload(copy.Text,
+            out buildDesign, out GoalType cancelGoalType));
+        Assert.AreEqual("Platform Base mk1-a", buildDesign);
+        Assert.AreEqual(GoalType.DeepSpaceConstruction, cancelGoalType);
+
+        var loadPatrolRequest = AuthoritativePlayerCommand.LoadFleetPatrol(35, 2, 7, "Alpha Patrol")
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(loadPatrolRequest, toPeer: 1));
         copy = (AuthoritativeCommandRequestMessage)decoded.Message;
@@ -1574,10 +1590,32 @@ public class Authoritative4XSessionTests : StarDriveTest
             StringAssert.Contains(session.LastAuthoritySnapshot.Payload, design.Name);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
+            string beforeCancelDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.CancelDeepSpaceBuild(146,
+                authority.Player.Id, design.Name, authorityGoal.Type, authorityGoal.BuildPosition,
+                authorityGoal.TargetPlanet?.Id ?? 0, 0));
+
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsFalse(HasDeepSpaceGoal(authority.Player, design.Name, buildPos),
+                "Authority must remove the canceled deep-space build goal.");
+            Assert.IsFalse(HasDeepSpaceGoal(client.Player, design.Name, buildPos),
+                "Replica must remove the canceled deep-space build goal after host acceptance.");
+            Assert.AreNotEqual(beforeCancelDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "Deep-space cancel must move the authoritative digest.");
+            Assert.IsFalse(session.LastAuthoritySnapshot.Payload.Contains("|DeepSpace|"),
+                "Canceled deep-space goals must leave the canonical goal payload.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
             string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
-            session.SubmitFromClient(AuthoritativePlayerCommand.QueueDeepSpaceBuild(146,
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueDeepSpaceBuild(147,
                 authority.Player.Id, "missing-buildable-station", buildPos));
             Assert.IsFalse(session.LastResult.Accepted, "Unknown deep-space designs must be rejected.");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.CancelDeepSpaceBuild(148,
+                authority.Player.Id, design.Name, GoalType.DeepSpaceConstruction, buildPos));
+            Assert.IsFalse(session.LastResult.Accepted, "Canceling a missing deep-space goal must be rejected.");
             Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
         }
@@ -1586,6 +1624,11 @@ public class Authoritative4XSessionTests : StarDriveTest
             authority.Screen.Dispose();
             client.Screen.Dispose();
         }
+
+        static bool HasDeepSpaceGoal(Empire empire, string designName, Vector2 buildPos)
+            => empire.AI.Goals.Any(g => g is BuildConstructionShip
+                && string.Equals(g.ToBuild?.Name, designName, StringComparison.Ordinal)
+                && g.BuildPosition == buildPos);
     }
 
     [TestMethod]
@@ -2213,6 +2256,31 @@ public class Authoritative4XSessionTests : StarDriveTest
                     Authoritative4XClientContext.TrySubmitQueueDeepSpaceBuild(world.Enemy, design,
                         buildPos, targetPlanet: null, targetSystem: null, tetherOffset: Vector2.Zero));
                 Assert.AreEqual(1, submitted.Count);
+
+                var localGoal = new BuildConstructionShip(buildPos, design.Name, world.Player, manualPlacement: true);
+                world.Player.AI.AddGoalAndEvaluate(localGoal);
+                int goalsAfterLocalGoal = world.Player.AI.Goals.Count;
+                Assert.IsTrue(world.Player.AI.Goals.Any(g => ReferenceEquals(g, localGoal)));
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitCancelDeepSpaceBuild(world.Player, localGoal));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(2161, submitted[1].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.CancelDeepSpaceBuild, submitted[1].Kind);
+                Assert.AreEqual(buildPos, submitted[1].Position);
+                Assert.AreEqual(0, submitted[1].SubjectId);
+                Assert.AreEqual(0, submitted[1].TargetId);
+                Assert.IsTrue(AuthoritativePlayerCommand.TryParseDeepSpaceCancelPayload(submitted[1].Text,
+                    out string cancelDesignName, out GoalType cancelGoalType));
+                Assert.AreEqual(design.Name, cancelDesignName);
+                Assert.AreEqual(localGoal.Type, cancelGoalType);
+                Assert.AreEqual(goalsAfterLocalGoal, world.Player.AI.Goals.Count,
+                    "Passive MP clients must not remove deep-space build goals before host acceptance.");
+                Assert.IsTrue(world.Player.AI.Goals.Any(g => ReferenceEquals(g, localGoal)));
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitCancelDeepSpaceBuild(world.Enemy, localGoal));
+                Assert.AreEqual(2, submitted.Count);
             }
         }
         finally

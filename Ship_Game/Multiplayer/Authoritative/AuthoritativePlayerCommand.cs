@@ -46,6 +46,7 @@ public enum AuthoritativePlayerCommandKind : byte
     SetColonizationGoal = 32,
     SetFleetLayout = 33,
     QueueDeepSpaceBuild = 34,
+    CancelDeepSpaceBuild = 35,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -212,6 +213,19 @@ public sealed class AuthoritativePlayerCommand
             TargetId = targetSystemId,
             Position = buildPosition,
             Text = EncodeDeepSpaceBuildPayload(designName, tetherOffset),
+        };
+
+    public static AuthoritativePlayerCommand CancelDeepSpaceBuild(int sequence, int empireId, string designName,
+        GoalType goalType, Vector2 buildPosition, int targetPlanetId = 0, int targetSystemId = 0)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.CancelDeepSpaceBuild,
+            SubjectId = targetPlanetId,
+            TargetId = targetSystemId,
+            Position = buildPosition,
+            Text = EncodeDeepSpaceCancelPayload(designName, goalType),
         };
 
     public static AuthoritativePlayerCommand SetColonyLabor(int sequence, int empireId, int planetId,
@@ -702,6 +716,29 @@ public sealed class AuthoritativePlayerCommand
 
         tetherOffset = new Vector2(FloatFromBits(xBits), FloatFromBits(yBits));
         return float.IsFinite(tetherOffset.X) && float.IsFinite(tetherOffset.Y);
+    }
+
+    public static string EncodeDeepSpaceCancelPayload(string designName, GoalType goalType)
+        => string.Join("|",
+            EncodeText(designName ?? ""),
+            ((int)goalType).ToString(CultureInfo.InvariantCulture));
+
+    public static bool TryParseDeepSpaceCancelPayload(string payload, out string designName, out GoalType goalType)
+    {
+        designName = "";
+        goalType = default;
+        string[] parts = (payload ?? "").Split('|');
+        if (parts.Length != 2
+            || !TryDecodeText(parts[0], out designName)
+            || string.IsNullOrWhiteSpace(designName)
+            || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int type)
+            || !Enum.IsDefined(typeof(GoalType), (GoalType)type))
+        {
+            return false;
+        }
+
+        goalType = (GoalType)type;
+        return true;
     }
 
     public static string EncodeFleetLayout(IEnumerable<FleetDataNode> nodes)

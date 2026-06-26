@@ -1141,6 +1141,18 @@ namespace Ship_Game
 
         void OnScrapSelectedItem()
         {
+            switch (Authoritative4XClientContext.TrySubmitCancelDeepSpaceBuild(Player, SelectedItem?.AssociatedGoal))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    if (ClickableBuildGoals.ContainsRef(SelectedItem))
+                        GameAudio.BlipClick();
+                    ClearSelectedItems();
+                    return;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return;
+            }
+
             Player.AI.RemoveGoal(SelectedItem.AssociatedGoal);
 
             bool found = false;
