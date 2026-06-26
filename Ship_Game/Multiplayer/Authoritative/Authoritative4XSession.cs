@@ -169,6 +169,7 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(s.Fleet?.Id ?? 0)
               .Append('|').Append(s.Fleet?.Key ?? 0)
               .Append('|').Append((int)s.AI.State)
+              .Append('|').Append((int)s.AI.CombatState)
               .Append('|').Append(FloatBits(s.Position.X))
               .Append('|').Append(FloatBits(s.Position.Y))
               .Append('|').Append(FloatBits(s.AI.MovePosition.X))

@@ -225,6 +225,15 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(99, copy.SubjectId);
         Assert.AreEqual((int)AuthoritativeShipSpecialOrderType.Explore, copy.TargetId);
 
+        var stanceRequest = AuthoritativePlayerCommand.SetShipCombatStance(29, 2, 99,
+                CombatState.HoldPosition)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(stanceRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetShipCombatStance, copy.Kind);
+        Assert.AreEqual(99, copy.SubjectId);
+        Assert.AreEqual((int)CombatState.HoldPosition, copy.TargetId);
+
         var attackRequest = AuthoritativePlayerCommand.AttackShip(12, 2, 99, 100, queue: true)
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(attackRequest, toPeer: 1));
@@ -1203,6 +1212,61 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XShipCombatStance_SyncsAndRejectsInvalidRequests_Headless()
+    {
+        const ulong Seed = 0x57AACEUL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+            CombatState stance = authority.Ship.AI.CombatState == CombatState.HoldPosition
+                ? CombatState.Artillery
+                : CombatState.HoldPosition;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipCombatStance(140,
+                authority.Player.Id, authority.Ship.Id, stance));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(stance, authority.Ship.AI.CombatState);
+            Assert.AreEqual(stance, client.Ship.AI.CombatState);
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload,
+                $"S|{authority.Ship.Id}|{authority.Player.Id}|0|0|{(int)authority.Ship.AI.State}|{(int)stance}|");
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover ship combat stance.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipCombatStance(141,
+                authority.Enemy.Id, authority.Ship.Id, CombatState.Evade));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not change another empire's ship stance.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(stance, authority.Ship.AI.CombatState);
+            Assert.AreEqual(stance, client.Ship.AI.CombatState);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(new AuthoritativePlayerCommand
+            {
+                Sequence = 142,
+                EmpireId = authority.Player.Id,
+                Kind = AuthoritativePlayerCommandKind.SetShipCombatStance,
+                SubjectId = authority.Ship.Id,
+                TargetId = 255,
+            });
+            Assert.IsFalse(session.LastResult.Accepted, "Unknown combat stance values must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "Unsupported");
+            Assert.AreEqual(stance, authority.Ship.AI.CombatState);
+            Assert.AreEqual(stance, client.Ship.AI.CombatState);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientContext_SubmitsFleetAssignmentWithoutLocalMutation_Headless()
     {
         const ulong Seed = 0xF1EE7C17UL;
@@ -1345,6 +1409,54 @@ public class Authoritative4XSessionTests : StarDriveTest
                     Authoritative4XClientContext.TrySubmitShipSpecialOrder(world.Ship,
                         (AuthoritativeShipSpecialOrderType)255));
                 Assert.AreEqual(1, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsShipCombatStanceWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0x57AACCUL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            CombatState originalShipStance = world.Ship.AI.CombatState;
+            CombatState originalWingStance = world.WingShip.AI.CombatState;
+            CombatState requested = originalShipStance == CombatState.Evade
+                ? CombatState.Artillery
+                : CombatState.Evade;
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2180))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetShipCombatStance(
+                        new[] { world.Ship, world.WingShip }, requested));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.IsTrue(submitted.All(c => c.Kind == AuthoritativePlayerCommandKind.SetShipCombatStance));
+                Assert.AreEqual(2180, submitted[0].Sequence);
+                Assert.AreEqual(2181, submitted[1].Sequence);
+                Assert.AreEqual(world.Ship.Id, submitted[0].SubjectId);
+                Assert.AreEqual(world.WingShip.Id, submitted[1].SubjectId);
+                Assert.AreEqual((int)requested, submitted[0].TargetId);
+                Assert.AreEqual((int)requested, submitted[1].TargetId);
+                Assert.AreEqual(originalShipStance, world.Ship.AI.CombatState,
+                    "Passive MP clients must not locally change ship stance before host acceptance.");
+                Assert.AreEqual(originalWingStance, world.WingShip.AI.CombatState);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetShipCombatStance(world.EnemyShip, CombatState.HoldPosition));
+                Assert.AreEqual(2, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetShipCombatStance(world.Ship, (CombatState)255));
+                Assert.AreEqual(2, submitted.Count);
             }
         }
         finally

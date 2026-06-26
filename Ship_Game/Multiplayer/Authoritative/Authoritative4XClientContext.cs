@@ -187,6 +187,31 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitSetShipCombatStance(Ship ship, CombatState stance)
+    {
+        if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!IsLegalCombatStance(stance) || !CanSubmitShipCombatStance(ship))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.SetShipCombatStance(context.Next(), context.EmpireId,
+            ship.Id, stance));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitSetShipCombatStance(Ship[] ships, CombatState stance)
+    {
+        if (!TryGetForBatch(ships, out Authoritative4XClientContext context, out Ship[] ownedShips))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!IsLegalCombatStance(stance) || ownedShips.Length == 0 || ownedShips.Any(s => !CanSubmitShipCombatStance(s)))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        foreach (Ship ship in ownedShips)
+            context.Submit(AuthoritativePlayerCommand.SetShipCombatStance(context.Next(), context.EmpireId,
+                ship.Id, stance));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitAttackShip(Ship ship, Ship target, bool queue)
     {
         if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
@@ -506,6 +531,16 @@ public sealed class Authoritative4XClientContext : IDisposable
            && !ship.IsPlatformOrStation
            && !ship.IsSubspaceProjector
            && ship.ShipData.Role != RoleName.troop;
+
+    static bool CanSubmitShipCombatStance(Ship ship)
+        => ship?.Active == true
+           && !ship.IsConstructor
+           && !ship.IsMiningShip
+           && !ship.IsSupplyShuttle
+           && ship.DesignRole != RoleName.ssp;
+
+    static bool IsLegalCombatStance(CombatState stance)
+        => Enum.IsDefined(typeof(CombatState), stance);
 
     static bool CanSubmitShipAttack(Ship ship, Ship target)
         => CanSubmitShipMove(ship) && ship.ShipData.Role != RoleName.troop && ship != target

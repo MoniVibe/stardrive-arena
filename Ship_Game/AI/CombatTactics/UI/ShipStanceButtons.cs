@@ -1,6 +1,7 @@
 ﻿using System;
 using SDGraphics;
 using SDUtils;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Vector2 = SDGraphics.Vector2;
 
@@ -16,7 +17,7 @@ namespace Ship_Game.AI.CombatTactics.UI
         public void ResetButtons(Array<Ship> ships)
         {
             // filter out ships where the order buttons should not be shown.
-            SelectedShips = ships.Filter(s => s.Active && s.Loyalty.isPlayer && !s.IsConstructor && !s.IsMiningShip && !s.IsSupplyShuttle
+            SelectedShips = ships.Filter(s => s.Active && IsLocalShipForUi(s) && !s.IsConstructor && !s.IsMiningShip && !s.IsSupplyShuttle
                                               && s.DesignRole != RoleName.ssp);
             if (SelectedShips.Length == 0)
                 Reset(new CombatState[0]);
@@ -29,6 +30,13 @@ namespace Ship_Game.AI.CombatTactics.UI
             var ships = SelectedShips;
             if (ships.Length == 0)
                 return;
+
+            switch (Authoritative4XClientContext.TrySubmitSetShipCombatStance(ships, stance))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    return;
+            }
 
             ships[0].Universe.Screen?.RunOnSimThread(() =>
             {
@@ -59,5 +67,8 @@ namespace Ship_Game.AI.CombatTactics.UI
                 ships[i].DrawWeaponRanges(Screen, b.CombatState);
             }
         }
+
+        static bool IsLocalShipForUi(Ship ship)
+            => ship.Universe?.Screen?.IsLocalShipForUi(ship) ?? ship.Loyalty.isPlayer;
     }
 }
