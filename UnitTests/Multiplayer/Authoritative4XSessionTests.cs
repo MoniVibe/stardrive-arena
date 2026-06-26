@@ -35,6 +35,7 @@ public class Authoritative4XSessionTests : StarDriveTest
         public Ship WingShip;
         public Ship EnemyShip;
         public Ship PlatformShip;
+        public Ship ColonyShip;
         public string ResearchUid;
     }
 
@@ -812,6 +813,69 @@ public class Authoritative4XSessionTests : StarDriveTest
             StringAssert.Contains(session.LastResult.Reason, "already owned");
             Assert.AreEqual(canceledDigest, session.LastAuthoritySnapshot.SyncDigest);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XShipPlanetOrder_ColonizeAssignsShipAndSyncs_Headless()
+    {
+        const ulong Seed = 0xC010C01UL;
+        BuiltWorld authority = BuildWorld(Seed, includeNeutralPlanet: true, includeColonyShip: true);
+        BuiltWorld client = BuildWorld(Seed, includeNeutralPlanet: true, includeColonyShip: true);
+
+        try
+        {
+            Ship authorityColony = authority.ColonyShip;
+            Ship clientColony = client.ColonyShip;
+            Assert.AreEqual(authorityColony.Id, clientColony.Id,
+                "Authority and replica need matching spawned colony ship ids for command replay.");
+
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            var colonize = AuthoritativePlayerCommand.ShipPlanetOrder(12, authority.Player.Id,
+                authorityColony.Id, authority.NeutralPlanet.Id, AuthoritativeShipPlanetOrderType.Colonize,
+                clearOrders: true, MoveOrder.Regular);
+            session.SubmitFromClient(colonize);
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+
+            MarkForColonization authorityGoal = authority.Player.AI.FindGoals<MarkForColonization>()
+                .FirstOrDefault(g => g.TargetPlanet == authority.NeutralPlanet);
+            MarkForColonization clientGoal = client.Player.AI.FindGoals<MarkForColonization>()
+                .FirstOrDefault(g => g.TargetPlanet == client.NeutralPlanet);
+            Assert.IsNotNull(authorityGoal, "The host should create the real ship-bound colonization goal.");
+            Assert.IsNotNull(clientGoal, "The replica should receive the accepted colonization goal.");
+            Assert.AreSame(authorityColony, authorityGoal.FinishedShip);
+            Assert.AreSame(clientColony, clientGoal.FinishedShip);
+            Assert.IsTrue(authorityGoal.IsManualColonizationOrder);
+            Assert.IsTrue(clientGoal.IsManualColonizationOrder);
+            Assert.AreEqual(AIState.Colonize, authorityColony.AI.State);
+            Assert.AreEqual(AIState.Colonize, clientColony.AI.State);
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload,
+                $"G|{authority.Player.Id}|MarkForColonization|{authority.NeutralPlanet.Id}|1|{authorityColony.Id}");
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover ship-bound colonization orders.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string acceptedDigest = session.LastAuthoritySnapshot.SyncDigest;
+            var nonColony = AuthoritativePlayerCommand.ShipPlanetOrder(13, authority.Player.Id,
+                authority.Ship.Id, authority.NeutralPlanet.Id, AuthoritativeShipPlanetOrderType.Colonize);
+            session.SubmitFromClient(nonColony);
+            Assert.IsFalse(session.LastResult.Accepted, "Non-colony ships must not receive colonize orders.");
+            StringAssert.Contains(session.LastResult.Reason, "not a colony ship");
+            Assert.AreEqual(acceptedDigest, session.LastAuthoritySnapshot.SyncDigest);
+
+            var ownedTarget = AuthoritativePlayerCommand.ShipPlanetOrder(14, authority.Player.Id,
+                authorityColony.Id, authority.Planet.Id, AuthoritativeShipPlanetOrderType.Colonize);
+            session.SubmitFromClient(ownedTarget);
+            Assert.IsFalse(session.LastResult.Accepted, "Owned planets must not receive colonize orders.");
+            StringAssert.Contains(session.LastResult.Reason, "not a legal colonization target");
+            Assert.AreEqual(acceptedDigest, session.LastAuthoritySnapshot.SyncDigest);
         }
         finally
         {
@@ -4205,6 +4269,62 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XClientContext_SubmitsShipColonizeWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xC0110C9UL;
+        BuiltWorld world = BuildWorld(Seed, includeNeutralPlanet: true, includeColonyShip: true);
+
+        try
+        {
+            Ship colony = world.ColonyShip;
+            AIState originalState = colony.AI.State;
+            int originalOrderCount = colony.AI.OrderQueue.Count;
+            bool originalGoalPresent = world.Player.AI.HasGoal(g => g.Type == GoalType.MarkForColonization
+                                                                 && g.FinishedShip == colony);
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 730))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitShipPlanetOrder(colony, world.NeutralPlanet,
+                        AuthoritativeShipPlanetOrderType.Colonize, clearOrders: true, MoveOrder.Regular));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(730, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.ShipPlanetOrder, submitted[0].Kind);
+                Assert.AreEqual(colony.Id, submitted[0].SubjectId);
+                Assert.AreEqual(world.NeutralPlanet.Id, submitted[0].TargetId);
+                Assert.AreEqual($"{(int)AuthoritativeShipPlanetOrderType.Colonize}|1|{(int)MoveOrder.Regular}",
+                    submitted[0].Text);
+                Assert.AreEqual(originalState, colony.AI.State,
+                    "Passive MP clients must not locally order colonization before host acceptance.");
+                Assert.AreEqual(originalOrderCount, colony.AI.OrderQueue.Count,
+                    "Passive MP clients must not locally queue colony ship goals before host acceptance.");
+                Assert.AreEqual(originalGoalPresent, world.Player.AI.HasGoal(g =>
+                        g.Type == GoalType.MarkForColonization && g.FinishedShip == colony),
+                    "Passive MP clients must not locally create colonization goals before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitShipPlanetOrder(world.Ship, world.NeutralPlanet,
+                        AuthoritativeShipPlanetOrderType.Colonize, clearOrders: true, MoveOrder.Regular));
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitShipPlanetOrder(colony, world.Planet,
+                        AuthoritativeShipPlanetOrderType.Colonize, clearOrders: true, MoveOrder.Regular));
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitShipPlanetOrder(colony, world.NeutralPlanet,
+                        AuthoritativeShipPlanetOrderType.Colonize, clearOrders: true,
+                        MoveOrder.Regular | MoveOrder.AddWayPoint));
+                Assert.AreEqual(1, submitted.Count,
+                    "Invalid passive-client colonize attempts should not send commands for host rejection.");
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientContext_SubmitsBatchFleetCommandsWithoutLocalMutation_Headless()
     {
         const ulong Seed = 0xF1EE7C0UL;
@@ -5882,6 +6002,17 @@ public class Authoritative4XSessionTests : StarDriveTest
         return ship;
     }
 
+    static IShipDesign PickBuildableColonyShip(Empire empire)
+    {
+        IShipDesign ship = empire.ShipsWeCanBuildSnapshot
+            .Where(s => s.IsColonyShip && !s.IsPlatformOrStation && !s.IsShipyard)
+            .OrderBy(s => s.BaseCost)
+            .ThenBy(s => s.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(ship, $"Empire {empire.Id} needs at least one buildable colony ship for the authoritative colonize proof.");
+        return ship;
+    }
+
     static IShipDesign PickBuildableDeepSpacePlatform(Empire empire)
     {
         IShipDesign design = empire.SpaceStationsWeCanBuildSnapshot
@@ -6012,7 +6143,7 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     BuiltWorld BuildWorld(ulong seed, bool extraPlayerPlanet = false, bool includePlatform = false,
-        bool includeNeutralPlanet = false)
+        bool includeNeutralPlanet = false, bool includeColonyShip = false)
     {
         if (includePlatform)
             LoadStarterShips("Platform Base mk1-a");
@@ -6035,6 +6166,9 @@ public class Authoritative4XSessionTests : StarDriveTest
 
         Player.InitEmpireFromSave(UState);
         Enemy.InitEmpireFromSave(UState);
+        Ship colonyShip = includeColonyShip
+            ? SpawnShip(PickBuildableColonyShip(Player).Name, Player, new Vector2(12_000, 4_000))
+            : null;
         UState.Paused = false;
         UState.NoEliminationVictory = true;
         UState.Objects.EnableParallelUpdate = false;
@@ -6058,6 +6192,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             WingShip = wingShip,
             EnemyShip = enemyShip,
             PlatformShip = platformShip,
+            ColonyShip = colonyShip,
             ResearchUid = researchUid,
         };
     }

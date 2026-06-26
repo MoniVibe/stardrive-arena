@@ -601,11 +601,8 @@ public sealed class Authoritative4XClientContext : IDisposable
     {
         if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
             return Authoritative4XUiCommandResult.NotActive;
-        if (ship?.Active != true || planet == null
-            || ship.IsConstructor || ship.IsPlatformOrStation || ship.IsSubspaceProjector)
-        {
+        if (!CanSubmitShipPlanetOrder(ship, planet, orderType, moveOrder))
             return Authoritative4XUiCommandResult.Blocked;
-        }
 
         context.Submit(AuthoritativePlayerCommand.ShipPlanetOrder(context.Next(), context.EmpireId, ship.Id,
             planet.Id, orderType, clearOrders, moveOrder));
@@ -618,7 +615,7 @@ public sealed class Authoritative4XClientContext : IDisposable
         if (!TryGetForBatch(ships, out Authoritative4XClientContext context, out Ship[] ownedShips))
             return Authoritative4XUiCommandResult.NotActive;
         if (planet == null || ownedShips.Length == 0 || orderFor == null
-            || ownedShips.Any(s => !CanSubmitShipPlanetOrder(s)))
+            || ownedShips.Any(s => !CanSubmitShipPlanetOrder(s, planet, orderFor(s), moveOrder)))
         {
             return Authoritative4XUiCommandResult.Blocked;
         }
@@ -984,6 +981,35 @@ public sealed class Authoritative4XClientContext : IDisposable
 
     static bool CanSubmitShipPlanetOrder(Ship ship)
         => ship?.Active == true && !ship.IsConstructor && !ship.IsPlatformOrStation && !ship.IsSubspaceProjector;
+
+    static bool CanSubmitShipPlanetOrder(Ship ship, Planet planet, AuthoritativeShipPlanetOrderType orderType,
+        MoveOrder moveOrder)
+    {
+        if (!CanSubmitShipPlanetOrder(ship) || planet == null || ship.Loyalty == null)
+            return false;
+
+        const MoveOrder Allowed = MoveOrder.Regular | MoveOrder.Aggressive | MoveOrder.StandGround;
+        if ((moveOrder & ~Allowed) != 0)
+            return false;
+
+        return orderType switch
+        {
+            AuthoritativeShipPlanetOrderType.Orbit => true,
+            AuthoritativeShipPlanetOrderType.Colonize =>
+                ship.ShipData.IsColonyShip && planet.Habitable && planet.Owner == null,
+            AuthoritativeShipPlanetOrderType.Bombard =>
+                ship.HasBombs && planet.Owner != null && planet.Owner != ship.Loyalty
+                              && ship.Loyalty.IsEmpireAttackable(planet.Owner),
+            AuthoritativeShipPlanetOrderType.LandTroops =>
+                ship.Carrier.AnyAssaultOpsAvailable && planet.Habitable
+                                                   && (planet.Owner == null
+                                                       || planet.Owner == ship.Loyalty
+                                                       && planet.ForeignTroopHere(ship.Loyalty)
+                                                       || planet.Owner != ship.Loyalty
+                                                       && ship.Loyalty.IsAtWarWith(planet.Owner)),
+            _ => false,
+        };
+    }
 
     static int QueueIndexOf(Planet planet, QueueItem item)
     {
