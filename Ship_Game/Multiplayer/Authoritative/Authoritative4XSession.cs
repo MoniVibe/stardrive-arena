@@ -20,7 +20,7 @@ namespace Ship_Game.Multiplayer.Authoritative;
 
 public sealed class AuthoritativeStateSnapshot
 {
-    const float ShipMovementDigestQuantum = 32f;
+    const int VolatileShipPositionDigest = 0;
 
     public uint Tick;
     public ulong HashLo;
@@ -341,10 +341,10 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(s.Fleet?.Key ?? 0)
               .Append('|').Append((int)s.AI.State)
               .Append('|').Append((int)s.AI.CombatState)
-              .Append('|').Append(ShipMovementDigest(s.Position.X))
-              .Append('|').Append(ShipMovementDigest(s.Position.Y))
-              .Append('|').Append(ShipMovementDigest(s.AI.MovePosition.X))
-              .Append('|').Append(ShipMovementDigest(s.AI.MovePosition.Y))
+              .Append('|').Append(VolatileShipPositionDigest)
+              .Append('|').Append(VolatileShipPositionDigest)
+              .Append('|').Append(FloatBits(s.AI.MovePosition.X))
+              .Append('|').Append(FloatBits(s.AI.MovePosition.Y))
               .Append('|').Append(FloatBits(s.ScuttleTimer))
               .Append('|').Append(s.AI.Target?.Id ?? 0)
               .Append('|').Append(s.AI.HasPriorityTarget ? 1 : 0)
@@ -603,17 +603,6 @@ public sealed class AuthoritativeStateSnapshot
     }
 
     static uint FloatBits(float value) => System.BitConverter.SingleToUInt32Bits(value);
-
-    static long ShipMovementDigest(float value)
-    {
-        if (float.IsNaN(value))
-            return long.MinValue;
-        if (float.IsPositiveInfinity(value))
-            return long.MaxValue;
-        if (float.IsNegativeInfinity(value))
-            return long.MinValue + 1;
-        return (long)Math.Round(value / ShipMovementDigestQuantum, MidpointRounding.AwayFromZero);
-    }
 }
 
 public sealed class Authoritative4XAuthority

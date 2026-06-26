@@ -6802,7 +6802,7 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
-    public void Authoritative4XSnapshot_ToleratesSubQuantumShipMovementDrift_Headless()
+    public void Authoritative4XSnapshot_IgnoresVolatileShipPositionButTracksMoveTarget_Headless()
     {
         LoadAllGameData();
 
@@ -6866,14 +6866,22 @@ public class Authoritative4XSessionTests : StarDriveTest
             AuthoritativeStateSnapshot clientSnapshot = AuthoritativeStateSnapshot.Capture(client.AuthorityUniverse, 0);
 
             Assert.AreEqual(authoritySnapshot.SyncDigest, clientSnapshot.SyncDigest,
-                "Sub-quantum ship movement drift must not be treated as an authoritative gameplay-state mismatch.");
+                "Physical ship-position drift must not be treated as an authoritative gameplay-state mismatch.");
 
             clientShip.Position = new Vector2(authorityX + 128f, 25_000f);
             AuthoritativeStateSnapshot materialDrift = AuthoritativeStateSnapshot.Capture(client.AuthorityUniverse, 0);
-            Assert.AreNotEqual(authoritySnapshot.SyncDigest, materialDrift.SyncDigest,
-                "The sync digest must still catch material ship-position divergence. authority='"
+            Assert.AreEqual(authoritySnapshot.SyncDigest, materialDrift.SyncDigest,
+                "Live-integrated ship coordinates are raw-hash telemetry, not canonical command state. authority='"
                 + ShipPayloadRowForTest(authoritySnapshot.Payload, authorityShip.Id) + "' client='"
                 + ShipPayloadRowForTest(materialDrift.Payload, clientShip.Id) + "'");
+
+            clientShip.AI.MovePosition = new Vector2(authorityShip.AI.MovePosition.X + 128f,
+                authorityShip.AI.MovePosition.Y);
+            AuthoritativeStateSnapshot moveTargetDrift = AuthoritativeStateSnapshot.Capture(client.AuthorityUniverse, 0);
+            Assert.AreNotEqual(authoritySnapshot.SyncDigest, moveTargetDrift.SyncDigest,
+                "The sync digest must still catch command-state movement target divergence. authority='"
+                + ShipPayloadRowForTest(authoritySnapshot.Payload, authorityShip.Id) + "' client='"
+                + ShipPayloadRowForTest(moveTargetDrift.Payload, clientShip.Id) + "'");
         }
         finally
         {
