@@ -23,6 +23,7 @@ public partial class UniverseScreen
                 $"Authoritative 4X local empire {session.LocalEmpireId} was not found.");
         if (EmpireUI != null)
             EmpireUI.Player = Authoritative4XLocalPlayer;
+        RefreshAuthoritative4XLocalVisibility();
     }
 
     public bool IsLocalEmpireForUi(Empire empire)
@@ -32,7 +33,14 @@ public partial class UniverseScreen
         => ship?.Loyalty != null && IsLocalEmpireForUi(ship.Loyalty);
 
     public bool IsKnownToLocalPlayerForUi(Ship ship)
-        => ship?.KnownByEmpires.KnownBy(Player) == true;
+    {
+        if (ship?.Loyalty == null)
+            return false;
+
+        Empire localPlayer = Player;
+        return ship.Loyalty == localPlayer
+               || ship.KnownByEmpires.KnownBy(localPlayer);
+    }
 
     public bool IsVisibleToLocalPlayerInMapForUi(Ship ship)
         => ship?.InFrustum == true && IsKnownToLocalPlayerForUi(ship);
@@ -75,6 +83,38 @@ public partial class UniverseScreen
             Authoritative4XLive.TrySetGameSpeed(speed);
         }
         return true;
+    }
+
+    void RefreshAuthoritative4XLocalVisibility()
+    {
+        if (Authoritative4XLocalPlayer == null)
+            return;
+
+        foreach (Ship ship in Authoritative4XLocalPlayer.OwnedShips)
+            MarkKnownToAuthoritativeLocalPlayer(ship);
+
+        foreach (Ship ship in UState.Ships)
+        {
+            if (ship?.Active != true || ship.Loyalty == null)
+                continue;
+            if (ship.Loyalty != Authoritative4XLocalPlayer
+                && !ship.Loyalty.IsAlliedWith(Authoritative4XLocalPlayer))
+            {
+                continue;
+            }
+
+            MarkKnownToAuthoritativeLocalPlayer(ship);
+        }
+    }
+
+    void MarkKnownToAuthoritativeLocalPlayer(Ship ship)
+    {
+        if (ship?.Active != true)
+            return;
+
+        ship.KnownByEmpires.SetSeen(Authoritative4XLocalPlayer);
+        if (ship.InFrustum && UState.IsSystemViewOrCloser)
+            QueueSceneObjectCreation(ship);
     }
 
     void UpdateAuthoritative4XMultiplayer()

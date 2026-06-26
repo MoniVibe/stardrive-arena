@@ -2935,11 +2935,14 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsFalse(client.Screen.IsLocalShipForUi(client.Ship));
             Assert.IsTrue(client.Screen.LocalShipCanTakeFleetOrders(client.EnemyShip, forAttack: false));
             Assert.IsFalse(client.Screen.LocalShipCanTakeFleetOrders(client.Ship, forAttack: false));
-            client.EnemyShip.KnownByEmpires.SetSeen(client.Enemy);
-            client.EnemyShip.InFrustum = true;
+            Assert.IsFalse(client.EnemyShip.KnownByEmpires.KnownBy(client.Player),
+                "The local-view visibility hook must not rewrite UState.Player sensor knowledge.");
             Assert.IsTrue(client.Screen.IsKnownToLocalPlayerForUi(client.EnemyShip),
-                "A client should use the assigned local empire's sensor knowledge for UI visibility.");
+                "A client should treat the assigned empire's own ships as known for UI visibility.");
+            client.EnemyShip.InFrustum = true;
             Assert.IsTrue(client.Screen.IsVisibleToLocalPlayerInMapForUi(client.EnemyShip));
+            Assert.IsTrue(client.EnemyShip.IsVisibleToPlayerInMap,
+                "Ship-level visibility should also use the assigned local empire so icons and scene objects can render.");
             Assert.AreNotEqual(client.EnemyShip.InPlayerSensorRange,
                 client.Screen.IsKnownToLocalPlayerForUi(client.EnemyShip),
                 "The local-view visibility proof must not be just a wrapper around UState.Player visibility.");

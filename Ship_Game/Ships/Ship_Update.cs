@@ -39,9 +39,11 @@ namespace Ship_Game.Ships
             }
         }
 
-        public bool IsVisibleToPlayer => InFrustum && Universe.IsSystemViewOrCloser && InPlayerSensorRange;
+        bool InLocalPlayerSensorRange => Universe.Screen?.IsKnownToLocalPlayerForUi(this) ?? InPlayerSensorRange;
 
-        public bool IsVisibleToPlayerInMap => InFrustum && InPlayerSensorRange;
+        public bool IsVisibleToPlayer => InFrustum && Universe.IsSystemViewOrCloser && InLocalPlayerSensorRange;
+
+        public bool IsVisibleToPlayerInMap => InFrustum && InLocalPlayerSensorRange;
 
         // NOTE: This is called on the main UI Thread by UniverseScreen
         // check UniverseScreen.QueueShipSceneObject()
