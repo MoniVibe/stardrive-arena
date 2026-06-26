@@ -80,6 +80,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.QueueDeepSpaceBuild => ApplyDeepSpaceBuild(command, empire, result),
                 AuthoritativePlayerCommandKind.CancelDeepSpaceBuild => ApplyCancelDeepSpaceBuild(command, empire, result),
                 AuthoritativePlayerCommandKind.QueuePlanetOrbitalBuild => ApplyPlanetOrbitalBuild(command, empire, result),
+                AuthoritativePlayerCommandKind.BuildCapitalHere => ApplyBuildCapitalHere(command, empire, result),
                 AuthoritativePlayerCommandKind.ApplyColonyBlueprints => ApplyColonyBlueprints(command, empire, result),
                 AuthoritativePlayerCommandKind.ClearColonyBlueprints => ApplyClearColonyBlueprints(command, empire, result),
                 AuthoritativePlayerCommandKind.ScrapColonyTile => ApplyScrapColonyTile(command, empire, result),
@@ -892,6 +893,19 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, $"Empire {empire.Id} cannot build orbital '{designName}' at planet {planet.Id}.");
 
         planet.AddOrbital(design);
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyBuildCapitalHere(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} was not found.");
+        if (planet.Owner != empire)
+            return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
+
+        planet.BuildCapitalHere();
         return Accept(result);
     }
 

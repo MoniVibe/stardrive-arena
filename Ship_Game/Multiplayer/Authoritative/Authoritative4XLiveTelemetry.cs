@@ -216,6 +216,8 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
             case AuthoritativePlayerCommandKind.QueueTroop:
             case AuthoritativePlayerCommandKind.QueuePlanetOrbitalBuild:
                 return $"payload={command.Kind} item='{OneLine(command.Text)}'";
+            case AuthoritativePlayerCommandKind.BuildCapitalHere:
+                return $"payload=BuildCapitalHere planet={command.SubjectId}";
             case AuthoritativePlayerCommandKind.AttackShip:
                 return $"payload=AttackShip queued={string.Equals(command.Text, "queue", StringComparison.Ordinal)}";
             case AuthoritativePlayerCommandKind.ShipPlanetOrder:

@@ -386,10 +386,17 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(5, copy.SubjectId);
         Assert.AreEqual("Platform Base mk1-a", copy.Text);
 
+        var buildCapitalRequest = AuthoritativePlayerCommand.BuildCapitalHere(41, 2, planetId: 5)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(buildCapitalRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.BuildCapitalHere, copy.Kind);
+        Assert.AreEqual(5, copy.SubjectId);
+
         var blueprints = new BlueprintsTemplate("MP Forge", exclusive: true, linkTo: "",
             new HashSet<string>(StringComparer.Ordinal) { "Factory", "Laboratory" },
             Planet.ColonyType.Industrial);
-        var applyBlueprintsRequest = AuthoritativePlayerCommand.ApplyColonyBlueprints(41, 2,
+        var applyBlueprintsRequest = AuthoritativePlayerCommand.ApplyColonyBlueprints(42, 2,
                 planetId: 5, blueprints)
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(applyBlueprintsRequest, toPeer: 1));
@@ -404,14 +411,14 @@ public class Authoritative4XSessionTests : StarDriveTest
         CollectionAssert.AreEqual(new[] { "Factory", "Laboratory" },
             decodedBlueprints.PlannedBuildings.OrderBy(name => name, StringComparer.Ordinal).ToArray());
 
-        var clearBlueprintsRequest = AuthoritativePlayerCommand.ClearColonyBlueprints(42, 2, planetId: 5)
+        var clearBlueprintsRequest = AuthoritativePlayerCommand.ClearColonyBlueprints(43, 2, planetId: 5)
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(clearBlueprintsRequest, toPeer: 1));
         copy = (AuthoritativeCommandRequestMessage)decoded.Message;
         Assert.AreEqual((byte)AuthoritativePlayerCommandKind.ClearColonyBlueprints, copy.Kind);
         Assert.AreEqual(5, copy.SubjectId);
 
-        var scrapBuildingRequest = AuthoritativePlayerCommand.ScrapColonyTile(43, 2, planetId: 5,
+        var scrapBuildingRequest = AuthoritativePlayerCommand.ScrapColonyTile(44, 2, planetId: 5,
                 tileX: 2, tileY: 3, AuthoritativeColonyTileScrapKind.Building, "Factory")
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(scrapBuildingRequest, toPeer: 1));
@@ -1282,6 +1289,108 @@ public class Authoritative4XSessionTests : StarDriveTest
         {
             authority.Screen.Dispose();
             client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XBuildCapitalHere_SyncsAndRejectsUnownedPlanets_Headless()
+    {
+        const ulong Seed = 0xCA917A1UL;
+        BuiltWorld authority = BuildWorld(Seed, includeNeutralPlanet: true);
+        BuiltWorld client = BuildWorld(Seed, includeNeutralPlanet: true);
+
+        try
+        {
+            EnsureSingleBuildTile(authority.Planet);
+            EnsureSingleBuildTile(client.Planet);
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+            Assert.IsFalse(authority.Planet.IsHomeworld);
+            Assert.IsFalse(authority.Planet.TestIsCapitalInQueue());
+            Assert.IsFalse(client.Planet.IsHomeworld);
+            Assert.IsFalse(client.Planet.TestIsCapitalInQueue());
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.BuildCapitalHere(84,
+                authority.Player.Id, authority.Planet.Id));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.Planet.IsHomeworld);
+            Assert.IsTrue(client.Planet.IsHomeworld);
+            Assert.IsTrue(authority.Planet.TestIsCapitalInQueue());
+            Assert.IsTrue(client.Planet.TestIsCapitalInQueue());
+            Assert.AreEqual(1, authority.Planet.ConstructionQueue.Count(q => q.isBuilding && q.Building.IsCapital));
+            Assert.AreEqual(1, client.Planet.ConstructionQueue.Count(q => q.isBuilding && q.Building.IsCapital));
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover the capital rebuild queue item.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string acceptedDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.BuildCapitalHere(85,
+                authority.Enemy.Id, authority.Planet.Id));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not rebuild capital on another empire's planet.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(1, authority.Planet.ConstructionQueue.Count(q => q.isBuilding && q.Building.IsCapital));
+            Assert.AreEqual(acceptedDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.BuildCapitalHere(86,
+                authority.Player.Id, authority.NeutralPlanet.Id));
+            Assert.IsFalse(session.LastResult.Accepted, "Unowned planets must not accept capital rebuild commands.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.IsFalse(authority.NeutralPlanet.IsHomeworld);
+            Assert.IsFalse(authority.NeutralPlanet.TestIsCapitalInQueue());
+            Assert.AreEqual(acceptedDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsBuildCapitalHereWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xCA917C1UL;
+        BuiltWorld world = BuildWorld(Seed, includeNeutralPlanet: true);
+
+        try
+        {
+            bool originalHomeworld = world.Planet.IsHomeworld;
+            int originalQueueCount = world.Planet.ConstructionQueue.Count;
+            bool originalCapitalQueued = world.Planet.TestIsCapitalInQueue();
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2600))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitBuildCapitalHere(world.Planet));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2600, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.BuildCapitalHere, submitted[0].Kind);
+                Assert.AreEqual(world.Player.Id, submitted[0].EmpireId);
+                Assert.AreEqual(world.Planet.Id, submitted[0].SubjectId);
+                Assert.AreEqual(originalHomeworld, world.Planet.IsHomeworld,
+                    "Passive MP clients must not locally mark the colony as a homeworld before host acceptance.");
+                Assert.AreEqual(originalQueueCount, world.Planet.ConstructionQueue.Count,
+                    "Passive MP clients must not locally enqueue capital rebuild before host acceptance.");
+                Assert.AreEqual(originalCapitalQueued, world.Planet.TestIsCapitalInQueue());
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitBuildCapitalHere(world.EnemyPlanet));
+                Assert.AreEqual(1, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitBuildCapitalHere(world.NeutralPlanet));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.IsFalse(world.NeutralPlanet.IsHomeworld);
+                Assert.IsFalse(world.NeutralPlanet.TestIsCapitalInQueue());
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
         }
     }
 

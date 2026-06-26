@@ -742,6 +742,12 @@ namespace Ship_Game
 
         void OnBuildCapitalClicked(UIButton b)
         {
+            if (HandleAuthoritativeGovernorResult(
+                    Authoritative4XClientContext.TrySubmitBuildCapitalHere(Planet)))
+            {
+                return;
+            }
+
             Planet.BuildCapitalHere();
         }
 

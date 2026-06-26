@@ -66,6 +66,7 @@ public enum AuthoritativePlayerCommandKind : byte
     SetShipTradeRoute = 50,
     SetShipAreaOfOperation = 51,
     RefitShip = 52,
+    BuildCapitalHere = 53,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -332,6 +333,15 @@ public sealed class AuthoritativePlayerCommand
             Kind = AuthoritativePlayerCommandKind.QueuePlanetOrbitalBuild,
             SubjectId = planetId,
             Text = designName ?? "",
+        };
+
+    public static AuthoritativePlayerCommand BuildCapitalHere(int sequence, int empireId, int planetId)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.BuildCapitalHere,
+            SubjectId = planetId,
         };
 
     public static AuthoritativePlayerCommand ApplyColonyBlueprints(int sequence, int empireId,

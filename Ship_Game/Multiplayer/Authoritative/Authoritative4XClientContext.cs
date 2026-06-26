@@ -110,6 +110,16 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitBuildCapitalHere(Planet planet)
+    {
+        if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+
+        context.Submit(AuthoritativePlayerCommand.BuildCapitalHere(context.Next(), context.EmpireId,
+            planet.Id));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitApplyColonyBlueprints(Planet planet,
         BlueprintsTemplate template)
     {
