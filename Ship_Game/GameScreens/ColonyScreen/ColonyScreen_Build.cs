@@ -264,11 +264,16 @@ namespace Ship_Game
 
         public bool Build(Building b, PlanetGridSquare where = null)
         {
-            if (where == null && Authoritative4XClientContext.TrySubmitQueueBuilding(P, b?.Name))
+            if (Authoritative4XClientContext.TrySubmitQueueBuilding(P, b?.Name, where))
             {
                 GameAudio.AcceptClick();
                 ClearItemsFilter();
                 return true;
+            }
+            if (Authoritative4XClientContext.IsActive)
+            {
+                GameAudio.NegativeClick();
+                return false;
             }
 
             if (P.Construction.Enqueue(b, where, true))

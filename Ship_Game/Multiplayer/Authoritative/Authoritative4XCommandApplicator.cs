@@ -616,7 +616,23 @@ public sealed class Authoritative4XCommandApplicator
         if (buildable == null)
             return Reject(result, $"Empire {empire.Id} cannot build {buildingName} at planet {planet.Id}.");
 
-        return planet.Construction.Enqueue(buildable, where: null, playerAdded: true)
+        PlanetGridSquare where = null;
+        if (command.TargetId == 1)
+        {
+            int tileX = (int)command.Position.X;
+            int tileY = (int)command.Position.Y;
+            where = planet.TilesList.FirstOrDefault(tile => tile.X == tileX && tile.Y == tileY);
+            if (where == null)
+                return Reject(result, $"Tile {tileX},{tileY} was not found at planet {planet.Id}.");
+            if (!where.CanEnqueueBuildingHere(buildable))
+                return Reject(result, $"Tile {tileX},{tileY} cannot queue {buildingName} at planet {planet.Id}.");
+        }
+        else if (command.TargetId != 0)
+        {
+            return Reject(result, $"Unsupported building placement mode {command.TargetId}.");
+        }
+
+        return planet.Construction.Enqueue(buildable, where, playerAdded: true)
             ? Accept(result)
             : Reject(result, $"No valid tile was available for {buildingName} at planet {planet.Id}.");
     }

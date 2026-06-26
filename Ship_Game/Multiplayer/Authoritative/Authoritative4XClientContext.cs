@@ -93,14 +93,18 @@ public sealed class Authoritative4XClientContext : IDisposable
             planet.Food.PercentLock, planet.Prod.PercentLock, planet.Res.PercentLock);
     }
 
-    public static bool TrySubmitQueueBuilding(Planet planet, string buildingName)
+    public static bool TrySubmitQueueBuilding(Planet planet, string buildingName, PlanetGridSquare where = null)
     {
         if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
             return false;
         if (string.IsNullOrEmpty(buildingName))
             return false;
 
-        context.Submit(AuthoritativePlayerCommand.QueueBuilding(context.Next(), context.EmpireId, planet.Id, buildingName));
+        AuthoritativePlayerCommand command = where != null
+            ? AuthoritativePlayerCommand.QueueBuilding(context.Next(), context.EmpireId, planet.Id,
+                buildingName, where.X, where.Y)
+            : AuthoritativePlayerCommand.QueueBuilding(context.Next(), context.EmpireId, planet.Id, buildingName);
+        context.Submit(command);
         return true;
     }
 

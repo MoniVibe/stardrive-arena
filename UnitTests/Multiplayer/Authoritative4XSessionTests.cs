@@ -95,6 +95,17 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(456, copy.SubjectId);
         Assert.AreEqual("Factory", copy.Text);
 
+        var tileBuildingRequest = AuthoritativePlayerCommand.QueueBuilding(12, 2, 456, "Factory", 1, 3)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(tileBuildingRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.QueueBuilding, copy.Kind);
+        Assert.AreEqual(456, copy.SubjectId);
+        Assert.AreEqual(1, copy.TargetId);
+        Assert.AreEqual(1f, copy.X);
+        Assert.AreEqual(3f, copy.Y);
+        Assert.AreEqual("Factory", copy.Text);
+
         var troopRequest = AuthoritativePlayerCommand.QueueTroop(11, 2, 789, "Marine")
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(troopRequest, toPeer: 1));
@@ -750,6 +761,45 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsFalse(session.LastResult.Accepted, "Unknown troops must not be queued.");
             StringAssert.Contains(session.LastResult.Reason, "not found");
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XColonyTileBuildQueue_QueuesAtRequestedTile_Headless()
+    {
+        const ulong Seed = 0xB411D02UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+            EnsureTwoBuildTiles(authority.Planet);
+            EnsureTwoBuildTiles(client.Planet);
+            Building buildable = PickBuildableBuilding(authority.Planet);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueBuilding(39, authority.Player.Id,
+                authority.Planet.Id, buildable.Name, tileX: 1, tileY: 0));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+
+            QueueItem authorityItem = LastQueuedBuilding(authority.Planet, buildable.Name);
+            QueueItem clientItem = LastQueuedBuilding(client.Planet, buildable.Name);
+            Assert.IsNotNull(authorityItem.pgs, "Explicit tile placement must reserve the requested authority tile.");
+            Assert.IsNotNull(clientItem.pgs, "Explicit tile placement must reserve the requested client tile.");
+            Assert.AreEqual(1, authorityItem.pgs.X);
+            Assert.AreEqual(0, authorityItem.pgs.Y);
+            Assert.AreEqual(authorityItem.pgs.X, clientItem.pgs.X);
+            Assert.AreEqual(authorityItem.pgs.Y, clientItem.pgs.Y);
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The canonical sync digest must cover explicit tile building queue mutations.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, "|1|0|");
         }
         finally
         {
@@ -2577,6 +2627,21 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual((int)AuthoritativeDiplomacyProposalType.TradeDeal, submitted[10].TargetId);
                 Assert.AreEqual("trade terms", submitted[10].Text);
 
+                PlanetGridSquare explicitTile = world.Planet.TilesList.First();
+                Assert.IsTrue(Authoritative4XClientContext.TrySubmitQueueBuilding(world.Planet,
+                    buildable.Name, explicitTile), "Dragging a building to a colony tile should submit tile coordinates.");
+                Assert.AreEqual(12, submitted.Count);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.QueueBuilding, submitted[11].Kind);
+                Assert.AreEqual(711, submitted[11].Sequence);
+                Assert.AreEqual(world.Planet.Id, submitted[11].SubjectId);
+                Assert.AreEqual(1, submitted[11].TargetId);
+                Assert.AreEqual(explicitTile.X, (int)submitted[11].Position.X);
+                Assert.AreEqual(explicitTile.Y, (int)submitted[11].Position.Y);
+                Assert.AreEqual(buildable.Name, submitted[11].Text);
+                Assert.IsFalse(world.Planet.Construction.GetConstructionQueueSnapshot()
+                        .Any(q => q.isBuilding && q.Building?.Name == buildable.Name),
+                    "Passive MP clients must not locally enqueue dragged tile buildings before host acceptance.");
+
                 int beforeWrongEmpire = submitted.Count;
                 Assert.IsFalse(Authoritative4XClientContext.TrySubmitQueueBuilding(world.EnemyPlanet, buildable.Name),
                     "An active client context must only handle its own empire's UI commands.");
@@ -3944,6 +4009,14 @@ public class Authoritative4XSessionTests : StarDriveTest
     {
         planet.TilesList.Clear();
         planet.TilesList.Add(new PlanetGridSquare(planet, 0, 0, b: null, hab: true, terraformable: false));
+        planet.RefreshBuildingsWeCanBuildHere();
+    }
+
+    static void EnsureTwoBuildTiles(Planet planet)
+    {
+        planet.TilesList.Clear();
+        planet.TilesList.Add(new PlanetGridSquare(planet, 0, 0, b: null, hab: true, terraformable: false));
+        planet.TilesList.Add(new PlanetGridSquare(planet, 1, 0, b: null, hab: true, terraformable: false));
         planet.RefreshBuildingsWeCanBuildHere();
     }
 

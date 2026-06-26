@@ -274,6 +274,19 @@ public sealed class AuthoritativePlayerCommand
             Text = buildingName ?? "",
         };
 
+    public static AuthoritativePlayerCommand QueueBuilding(int sequence, int empireId, int planetId,
+        string buildingName, int tileX, int tileY)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.QueueBuilding,
+            SubjectId = planetId,
+            TargetId = 1,
+            Position = new Vector2(tileX, tileY),
+            Text = buildingName ?? "",
+        };
+
     public static AuthoritativePlayerCommand QueueTroop(int sequence, int empireId, int planetId, string troopName)
         => new()
         {
