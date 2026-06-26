@@ -355,6 +355,15 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(99, copy.SubjectId);
         Assert.AreEqual((int)AuthoritativeShipSpecialOrderType.Explore, copy.TargetId);
 
+        var clearOrderRequest = AuthoritativePlayerCommand.ShipSpecialOrder(29, 2, 99,
+                AuthoritativeShipSpecialOrderType.ClearOrders)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(clearOrderRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.ShipSpecialOrder, copy.Kind);
+        Assert.AreEqual(99, copy.SubjectId);
+        Assert.AreEqual((int)AuthoritativeShipSpecialOrderType.ClearOrders, copy.TargetId);
+
         var lifecycleOrderRequest = AuthoritativePlayerCommand.ShipLifecycleOrder(32, 2, 99,
                 AuthoritativeShipLifecycleOrderType.Scrap)
             .ToMessage(fromPeer: 2);
@@ -364,7 +373,16 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(99, copy.SubjectId);
         Assert.AreEqual((int)AuthoritativeShipLifecycleOrderType.Scrap, copy.TargetId);
 
-        var stanceRequest = AuthoritativePlayerCommand.SetShipCombatStance(29, 2, 99,
+        var cancelScuttleRequest = AuthoritativePlayerCommand.ShipLifecycleOrder(33, 2, 99,
+                AuthoritativeShipLifecycleOrderType.CancelScuttle)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(cancelScuttleRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.ShipLifecycleOrder, copy.Kind);
+        Assert.AreEqual(99, copy.SubjectId);
+        Assert.AreEqual((int)AuthoritativeShipLifecycleOrderType.CancelScuttle, copy.TargetId);
+
+        var stanceRequest = AuthoritativePlayerCommand.SetShipCombatStance(34, 2, 99,
                 CombatState.HoldPosition)
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(stanceRequest, toPeer: 1));
@@ -1954,9 +1972,21 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(AIState.Explore, client.Ship.AI.State);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
+            string beforeClearDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.ShipSpecialOrder(133,
+                authority.Player.Id, authority.Ship.Id, AuthoritativeShipSpecialOrderType.ClearOrders));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreNotEqual(AIState.Explore, authority.Ship.AI.State);
+            Assert.AreNotEqual(AIState.Explore, client.Ship.AI.State);
+            Assert.IsFalse(authority.Ship.AI.OrderQueue.ToArray().Any(g => g.Plan == ShipAI.Plan.Explore));
+            Assert.IsFalse(client.Ship.AI.OrderQueue.ToArray().Any(g => g.Plan == ShipAI.Plan.Explore));
+            Assert.AreNotEqual(beforeClearDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover order-clearing state.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
             session.SubmitFromClient(new AuthoritativePlayerCommand
             {
-                Sequence = 132,
+                Sequence = 134,
                 EmpireId = authority.Player.Id,
                 Kind = AuthoritativePlayerCommandKind.ShipSpecialOrder,
                 SubjectId = authority.Ship.Id,
@@ -1964,8 +1994,6 @@ public class Authoritative4XSessionTests : StarDriveTest
             });
             Assert.IsFalse(session.LastResult.Accepted, "Unknown special-order types must be rejected.");
             StringAssert.Contains(session.LastResult.Reason, "Unsupported");
-            Assert.AreEqual(AIState.Explore, authority.Ship.AI.State);
-            Assert.AreEqual(AIState.Explore, client.Ship.AI.State);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
         }
         finally
@@ -2035,6 +2063,16 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(authority.PlatformShip.ScuttleTimer, client.PlatformShip.ScuttleTimer);
             Assert.AreNotEqual(beforeScuttleDigest, session.LastAuthoritySnapshot.SyncDigest,
                 "The authoritative sync digest must cover scuttle timer state.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeCancelScuttleDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.ShipLifecycleOrder(156,
+                authority.Player.Id, authority.PlatformShip.Id, AuthoritativeShipLifecycleOrderType.CancelScuttle));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(-1f, authority.PlatformShip.ScuttleTimer);
+            Assert.AreEqual(-1f, client.PlatformShip.ScuttleTimer);
+            Assert.AreNotEqual(beforeCancelScuttleDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover scuttle cancellation.");
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
         }
         finally
@@ -2519,15 +2557,30 @@ public class Authoritative4XSessionTests : StarDriveTest
                     "Passive MP clients must not locally start exploration before host acceptance.");
                 Assert.AreEqual(originalOrders, world.Ship.AI.OrderQueue.Count);
 
+                world.Ship.AI.OrderExplore();
+                AIState exploringState = world.Ship.AI.State;
+                int exploringOrders = world.Ship.AI.OrderQueue.Count;
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitShipSpecialOrder(world.Ship,
+                        AuthoritativeShipSpecialOrderType.ClearOrders));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(2171, submitted[1].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.ShipSpecialOrder, submitted[1].Kind);
+                Assert.AreEqual(world.Ship.Id, submitted[1].SubjectId);
+                Assert.AreEqual((int)AuthoritativeShipSpecialOrderType.ClearOrders, submitted[1].TargetId);
+                Assert.AreEqual(exploringState, world.Ship.AI.State,
+                    "Passive MP clients must not locally clear ship orders before host acceptance.");
+                Assert.AreEqual(exploringOrders, world.Ship.AI.OrderQueue.Count);
+
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitShipSpecialOrder(world.EnemyShip,
                         AuthoritativeShipSpecialOrderType.Explore));
-                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2, submitted.Count);
 
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitShipSpecialOrder(world.Ship,
                         (AuthoritativeShipSpecialOrderType)255));
-                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2, submitted.Count);
             }
         }
         finally
@@ -2574,15 +2627,26 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual(originalPlatformTimer, world.PlatformShip.ScuttleTimer,
                     "Passive MP clients must not locally set scuttle timers before host acceptance.");
 
+                world.PlatformShip.ScuttleTimer = 10f;
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitShipLifecycleOrder(world.PlatformShip,
+                        AuthoritativeShipLifecycleOrderType.CancelScuttle));
+                Assert.AreEqual(3, submitted.Count);
+                Assert.AreEqual(2192, submitted[2].Sequence);
+                Assert.AreEqual(world.PlatformShip.Id, submitted[2].SubjectId);
+                Assert.AreEqual((int)AuthoritativeShipLifecycleOrderType.CancelScuttle, submitted[2].TargetId);
+                Assert.AreEqual(10f, world.PlatformShip.ScuttleTimer,
+                    "Passive MP clients must not locally cancel scuttle timers before host acceptance.");
+
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitShipLifecycleOrder(world.EnemyShip,
                         AuthoritativeShipLifecycleOrderType.Scrap));
-                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(3, submitted.Count);
 
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitShipLifecycleOrder(world.Ship,
                         (AuthoritativeShipLifecycleOrderType)255));
-                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(3, submitted.Count);
             }
         }
         finally

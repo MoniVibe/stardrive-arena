@@ -120,12 +120,14 @@ public enum AuthoritativeFleetAssignmentMode : byte
 public enum AuthoritativeShipSpecialOrderType : byte
 {
     Explore = 1,
+    ClearOrders = 2,
 }
 
 public enum AuthoritativeShipLifecycleOrderType : byte
 {
     Scrap = 1,
     Scuttle = 2,
+    CancelScuttle = 3,
 }
 
 public readonly struct AuthoritativeFleetLayoutNode

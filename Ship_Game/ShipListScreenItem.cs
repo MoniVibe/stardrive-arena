@@ -8,6 +8,7 @@ using Ship_Game.Ships;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
 using Ship_Game.Commands.Goals;
+using Ship_Game.Multiplayer.Authoritative;
 using System.Collections;
 using System.Web;
 
@@ -361,10 +362,20 @@ namespace Ship_Game
                 {
                     if (Ship.AI.State == AIState.Explore)
                     {
+                        if (TrySubmitSpecialOrder(AuthoritativeShipSpecialOrderType.ClearOrders))
+                        {
+                            StatusText = GetStatusText(Ship);
+                            return true;
+                        }
                         Ship.AI.ClearOrders();
                     }
                     else
                     {
+                        if (TrySubmitSpecialOrder(AuthoritativeShipSpecialOrderType.Explore))
+                        {
+                            StatusText = GetStatusText(Ship);
+                            return true;
+                        }
                         Ship.AI.OrderExplore();
                     }
                     StatusText = GetStatusText(Ship);
@@ -394,10 +405,20 @@ namespace Ship_Game
                 {
                     if (Ship.AI.State == AIState.Scrap)
                     {
+                        if (TrySubmitSpecialOrder(AuthoritativeShipSpecialOrderType.ClearOrders))
+                        {
+                            StatusText = GetStatusText(Ship);
+                            return true;
+                        }
                         Ship.AI.ClearOrders();
                     }
                     else
                     {
+                        if (TrySubmitLifecycleOrder(AuthoritativeShipLifecycleOrderType.Scrap))
+                        {
+                            StatusText = GetStatusText(Ship);
+                            return true;
+                        }
                         if (input.IsShiftKeyDown)
                         {
                             Screen.Universe.RunOnSimThread(() => Ship.Loyalty.MassScrap(Ship));
@@ -414,11 +435,21 @@ namespace Ship_Game
                 {
                     if (Ship.ScuttleTimer != -1f)
                     {
+                        if (TrySubmitLifecycleOrder(AuthoritativeShipLifecycleOrderType.CancelScuttle))
+                        {
+                            StatusText = GetStatusText(Ship);
+                            return true;
+                        }
                         Ship.ScuttleTimer = -1f;
                         Ship.AI.ClearOrders();
                     }
                     else
                     {
+                        if (TrySubmitLifecycleOrder(AuthoritativeShipLifecycleOrderType.Scuttle))
+                        {
+                            StatusText = GetStatusText(Ship);
+                            return true;
+                        }
                         Ship.ScuttleTimer = 10f;
                         Ship.AI.ClearOrders(AIState.Scuttle, priority:true);
                     }
@@ -428,6 +459,30 @@ namespace Ship_Game
             }
 
             return base.HandleInput(input);
+        }
+
+        bool TrySubmitSpecialOrder(AuthoritativeShipSpecialOrderType order)
+        {
+            switch (Authoritative4XClientContext.TrySubmitShipSpecialOrder(Ship, order))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        bool TrySubmitLifecycleOrder(AuthoritativeShipLifecycleOrderType order)
+        {
+            switch (Authoritative4XClientContext.TrySubmitShipLifecycleOrder(Ship, order))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         void SetNewPos(int x, int y)

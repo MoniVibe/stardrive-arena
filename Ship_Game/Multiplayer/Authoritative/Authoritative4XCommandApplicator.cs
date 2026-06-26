@@ -160,6 +160,10 @@ public sealed class Authoritative4XCommandApplicator
 
         switch ((AuthoritativeShipSpecialOrderType)command.TargetId)
         {
+            case AuthoritativeShipSpecialOrderType.ClearOrders:
+                ship.AI.ClearOrders();
+                return Accept(result);
+
             case AuthoritativeShipSpecialOrderType.Explore:
                 if (!ship.PlayerShipCanTakeFleetOrders()
                     || ship.IsPlatformOrStation
@@ -208,6 +212,13 @@ public sealed class Authoritative4XCommandApplicator
                 if (!ship.IsPlatformOrStation)
                     return Reject(result, $"Ship {ship.Id} is not a platform or station.");
                 ship.ScuttleTimer = 10f;
+                return Accept(result);
+
+            case AuthoritativeShipLifecycleOrderType.CancelScuttle:
+                if (!ship.IsPlatformOrStation)
+                    return Reject(result, $"Ship {ship.Id} is not a platform or station.");
+                ship.ScuttleTimer = -1f;
+                ship.AI.ClearOrders();
                 return Accept(result);
 
             default:

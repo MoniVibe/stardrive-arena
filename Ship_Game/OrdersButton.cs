@@ -159,7 +159,18 @@ namespace Ship_Game
                         case OrderType.AllowInterTrade:    ship.AllowInterEmpireTrade    = !input.RightMouseClick; break;
                         case OrderType.FighterToggle:      ship.Carrier.FightersOut      = !input.RightMouseClick; break;
                         case OrderType.TroopToggle:        ship.Carrier.TroopsOut        = !input.RightMouseClick; break;
-                        case OrderType.Explore:            ship.AI.OrderExplore();                                 break;
+                        case OrderType.Explore:
+                            switch (Authoritative4XClientContext.TrySubmitShipSpecialOrder(ship,
+                                        AuthoritativeShipSpecialOrderType.Explore))
+                            {
+                                case Authoritative4XUiCommandResult.Submitted:
+                                case Authoritative4XUiCommandResult.Blocked:
+                                    break;
+                                default:
+                                    ship.AI.OrderExplore();
+                                    break;
+                            }
+                            break;
                         case OrderType.OrderResupply:      ship.Supply.ResupplyFromButton();                       break;
                         case OrderType.Scrap:
                             switch (Authoritative4XClientContext.TrySubmitShipLifecycleOrder(ship,

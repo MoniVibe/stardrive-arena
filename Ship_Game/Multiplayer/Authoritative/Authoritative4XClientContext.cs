@@ -741,12 +741,20 @@ public sealed class Authoritative4XClientContext : IDisposable
     }
 
     static bool CanSubmitShipSpecialOrder(Ship ship, AuthoritativeShipSpecialOrderType orderType)
-        => orderType == AuthoritativeShipSpecialOrderType.Explore
-           && ship?.Active == true
-           && ship.PlayerShipCanTakeFleetOrders()
-           && !ship.IsPlatformOrStation
-           && !ship.IsSubspaceProjector
-           && ship.ShipData.Role != RoleName.troop;
+    {
+        if (ship?.Active != true)
+            return false;
+
+        return orderType switch
+        {
+            AuthoritativeShipSpecialOrderType.ClearOrders => true,
+            AuthoritativeShipSpecialOrderType.Explore => ship.PlayerShipCanTakeFleetOrders()
+                && !ship.IsPlatformOrStation
+                && !ship.IsSubspaceProjector
+                && ship.ShipData.Role != RoleName.troop,
+            _ => false,
+        };
+    }
 
     static bool CanSubmitShipLifecycleOrder(Ship ship, AuthoritativeShipLifecycleOrderType orderType)
     {
@@ -757,6 +765,7 @@ public sealed class Authoritative4XClientContext : IDisposable
         {
             AuthoritativeShipLifecycleOrderType.Scrap => !ship.IsPlatformOrStation,
             AuthoritativeShipLifecycleOrderType.Scuttle => ship.IsPlatformOrStation,
+            AuthoritativeShipLifecycleOrderType.CancelScuttle => ship.IsPlatformOrStation,
             _ => false,
         };
     }
