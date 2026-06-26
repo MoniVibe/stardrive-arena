@@ -7916,6 +7916,21 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void ArenaMultiplayerLobby_JoinFailureReturnsStatusError_Headless()
+    {
+        int closedPort = FreeTcpPort();
+
+        bool connected = ArenaMultiplayerLobbyScreen.TryCreateJoinTransport("127.0.0.1", closedPort,
+            localPeerId: 3, remotePeerId: Authoritative4XLobby.AuthorityPeerId,
+            out TcpLockstepTransport transport, out string error);
+
+        Assert.IsFalse(connected, "Joining a closed local port should fail without throwing.");
+        Assert.IsNull(transport);
+        Assert.IsFalse(string.IsNullOrWhiteSpace(error),
+            "The lobby needs a visible status message when the socket connect fails.");
+    }
+
+    [TestMethod]
     public void Authoritative4XLobby_StartsGeneratedGameWithHumanRosterAndSettings_Headless()
     {
         LoadAllGameData();

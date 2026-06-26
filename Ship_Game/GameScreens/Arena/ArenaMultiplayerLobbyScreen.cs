@@ -1,6 +1,7 @@
 using System;
 using System.Globalization;
 using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.Xna.Framework.Graphics;
 using SDGraphics;
 using SDLockstep;
@@ -66,6 +67,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     LobbyPeer LocalPeer = new() { PlayerName = "Local", RacePreference = "United", LoadoutTrait = "Wingmates" };
     LobbyPeer RemotePeer = new() { PlayerName = "Remote", RacePreference = "-", LoadoutTrait = "-", Ready = false };
     SessionStartMessage Pending4XStart;
+    Action PendingLobbyAction;
     ArenaMultiplayerRunResult LastResult;
     Authoritative4XLobbySelfTestResult Last4XSelfTestResult;
     string StatusText;
@@ -79,6 +81,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     int TurnTimerIndex = 2;
     int RichnessIndex;
     bool StartPaused;
+    bool JoinInProgress;
+    bool ScreenExiting;
     bool Launching;
     ArenaRegularMultiplayerSettings RegularSettings = new();
 
@@ -309,7 +313,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
     void StartHost()
     {
-        if (Transport != null)
+        if (Transport != null || JoinInProgress)
         {
             SetStatus("Already hosting or joined. Back out to reset the socket.");
             GameAudio.NegativeClick();
@@ -321,17 +325,31 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         ApplyLocalSelection();
         LobbyTelemetry?.Dispose();
         LobbyTelemetry = ArenaMultiplayerTelemetry.Start("Host", "lobby", CreateDefaultSettings(ParseTurns()));
-        Transport = TcpLockstepTransport.HostMulti(ParsePort());
+        int port = ParsePort();
+        try
+        {
+            Transport = TcpLockstepTransport.HostMulti(port);
+        }
+        catch (Exception ex)
+        {
+            LocalRole = null;
+            LobbyTelemetry?.NetworkError(ex.Message);
+            LobbyTelemetry?.Dispose();
+            LobbyTelemetry = null;
+            SetStatus($"HOST failed on port {port}: {ex.Message}");
+            GameAudio.NegativeClick();
+            return;
+        }
         Transport.AddObserver(AuthorityPeerId, OnHostMessage);
         SendLocalLobby();
-        SetStatus($"HOST listening on port {ParsePort()}\nPick setup, ready, then launch when remote is ready.");
-        LobbyTelemetry.Event("HOST_LISTEN", $"port={ParsePort()}");
+        SetStatus($"HOST listening on port {port}\nPick setup, ready, then launch when remote is ready.");
+        LobbyTelemetry.Event("HOST_LISTEN", $"port={port}");
         GameAudio.AffirmativeClick();
     }
 
     void StartJoin()
     {
-        if (Transport != null)
+        if (Transport != null || JoinInProgress)
         {
             SetStatus("Already hosting or joined. Back out to reset the socket.");
             GameAudio.NegativeClick();
@@ -346,7 +364,51 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         ApplyLocalSelection();
         LobbyTelemetry?.Dispose();
         LobbyTelemetry = ArenaMultiplayerTelemetry.Start("Join", "lobby", CreateDefaultSettings(ParseTurns()));
-        Transport = TcpLockstepTransport.JoinAsPeer(host, ParsePort(), JoinPlayerPeerId4X, AuthorityPeerId);
+        int port = ParsePort();
+        JoinInProgress = true;
+        SetStatus($"JOIN connecting to {host}:{port}...");
+        LobbyTelemetry.Event("JOIN_START", $"host={host} port={port}");
+        Task.Run(() =>
+        {
+            if (TryCreateJoinTransport(host, port, JoinPlayerPeerId4X, AuthorityPeerId,
+                    out TcpLockstepTransport joinedTransport, out string error))
+            {
+                QueueLobbyAction(() => CompleteJoin(host, port, joinedTransport));
+            }
+            else
+            {
+                QueueLobbyAction(() => FailJoin(host, port, error));
+            }
+        });
+    }
+
+    public static bool TryCreateJoinTransport(string host, int port, int localPeerId, int remotePeerId,
+        out TcpLockstepTransport transport, out string error)
+    {
+        try
+        {
+            transport = TcpLockstepTransport.JoinAsPeer(host, port, localPeerId, remotePeerId);
+            error = "";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            transport = null;
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    void CompleteJoin(string host, int port, TcpLockstepTransport joinedTransport)
+    {
+        JoinInProgress = false;
+        if (ScreenExiting || Transport != null)
+        {
+            joinedTransport?.Dispose();
+            return;
+        }
+
+        Transport = joinedTransport;
         Transport.AddObserver(JoinPlayerPeerId4X, OnJoinMessage);
         Transport.Send(AuthorityPeerId, new SessionHelloMessage
         {
@@ -358,9 +420,43 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
         });
         SendLocalLobby();
-        SetStatus($"JOIN connected to {host}:{ParsePort()}\nPress ready; host launches the match.");
-        LobbyTelemetry.Event("JOIN_CONNECT", $"host={host} port={ParsePort()}");
+        SetStatus($"JOIN connected to {host}:{port}\nPress ready; host launches the match.");
+        LobbyTelemetry?.Event("JOIN_CONNECT", $"host={host} port={port}");
         GameAudio.AffirmativeClick();
+    }
+
+    void FailJoin(string host, int port, string error)
+    {
+        JoinInProgress = false;
+        LocalRole = null;
+        LobbyTelemetry?.NetworkError(error);
+        LobbyTelemetry?.Dispose();
+        LobbyTelemetry = null;
+        SetStatus($"FAILED: {error}\nNo response from {host}:{port}. Check host is listening, VPN/IP, and firewall.");
+        GameAudio.NegativeClick();
+    }
+
+    void QueueLobbyAction(Action action)
+    {
+        if (action == null)
+            return;
+        lock (Sync)
+        {
+            if (ScreenExiting)
+                return;
+            PendingLobbyAction += action;
+        }
+    }
+
+    void DrainPendingLobbyActions()
+    {
+        Action action;
+        lock (Sync)
+        {
+            action = PendingLobbyAction;
+            PendingLobbyAction = null;
+        }
+        action?.Invoke();
     }
 
     void ToggleReady()
@@ -629,6 +725,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     public override void Update(float fixedDeltaTime)
     {
         base.Update(fixedDeltaTime);
+        DrainPendingLobbyActions();
         if (Transport != null)
         {
             Transport.Poll();
@@ -945,6 +1042,12 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
     public override void ExitScreen()
     {
+        lock (Sync)
+        {
+            ScreenExiting = true;
+            JoinInProgress = false;
+            PendingLobbyAction = null;
+        }
         Transport?.Dispose();
         Transport = null;
         LobbyTelemetry?.Dispose();
