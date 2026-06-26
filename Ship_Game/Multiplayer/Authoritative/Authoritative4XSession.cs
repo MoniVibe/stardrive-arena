@@ -64,6 +64,7 @@ public sealed class AuthoritativeStateSnapshot
         foreach (Empire e in us.Empires.OrderBy(e => e.Id))
             sb.Append("E|").Append(e.Id)
               .Append('|').Append(e.Research.Topic ?? "")
+              .Append('|').Append(ResearchQueueSignature(e))
               .Append('|').Append(FloatBits(e.Money))
               .Append('|').Append(FloatBits(e.data.TaxRate))
               .Append('|').Append(FloatBits(e.data.treasuryGoal))
@@ -183,6 +184,9 @@ public sealed class AuthoritativeStateSnapshot
 
     static string TargetQueueSignature(Ship ship)
         => string.Join(",", ship.AI.TargetQueue.Select(s => s?.Id ?? 0));
+
+    static string ResearchQueueSignature(Empire empire)
+        => string.Join(",", empire.data.ResearchQueue);
 
     static string ShipOrderQueueSignature(Ship ship)
     {

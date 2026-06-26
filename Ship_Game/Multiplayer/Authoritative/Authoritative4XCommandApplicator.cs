@@ -41,6 +41,9 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.SetColonyType => ApplyColonyType(command, empire, result),
                 AuthoritativePlayerCommandKind.SetColonyLabor => ApplyColonyLabor(command, empire, result),
                 AuthoritativePlayerCommandKind.SetResearchTopic => ApplyResearchTopic(command, empire, result),
+                AuthoritativePlayerCommandKind.QueueResearch => ApplyQueueResearch(command, empire, result),
+                AuthoritativePlayerCommandKind.RemoveResearchQueueItem => ApplyRemoveResearchQueueItem(command, empire, result),
+                AuthoritativePlayerCommandKind.MoveResearchQueueItem => ApplyMoveResearchQueueItem(command, empire, result),
                 AuthoritativePlayerCommandKind.SetEmpireBudget => ApplyEmpireBudget(command, empire, result),
                 AuthoritativePlayerCommandKind.DiplomacyProposal => ApplyDiplomacy(command, empire, result),
                 AuthoritativePlayerCommandKind.DiplomacyResponse => ApplyDiplomacy(command, empire, result),
@@ -254,6 +257,86 @@ public sealed class Authoritative4XCommandApplicator
 
         empire.Research.SetTopic(techUid);
         return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyQueueResearch(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (!TryGetResearchEntry(command.Text, empire, result, out string techUid, out TechEntry entry,
+                out AuthoritativeCommandResult rejected))
+        {
+            return rejected;
+        }
+        if (!entry.Discovered)
+            return Reject(result, $"Tech {techUid} is not discovered by empire {empire.Id}.");
+        if (!entry.CanBeResearched)
+            return Reject(result, $"Tech {techUid} cannot be researched by empire {empire.Id}.");
+
+        empire.Research.AddTechToQueue(techUid);
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyRemoveResearchQueueItem(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (!TryGetResearchEntry(command.Text, empire, result, out string techUid, out _,
+                out AuthoritativeCommandResult rejected))
+        {
+            return rejected;
+        }
+        if (!empire.Research.IsQueued(techUid))
+            return Reject(result, $"Tech {techUid} is not queued for empire {empire.Id}.");
+
+        empire.Research.RemoveTechFromQueue(techUid);
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyMoveResearchQueueItem(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (!TryGetResearchEntry(command.Text, empire, result, out string techUid, out _,
+                out AuthoritativeCommandResult rejected))
+        {
+            return rejected;
+        }
+        if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
+            || !Enum.IsDefined(typeof(AuthoritativeResearchQueueMove),
+                (AuthoritativeResearchQueueMove)(byte)command.TargetId))
+        {
+            return Reject(result, $"Unsupported research queue move {command.TargetId}.");
+        }
+
+        int index = empire.Research.IndexInQueue(techUid);
+        if (index < 0)
+            return Reject(result, $"Tech {techUid} is not queued for empire {empire.Id}.");
+
+        switch ((AuthoritativeResearchQueueMove)command.TargetId)
+        {
+            case AuthoritativeResearchQueueMove.Up:
+                if (!empire.Research.CanMoveUp(index))
+                    return Reject(result, $"Tech {techUid} cannot move up in the research queue.");
+                empire.Research.MoveUp(index);
+                return Accept(result);
+
+            case AuthoritativeResearchQueueMove.Down:
+                if (!empire.Research.CanMoveDown(index))
+                    return Reject(result, $"Tech {techUid} cannot move down in the research queue.");
+                empire.Research.MoveDown(index);
+                return Accept(result);
+
+            case AuthoritativeResearchQueueMove.ToTopOrPrereq:
+                if (empire.Research.MoveToTopOrPreReq(index) == 0)
+                    return Reject(result, $"Tech {techUid} could not move toward the top of the research queue.");
+                return Accept(result);
+
+            case AuthoritativeResearchQueueMove.ToTopWithPrereqs:
+                if (empire.Research.MoveToTopWithPreReqs(index) == 0)
+                    return Reject(result, $"Tech {techUid} could not move to the top of the research queue.");
+                return Accept(result);
+
+            default:
+                return Reject(result, $"Unsupported research queue move {command.TargetId}.");
+        }
     }
 
     AuthoritativeCommandResult ApplyEmpireBudget(AuthoritativePlayerCommand command, Empire empire,
@@ -506,6 +589,31 @@ public sealed class Authoritative4XCommandApplicator
         }
 
         item = planet.ConstructionQueue[queueIndex];
+        return true;
+    }
+
+    static bool TryGetResearchEntry(string requestedTechUid, Empire empire, AuthoritativeCommandResult result,
+        out string techUid, out TechEntry entry, out AuthoritativeCommandResult rejected)
+    {
+        techUid = requestedTechUid ?? "";
+        entry = null;
+        rejected = null;
+
+        if (techUid.IsEmpty())
+        {
+            rejected = Reject(result, "Research tech UID is empty.");
+            return false;
+        }
+        if (!ResourceManager.TryGetTech(techUid, out _))
+        {
+            rejected = Reject(result, $"Tech {techUid} not found.");
+            return false;
+        }
+        if (!empire.TryGetTechEntry(techUid, out entry))
+        {
+            rejected = Reject(result, $"Empire {empire.Id} has no tech entry for {techUid}.");
+            return false;
+        }
         return true;
     }
 

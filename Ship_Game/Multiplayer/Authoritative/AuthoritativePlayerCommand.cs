@@ -24,6 +24,9 @@ public enum AuthoritativePlayerCommandKind : byte
     CancelConstructionQueueItem = 13,
     ReorderConstructionQueueItem = 14,
     SetEmpireBudget = 15,
+    QueueResearch = 16,
+    RemoveResearchQueueItem = 17,
+    MoveResearchQueueItem = 18,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -48,6 +51,14 @@ public enum AuthoritativeDiplomacyResponseKind : byte
     Accept = 1,
     Reject = 2,
     Counter = 3,
+}
+
+public enum AuthoritativeResearchQueueMove : byte
+{
+    Up = 1,
+    Down = 2,
+    ToTopOrPrereq = 3,
+    ToTopWithPrereqs = 4,
 }
 
 /// <summary>
@@ -111,6 +122,35 @@ public sealed class AuthoritativePlayerCommand
             Sequence = sequence,
             EmpireId = empireId,
             Kind = AuthoritativePlayerCommandKind.SetResearchTopic,
+            Text = techUid ?? "",
+        };
+
+    public static AuthoritativePlayerCommand QueueResearch(int sequence, int empireId, string techUid)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.QueueResearch,
+            Text = techUid ?? "",
+        };
+
+    public static AuthoritativePlayerCommand RemoveResearchQueueItem(int sequence, int empireId, string techUid)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.RemoveResearchQueueItem,
+            Text = techUid ?? "",
+        };
+
+    public static AuthoritativePlayerCommand MoveResearchQueueItem(int sequence, int empireId, string techUid,
+        AuthoritativeResearchQueueMove move)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.MoveResearchQueueItem,
+            TargetId = (int)move,
             Text = techUid ?? "",
         };
 

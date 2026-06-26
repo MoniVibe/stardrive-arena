@@ -357,6 +357,60 @@ namespace Ship_Game
                 return;
             }
 
+            if (Authoritative4XClientContext.IsActive)
+            {
+                if (!Authoritative4XClientContext.IsActiveFor(Player))
+                {
+                    GameAudio.NegativeClick();
+                    return;
+                }
+
+                bool ctrl = GameBase.ScreenManager.input != null && GameBase.ScreenManager.input.IsCtrlKeyDown;
+                bool queued = Player.Research.IsQueued(tech.UID);
+                bool hadQueue = Player.Research.HasTopic;
+                if (!queued)
+                {
+                    if (Authoritative4XClientContext.TrySubmitQueueResearch(Player, tech.UID)
+                        != Authoritative4XUiCommandResult.Submitted)
+                    {
+                        GameAudio.NegativeClick();
+                        return;
+                    }
+                }
+
+                if (ctrl)
+                {
+                    if (queued && Player.Research.IndexInQueue(tech.UID) <= 0)
+                    {
+                        GameAudio.NegativeClick();
+                        return;
+                    }
+                    if (queued || hadQueue)
+                    {
+                        if (Authoritative4XClientContext.TrySubmitMoveResearchQueueItem(Player, tech.UID,
+                                AuthoritativeResearchQueueMove.ToTopWithPrereqs)
+                            != Authoritative4XUiCommandResult.Submitted)
+                        {
+                            GameAudio.NegativeClick();
+                            return;
+                        }
+                    }
+                }
+                else if (queued)
+                {
+                    if (Authoritative4XClientContext.TrySubmitRemoveResearchQueueItem(Player, tech.UID)
+                        != Authoritative4XUiCommandResult.Submitted)
+                    {
+                        GameAudio.NegativeClick();
+                        return;
+                    }
+                }
+
+                GameAudio.ResearchSelect();
+                Queue.ReloadResearchQueue();
+                return;
+            }
+
             if (Authoritative4XClientContext.TrySubmitSetResearchTopic(Player, tech.UID))
             {
                 GameAudio.ResearchSelect();

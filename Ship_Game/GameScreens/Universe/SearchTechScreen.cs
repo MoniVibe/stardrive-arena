@@ -95,9 +95,16 @@ namespace Ship_Game
                 return;
             }
 
-            if (Authoritative4XClientContext.TrySubmitSetResearchTopic(Screen.Player, entry.UID))
+            Authoritative4XUiCommandResult mpResult =
+                Authoritative4XClientContext.TrySubmitQueueResearch(Screen.Player, entry.UID);
+            if (mpResult == Authoritative4XUiCommandResult.Submitted)
             {
                 GameAudio.ResearchSelect();
+                return;
+            }
+            if (mpResult == Authoritative4XUiCommandResult.Blocked)
+            {
+                GameAudio.NegativeClick();
                 return;
             }
 

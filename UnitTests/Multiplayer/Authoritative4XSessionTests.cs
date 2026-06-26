@@ -102,6 +102,29 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(0.45f, treasuryGoal);
         Assert.IsTrue(autoTaxes);
 
+        var queueResearchRequest = AuthoritativePlayerCommand.QueueResearch(18, 2, "Research UID")
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(queueResearchRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.QueueResearch, copy.Kind);
+        Assert.AreEqual("Research UID", copy.Text);
+
+        var removeResearchRequest = AuthoritativePlayerCommand.RemoveResearchQueueItem(19, 2, "Research UID")
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(removeResearchRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.RemoveResearchQueueItem, copy.Kind);
+        Assert.AreEqual("Research UID", copy.Text);
+
+        var moveResearchRequest = AuthoritativePlayerCommand.MoveResearchQueueItem(20, 2, "Research UID",
+                AuthoritativeResearchQueueMove.ToTopWithPrereqs)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(moveResearchRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.MoveResearchQueueItem, copy.Kind);
+        Assert.AreEqual((int)AuthoritativeResearchQueueMove.ToTopWithPrereqs, copy.TargetId);
+        Assert.AreEqual("Research UID", copy.Text);
+
         var cancelQueueRequest = AuthoritativePlayerCommand.CancelConstructionQueueItem(15, 2, 789, queueIndex: 3)
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(cancelQueueRequest, toPeer: 1));
@@ -378,6 +401,95 @@ public class Authoritative4XSessionTests : StarDriveTest
             session.SubmitFromClient(illegalOrbit);
             Assert.IsFalse(session.LastResult.Accepted, "An empire must not issue planet orders for ships it does not own.");
             StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XResearchQueue_AddMoveRemoveSync_Headless()
+    {
+        const ulong Seed = 0xA47E5EAUL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+            string[] techs = ResearchCandidates(authority.Player, 4);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueResearch(21, authority.Player.Id, techs[0]));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.Player.Research.IsQueued(techs[0]));
+            Assert.IsTrue(client.Player.Research.IsQueued(techs[0]));
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover research queue additions.");
+            AssertResearchQueuesEqual(authority.Player, client.Player);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            for (int i = 1; i < techs.Length; ++i)
+            {
+                session.SubmitFromClient(AuthoritativePlayerCommand.QueueResearch(21 + i,
+                    authority.Player.Id, techs[i]));
+                Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            }
+            AssertResearchQueuesEqual(authority.Player, client.Player);
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, ResearchQueuePayloadPrefix(authority.Player));
+
+            string beforeMoveDigest = session.LastAuthoritySnapshot.SyncDigest;
+            (string movableUp, int upIndex) = FindQueuedResearch(authority.Player, i => authority.Player.Research.CanMoveUp(i));
+            session.SubmitFromClient(AuthoritativePlayerCommand.MoveResearchQueueItem(30,
+                authority.Player.Id, movableUp, AuthoritativeResearchQueueMove.Up));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(upIndex - 1, authority.Player.Research.IndexInQueue(movableUp));
+            AssertResearchQueuesEqual(authority.Player, client.Player);
+            Assert.AreNotEqual(beforeMoveDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover research queue order changes.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            (string movableDown, int downIndex) = FindQueuedResearch(authority.Player, i => authority.Player.Research.CanMoveDown(i));
+            session.SubmitFromClient(AuthoritativePlayerCommand.MoveResearchQueueItem(31,
+                authority.Player.Id, movableDown, AuthoritativeResearchQueueMove.Down));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(downIndex + 1, authority.Player.Research.IndexInQueue(movableDown));
+            AssertResearchQueuesEqual(authority.Player, client.Player);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            (string topCandidate, int topIndex) = FindQueuedResearch(authority.Player, i => i > 0 && authority.Player.Research.CanMoveUp(i));
+            session.SubmitFromClient(AuthoritativePlayerCommand.MoveResearchQueueItem(32,
+                authority.Player.Id, topCandidate, AuthoritativeResearchQueueMove.ToTopWithPrereqs));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.Player.Research.IndexInQueue(topCandidate) < topIndex,
+                "Move-to-top should move the tech upward while respecting prerequisite ordering.");
+            AssertResearchQueuesEqual(authority.Player, client.Player);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string removeCandidate = authority.Player.data.ResearchQueue.ToArray().Last();
+            session.SubmitFromClient(AuthoritativePlayerCommand.RemoveResearchQueueItem(33,
+                authority.Player.Id, removeCandidate));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsFalse(authority.Player.Research.IsQueued(removeCandidate));
+            Assert.IsFalse(client.Player.Research.IsQueued(removeCandidate));
+            AssertResearchQueuesEqual(authority.Player, client.Player);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueResearch(34,
+                authority.Player.Id, "Definitely Missing MP Research"));
+            Assert.IsFalse(session.LastResult.Accepted, "Unknown tech must not enter the authoritative research queue.");
+            StringAssert.Contains(session.LastResult.Reason, "not found");
+            AssertResearchQueuesEqual(authority.Player, client.Player);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.RemoveResearchQueueItem(35,
+                authority.Player.Id, removeCandidate));
+            Assert.IsFalse(session.LastResult.Accepted, "Removing a non-queued tech must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "not queued");
+            AssertResearchQueuesEqual(authority.Player, client.Player);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
         }
         finally
@@ -781,6 +893,60 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.IsFalse(Authoritative4XClientContext.TrySubmitSetEmpireBudget(world.Enemy,
                     taxRate: 0.2f, treasuryGoal: 0.3f, autoTaxes: true));
                 Assert.AreEqual(1, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsResearchQueueWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0x4E5EACCUL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            string[] techs = ResearchCandidates(world.Player, 3);
+            world.Player.Research.AddTechToQueue(techs[0]);
+            string[] originalQueue = world.Player.data.ResearchQueue.ToArray();
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 1900))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitQueueResearch(world.Player, techs[1]));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(1900, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.QueueResearch, submitted[0].Kind);
+                Assert.AreEqual(techs[1], submitted[0].Text);
+                CollectionAssert.AreEqual(originalQueue, world.Player.data.ResearchQueue.ToArray(),
+                    "Passive MP clients must not locally add research before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitMoveResearchQueueItem(world.Player, techs[0],
+                        AuthoritativeResearchQueueMove.ToTopWithPrereqs));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(1901, submitted[1].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.MoveResearchQueueItem, submitted[1].Kind);
+                Assert.AreEqual((int)AuthoritativeResearchQueueMove.ToTopWithPrereqs, submitted[1].TargetId);
+                CollectionAssert.AreEqual(originalQueue, world.Player.data.ResearchQueue.ToArray(),
+                    "Passive MP clients must not locally reorder research before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitRemoveResearchQueueItem(world.Player, techs[0]));
+                Assert.AreEqual(3, submitted.Count);
+                Assert.AreEqual(1902, submitted[2].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.RemoveResearchQueueItem, submitted[2].Kind);
+                CollectionAssert.AreEqual(originalQueue, world.Player.data.ResearchQueue.ToArray(),
+                    "Passive MP clients must not locally remove research before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitQueueResearch(world.Enemy, techs[2]));
+                Assert.AreEqual(3, submitted.Count);
             }
         }
         finally
@@ -2210,6 +2376,41 @@ public class Authoritative4XSessionTests : StarDriveTest
             ResearchUid = researchUid,
         };
     }
+
+    static string[] ResearchCandidates(Empire empire, int count)
+    {
+        string[] uids = empire.TechEntries
+            .Where(t => t.Discovered && t.CanBeResearched)
+            .OrderBy(t => t.UID, StringComparer.Ordinal)
+            .Select(t => t.UID)
+            .Distinct(StringComparer.Ordinal)
+            .Take(count)
+            .ToArray();
+        Assert.IsTrue(uids.Length >= count,
+            $"Expected at least {count} discovered, researchable techs for authoritative MP research tests.");
+        return uids;
+    }
+
+    static (string uid, int index) FindQueuedResearch(Empire empire, Func<int, bool> indexPredicate)
+    {
+        for (int i = 0; i < empire.data.ResearchQueue.Count; ++i)
+        {
+            if (indexPredicate(i))
+                return (empire.data.ResearchQueue[i], i);
+        }
+
+        Assert.Fail("Could not find a queued research item matching the requested movement predicate.");
+        return ("", -1);
+    }
+
+    static void AssertResearchQueuesEqual(Empire expected, Empire actual)
+    {
+        CollectionAssert.AreEqual(expected.data.ResearchQueue.ToArray(), actual.data.ResearchQueue.ToArray(),
+            "Research queue order must match between authority and replica.");
+    }
+
+    static string ResearchQueuePayloadPrefix(Empire empire)
+        => $"E|{empire.Id}|{empire.Research.Topic}|{string.Join(",", empire.data.ResearchQueue)}|";
 
     static void MakeAtWar(Empire a, Empire b)
     {

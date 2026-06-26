@@ -1,6 +1,7 @@
 using Microsoft.Xna.Framework.Graphics;
 using SDGraphics;
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 using Vector2 = SDGraphics.Vector2;
 
 namespace Ship_Game
@@ -69,10 +70,14 @@ namespace Ship_Game
             InputState input = GameBase.ScreenManager.input;
             if (input.IsCtrlKeyDown)
             {
+                if (TrySubmitAuthoritativeMove(AuthoritativeResearchQueueMove.ToTopOrPrereq))
+                    return;
                 Research.MoveToTopOrPreReq(index);
             }
             else
             {
+                if (TrySubmitAuthoritativeMove(AuthoritativeResearchQueueMove.Up))
+                    return;
                 Research.MoveUp(index);
             }
             Screen.Queue.ReloadResearchQueue();
@@ -87,12 +92,27 @@ namespace Ship_Game
                 return;
             }
 
+            if (TrySubmitAuthoritativeMove(AuthoritativeResearchQueueMove.Down))
+                return;
             Research.MoveDown(index);
             Screen.Queue.ReloadResearchQueue();
         }
 
         void OnBtnCancelPressed(UIButton cancel)
         {
+            Authoritative4XUiCommandResult mpResult =
+                Authoritative4XClientContext.TrySubmitRemoveResearchQueueItem(Screen.Player, Tech.UID);
+            if (mpResult == Authoritative4XUiCommandResult.Submitted)
+            {
+                Screen.Queue.ReloadResearchQueue();
+                return;
+            }
+            if (mpResult == Authoritative4XUiCommandResult.Blocked)
+            {
+                GameAudio.NegativeClick();
+                return;
+            }
+
             Research.RemoveTechFromQueue(Tech.UID);
             Screen.Queue.ReloadResearchQueue();
         }
@@ -106,7 +126,10 @@ namespace Ship_Game
                 GameAudio.NegativeClick();
                 return;
             }
-            
+
+            if (TrySubmitAuthoritativeMove(AuthoritativeResearchQueueMove.ToTopWithPrereqs))
+                return;
+
             int moved = Research.MoveToTopWithPreReqs(index);
             if (moved == 0)
             {
@@ -115,6 +138,23 @@ namespace Ship_Game
             }
 
             Screen.Queue.ReloadResearchQueue();
+        }
+
+        bool TrySubmitAuthoritativeMove(AuthoritativeResearchQueueMove move)
+        {
+            Authoritative4XUiCommandResult mpResult =
+                Authoritative4XClientContext.TrySubmitMoveResearchQueueItem(Screen.Player, Tech.UID, move);
+            if (mpResult == Authoritative4XUiCommandResult.Submitted)
+            {
+                Screen.Queue.ReloadResearchQueue();
+                return true;
+            }
+            if (mpResult == Authoritative4XUiCommandResult.Blocked)
+            {
+                GameAudio.NegativeClick();
+                return true;
+            }
+            return false;
         }
     }
 }

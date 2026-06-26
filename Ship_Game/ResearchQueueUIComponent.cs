@@ -3,6 +3,7 @@ using Microsoft.Xna.Framework.Graphics;
 using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using SDUtils;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.UI;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
@@ -149,6 +150,16 @@ namespace Ship_Game
 
         public void AddToResearchQueue(TechEntry tech)
         {
+            Authoritative4XUiCommandResult mpResult =
+                Authoritative4XClientContext.TrySubmitQueueResearch(Player, tech.UID);
+            if (mpResult == Authoritative4XUiCommandResult.Submitted)
+            {
+                SetQueueVisible(true);
+                return;
+            }
+            if (mpResult == Authoritative4XUiCommandResult.Blocked)
+                return;
+
             if (Player.Research.AddToQueue(tech.UID))
             {
                 if (CurrentResearch == null)

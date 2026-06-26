@@ -204,6 +204,41 @@ public sealed class Authoritative4XClientContext : IDisposable
         return true;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitQueueResearch(Empire empire, string techUid)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (string.IsNullOrEmpty(techUid))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.QueueResearch(context.Next(), context.EmpireId, techUid));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitRemoveResearchQueueItem(Empire empire, string techUid)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (string.IsNullOrEmpty(techUid))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.RemoveResearchQueueItem(context.Next(), context.EmpireId, techUid));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitMoveResearchQueueItem(Empire empire, string techUid,
+        AuthoritativeResearchQueueMove move)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (string.IsNullOrEmpty(techUid))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.MoveResearchQueueItem(context.Next(), context.EmpireId,
+            techUid, move));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static bool TrySubmitSetEmpireBudget(Empire empire, float taxRate, float treasuryGoal, bool autoTaxes)
     {
         if (!TryGetFor(empire, out Authoritative4XClientContext context))
