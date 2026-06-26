@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
@@ -7,6 +8,7 @@ using SDGraphics;
 using SDLockstep;
 using Ship_Game.Audio;
 using Ship_Game.Data;
+using Ship_Game.Gameplay;
 using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.UI;
 using Ship_Game.Universe;
@@ -147,10 +149,10 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             StartPaused = s.StartPaused,
         };
         LocalPeer.RacePreference = localRace;
-        LocalPeer.TraitOptions = localTraits ?? "";
+        LocalPeer.TraitOptions = NormalizeTraitSelection(localTraits);
         LocalPeer.LoadoutTrait = ArenaStartArchetype.Wingmates.ToString();
         RemotePeer.RacePreference = remoteRace;
-        RemotePeer.TraitOptions = remoteTraits ?? "";
+        RemotePeer.TraitOptions = NormalizeTraitSelection(remoteTraits);
         RemotePeer.LoadoutTrait = ArenaStartArchetype.Wingmates.ToString();
         StartPaused = s.StartPaused;
         if (SeedEntry != null)
@@ -165,7 +167,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         RaceOptions = AvailableRacePreferences();
         TraitOptions = AvailableTraitOptions();
         RaceIndex = Math.Max(0, Array.IndexOf(RaceOptions, LocalPeer.RacePreference));
-        TraitIndex = Math.Max(0, Array.IndexOf(TraitOptions, LocalPeer.TraitOptions ?? ""));
+        TraitIndex = TraitCursorIndex(LocalPeer.TraitOptions);
         GalaxyIndex = Math.Max(0, Array.IndexOf(GalaxyOptions, RegularSettings.GalaxySize));
         StarsIndex = Math.Max(0, Array.IndexOf(StarOptions, RegularSettings.StarsCount));
         DifficultyIndex = Math.Max(0, Array.IndexOf(DifficultyOptions, RegularSettings.Difficulty));
@@ -196,16 +198,19 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         UIButton race = ArenaTheme.AddPillButton(setup, "", _ => CycleRace(), 152f);
         race.Name = "arena_mp_race";
         race.DynamicText = () => $"RACE {LocalPeer.RacePreference}";
-        UIButton trait = ArenaTheme.AddPillButton(setup, "", _ => CycleTrait(), 176f);
+        UIButton trait = ArenaTheme.AddPillButton(setup, "", _ => CycleTrait(), 148f);
         trait.Name = "arena_mp_trait";
-        trait.DynamicText = () => $"TRAIT {TraitLabel(LocalPeer.TraitOptions)}";
-        UIButton galaxy = ArenaTheme.AddPillButton(setup, "", _ => CycleGalaxy(), 126f);
+        trait.DynamicText = () => $"TRAIT {CurrentTraitLabel()}";
+        UIButton traitToggle = ArenaTheme.AddPillButton(setup, "", _ => ToggleTrait(), 142f);
+        traitToggle.Name = "arena_mp_trait_toggle";
+        traitToggle.DynamicText = TraitToggleLabel;
+        UIButton galaxy = ArenaTheme.AddPillButton(setup, "", _ => CycleGalaxy(), 110f);
         galaxy.Name = "arena_mp_regular_settings";
         galaxy.DynamicText = () => $"MAP {RegularSettings.GalaxySize.ToString().ToUpperInvariant()}";
-        UIButton stars = ArenaTheme.AddPillButton(setup, "", _ => CycleStars(), 142f);
+        UIButton stars = ArenaTheme.AddPillButton(setup, "", _ => CycleStars(), 118f);
         stars.Name = "arena_mp_stars";
         stars.DynamicText = () => $"STARS {RegularSettings.StarsCount.ToString().ToUpperInvariant()}";
-        UIButton difficulty = ArenaTheme.AddPillButton(setup, "", _ => CycleDifficulty(), 126f);
+        UIButton difficulty = ArenaTheme.AddPillButton(setup, "", _ => CycleDifficulty(), 110f);
         difficulty.Name = "arena_mp_difficulty";
         difficulty.DynamicText = () => $"DIFF {RegularSettings.Difficulty.ToString().ToUpperInvariant()}";
 
@@ -763,6 +768,21 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         if (TraitOptions.Length == 0)
             return;
         TraitIndex = (TraitIndex + 1) % TraitOptions.Length;
+    }
+
+    void ToggleTrait()
+    {
+        if (TraitOptions.Length == 0)
+            return;
+        string trait = CurrentTraitName();
+        string updated = ToggleTraitSelection(LocalPeer.TraitOptions, trait, out bool accepted);
+        if (!accepted)
+        {
+            SetStatus($"Trait budget/exclusion blocks {trait}.");
+            GameAudio.NegativeClick();
+            return;
+        }
+        LocalPeer.TraitOptions = updated;
         ApplyLocalSelection();
         LocalPeer.Ready = false;
         SendLocalLobby();
@@ -852,7 +872,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     {
         LocalPeer.RacePreference = RaceOptions.Length == 0 ? "United" : RaceOptions[RaceIndex.Clamped(0, RaceOptions.Length - 1)];
         LocalPeer.LoadoutTrait = ArenaStartArchetype.Wingmates.ToString();
-        LocalPeer.TraitOptions = TraitOptions.Length == 0 ? "" : TraitOptions[TraitIndex.Clamped(0, TraitOptions.Length - 1)];
+        LocalPeer.TraitOptions = NormalizeTraitSelection(LocalPeer.TraitOptions);
         RegularSettings.HostRacePreference = LocalPeer.RacePreference;
         RegularSettings.JoinRacePreference = RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference;
     }
@@ -1022,23 +1042,178 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     {
         try
         {
-            int points = new UniverseParams().RacialTraitPoints;
             string[] traits = ResourceManager.RaceTraits.TraitList
-                .Where(t => t != null && t.TraitName.NotEmpty() && t.Cost <= points)
+                .Where(t => t != null && t.TraitName.NotEmpty())
                 .Select(t => t.TraitName)
                 .Distinct(StringComparer.Ordinal)
                 .OrderBy(t => t, StringComparer.Ordinal)
                 .ToArray();
-            return new[] { "" }.Concat(traits).ToArray();
+            return traits;
         }
         catch
         {
-            return new[] { "" };
+            return Array.Empty<string>();
         }
     }
 
-    static string TraitLabel(string trait)
-        => trait.NotEmpty() ? trait.ToUpperInvariant() : "NONE";
+    public static string[] AvailableTraitOptionsForHeadless()
+        => AvailableTraitOptions();
+
+    public static int TraitBudgetForHeadless()
+        => TraitBudget();
+
+    public static int TraitSelectionCostForHeadless(string traits)
+        => TraitSelectionCost(traits);
+
+    public static string ToggleTraitSelectionForHeadless(string selectedTraits, string trait, out bool accepted)
+        => ToggleTraitSelection(selectedTraits, trait, out accepted);
+
+    static int TraitBudget()
+        => new UniverseParams().RacialTraitPoints;
+
+    int TraitCursorIndex(string selectedTraits)
+    {
+        if (TraitOptions.Length == 0)
+            return 0;
+        string first = SplitTraitSelection(selectedTraits).FirstOrDefault();
+        int index = first.NotEmpty() ? Array.IndexOf(TraitOptions, first) : -1;
+        return index >= 0 ? index : 0;
+    }
+
+    string CurrentTraitName()
+        => TraitOptions.Length == 0 ? "" : TraitOptions[TraitIndex.Clamped(0, TraitOptions.Length - 1)];
+
+    string CurrentTraitLabel()
+    {
+        string trait = CurrentTraitName();
+        if (trait.IsEmpty())
+            return "NONE";
+        return $"{ShortTraitName(trait)} {SignedTraitCost(trait)}".ToUpperInvariant();
+    }
+
+    string TraitToggleLabel()
+    {
+        string trait = CurrentTraitName();
+        if (trait.IsEmpty())
+            return "NO TRAITS";
+        string verb = TraitSelectionContains(LocalPeer.TraitOptions, trait) ? "DROP"
+            : CanAddTrait(LocalPeer.TraitOptions, trait) ? "ADD"
+            : "FULL";
+        return $"{verb} {TraitSelectionCost(LocalPeer.TraitOptions)}/{TraitBudget()}";
+    }
+
+    static string TraitLabel(string traits)
+    {
+        string[] selected = SplitTraitSelection(traits);
+        if (selected.Length == 0)
+            return $"NONE (0/{TraitBudget()})";
+        string names = string.Join("+", selected.Select(ShortTraitName));
+        return $"{names.ToUpperInvariant()} ({TraitSelectionCost(traits)}/{TraitBudget()})";
+    }
+
+    static string[] SplitTraitSelection(string traits)
+        => Authoritative4XLobbyNetworkFlow.SplitTraitOptions(traits)
+            .Where(t => t.NotEmpty())
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(TraitOrder)
+            .ThenBy(t => t, StringComparer.Ordinal)
+            .ToArray();
+
+    static string NormalizeTraitSelection(string traits)
+    {
+        string accepted = "";
+        foreach (string trait in SplitTraitSelection(traits))
+            accepted = ToggleTraitSelection(accepted, trait, out bool added);
+        return accepted;
+    }
+
+    static string ToggleTraitSelection(string selectedTraits, string trait, out bool accepted)
+    {
+        accepted = false;
+        RacialTraitOption option = FindTrait(trait);
+        if (option == null)
+            return NormalizeKnownTraitSelection(selectedTraits);
+
+        string[] selected = SplitTraitSelection(selectedTraits)
+            .Where(t => FindTrait(t) != null)
+            .ToArray();
+        if (selected.Contains(option.TraitName, StringComparer.Ordinal))
+        {
+            accepted = true;
+            return JoinTraitSelection(selected.Where(t => !string.Equals(t, option.TraitName, StringComparison.Ordinal)));
+        }
+
+        string[] candidate = selected.Concat(new[] { option.TraitName }).ToArray();
+        if (!TraitSelectionIsValid(candidate))
+            return JoinTraitSelection(selected);
+
+        accepted = true;
+        return JoinTraitSelection(candidate);
+    }
+
+    static string NormalizeKnownTraitSelection(string traits)
+        => JoinTraitSelection(SplitTraitSelection(traits).Where(t => FindTrait(t) != null));
+
+    static bool CanAddTrait(string selectedTraits, string trait)
+    {
+        if (TraitSelectionContains(selectedTraits, trait))
+            return true;
+        string[] candidate = SplitTraitSelection(selectedTraits).Concat(new[] { trait }).ToArray();
+        return TraitSelectionIsValid(candidate);
+    }
+
+    static bool TraitSelectionContains(string selectedTraits, string trait)
+        => SplitTraitSelection(selectedTraits).Contains(trait, StringComparer.Ordinal);
+
+    static bool TraitSelectionIsValid(string[] traits)
+    {
+        string[] selected = traits
+            .Where(t => FindTrait(t) != null)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (TraitSelectionCost(selected) > TraitBudget())
+            return false;
+        foreach (string name in selected)
+        {
+            RacialTraitOption trait = FindTrait(name);
+            if (trait?.Excludes == null)
+                continue;
+            foreach (string excluded in trait.Excludes)
+                if (selected.Contains(excluded, StringComparer.Ordinal))
+                    return false;
+        }
+        return true;
+    }
+
+    static int TraitSelectionCost(string traits)
+        => TraitSelectionCost(SplitTraitSelection(traits));
+
+    static int TraitSelectionCost(IEnumerable<string> traits)
+        => traits.Select(FindTrait).Where(t => t != null).Distinct()
+            .Sum(t => t.Cost);
+
+    static string JoinTraitSelection(IEnumerable<string> traits)
+        => string.Join('|', traits
+            .Where(t => FindTrait(t) != null)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(TraitOrder)
+            .ThenBy(t => t, StringComparer.Ordinal));
+
+    static RacialTraitOption FindTrait(string trait)
+        => trait.IsEmpty() ? null : ResourceManager.RaceTraits.TraitList
+            .FirstOrDefault(t => t != null && string.Equals(t.TraitName, trait, StringComparison.Ordinal));
+
+    static int TraitOrder(string trait)
+        => Array.IndexOf(AvailableTraitOptions(), trait) is int index && index >= 0 ? index : int.MaxValue;
+
+    static string ShortTraitName(string trait)
+        => trait.Length <= 12 ? trait : trait.Substring(0, 9) + "...";
+
+    static string SignedTraitCost(string trait)
+    {
+        int cost = FindTrait(trait)?.Cost ?? 0;
+        return cost >= 0 ? $"+{cost}" : cost.ToString(CultureInfo.InvariantCulture);
+    }
 
     public override void ExitScreen()
     {

@@ -69,6 +69,8 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
                 "The multiplayer lobby must expose a race selector.");
             Assert.IsTrue(lobby.Find("arena_mp_trait", out UIButton _),
                 "The multiplayer lobby must expose a racial trait selector for 4X starts.");
+            Assert.IsTrue(lobby.Find("arena_mp_trait_toggle", out UIButton _),
+                "The multiplayer lobby must expose an add/remove control so players can pick multiple traits.");
             Assert.IsTrue(lobby.Find("arena_mp_regular_settings", out UIButton _),
                 "The multiplayer lobby must expose regular-game map settings instead of Arena loadouts.");
             Assert.IsTrue(lobby.Find("arena_mp_stars", out UIButton _),
@@ -211,6 +213,61 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             ArenaFightScreen.PendingPlayerDesignName = null;
             try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
         }
+    }
+
+    [TestMethod]
+    public void ArenaMultiplayerLobbyTraitsAllowBudgetedMultiSelection_Headless()
+    {
+        LoadAllGameData();
+
+        string[] options = ArenaMultiplayerLobbyScreen.AvailableTraitOptionsForHeadless();
+        Assert.IsTrue(options.Length > 1, "The loaded race-trait data should expose multiple selectable traits.");
+
+        string selected = "";
+        foreach (string trait in options)
+        {
+            string updated = ArenaMultiplayerLobbyScreen.ToggleTraitSelectionForHeadless(selected, trait, out bool accepted);
+            if (accepted && updated != selected)
+                selected = updated;
+            if (Authoritative4XLobbyNetworkFlow.SplitTraitOptions(selected).Length >= 2)
+                break;
+        }
+
+        string[] selectedTraits = Authoritative4XLobbyNetworkFlow.SplitTraitOptions(selected);
+        Assert.IsTrue(selectedTraits.Length >= 2,
+            "The lobby selector should allow multiple compatible traits within the point budget.");
+        Assert.IsTrue(ArenaMultiplayerLobbyScreen.TraitSelectionCostForHeadless(selected) <=
+                      ArenaMultiplayerLobbyScreen.TraitBudgetForHeadless(),
+            "The multi-trait selection must stay within the single-player racial trait budget.");
+
+        var settings = new Authoritative4XGameSettings();
+        var lobby = new ArenaMultiplayerLobbyScreen(ArenaMultiplayerLobbySurface.Authoritative4X);
+        lobby.Configure4XForHeadless(settings, "United", selected, "Kulrathi", "");
+        SessionStartMessage start = lobby.Build4XStartForHeadless();
+        CollectionAssert.AreEqual(selectedTraits, Authoritative4XLobbyNetworkFlow.SplitTraitOptions(start.HostTraitOptions),
+            "The visible lobby must preserve the selected trait set in the authoritative start message.");
+
+        bool sawRejectedAdd = false;
+        foreach (string trait in options.Reverse())
+        {
+            if (selectedTraits.Contains(trait, StringComparer.Ordinal))
+                continue;
+            string before = selected;
+            string updated = ArenaMultiplayerLobbyScreen.ToggleTraitSelectionForHeadless(selected, trait, out bool accepted);
+            if (accepted)
+            {
+                selected = updated;
+                selectedTraits = Authoritative4XLobbyNetworkFlow.SplitTraitOptions(selected);
+                continue;
+            }
+
+            sawRejectedAdd = true;
+            Assert.AreEqual(before, updated,
+                "An over-budget or excluded trait add must leave the selected trait set unchanged.");
+            break;
+        }
+        Assert.IsTrue(sawRejectedAdd,
+            "The loaded trait data should eventually produce a budget/exclusion rejection when adding traits.");
     }
 
     [TestMethod]
