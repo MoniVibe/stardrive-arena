@@ -1,11 +1,14 @@
 using System;
+using System.Globalization;
 using System.Linq;
 using Microsoft.Xna.Framework.Graphics;
 using SDGraphics;
 using SDLockstep;
 using Ship_Game.Audio;
+using Ship_Game.Data;
 using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.UI;
+using Ship_Game.Universe;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
 
@@ -25,6 +28,22 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         GalSize.Small,
         GalSize.Medium,
     };
+    static readonly RaceDesignScreen.StarsAbundance[] StarOptions =
+    {
+        RaceDesignScreen.StarsAbundance.Rare,
+        RaceDesignScreen.StarsAbundance.Normal,
+        RaceDesignScreen.StarsAbundance.Abundant,
+        RaceDesignScreen.StarsAbundance.Crowded,
+    };
+    static readonly GameDifficulty[] DifficultyOptions =
+    {
+        GameDifficulty.Normal,
+        GameDifficulty.Hard,
+        GameDifficulty.Brutal,
+        GameDifficulty.Insane,
+    };
+    static readonly int[] TurnTimerOptions = { 1, 3, 5, 10 };
+    static readonly float[] RichnessOptions = { 0f, 1f, 2f, 3f, 5f };
 
     readonly object Sync = new();
     UITextEntry HostEntry;
@@ -41,8 +60,14 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     ArenaMultiplayerRunResult LastResult;
     string StatusText = "Idle. Host, join, ready up, then host launches.";
     string[] RaceOptions = Array.Empty<string>();
+    string[] TraitOptions = Array.Empty<string>();
     int RaceIndex;
+    int TraitIndex;
     int GalaxyIndex;
+    int StarsIndex;
+    int DifficultyIndex;
+    int TurnTimerIndex = 2;
+    int RichnessIndex;
     bool StartPaused;
     bool Launching;
     ArenaRegularMultiplayerSettings RegularSettings = new();
@@ -65,14 +90,59 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     public bool RemoteReady => RemotePeer.Ready;
     public string LocalRace => LocalPeer.RacePreference;
     public string LocalLoadoutTrait => LocalPeer.LoadoutTrait;
+    public string LocalTraitOptions => LocalPeer.TraitOptions;
     public string RemoteRace => RemotePeer.RacePreference;
     public string RemoteLoadoutTrait => RemotePeer.LoadoutTrait;
+    public string RemoteTraitOptions => RemotePeer.TraitOptions;
+    public Authoritative4XGameSettings Current4XSettingsForHeadless => Build4XSettings();
+    public SessionStartMessage Build4XStartForHeadless() => Build4XStartMessage();
+    public Authoritative4XGeneratedGameStart CreateGenerated4XGameForHeadless(SessionStartMessage start)
+        => CreateGenerated4XGame(start);
+
+    public void Configure4XForHeadless(Authoritative4XGameSettings settings, string localRace, string localTraits,
+        string remoteRace, string remoteTraits)
+    {
+        Authoritative4XGameSettings s = (settings ?? new Authoritative4XGameSettings()).Normalized(2);
+        RegularSettings = new ArenaRegularMultiplayerSettings
+        {
+            GenerationSeed = s.GenerationSeed,
+            Mode = s.Mode,
+            StarsCount = s.StarsCount,
+            GalaxySize = s.GalaxySize,
+            Difficulty = s.Difficulty,
+            NumOpponents = s.NumOpponents,
+            Pace = s.Pace,
+            TurnTimer = s.TurnTimer,
+            ExtraPlanets = s.ExtraPlanets,
+            StartingPlanetRichnessBonus = s.StartingPlanetRichnessBonus,
+            GameSpeed = s.GameSpeed,
+            StartPaused = s.StartPaused,
+        };
+        LocalPeer.RacePreference = localRace;
+        LocalPeer.TraitOptions = localTraits ?? "";
+        LocalPeer.LoadoutTrait = ArenaStartArchetype.Wingmates.ToString();
+        RemotePeer.RacePreference = remoteRace;
+        RemotePeer.TraitOptions = remoteTraits ?? "";
+        RemotePeer.LoadoutTrait = ArenaStartArchetype.Wingmates.ToString();
+        StartPaused = s.StartPaused;
+        if (SeedEntry != null)
+            SeedEntry.Text = s.GenerationSeed.ToString(CultureInfo.InvariantCulture);
+        if (SpeedEntry != null)
+            SpeedEntry.Text = s.GameSpeed.ToString(CultureInfo.InvariantCulture);
+    }
 
     public override void LoadContent()
     {
         RemoveAll();
         RaceOptions = AvailableRacePreferences();
+        TraitOptions = AvailableTraitOptions();
         RaceIndex = Math.Max(0, Array.IndexOf(RaceOptions, LocalPeer.RacePreference));
+        TraitIndex = Math.Max(0, Array.IndexOf(TraitOptions, LocalPeer.TraitOptions ?? ""));
+        GalaxyIndex = Math.Max(0, Array.IndexOf(GalaxyOptions, RegularSettings.GalaxySize));
+        StarsIndex = Math.Max(0, Array.IndexOf(StarOptions, RegularSettings.StarsCount));
+        DifficultyIndex = Math.Max(0, Array.IndexOf(DifficultyOptions, RegularSettings.Difficulty));
+        TurnTimerIndex = Math.Max(0, Array.IndexOf(TurnTimerOptions, RegularSettings.TurnTimer));
+        RichnessIndex = Math.Max(0, Array.IndexOf(RichnessOptions, RegularSettings.StartingPlanetRichnessBonus));
         ApplyLocalSelection();
 
         Vector2 c = ScreenCenter;
@@ -90,26 +160,52 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         AddPeerCard(new RectF(panel.X + 24, panel.Y + 222, 392, 126), "YOU", () => LocalPeer);
         AddPeerCard(new RectF(panel.X + 440, panel.Y + 222, 392, 126), "REMOTE", () => RemotePeer);
 
-        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 372), "SETUP"));
-        UIList setup = AddList(new Vector2(panel.X + 24, panel.Y + 400));
+        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 364), "SETUP"));
+        UIList setup = AddList(new Vector2(panel.X + 24, panel.Y + 392));
         setup.Direction = new Vector2(1f, 0f);
         setup.Padding = new Vector2(8f, 8f);
         setup.LayoutStyle = ListLayoutStyle.ResizeList;
-        UIButton race = ArenaTheme.AddPillButton(setup, "", _ => CycleRace(), 176f);
+        UIButton race = ArenaTheme.AddPillButton(setup, "", _ => CycleRace(), 152f);
         race.Name = "arena_mp_race";
         race.DynamicText = () => $"RACE {LocalPeer.RacePreference}";
-        UIButton galaxy = ArenaTheme.AddPillButton(setup, "", _ => CycleGalaxy(), 176f);
+        UIButton trait = ArenaTheme.AddPillButton(setup, "", _ => CycleTrait(), 176f);
+        trait.Name = "arena_mp_trait";
+        trait.DynamicText = () => $"TRAIT {TraitLabel(LocalPeer.TraitOptions)}";
+        UIButton galaxy = ArenaTheme.AddPillButton(setup, "", _ => CycleGalaxy(), 126f);
         galaxy.Name = "arena_mp_regular_settings";
         galaxy.DynamicText = () => $"MAP {RegularSettings.GalaxySize.ToString().ToUpperInvariant()}";
-        UIButton pause = ArenaTheme.AddPillButton(setup, "", _ => ToggleStartPaused(), 126f);
+        UIButton stars = ArenaTheme.AddPillButton(setup, "", _ => CycleStars(), 142f);
+        stars.Name = "arena_mp_stars";
+        stars.DynamicText = () => $"STARS {RegularSettings.StarsCount.ToString().ToUpperInvariant()}";
+        UIButton difficulty = ArenaTheme.AddPillButton(setup, "", _ => CycleDifficulty(), 126f);
+        difficulty.Name = "arena_mp_difficulty";
+        difficulty.DynamicText = () => $"DIFF {RegularSettings.Difficulty.ToString().ToUpperInvariant()}";
+
+        UIList setup2 = AddList(new Vector2(panel.X + 24, panel.Y + 430));
+        setup2.Direction = new Vector2(1f, 0f);
+        setup2.Padding = new Vector2(8f, 8f);
+        setup2.LayoutStyle = ListLayoutStyle.ResizeList;
+        UIButton ai = ArenaTheme.AddPillButton(setup2, "", _ => CycleOpponents(), 88f);
+        ai.Name = "arena_mp_opponents";
+        ai.DynamicText = () => $"AI {RegularSettings.NumOpponents}";
+        UIButton richness = ArenaTheme.AddPillButton(setup2, "", _ => CycleRichness(), 142f);
+        richness.Name = "arena_mp_richness";
+        richness.DynamicText = () => $"RICH {RegularSettings.StartingPlanetRichnessBonus:0.#}";
+        UIButton turn = ArenaTheme.AddPillButton(setup2, "", _ => CycleTurnTimer(), 126f);
+        turn.Name = "arena_mp_turn_timer";
+        turn.DynamicText = () => $"TURN {RegularSettings.TurnTimer}S";
+        UIButton pace = ArenaTheme.AddPillButton(setup2, "", _ => CyclePace(), 112f);
+        pace.Name = "arena_mp_pace";
+        pace.DynamicText = () => $"PACE {RegularSettings.Pace:0.#}X";
+        UIButton pause = ArenaTheme.AddPillButton(setup2, "", _ => ToggleStartPaused(), 126f);
         pause.Name = "arena_mp_start_paused";
         pause.DynamicText = () => StartPaused ? "START PAUSED" : "START LIVE";
 
-        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 458), "STATUS"));
+        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 466), "STATUS"));
         for (int i = 0; i < 3; ++i)
         {
             int line = i;
-            Add(new UILabel(new Vector2(panel.X + 24, panel.Y + 486 + i * 20),
+            Add(new UILabel(new Vector2(panel.X + 24, panel.Y + 492 + i * 18),
                 StatusLine(line), ArenaTheme.BodySmallFont, ArenaTheme.TextSecondary)
             {
                 DynamicText = _ => StatusLine(line),
@@ -159,7 +255,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         });
         Add(new UILabel(new Vector2(rect.X + 14, rect.Y + 70), "", ArenaTheme.BodySmallFont, ArenaTheme.TextSecondary)
         {
-            DynamicText = _ => $"Race: {peer().RacePreference}",
+            DynamicText = _ => $"Race: {peer().RacePreference} | Trait: {TraitLabel(peer().TraitOptions)}",
         });
         Add(new UILabel(new Vector2(rect.X + 14, rect.Y + 94), "", ArenaTheme.BodySmallFont, ArenaTheme.TextMuted)
         {
@@ -357,6 +453,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             PlayerName = LocalPeer.PlayerName,
             RacePreference = LocalPeer.RacePreference,
             LoadoutTrait = LocalPeer.LoadoutTrait,
+            TraitOptions = LocalPeer.TraitOptions,
             BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
             BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
         });
@@ -420,6 +517,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
             HostRacePreference = LocalPeer.RacePreference,
             JoinRacePreference = RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference,
+            HostTraitOptions = LocalPeer.TraitOptions,
+            JoinTraitOptions = RemotePeer.TraitOptions,
             IsAuthoritative4X = true,
             AuthoritativeHostPeerId = HostPlayerPeerId4X,
             AuthoritativeJoinPeerId = JoinPlayerPeerId4X,
@@ -440,15 +539,15 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         => new Authoritative4XGameSettings
         {
             GenerationSeed = ParseSeed(),
-            Mode = RaceDesignScreen.GameMode.Sandbox,
-            StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+            Mode = RegularSettings.Mode,
+            StarsCount = RegularSettings.StarsCount,
             GalaxySize = RegularSettings.GalaxySize,
-            Difficulty = GameDifficulty.Normal,
-            NumOpponents = 1,
-            Pace = 1f,
-            TurnTimer = 5,
-            ExtraPlanets = 0,
-            StartingPlanetRichnessBonus = 0f,
+            Difficulty = RegularSettings.Difficulty,
+            NumOpponents = RegularSettings.NumOpponents,
+            Pace = RegularSettings.Pace,
+            TurnTimer = RegularSettings.TurnTimer,
+            ExtraPlanets = RegularSettings.ExtraPlanets,
+            StartingPlanetRichnessBonus = RegularSettings.StartingPlanetRichnessBonus,
             GameSpeed = ParseSpeed(),
             StartPaused = StartPaused,
         }.Normalized(2);
@@ -548,17 +647,93 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         SendLocalLobby();
     }
 
+    void CycleTrait()
+    {
+        if (TraitOptions.Length == 0)
+            return;
+        TraitIndex = (TraitIndex + 1) % TraitOptions.Length;
+        ApplyLocalSelection();
+        LocalPeer.Ready = false;
+        SendLocalLobby();
+    }
+
     void CycleGalaxy()
     {
+        if (HostSettingsAreLockedToRemote())
+            return;
         GalaxyIndex = (GalaxyIndex + 1) % GalaxyOptions.Length;
         RegularSettings.GalaxySize = GalaxyOptions[GalaxyIndex];
         LocalPeer.Ready = false;
         SendLocalLobby();
     }
 
+    void CycleStars()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        StarsIndex = (StarsIndex + 1) % StarOptions.Length;
+        RegularSettings.StarsCount = StarOptions[StarsIndex];
+        LocalPeer.Ready = false;
+        SendLocalLobby();
+    }
+
+    void CycleDifficulty()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        DifficultyIndex = (DifficultyIndex + 1) % DifficultyOptions.Length;
+        RegularSettings.Difficulty = DifficultyOptions[DifficultyIndex];
+        LocalPeer.Ready = false;
+        SendLocalLobby();
+    }
+
+    void CycleOpponents()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        int max = Math.Max(1, ResourceManager.MajorRaces.Count - 1);
+        RegularSettings.NumOpponents = RegularSettings.NumOpponents >= max ? 1 : RegularSettings.NumOpponents + 1;
+        LocalPeer.Ready = false;
+        SendLocalLobby();
+    }
+
+    void CycleRichness()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        RichnessIndex = (RichnessIndex + 1) % RichnessOptions.Length;
+        RegularSettings.StartingPlanetRichnessBonus = RichnessOptions[RichnessIndex];
+        LocalPeer.Ready = false;
+        SendLocalLobby();
+    }
+
+    void CycleTurnTimer()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        TurnTimerIndex = (TurnTimerIndex + 1) % TurnTimerOptions.Length;
+        RegularSettings.TurnTimer = TurnTimerOptions[TurnTimerIndex];
+        LocalPeer.Ready = false;
+        SendLocalLobby();
+    }
+
+    void CyclePace()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        RegularSettings.Pace += 0.5f;
+        if (RegularSettings.Pace > 4f)
+            RegularSettings.Pace = 1f;
+        LocalPeer.Ready = false;
+        SendLocalLobby();
+    }
+
     void ToggleStartPaused()
     {
+        if (HostSettingsAreLockedToRemote())
+            return;
         StartPaused = !StartPaused;
+        RegularSettings.StartPaused = StartPaused;
         SendLocalLobby();
     }
 
@@ -566,8 +741,18 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     {
         LocalPeer.RacePreference = RaceOptions.Length == 0 ? "United" : RaceOptions[RaceIndex.Clamped(0, RaceOptions.Length - 1)];
         LocalPeer.LoadoutTrait = ArenaStartArchetype.Wingmates.ToString();
+        LocalPeer.TraitOptions = TraitOptions.Length == 0 ? "" : TraitOptions[TraitIndex.Clamped(0, TraitOptions.Length - 1)];
         RegularSettings.HostRacePreference = LocalPeer.RacePreference;
         RegularSettings.JoinRacePreference = RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference;
+    }
+
+    bool HostSettingsAreLockedToRemote()
+    {
+        if (LocalRole != ArenaMultiplayerRole.Join)
+            return false;
+        SetStatus("Host controls game settings.");
+        GameAudio.NegativeClick();
+        return true;
     }
 
     int ParsePort()
@@ -577,12 +762,14 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         => int.TryParse(TurnsEntry?.Text, out int turns) ? turns.Clamped(30, 2000) : DefaultTurns;
 
     int ParseSeed()
-        => int.TryParse(SeedEntry?.Text, out int seed) ? seed : 0x5EED;
+        => int.TryParse(SeedEntry?.Text, out int seed)
+            ? seed
+            : RegularSettings.GenerationSeed != 0 ? RegularSettings.GenerationSeed : 0x5EED;
 
     float ParseSpeed()
         => float.TryParse(SpeedEntry?.Text, out float speed)
             ? ArenaMultiplayerSettings.ClampGameSpeed(speed)
-            : 1f;
+            : ArenaMultiplayerSettings.ClampGameSpeed(RegularSettings.GameSpeed);
 
     void SetStatus(string text)
     {
@@ -645,6 +832,28 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         }
     }
 
+    static string[] AvailableTraitOptions()
+    {
+        try
+        {
+            int points = new UniverseParams().RacialTraitPoints;
+            string[] traits = ResourceManager.RaceTraits.TraitList
+                .Where(t => t != null && t.TraitName.NotEmpty() && t.Cost <= points)
+                .Select(t => t.TraitName)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(t => t, StringComparer.Ordinal)
+                .ToArray();
+            return new[] { "" }.Concat(traits).ToArray();
+        }
+        catch
+        {
+            return new[] { "" };
+        }
+    }
+
+    static string TraitLabel(string trait)
+        => trait.NotEmpty() ? trait.ToUpperInvariant() : "NONE";
+
     public override void ExitScreen()
     {
         Transport?.Dispose();
@@ -669,6 +878,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         public string PlayerName = "";
         public string RacePreference = "";
         public string LoadoutTrait = "";
+        public string TraitOptions = "";
         public string BuildHash = "";
         public string BuildSummary = "";
 
@@ -683,6 +893,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                 PlayerName = message.PlayerName.NotEmpty() ? message.PlayerName : fallbackName,
                 RacePreference = message.RacePreference.NotEmpty() ? message.RacePreference : "United",
                 LoadoutTrait = ArenaMultiplayerSettings.NormalizeLoadoutTrait(message.LoadoutTrait),
+                TraitOptions = message.TraitOptions ?? "",
                 BuildHash = message.BuildHash ?? "",
                 BuildSummary = message.BuildSummary ?? "",
             };

@@ -94,6 +94,7 @@ public class LockstepNetworkTransportTests
             PlayerName = "Join",
             RacePreference = "Kulrathi",
             LoadoutTrait = "Swarm",
+            TraitOptions = "Aquatic|Cybernetic",
             BuildHash = "env",
             BuildSummary = "Jupiter 045; CA",
         }, decoded =>
@@ -105,6 +106,7 @@ public class LockstepNetworkTransportTests
             Assert.AreEqual("Join", msg.PlayerName);
             Assert.AreEqual("Kulrathi", msg.RacePreference);
             Assert.AreEqual("Swarm", msg.LoadoutTrait);
+            Assert.AreEqual("Aquatic|Cybernetic", msg.TraitOptions);
             Assert.AreEqual("env", msg.BuildHash);
         });
 

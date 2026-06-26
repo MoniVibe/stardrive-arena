@@ -9,6 +9,7 @@ using Ship_Game.Determinism.Lockstep;
 using Ship_Game.Gameplay;
 using Ship_Game.Ships;
 using Ship_Game.GameScreens.Arena;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Universe;
 using SynapseGaming.LightingSystem.Core;
 
@@ -61,10 +62,22 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
                 "The multiplayer lobby must expose a local self-test action.");
             Assert.IsTrue(lobby.Find("arena_mp_race", out UIButton _),
                 "The multiplayer lobby must expose a race selector.");
-            Assert.IsFalse(lobby.Find("arena_mp_trait", out UIButton _),
-                "The multiplayer lobby must not expose the old Arena Ace/Wingmates/Swarm loadout selector.");
+            Assert.IsTrue(lobby.Find("arena_mp_trait", out UIButton _),
+                "The multiplayer lobby must expose a racial trait selector for 4X starts.");
             Assert.IsTrue(lobby.Find("arena_mp_regular_settings", out UIButton _),
                 "The multiplayer lobby must expose regular-game map settings instead of Arena loadouts.");
+            Assert.IsTrue(lobby.Find("arena_mp_stars", out UIButton _),
+                "The multiplayer lobby must expose host-controlled star density.");
+            Assert.IsTrue(lobby.Find("arena_mp_difficulty", out UIButton _),
+                "The multiplayer lobby must expose host-controlled difficulty.");
+            Assert.IsTrue(lobby.Find("arena_mp_opponents", out UIButton _),
+                "The multiplayer lobby must expose host-controlled AI opponent count.");
+            Assert.IsTrue(lobby.Find("arena_mp_richness", out UIButton _),
+                "The multiplayer lobby must expose host-controlled planet richness.");
+            Assert.IsTrue(lobby.Find("arena_mp_turn_timer", out UIButton _),
+                "The multiplayer lobby must expose host-controlled seconds-per-turn.");
+            Assert.IsTrue(lobby.Find("arena_mp_pace", out UIButton _),
+                "The multiplayer lobby must expose host-controlled game pacing.");
             Assert.IsTrue(lobby.Find("arena_mp_host_entry", out UITextEntry _),
                 "The multiplayer lobby must expose a host/IP entry.");
             Assert.IsTrue(lobby.Find("arena_mp_port_entry", out UITextEntry _),
@@ -73,6 +86,75 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
                 "The multiplayer lobby must expose a host-controlled match seed.");
             Assert.IsTrue(lobby.Find("arena_mp_speed_entry", out UITextEntry _),
                 "The multiplayer lobby must expose a host-controlled game speed.");
+
+            string[] races = ResourceManager.MajorRaces
+                .Select(r => r.ArchetypeName.NotEmpty() ? r.ArchetypeName : r.Name)
+                .Where(r => r.NotEmpty())
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(r => r, StringComparer.Ordinal)
+                .Take(2)
+                .ToArray();
+            Assert.IsTrue(races.Length >= 2, "The 4X lobby proof needs at least two major races.");
+            int traitBudget = new UniverseParams().RacialTraitPoints;
+            string[] traits = ResourceManager.RaceTraits.TraitList
+                .Where(t => t.TraitName.NotEmpty() && t.Cost <= traitBudget)
+                .Select(t => t.TraitName)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(t => t, StringComparer.Ordinal)
+                .Take(2)
+                .ToArray();
+            string hostTrait = traits.Length > 0 ? traits[0] : "";
+            string joinTrait = traits.Length > 1 ? traits[1] : hostTrait;
+            var settings = new Authoritative4XGameSettings
+            {
+                GenerationSeed = 424242,
+                GalaxySize = GalSize.Small,
+                StarsCount = RaceDesignScreen.StarsAbundance.Normal,
+                Difficulty = GameDifficulty.Hard,
+                NumOpponents = 2,
+                Pace = 2f,
+                TurnTimer = 3,
+                ExtraPlanets = 1,
+                StartingPlanetRichnessBonus = 2f,
+                GameSpeed = 0.5f,
+                StartPaused = true,
+            }.Normalized(2);
+            lobby.Configure4XForHeadless(settings, races[0], hostTrait, races[1], joinTrait);
+            SessionStartMessage start = lobby.Build4XStartForHeadless();
+            Assert.IsTrue(start.IsAuthoritative4X, "The visible MP lobby should now launch the authoritative 4X path.");
+            Assert.AreEqual(races[0], start.HostRacePreference);
+            Assert.AreEqual(races[1], start.JoinRacePreference);
+            Assert.AreEqual(hostTrait, start.HostTraitOptions);
+            Assert.AreEqual(joinTrait, start.JoinTraitOptions);
+            Assert.AreEqual((int)settings.GalaxySize, start.GalaxySize);
+            Assert.AreEqual((int)settings.StarsCount, start.StarsCount);
+            Assert.AreEqual((int)settings.Difficulty, start.Difficulty);
+            Assert.AreEqual(settings.NumOpponents, start.NumOpponents);
+            Assert.AreEqual(settings.Pace, start.Pace);
+            Assert.AreEqual(settings.TurnTimer, start.TurnTimer);
+            Assert.AreEqual(settings.ExtraPlanets, start.ExtraPlanets);
+            Assert.AreEqual(settings.StartingPlanetRichnessBonus, start.StartingPlanetRichnessBonus);
+
+            using (Authoritative4XGeneratedGameStart generated = lobby.CreateGenerated4XGameForHeadless(start))
+            {
+                UniverseState us = generated.AuthorityUniverse.UState;
+                Assert.AreEqual(settings.GalaxySize, us.P.GalaxySize);
+                Assert.AreEqual(settings.StarsCount, us.P.StarsCount);
+                Assert.AreEqual(settings.Difficulty, us.P.Difficulty);
+                Assert.AreEqual(settings.Pace, us.P.Pace);
+                Assert.AreEqual(settings.TurnTimer, us.P.TurnTimer);
+                Assert.AreEqual(settings.ExtraPlanets, us.P.ExtraPlanets);
+                Assert.AreEqual(settings.StartingPlanetRichnessBonus, us.P.StartingPlanetRichnessBonus);
+                Assert.AreEqual(2, generated.HumanEmpireIds.Length);
+                Empire hostEmpire = us.GetEmpireById(generated.EmpireIdForPeer(2));
+                Empire joinEmpire = us.GetEmpireById(generated.EmpireIdForPeer(3));
+                if (hostTrait.NotEmpty())
+                    Assert.IsTrue(hostEmpire.data.Traits.PlayerTraitOptions.Contains(hostTrait),
+                        "The generated host empire must include the host's chosen trait.");
+                if (joinTrait.NotEmpty())
+                    Assert.IsTrue(joinEmpire.data.Traits.PlayerTraitOptions.Contains(joinTrait),
+                        "The generated join empire must include the joiner's chosen trait.");
+            }
 
             ArenaMultiplayerSettings defaultSettings = ArenaMultiplayerLobbyScreen.CreateDefaultSettings(60).WithResolvedFleets();
             Assert.AreEqual("United", defaultSettings.HostRacePreference,

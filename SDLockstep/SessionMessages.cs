@@ -30,6 +30,7 @@ public sealed class SessionLobbyMessage : LockstepMessage
     public string PlayerName = "";
     public string RacePreference = "";
     public string LoadoutTrait = "";
+    public string TraitOptions = "";
     public string BuildHash = "";
     public string BuildSummary = "";
 }
