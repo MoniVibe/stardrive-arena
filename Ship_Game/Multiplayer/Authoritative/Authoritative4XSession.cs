@@ -597,10 +597,21 @@ public sealed class AuthoritativeStateSnapshot
     static string ShipOrderQueueSignature(Ship ship)
     {
         ShipAI.ShipGoal[] goals = ship.AI.OrderQueue.ToArray();
-        return string.Join(";", goals.Select(g =>
+        return string.Join(";", goals
+            .Where(g => g != null && !IsVolatileMovementSolverPlan(g.Plan))
+            .Select(g =>
             $"{(int)g.Plan},{g.TargetPlanet?.Id ?? 0},{g.TargetShip?.Id ?? 0}," +
             $"{FloatBits(g.MovePosition.X):X8},{FloatBits(g.MovePosition.Y):X8},{(int)g.MoveOrder}"));
     }
+
+    internal static string ShipOrderQueueSignatureForTest(Ship ship) => ShipOrderQueueSignature(ship);
+
+    static bool IsVolatileMovementSolverPlan(ShipAI.Plan plan)
+        => plan is ShipAI.Plan.RotateToFaceMovePosition
+            or ShipAI.Plan.RotateToDesiredFacing
+            or ShipAI.Plan.MoveToWithin1000
+            or ShipAI.Plan.MakeFinalApproach
+            or ShipAI.Plan.RotateInlineWithVelocity;
 
     static uint FloatBits(float value) => System.BitConverter.SingleToUInt32Bits(value);
 }

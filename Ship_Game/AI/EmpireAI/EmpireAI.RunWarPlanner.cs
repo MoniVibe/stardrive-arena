@@ -278,6 +278,7 @@ namespace Ship_Game.AI
         private void RunWarPlanner()
         {
             if (OwnerEmpire.isPlayer
+                || IsAuthoritativeHumanControlled
                 || OwnerEmpire.IsDefeated
                 || OwnerEmpire.GetPlanets().Count == 0)
             {

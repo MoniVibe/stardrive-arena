@@ -10,6 +10,7 @@ using Ship_Game.Commands.Goals;
 using Ship_Game.Data.Serialization;
 using Ship_Game.Debug;
 using Ship_Game.GameScreens.DiplomacyScreen;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Universe;
 using Vector2 = SDGraphics.Vector2;
 using Ship_Game.Fleets;
@@ -26,6 +27,8 @@ namespace Ship_Game.AI
         public float AllianceBuildCapacity { get; private set; }
 
         UniverseState UState => OwnerEmpire.Universe;
+        bool IsAuthoritativeHumanControlled => !OwnerEmpire.isPlayer
+                                               && AuthoritativeHumanPlayers.IsHumanControlled(OwnerEmpire);
 
         [StarData] readonly Empire OwnerEmpire;
 
@@ -148,6 +151,9 @@ namespace Ship_Game.AI
         void RunManagers()
         {
             if (OwnerEmpire.data.IsRebelFaction || OwnerEmpire.IsDefeated)
+                return;
+
+            if (IsAuthoritativeHumanControlled)
                 return;
 
             if (!OwnerEmpire.IsFaction)

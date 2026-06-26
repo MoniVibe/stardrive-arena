@@ -276,6 +276,8 @@ public sealed class Authoritative4XLobby
             for (int i = 0; i < players.Length; ++i)
             {
                 UniverseScreen clientUniverse = CreateUniverse(players, settings);
+                AuthoritativeHumanPlayers.SetHumanControlledEmpires(clientUniverse.UState, humanEmpireIds);
+                ConfigureHumanEmpires(clientUniverse.UState, humanEmpireIds);
                 specs[i] = new Authoritative4XClientSpec(players[i].PeerId, empireIdByPeer[players[i].PeerId], clientUniverse);
             }
 
@@ -301,6 +303,7 @@ public sealed class Authoritative4XLobby
         Dictionary<int, int> empireIdByPeer = MapHumanEmpires(players, authority);
         int[] humanEmpireIds = players.Select(p => empireIdByPeer[p.PeerId]).ToArray();
         AuthoritativeHumanPlayers.SetHumanControlledEmpires(authority.UState, humanEmpireIds);
+        ConfigureHumanEmpires(authority.UState, humanEmpireIds);
         return new Authoritative4XGeneratedGameStart(authority, humanEmpireIds, empireIdByPeer, settings);
     }
 
@@ -418,6 +421,49 @@ public sealed class Authoritative4XLobby
         for (int i = 0; i < players.Length; ++i)
             map[players[i].PeerId] = majors[i].Id;
         return map;
+    }
+
+    static void ConfigureHumanEmpires(UniverseState universe, int[] humanEmpireIds)
+    {
+        if (universe == null || humanEmpireIds == null)
+            return;
+
+        foreach (int empireId in humanEmpireIds)
+            ConfigureHumanEmpire(universe.GetEmpireById(empireId));
+    }
+
+    static void ConfigureHumanEmpire(Empire empire)
+    {
+        if (empire == null)
+            return;
+
+        empire.AISidekickEnabled = false;
+        empire.OracleSidekickEnabled = false;
+        empire.AutoPickConstructors = false;
+        empire.AutoPickBestColonizer = false;
+        empire.AutoPickBestFreighter = false;
+        empire.AutoResearch = false;
+        empire.AutoBuildTerraformers = false;
+        empire.AutoTaxes = false;
+        empire.AutoPickBestResearchStation = false;
+        empire.AutoPickBestMiningStation = false;
+        empire.AutoExplore = false;
+        empire.AutoColonize = false;
+        empire.AutoBuildSpaceRoads = false;
+        empire.AutoFreighters = false;
+        empire.AutoBuildResearchStations = false;
+        empire.AutoBuildMiningStations = false;
+        empire.AutoMilitary = false;
+        empire.AutoSpy = false;
+        empire.RushAllConstruction = false;
+        empire.SwitchRushAllConstruction(false);
+        empire.data.CurrentAutoFreighter = "";
+        empire.data.CurrentAutoColony = "";
+        empire.data.CurrentAutoScout = "";
+        empire.data.CurrentConstructor = "";
+        empire.data.CurrentResearchStation = "";
+        empire.data.CurrentMiningStation = "";
+        empire.Research?.Reset();
     }
 
     static EmpireData CreateEmpireData(IEmpireData race, string[] traitOptions, bool player)

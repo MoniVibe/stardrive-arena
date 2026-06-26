@@ -6891,6 +6891,39 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XSnapshot_IgnoresVolatileMovementSolverQueueSteps_Headless()
+    {
+        const ulong Seed = 0x515055455545UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            world.Ship.AI.OrderMoveTo(world.Ship.Position + new Vector2(12000f, 2500f),
+                Vectors.Right, AIState.AwaitingOrders, MoveOrder.Regular);
+
+            ShipAI.ShipGoal[] rawGoals = world.Ship.AI.OrderQueue.ToArray();
+            Assert.IsTrue(rawGoals.Any(g => g.Plan == ShipAI.Plan.MoveToWithin1000),
+                "The proof must start with the movement solver micro-plan that caused the live turn-1359 drift.");
+            Assert.IsTrue(rawGoals.Any(g => g.Plan == ShipAI.Plan.MakeFinalApproach),
+                "The proof must include the final-approach micro-plan that should remain raw telemetry only.");
+            Assert.IsTrue(rawGoals.Any(g => g.Plan == ShipAI.Plan.HoldPosition),
+                "The durable hold-position order should remain in the canonical order signature.");
+
+            string signature = AuthoritativeStateSnapshot.ShipOrderQueueSignatureForTest(world.Ship);
+            Assert.IsFalse(signature.Split(';').Any(part => part.StartsWith($"{(int)ShipAI.Plan.MoveToWithin1000},", StringComparison.Ordinal)),
+                $"Volatile MoveToWithin1000 solver steps must not be canonical sync state. signature='{signature}'");
+            Assert.IsFalse(signature.Split(';').Any(part => part.StartsWith($"{(int)ShipAI.Plan.MakeFinalApproach},", StringComparison.Ordinal)),
+                $"Volatile MakeFinalApproach solver steps must not be canonical sync state. signature='{signature}'");
+            Assert.IsTrue(signature.Split(';').Any(part => part.StartsWith($"{(int)ShipAI.Plan.HoldPosition},", StringComparison.Ordinal)),
+                $"Durable orders must still be canonical sync state. signature='{signature}'");
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XLiveHost_AttachesPollsAndBroadcastsHeartbeat_Headless()
     {
         const ulong Seed = 0x41E40057UL;
@@ -7879,6 +7912,25 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsTrue(SameRace(clientEmpire.data, races[1]));
             Assert.IsTrue(AuthoritativeHumanPlayers.IsHumanControlled(hostEmpire));
             Assert.IsTrue(AuthoritativeHumanPlayers.IsHumanControlled(clientEmpire));
+            AssertEmpireAutomation(hostEmpire, AuthoritativeEmpireAutomationFlags.None, "", "", "", "", "", "",
+                "Generated host human empire should start with player-controlled automation.");
+            AssertEmpireAutomation(clientEmpire, AuthoritativeEmpireAutomationFlags.None, "", "", "", "", "", "",
+                "Generated join human empire should start with player-controlled automation.");
+            Assert.IsFalse(hostEmpire.AISidekickEnabled);
+            Assert.IsFalse(hostEmpire.OracleSidekickEnabled);
+            Assert.IsFalse(hostEmpire.AutoMilitary);
+            Assert.IsFalse(hostEmpire.AutoSpy);
+            Assert.IsTrue(hostEmpire.Research.NoTopic, "Generated host human should not inherit an AI research pick.");
+            Assert.IsFalse(clientEmpire.AISidekickEnabled);
+            Assert.IsFalse(clientEmpire.OracleSidekickEnabled);
+            Assert.IsFalse(clientEmpire.AutoMilitary);
+            Assert.IsFalse(clientEmpire.AutoSpy);
+            Assert.IsTrue(clientEmpire.Research.NoTopic, "Generated join human should not inherit an AI research pick.");
+
+            clientEmpire.AutoResearch = true;
+            clientEmpire.AI.Update();
+            Assert.IsTrue(clientEmpire.Research.NoTopic,
+                "Authoritative human empires must not run the stock AI research planner even if a stale auto flag is toggled.");
             Assert.IsTrue(hostEmpire.GetPlanets().Count > 0);
             Assert.IsTrue(clientEmpire.GetPlanets().Count > 0);
         }
