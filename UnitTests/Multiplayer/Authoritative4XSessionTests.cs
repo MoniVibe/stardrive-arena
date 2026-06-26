@@ -6,6 +6,7 @@ using Ship_Game.AI;
 using Ship_Game.Commands.Goals;
 using Ship_Game.Data;
 using Ship_Game.GameScreens.DiplomacyScreen;
+using Ship_Game.GameScreens.Arena;
 using Ship_Game.GameScreens.ShipDesign;
 using Ship_Game.Gameplay;
 using Ship_Game.Fleets;
@@ -6675,6 +6676,29 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsTrue(hostGenerated.AuthorityUniverse.UState.Paused);
             Assert.AreEqual(settings.GameSpeed, hostGenerated.AuthorityUniverse.UState.GameSpeed);
 
+            Planet clientJoinPlanet = joinGenerated.AuthorityUniverse.UState
+                .GetEmpireById(joinGenerated.EmpireIdForPeer(JoinPeer))
+                .GetPlanets()
+                .OrderBy(p => p.Id)
+                .FirstOrDefault();
+            Assert.IsNotNull(clientJoinPlanet, "The generated client empire needs a planet for the UI command proof.");
+            Planet authorityJoinPlanet = hostGenerated.AuthorityUniverse.UState.GetPlanet(clientJoinPlanet.Id);
+            Assert.IsNotNull(authorityJoinPlanet, "The authority game must contain the client's planet id.");
+            Planet.ColonyType targetType = clientJoinPlanet.CType == Planet.ColonyType.Research
+                ? Planet.ColonyType.Military
+                : Planet.ColonyType.Research;
+            Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetColonyType(clientJoinPlanet, targetType),
+                "The visible client session should route UI commands through the authoritative context.");
+            PumpLiveTcpUntil(() => NetworkClientCaughtUp(liveJoin, JoinPeer, 1)
+                                  && liveHost.LastSnapshot != null,
+                liveHost, liveJoin);
+            Assert.IsTrue(liveJoin.LastResult.Accepted, liveJoin.LastResult.Reason);
+            Assert.AreEqual(targetType, authorityJoinPlanet.CType);
+            Assert.AreEqual(targetType, clientJoinPlanet.CType);
+            Assert.AreEqual(liveHost.LastSnapshot.HashLo, liveJoin.LastSnapshot.HashLo);
+            Assert.AreEqual(liveHost.LastSnapshot.HashHi, liveJoin.LastSnapshot.HashHi);
+            Assert.AreEqual(liveHost.LastSnapshot.SyncDigest, liveJoin.LastSnapshot.SyncDigest);
+
             liveHost.TryTogglePause();
             PumpLiveTcpUntil(() => liveJoin.LastSnapshot != null
                                   && !joinGenerated.AuthorityUniverse.UState.Paused,
@@ -6691,6 +6715,25 @@ public class Authoritative4XSessionTests : StarDriveTest
             hostTransport?.Dispose();
             joinTransport?.Dispose();
         }
+    }
+
+    [TestMethod]
+    public void Authoritative4XLobbySelfTest_RunsRealLoopbackUiCommandProof_Headless()
+    {
+        LoadAllGameData();
+
+        Authoritative4XLobbySelfTestResult result =
+            ArenaMultiplayerLobbyScreen.RunAuthoritative4XSelfTestForHeadless(60);
+
+        Assert.IsTrue(result.Passed, result.FailureReason);
+        Assert.IsTrue(result.CommandSubmitted, "The 4X lobby self-test must submit a UI command.");
+        Assert.IsTrue(result.CommandAccepted, "The authoritative host must accept the self-test UI command.");
+        Assert.IsTrue(result.SnapshotsSynced,
+            $"Authority/client snapshots diverged. authority={result.AuthorityDigest} client={result.ClientDigest}");
+        Assert.AreEqual(60, result.MaxTurns);
+        Assert.AreEqual(2, result.HostPeerId);
+        Assert.AreEqual(3, result.JoinPeerId);
+        Assert.IsFalse(string.IsNullOrWhiteSpace(result.FinalHash));
     }
 
     [TestMethod]

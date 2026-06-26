@@ -67,6 +67,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     LobbyPeer RemotePeer = new() { PlayerName = "Remote", RacePreference = "-", LoadoutTrait = "-", Ready = false };
     SessionStartMessage Pending4XStart;
     ArenaMultiplayerRunResult LastResult;
+    Authoritative4XLobbySelfTestResult Last4XSelfTestResult;
     string StatusText;
     string[] RaceOptions = Array.Empty<string>();
     string[] TraitOptions = Array.Empty<string>();
@@ -108,6 +109,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
     public bool IsRunning => Launching;
     public ArenaMultiplayerRunResult LatestResult => LastResult;
+    public Authoritative4XLobbySelfTestResult Latest4XSelfTestResult => Last4XSelfTestResult;
     public bool LocalReady => LocalPeer.Ready;
     public bool RemoteReady => RemotePeer.Ready;
     public string LocalRace => LocalPeer.RacePreference;
@@ -287,7 +289,20 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
     void StartSelfTest()
     {
+        if (Surface == ArenaMultiplayerLobbySurface.Authoritative4X)
+        {
+            Last4XSelfTestResult = RunAuthoritative4XSelfTestForHeadless(ParseTurns());
+            LastResult = null;
+            SetStatus(Last4XSelfTestResult.Summary);
+            if (Last4XSelfTestResult.Passed)
+                GameAudio.AffirmativeClick();
+            else
+                GameAudio.NegativeClick();
+            return;
+        }
+
         LastResult = RunLocalSelfTestForHeadless(ParseTurns());
+        Last4XSelfTestResult = null;
         SetStatus(Summarize(LastResult));
         GameAudio.AffirmativeClick();
     }
@@ -395,9 +410,23 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             return;
         }
 
-        SessionStartMessage start = Build4XStartMessage();
+        SessionStartMessage start;
+        try
+        {
+            start = Build4XStartMessage();
+        }
+        catch (Exception e)
+        {
+            string startError = $"4X start failed: {e.Message}\n{Build4XStartDiagnostics()}";
+            Transport.Send(JoinPlayerPeerId4X,
+                new SessionErrorMessage { FromPeer = AuthorityPeerId, Error = startError });
+            SetStatus(startError);
+            LobbyTelemetry?.Event("START_BUILD_REJECT", startError);
+            GameAudio.NegativeClick();
+            return;
+        }
         LobbyTelemetry?.Event("LAUNCH_HOST",
-            $"settingsHash={start.SettingsHash} mode=4x");
+            $"settingsHash={start.SettingsHash} mode=4x {Build4XStartDiagnostics(start)}");
         Transport.Send(JoinPlayerPeerId4X, start);
         LaunchVisible4X(Authoritative4XLiveRole.Host, start);
     }
@@ -517,39 +546,11 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
     SessionStartMessage Build4XStartMessage()
     {
-        Authoritative4XGameSettings settings = Build4XSettings();
-        return new SessionStartMessage
-        {
-            FromPeer = AuthorityPeerId,
-            ProtocolVersion = ArenaMultiplayerSettings.ProtocolVersion,
-            MatchSeed = settings.GenerationSeed,
-            RngSeed = (uint)settings.GenerationSeed ^ 0x4D505547u,
-            InputDelay = 0,
-            MaxTurns = ParseTurns(),
-            CommandEveryTurns = 1,
-            GameSpeed = settings.GameSpeed,
-            StartPaused = settings.StartPaused,
-            SettingsHash = settings.SettingsHash,
-            BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
-            BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
-            HostRacePreference = LocalPeer.RacePreference,
-            JoinRacePreference = RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference,
-            HostTraitOptions = LocalPeer.TraitOptions,
-            JoinTraitOptions = RemotePeer.TraitOptions,
-            IsAuthoritative4X = true,
-            AuthoritativeHostPeerId = HostPlayerPeerId4X,
-            AuthoritativeJoinPeerId = JoinPlayerPeerId4X,
-            GenerationSeed = settings.GenerationSeed,
-            GalaxySize = (int)settings.GalaxySize,
-            StarsCount = (int)settings.StarsCount,
-            GameMode = (int)settings.Mode,
-            Difficulty = (int)settings.Difficulty,
-            NumOpponents = settings.NumOpponents,
-            Pace = settings.Pace,
-            TurnTimer = settings.TurnTimer,
-            ExtraPlanets = settings.ExtraPlanets,
-            StartingPlanetRichnessBonus = settings.StartingPlanetRichnessBonus,
-        };
+        Authoritative4XLobby lobby = Build4XLobbyForStart();
+        return LobbyFlow.BuildStartMessage(lobby, ArenaMultiplayerSettings.ProtocolVersion,
+            ArenaMultiplayerPeerSignature.EnvironmentHash(),
+            ArenaMultiplayerPeerSignature.EnvironmentSummary(),
+            maxTurns: ParseTurns());
     }
 
     Authoritative4XGameSettings Build4XSettings()
@@ -569,17 +570,56 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             StartPaused = StartPaused,
         }.Normalized(2);
 
+    Authoritative4XLobby Build4XLobbyForStart()
+    {
+        var lobby = new Authoritative4XLobby(HostPlayerPeerId4X,
+            LocalPeer.PlayerName.NotEmpty() ? LocalPeer.PlayerName : "Host");
+        lobby.Join(JoinPlayerPeerId4X,
+            RemotePeer.PlayerName.NotEmpty() && RemotePeer.PlayerName != "-"
+                ? RemotePeer.PlayerName
+                : "Join");
+        RequireLobbyValid(lobby.SetSettings(HostPlayerPeerId4X, Build4XSettings()));
+        RequireLobbyValid(lobby.SetPlayerSelection(HostPlayerPeerId4X, LocalPeer.RacePreference,
+            Authoritative4XLobbyNetworkFlow.SplitTraitOptions(LocalPeer.TraitOptions)));
+        RequireLobbyValid(lobby.SetPlayerSelection(JoinPlayerPeerId4X,
+            RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference,
+            Authoritative4XLobbyNetworkFlow.SplitTraitOptions(RemotePeer.TraitOptions)));
+        RequireLobbyValid(lobby.SetReady(HostPlayerPeerId4X, true));
+        RequireLobbyValid(lobby.SetReady(JoinPlayerPeerId4X, true));
+        return lobby;
+    }
+
+    static void RequireLobbyValid(Authoritative4XLobbyValidation validation)
+    {
+        if (validation == null)
+            throw new InvalidOperationException("Lobby validation was missing.");
+        if (!validation.Valid)
+            throw new InvalidOperationException(validation.Reason);
+    }
+
     string Validate4XStart(SessionStartMessage start)
     {
         string flowError = LobbyFlow.ValidateStartMessage(start, ArenaMultiplayerSettings.ProtocolVersion);
         if (flowError.NotEmpty())
-            return flowError;
+            return $"{flowError}\n{Build4XStartDiagnostics(start)}";
         string error = ArenaMultiplayerPeerSignature.ValidateEnvironment(start.BuildHash, start.BuildSummary, "host");
-        return error.NotEmpty() ? error : "";
+        return error.NotEmpty() ? $"{error}\n{Build4XStartDiagnostics(start)}" : "";
     }
 
     Authoritative4XGeneratedGameStart CreateGenerated4XGame(SessionStartMessage start)
         => LobbyFlow.CreateGeneratedGame(start);
+
+    string Build4XStartDiagnostics(SessionStartMessage start = null)
+    {
+        Authoritative4XGameSettings settings = start != null
+            ? Authoritative4XLobbyNetworkFlow.SettingsFromStart(start).Normalized(2)
+            : Build4XSettings();
+        string settingsHash = start?.SettingsHash ?? settings.SettingsHash;
+        string hostRace = start?.HostRacePreference ?? LocalPeer.RacePreference;
+        string joinRace = start?.JoinRacePreference ?? (RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference);
+        return $"seed={settings.GenerationSeed} settings={settingsHash} "
+               + $"host='{hostRace}' join='{joinRace}' turns={(start?.MaxTurns ?? ParseTurns())}";
+    }
 
     public override void Update(float fixedDeltaTime)
     {
@@ -782,6 +822,81 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
     public static ArenaMultiplayerRunResult RunLocalSelfTestForHeadless(int turns = 90)
         => ArenaMultiplayerSession.RunInProcess(CreateDefaultSettings(turns));
+
+    public static Authoritative4XLobbySelfTestResult RunAuthoritative4XSelfTestForHeadless(int turns = 90)
+    {
+        string[] races = AvailableSelfTestRacePreferences();
+        if (races.Length < 2)
+        {
+            return new Authoritative4XLobbySelfTestResult
+            {
+                Passed = false,
+                FailureReason = "setup: authoritative 4X self-test needs two playable major races.",
+                MaxTurns = turns.Clamped(30, 2000),
+            };
+        }
+
+        var settings = new Authoritative4XGameSettings
+        {
+            GenerationSeed = 0x4A11E45,
+            GalaxySize = GalSize.Tiny,
+            StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+            Mode = RaceDesignScreen.GameMode.Sandbox,
+            Difficulty = GameDifficulty.Normal,
+            NumOpponents = 1,
+            Pace = 1f,
+            TurnTimer = 3,
+            ExtraPlanets = 1,
+            StartingPlanetRichnessBonus = 1f,
+            GameSpeed = 1f,
+            StartPaused = false,
+        }.Normalized(2);
+
+        var flow = new Authoritative4XLobbyNetworkFlow(HostPlayerPeerId4X, JoinPlayerPeerId4X, AuthorityPeerId);
+        return flow.RunLoopbackSelfTest(settings, races[0], OneAffordableTraitOrEmpty(),
+            races[1], Array.Empty<string>(), ArenaMultiplayerSettings.ProtocolVersion,
+            ArenaMultiplayerPeerSignature.EnvironmentHash(),
+            ArenaMultiplayerPeerSignature.EnvironmentSummary(),
+            maxTurns: turns.Clamped(30, 2000));
+    }
+
+    static string[] AvailableSelfTestRacePreferences()
+    {
+        try
+        {
+            return ResourceManager.MajorRaces
+                .Where(r => !r.IsFactionOrMinorRace)
+                .Select(r => r.ArchetypeName.NotEmpty() ? r.ArchetypeName : r.Name)
+                .Where(r => r.NotEmpty())
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(r => r, StringComparer.Ordinal)
+                .Take(2)
+                .ToArray();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    static string[] OneAffordableTraitOrEmpty()
+    {
+        try
+        {
+            int points = new UniverseParams().RacialTraitPoints;
+            string trait = ResourceManager.RaceTraits.TraitList
+                .Where(t => t.Cost > 0 && t.Cost <= points)
+                .OrderBy(t => t.Cost)
+                .ThenBy(t => t.TraitName, StringComparer.Ordinal)
+                .Select(t => t.TraitName)
+                .FirstOrDefault();
+            return trait.NotEmpty() ? new[] { trait } : Array.Empty<string>();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
 
     static string[] AvailableRacePreferences()
     {
