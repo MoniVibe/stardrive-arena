@@ -322,7 +322,7 @@ namespace Ship_Game
             RequisitionForces.OnClick = (b) => ScreenManager.AddScreen(new RequisitionScreen(this));
             SaveDesign.OnClick = (b) => ScreenManager.AddScreen(new SaveFleetDesignScreen(this, SelectedFleet));
             LoadDesign.OnClick = (b) => ScreenManager.AddScreen(new LoadFleetDesignScreen(this));
-            AutoArrange.OnClick = (b) => SelectedFleet.AutoArrange();   
+            AutoArrange.OnClick = (b) => AutoArrangeSelectedFleet();
 
             OperationsRect = new(SelectedStuffRect.Right + 2, SelectedStuffRect.Y + 30, 360, SelectedStuffRect.H - 30);
 
@@ -377,6 +377,19 @@ namespace Ship_Game
             if (fleet != null)
                 foreach (Ship ship in fleet.Ships)
                     ship.RemoveSceneObject();
+        }
+
+        void AutoArrangeSelectedFleet()
+        {
+            switch (Authoritative4XClientContext.TrySubmitAutoArrangeFleet(SelectedFleet))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    return;
+                case Authoritative4XUiCommandResult.NotActive:
+                    SelectedFleet?.AutoArrange();
+                    return;
+            }
         }
 
         public void LoadFleetDesign(FileInfo file)

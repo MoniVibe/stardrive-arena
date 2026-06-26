@@ -158,6 +158,17 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitAutoArrangeFleet(Fleet fleet)
+    {
+        if (!TryGetFor(fleet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (fleet.Key is < Empire.FirstFleetKey or > Empire.LastFleetKey || fleet.Ships.Count == 0)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.AutoArrangeFleet(context.Next(), context.EmpireId, fleet.Key));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitSetFleetAssignment(Empire empire, int fleetKey,
         AuthoritativeFleetAssignmentMode mode, Ship[] ships)
     {

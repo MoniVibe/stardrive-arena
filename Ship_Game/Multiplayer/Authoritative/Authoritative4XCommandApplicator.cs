@@ -63,6 +63,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.SetFleetAssignment => ApplyFleetAssignment(command, empire, result),
                 AuthoritativePlayerCommandKind.MoveFleet => ApplyMoveFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.RenameFleet => ApplyRenameFleet(command, empire, result),
+                AuthoritativePlayerCommandKind.AutoArrangeFleet => ApplyAutoArrangeFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipSpecialOrder => ApplyShipSpecialOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.SetShipCombatStance => ApplyShipCombatStance(command, empire, result),
                 AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
@@ -816,6 +817,21 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, "Fleet name cannot contain control characters.");
 
         fleet.Name = name;
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyAutoArrangeFleet(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
+            return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
+
+        Fleet fleet = empire.GetFleetOrNull(command.SubjectId);
+        if (fleet == null || fleet.Ships.Count == 0)
+            return Reject(result, $"Fleet {command.SubjectId} not found or empty.");
+
+        fleet.AutoArrange();
+        fleet.Update(FixedSimTime.Zero);
         return Accept(result);
     }
 
