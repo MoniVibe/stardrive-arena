@@ -67,6 +67,7 @@ public enum AuthoritativePlayerCommandKind : byte
     SetShipAreaOfOperation = 51,
     RefitShip = 52,
     BuildCapitalHere = 53,
+    QueueFleetRequisition = 54,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -706,6 +707,18 @@ public sealed class AuthoritativePlayerCommand
             Kind = AuthoritativePlayerCommandKind.SetFleetLayout,
             SubjectId = fleetKey,
             Text = EncodeFleetLayout(nodes),
+        };
+
+    public static AuthoritativePlayerCommand QueueFleetRequisition(int sequence, int empireId, int fleetKey,
+        bool rush, IEnumerable<int> nodeIndices = null)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.QueueFleetRequisition,
+            SubjectId = fleetKey,
+            TargetId = rush ? 1 : 0,
+            Text = EncodeIdList(nodeIndices),
         };
 
     public static AuthoritativePlayerCommand LoadFleetPatrol(int sequence, int empireId, int fleetKey, string patrolName)

@@ -77,6 +77,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.ClearFleetPatrol => ApplyClearFleetPatrol(command, empire, result),
                 AuthoritativePlayerCommandKind.CreateFleetPatrol => ApplyCreateFleetPatrol(command, empire, result),
                 AuthoritativePlayerCommandKind.SetFleetLayout => ApplyFleetLayout(command, empire, result),
+                AuthoritativePlayerCommandKind.QueueFleetRequisition => ApplyQueueFleetRequisition(command, empire, result),
                 AuthoritativePlayerCommandKind.QueueDeepSpaceBuild => ApplyDeepSpaceBuild(command, empire, result),
                 AuthoritativePlayerCommandKind.CancelDeepSpaceBuild => ApplyCancelDeepSpaceBuild(command, empire, result),
                 AuthoritativePlayerCommandKind.QueuePlanetOrbitalBuild => ApplyPlanetOrbitalBuild(command, empire, result),
@@ -1762,6 +1763,64 @@ public sealed class Authoritative4XCommandApplicator
         fleet.Update(FixedSimTime.Zero);
         return Accept(result);
     }
+
+    AuthoritativeCommandResult ApplyQueueFleetRequisition(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
+            return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
+        if (command.TargetId is not (0 or 1))
+            return Reject(result, $"Unsupported fleet requisition rush flag {command.TargetId}.");
+        if (!AuthoritativePlayerCommand.TryParseIdList(command.Text, out int[] requestedIndices))
+            return Reject(result, "Invalid fleet requisition node payload.");
+        if (requestedIndices.Length > 0 && requestedIndices.Distinct().ToArray().Length != requestedIndices.Length)
+            return Reject(result, "Fleet requisition node indices must be unique.");
+
+        Fleet fleet = empire.GetFleetOrNull(command.SubjectId);
+        if (fleet == null)
+            return Reject(result, $"Fleet {command.SubjectId} not found.");
+        if (fleet.Owner != empire)
+            return Reject(result, $"Fleet {command.SubjectId} is not owned by empire {empire.Id}.");
+
+        int[] targetIndices = requestedIndices.Length > 0
+            ? requestedIndices
+            : Enumerable.Range(0, fleet.DataNodes.Count)
+                .Where(i => IsEmptyRequisitionNode(fleet.DataNodes[i]))
+                .ToArray();
+        if (targetIndices.Length == 0)
+            return Reject(result, $"Fleet {command.SubjectId} has no empty requisition nodes.");
+
+        foreach (int index in targetIndices)
+        {
+            if ((uint)index >= fleet.DataNodes.Count)
+                return Reject(result, $"Fleet requisition node {index} was not found.");
+
+            FleetDataNode node = fleet.DataNodes[index];
+            if (!IsEmptyRequisitionNode(node))
+                return Reject(result, $"Fleet requisition node {index} is already filled or queued.");
+            if (string.IsNullOrWhiteSpace(node.ShipName))
+                return Reject(result, $"Fleet requisition node {index} has no ship design.");
+            if (!ResourceManager.Ships.GetDesign(node.ShipName, out IShipDesign design))
+                return Reject(result, $"Fleet requisition design '{node.ShipName}' was not found.");
+            if (design.IsPlatformOrStation)
+                return Reject(result, $"Fleet requisition design '{node.ShipName}' is not a mobile ship.");
+            if (!empire.CanBuildShip(design))
+                return Reject(result, $"Empire {empire.Id} cannot build fleet requisition design '{node.ShipName}'.");
+        }
+
+        bool rush = command.TargetId == 1;
+        foreach (int index in targetIndices)
+        {
+            FleetDataNode node = fleet.DataNodes[index];
+            var goal = new FleetRequisition(node.ShipName, empire, fleet, rush);
+            node.Goal = goal;
+            empire.AI.AddGoalAndEvaluate(goal);
+        }
+        return Accept(result);
+    }
+
+    static bool IsEmptyRequisitionNode(FleetDataNode node)
+        => node?.Ship == null && node?.Goal == null;
 
     AuthoritativeCommandResult ApplyFleetLayout(AuthoritativePlayerCommand command, Empire empire,
         AuthoritativeCommandResult result)

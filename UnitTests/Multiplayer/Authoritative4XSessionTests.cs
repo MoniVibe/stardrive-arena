@@ -361,6 +361,17 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(CombatState.GuardMode, decodedLayout[1].CombatState);
         Assert.AreEqual(654_321f, decodedLayout[1].OrdersRadius);
 
+        var fleetRequisitionRequest = AuthoritativePlayerCommand.QueueFleetRequisition(44, 2,
+                fleetKey: 7, rush: true, new[] { 0, 2 })
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(fleetRequisitionRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.QueueFleetRequisition, copy.Kind);
+        Assert.AreEqual(7, copy.SubjectId);
+        Assert.AreEqual(1, copy.TargetId);
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParseIdList(copy.Text, out int[] requisitionNodeIds));
+        CollectionAssert.AreEqual(new[] { 0, 2 }, requisitionNodeIds);
+
         var deepSpaceBuildRequest = AuthoritativePlayerCommand.QueueDeepSpaceBuild(33, 2,
                 "Platform Base mk1-a", new Vector2(10_000f, -20_000f), targetPlanetId: 5,
                 targetSystemId: 6, tetherOffset: new Vector2(1_250f, -2_500f))
@@ -2710,6 +2721,102 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XFleetRequisition_QueuesGoalsAndSyncs_Headless()
+    {
+        const ulong Seed = 0xF1EE4A15UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            EnableFleetRequisitionYard(authority);
+            EnableFleetRequisitionYard(client);
+
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            IShipDesign design = PickMobileBuildableShip(authority.Player);
+            Fleet authorityFleet = CreateFleetRequisitionFixture(authority.Player, fleetKey: 4, design.Name);
+            Fleet clientFleet = CreateFleetRequisitionFixture(client.Player, fleetKey: 4, design.Name);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueFleetRequisition(150,
+                authority.Player.Id, fleetKey: 4, rush: true));
+
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            FleetRequisition authorityGoal = FindFleetRequisitionGoal(authority.Player, authorityFleet, nodeIndex: 0);
+            FleetRequisition clientGoal = FindFleetRequisitionGoal(client.Player, clientFleet, nodeIndex: 0);
+            Assert.IsNotNull(authorityGoal, "Authority must create the real FleetRequisition goal.");
+            Assert.IsNotNull(clientGoal, "Replica must create the same accepted FleetRequisition goal.");
+            Assert.AreSame(authorityGoal, authorityFleet.DataNodes[0].Goal);
+            Assert.AreSame(clientGoal, clientFleet.DataNodes[0].Goal);
+            Assert.AreEqual(design.Name, authorityGoal.Build.Template.Name);
+            Assert.IsTrue(authorityGoal.Build.Rush);
+            Assert.IsTrue(HasQueuedFleetRequisitionShip(authority.Planet, authorityGoal, design.Name),
+                "The real FleetRequisition goal should enqueue its ship at the selected spaceport.");
+            Assert.IsTrue(HasQueuedFleetRequisitionShip(client.Planet, clientGoal, design.Name),
+                "The client replica should enqueue the same requisition after host acceptance.");
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "Fleet requisition goals must be covered by the authoritative sync digest.");
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, "|FleetRequisition|");
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, design.Name);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueFleetRequisition(151,
+                authority.Player.Id, fleetKey: 4, rush: false, new[] { 8 }));
+            Assert.IsFalse(session.LastResult.Accepted, "Missing fleet requisition nodes must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "was not found");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XFleetRequisition_RejectsWrongEmpireAndMissingFleet_Headless()
+    {
+        const ulong Seed = 0xF1EE4A16UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            EnableFleetRequisitionYard(authority);
+            EnableFleetRequisitionYard(client);
+
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            IShipDesign design = PickMobileBuildableShip(authority.Player);
+            CreateFleetRequisitionFixture(authority.Enemy, fleetKey: 4, design.Name);
+            CreateFleetRequisitionFixture(client.Enemy, fleetKey: 4, design.Name);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueFleetRequisition(152,
+                authority.Player.Id, fleetKey: 4, rush: false));
+            Assert.IsFalse(session.LastResult.Accepted,
+                "A player command must not requisition against another empire's fleet slot.");
+            StringAssert.Contains(session.LastResult.Reason, "not found");
+            Assert.IsFalse(authority.Player.AI.Goals.Any(g => g is FleetRequisition));
+            Assert.IsFalse(authority.Enemy.AI.Goals.Any(g => g is FleetRequisition));
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueFleetRequisition(153,
+                authority.Player.Id, fleetKey: 5, rush: false));
+            Assert.IsFalse(session.LastResult.Accepted, "Missing fleets must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "not found");
+            Assert.IsFalse(authority.Player.AI.Goals.Any(g => g is FleetRequisition));
+            Assert.IsFalse(authority.Enemy.AI.Goals.Any(g => g is FleetRequisition));
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XFleetCreatePatrol_CreatesSavedAndActivePlanAndSyncs_Headless()
     {
         const ulong Seed = 0xF1EE4A12UL;
@@ -3573,6 +3680,65 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitSetFleetLayout(enemyFleet, enemyFleet.DataNodes));
                 Assert.AreEqual(1, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsFleetRequisitionWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xF1EE7C1DUL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            Assert.IsTrue(world.Player.CanBuildShip(world.Ship.Name),
+                $"The passive requisition proof expects {world.Ship.Name} to be buildable.");
+            Fleet fleet = CreateFleetRequisitionFixture(world.Player, fleetKey: 4, world.Ship.Name);
+            int initialRequisitionGoals = world.Player.AI.Goals.Count(g => g is FleetRequisition);
+            var proposed = new[]
+            {
+                new FleetDataNode(fleet.DataNodes[0])
+                {
+                    Ship = world.Ship,
+                    Goal = fleet.DataNodes[0].Goal,
+                },
+            };
+
+            var submitted = new List<AuthoritativePlayerCommand>();
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2180))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitQueueFleetRequisition(fleet, rush: true));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2180, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.QueueFleetRequisition, submitted[0].Kind);
+                Assert.AreEqual(4, submitted[0].SubjectId);
+                Assert.AreEqual(1, submitted[0].TargetId);
+                Assert.AreEqual("", submitted[0].Text,
+                    "Empty requisition payload means all currently empty fleet nodes.");
+                Assert.IsNull(fleet.DataNodes[0].Goal,
+                    "Passive MP clients must not locally create FleetRequisition goals before host acceptance.");
+                Assert.AreEqual(initialRequisitionGoals, world.Player.AI.Goals.Count(g => g is FleetRequisition));
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetFleetLayout(fleet, proposed));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetFleetLayout, submitted[1].Kind);
+                Assert.IsNull(fleet.DataNodes[0].Ship,
+                    "Passive MP clients must not locally assign ships to requisition nodes before host acceptance.");
+                Assert.IsNull(world.Ship.Fleet,
+                    "Passive MP clients must not locally mutate fleet membership before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitQueueFleetRequisition(fleet, rush: false,
+                        new[] { 8 }));
+                Assert.AreEqual(2, submitted.Count);
             }
         }
         finally
@@ -7254,6 +7420,35 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.IsNotNull(ship, $"Empire {empire.Id} needs at least one mobile buildable ship for the UI dispatch proof.");
         return ship;
     }
+
+    static void EnableFleetRequisitionYard(BuiltWorld world)
+    {
+        world.Planet.HasSpacePort = true;
+        world.Player.UpdateRallyPoints();
+    }
+
+    static Fleet CreateFleetRequisitionFixture(Empire empire, int fleetKey, string designName)
+    {
+        Fleet fleet = empire.CreateFleet(fleetKey, null);
+        fleet.DataNodes.Add(new FleetDataNode
+        {
+            ShipName = designName,
+            RelativeFleetOffset = new Vector2(6_000f, -3_000f),
+            CombatState = CombatState.Artillery,
+            OrdersRadius = 500_000f,
+        });
+        return fleet;
+    }
+
+    static FleetRequisition FindFleetRequisitionGoal(Empire empire, Fleet fleet, int nodeIndex)
+        => empire.AI.Goals.OfType<FleetRequisition>()
+            .FirstOrDefault(g => g.Fleet == fleet && fleet.DataNodes[nodeIndex].Goal == g);
+
+    static bool HasQueuedFleetRequisitionShip(Planet planet, FleetRequisition goal, string designName)
+        => planet.Construction.GetConstructionQueueSnapshot()
+            .Any(q => q.isShip
+                      && q.Goal == goal
+                      && string.Equals(q.ShipData?.Name, designName, StringComparison.Ordinal));
 
     static IShipDesign PickBuildableColonyShip(Empire empire)
     {

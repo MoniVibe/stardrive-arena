@@ -287,6 +287,10 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
                            out AuthoritativeFleetLayoutNode[] nodes)
                     ? $"payload=FleetLayout nodes={nodes.Length}"
                     : "payload=FleetLayout invalid=true";
+            case AuthoritativePlayerCommandKind.QueueFleetRequisition:
+                return AuthoritativePlayerCommand.TryParseIdList(command.Text, out int[] requisitionNodes)
+                    ? $"payload=FleetRequisition fleet={command.SubjectId} rush={command.TargetId == 1} nodes={(requisitionNodes.Length == 0 ? "all-empty" : string.Join(",", requisitionNodes))}"
+                    : "payload=FleetRequisition invalid=true";
             case AuthoritativePlayerCommandKind.QueueDeepSpaceBuild:
                 return AuthoritativePlayerCommand.TryParseDeepSpaceBuildPayload(command.Text,
                            out string buildDesign, out SDGraphics.Vector2 tetherOffset)

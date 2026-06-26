@@ -145,6 +145,24 @@ public sealed class AuthoritativeStateSnapshot
                   .AppendLine();
             }
 
+            foreach (FleetRequisition goal in e.AI.Goals
+                         .OfType<FleetRequisition>()
+                         .OrderBy(g => g.Fleet?.Key ?? 0)
+                         .ThenBy(FleetGoalNodeIndex)
+                         .ThenBy(g => g.Build?.Template?.Name ?? "", StringComparer.Ordinal))
+            {
+                sb.Append("G|").Append(e.Id)
+                  .Append("|FleetRequisition")
+                  .Append('|').Append(goal.Step)
+                  .Append('|').Append(goal.Fleet?.Id ?? 0)
+                  .Append('|').Append(goal.Fleet?.Key ?? 0)
+                  .Append('|').Append(FleetGoalNodeIndex(goal))
+                  .Append('|').Append(goal.Build?.Template?.Name ?? "")
+                  .Append('|').Append(goal.PlanetBuildingAt?.Id ?? 0)
+                  .Append('|').Append(goal.Build?.Rush == true ? 1 : 0)
+                  .AppendLine();
+            }
+
             foreach (Goal goal in e.AI.Goals
                          .Where(IsDeepSpaceBuildStateGoal)
                          .OrderBy(g => (int)g.Type)
@@ -419,6 +437,16 @@ public sealed class AuthoritativeStateSnapshot
             MiningOps mining => mining.TargetSystem,
             _ => null,
         };
+
+    static int FleetGoalNodeIndex(FleetRequisition goal)
+    {
+        if (goal?.Fleet == null)
+            return -1;
+        for (int i = 0; i < goal.Fleet.DataNodes.Count; ++i)
+            if (goal.Fleet.DataNodes[i].Goal == goal)
+                return i;
+        return -1;
+    }
 
     static string FleetShipSignature(Fleet fleet)
         => string.Join(",", fleet.Ships.OrderBy(s => s.Id).Select(s => s.Id.ToString(CultureInfo.InvariantCulture)));

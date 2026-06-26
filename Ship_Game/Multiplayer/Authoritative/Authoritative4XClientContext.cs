@@ -375,6 +375,49 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitQueueFleetRequisition(Fleet fleet, bool rush,
+        IEnumerable<int> nodeIndices = null)
+    {
+        if (!TryGetFor(fleet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (fleet.Key is < Empire.FirstFleetKey or > Empire.LastFleetKey)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        int[] requested = (nodeIndices ?? Array.Empty<int>()).ToArray();
+        if (requested.Length > 0 && requested.Distinct().Count() != requested.Length)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        int[] targetIndices = requested.Length > 0
+            ? requested
+            : Enumerable.Range(0, fleet.DataNodes.Count)
+                .Where(i => CanQueueFleetRequisitionNode(fleet.Owner, fleet.DataNodes[i]))
+                .ToArray();
+        if (targetIndices.Length == 0)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        foreach (int index in targetIndices)
+        {
+            if ((uint)index >= fleet.DataNodes.Count
+                || !CanQueueFleetRequisitionNode(fleet.Owner, fleet.DataNodes[index]))
+            {
+                return Authoritative4XUiCommandResult.Blocked;
+            }
+        }
+
+        context.Submit(AuthoritativePlayerCommand.QueueFleetRequisition(context.Next(), context.EmpireId,
+            fleet.Key, rush, requested));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    static bool CanQueueFleetRequisitionNode(Empire empire, FleetDataNode node)
+    {
+        if (empire == null || node?.Ship != null || node?.Goal != null || string.IsNullOrWhiteSpace(node?.ShipName))
+            return false;
+        return ResourceManager.Ships.GetDesign(node.ShipName, out IShipDesign design)
+               && !design.IsPlatformOrStation
+               && empire.CanBuildShip(design);
+    }
+
     static bool IsFiniteFleetLayoutNode(FleetDataNode node)
         => float.IsFinite(node.RelativeFleetOffset.X)
            && float.IsFinite(node.RelativeFleetOffset.Y)

@@ -2,11 +2,14 @@ using Microsoft.Xna.Framework.Graphics;
 using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using SDUtils;
+using Ship_Game.Audio;
 using Ship_Game.Commands.Goals;
 using Ship_Game.Fleets;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Vector2 = SDGraphics.Vector2;
 using System;
+using System.Collections.Generic;
 
 namespace Ship_Game
 {
@@ -130,6 +133,8 @@ namespace Ship_Game
         void AssignAvailableShips()
         {
             Ship[] available = GetAvailableShips();
+            if (TrySubmitAssignAvailableShips(available))
+                return;
 
             foreach (Ship ship in available)
             {
@@ -165,8 +170,62 @@ namespace Ship_Game
             Fds.ChangeFleet(Fds.SelectedFleet.Key);
         }
 
+        bool TrySubmitAssignAvailableShips(Ship[] available)
+        {
+            switch (Authoritative4XClientContext.TrySubmitSetFleetLayout(F, ProposedAssignedFleetNodes(available)))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    return true;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        List<FleetDataNode> ProposedAssignedFleetNodes(Ship[] available)
+        {
+            var proposed = new List<FleetDataNode>();
+            foreach (FleetDataNode node in F.DataNodes)
+                proposed.Add(CloneFleetNode(node));
+
+            foreach (Ship ship in available)
+            {
+                if (ship.IsHomeDefense || ship.IsHangarShip)
+                    continue;
+
+                foreach (FleetDataNode node in proposed)
+                {
+                    if (node.ShipName != ship.Name || node.Ship != null || node.Goal != null)
+                        continue;
+                    node.Ship = ship;
+                    break;
+                }
+            }
+            return proposed;
+        }
+
+        static FleetDataNode CloneFleetNode(FleetDataNode node)
+        {
+            return new FleetDataNode(node)
+            {
+                Ship = node.Ship,
+                Goal = node.Goal,
+            };
+        }
+
         void CreateFleetRequisitionGoals(bool rush = false)
         {
+            switch (Authoritative4XClientContext.TrySubmitQueueFleetRequisition(F, rush))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    return;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return;
+            }
+
             foreach (FleetDataNode node in F.DataNodes)
             {
                 if (node.Ship == null
