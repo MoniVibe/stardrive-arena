@@ -358,6 +358,31 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(5, copy.SubjectId);
         Assert.AreEqual("Platform Base mk1-a", copy.Text);
 
+        var blueprints = new BlueprintsTemplate("MP Forge", exclusive: true, linkTo: "",
+            new HashSet<string>(StringComparer.Ordinal) { "Factory", "Laboratory" },
+            Planet.ColonyType.Industrial);
+        var applyBlueprintsRequest = AuthoritativePlayerCommand.ApplyColonyBlueprints(41, 2,
+                planetId: 5, blueprints)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(applyBlueprintsRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.ApplyColonyBlueprints, copy.Kind);
+        Assert.AreEqual(5, copy.SubjectId);
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParseBlueprintsTemplate(copy.Text,
+            out BlueprintsTemplate decodedBlueprints));
+        Assert.AreEqual("MP Forge", decodedBlueprints.Name);
+        Assert.IsTrue(decodedBlueprints.Exclusive);
+        Assert.AreEqual(Planet.ColonyType.Industrial, decodedBlueprints.ColonyType);
+        CollectionAssert.AreEqual(new[] { "Factory", "Laboratory" },
+            decodedBlueprints.PlannedBuildings.OrderBy(name => name, StringComparer.Ordinal).ToArray());
+
+        var clearBlueprintsRequest = AuthoritativePlayerCommand.ClearColonyBlueprints(42, 2, planetId: 5)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(clearBlueprintsRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.ClearColonyBlueprints, copy.Kind);
+        Assert.AreEqual(5, copy.SubjectId);
+
         var cancelDeepSpaceBuildRequest = AuthoritativePlayerCommand.CancelDeepSpaceBuild(34, 2,
                 "Platform Base mk1-a", GoalType.DeepSpaceConstruction, new Vector2(10_000f, -20_000f),
                 targetPlanetId: 5, targetSystemId: 6)
@@ -1472,6 +1497,141 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(expectedManualOrbitals, planet.ManualOrbitals);
             Assert.AreEqual(expectedGovGround, planet.GovGroundDefense);
             Assert.AreEqual(expectedSpecializedTradeHub, planet.SpecializedTradeHub);
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XColonyBlueprints_AppliesClearsAndSyncs_Headless()
+    {
+        const ulong Seed = 0xB10E9A17UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            Building blueprintBuilding = PickBlueprintBuilding(authority.Planet);
+            BlueprintsTemplate template = TestBlueprintTemplate("MP Industrial Plan", blueprintBuilding,
+                Planet.ColonyType.Industrial);
+            authority.Planet.DontScrapBuildings = true;
+            client.Planet.DontScrapBuildings = true;
+            authority.Planet.SetSpecializedTradeHub(true);
+            client.Planet.SetSpecializedTradeHub(true);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.ApplyColonyBlueprints(108,
+                authority.Player.Id, authority.Planet.Id, template));
+
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            AssertColonyBlueprints(authority.Planet, "MP Industrial Plan", blueprintBuilding.Name,
+                Planet.ColonyType.Industrial);
+            AssertColonyBlueprints(client.Planet, "MP Industrial Plan", blueprintBuilding.Name,
+                Planet.ColonyType.Industrial);
+            Assert.IsFalse(authority.Planet.DontScrapBuildings,
+                "Loading blueprints should mirror the live UI and clear the no-scrap governor flag.");
+            Assert.IsFalse(authority.Planet.SpecializedTradeHub,
+                "Loading blueprints should mirror the live UI and clear specialized trade hub.");
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover colony blueprint apply state.");
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, $"BP|{authority.Planet.Id}|MP Industrial Plan");
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, blueprintBuilding.Name);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeClearDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.ClearColonyBlueprints(109,
+                authority.Player.Id, authority.Planet.Id));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsFalse(authority.Planet.HasBlueprints);
+            Assert.IsFalse(client.Planet.HasBlueprints);
+            Assert.AreNotEqual(beforeClearDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover colony blueprint clear state.");
+            Assert.IsFalse(session.LastAuthoritySnapshot.Payload.Contains($"BP|{authority.Planet.Id}|"));
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
+            var linkedTemplate = TestBlueprintTemplate("MP Linked Plan", blueprintBuilding,
+                Planet.ColonyType.Industrial, linkTo: "Local AppData Template");
+            session.SubmitFromClient(AuthoritativePlayerCommand.ApplyColonyBlueprints(110,
+                authority.Player.Id, authority.Planet.Id, linkedTemplate));
+            Assert.IsFalse(session.LastResult.Accepted,
+                "Linked blueprint chains depend on local saved-template catalogs and must be rejected in MP.");
+            StringAssert.Contains(session.LastResult.Reason, "Linked colony blueprints");
+            Assert.IsFalse(authority.Planet.HasBlueprints);
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.ApplyColonyBlueprints(111,
+                authority.Enemy.Id, authority.Planet.Id, template));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not load blueprints onto another empire's planet.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsColonyBlueprintsWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xB10E9A18UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            Building blueprintBuilding = PickBlueprintBuilding(world.Planet);
+            BlueprintsTemplate template = TestBlueprintTemplate("Passive MP Plan", blueprintBuilding,
+                Planet.ColonyType.Research);
+            Planet.ColonyType originalType = world.Planet.CType;
+            world.Planet.DontScrapBuildings = true;
+            world.Planet.SetSpecializedTradeHub(true);
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2075))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitApplyColonyBlueprints(world.Planet, template));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2075, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.ApplyColonyBlueprints, submitted[0].Kind);
+                Assert.AreEqual(world.Planet.Id, submitted[0].SubjectId);
+                Assert.IsTrue(AuthoritativePlayerCommand.TryParseBlueprintsTemplate(submitted[0].Text,
+                    out BlueprintsTemplate decoded));
+                Assert.AreEqual("Passive MP Plan", decoded.Name);
+                Assert.IsFalse(world.Planet.HasBlueprints,
+                    "Passive MP clients must not apply blueprints locally before host acceptance.");
+                Assert.AreEqual(originalType, world.Planet.CType);
+                Assert.IsTrue(world.Planet.DontScrapBuildings);
+                Assert.IsTrue(world.Planet.SpecializedTradeHub);
+
+                world.Planet.AddBlueprints(template, world.Player);
+                Assert.IsTrue(world.Planet.HasBlueprints);
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitClearColonyBlueprints(world.Planet));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(2076, submitted[1].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.ClearColonyBlueprints, submitted[1].Kind);
+                Assert.IsTrue(world.Planet.HasBlueprints,
+                    "Passive MP clients must not clear blueprints locally before host acceptance.");
+
+                var linkedTemplate = TestBlueprintTemplate("Rejected Link", blueprintBuilding,
+                    Planet.ColonyType.Research, linkTo: "Local AppData Template");
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitApplyColonyBlueprints(world.Planet, linkedTemplate));
+                Assert.AreEqual(2, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitApplyColonyBlueprints(world.EnemyPlanet, template));
+                Assert.AreEqual(2, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
         }
     }
 
@@ -5295,6 +5455,35 @@ public class Authoritative4XSessionTests : StarDriveTest
             .FirstOrDefault();
         Assert.IsNotNull(building, $"Planet {planet.Id} needs at least one buildable building for the authoritative queue proof.");
         return building;
+    }
+
+    static Building PickBlueprintBuilding(Planet planet)
+    {
+        planet.RefreshBuildingsWeCanBuildHere();
+        Building building = planet.GetBuildingsCanBuild()
+            .Where(b => b.IsSuitableForBlueprints)
+            .OrderBy(b => b.ActualCost(planet.Owner))
+            .ThenBy(b => b.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(building,
+            $"Planet {planet.Id} needs at least one blueprint-suitable building for the authoritative blueprint proof.");
+        return building;
+    }
+
+    static BlueprintsTemplate TestBlueprintTemplate(string name, Building building, Planet.ColonyType type,
+        bool exclusive = true, string linkTo = "")
+        => new(name, exclusive, linkTo, new HashSet<string>(StringComparer.Ordinal) { building.Name }, type);
+
+    static void AssertColonyBlueprints(Planet planet, string expectedName, string expectedBuilding,
+        Planet.ColonyType expectedType)
+    {
+        Assert.IsTrue(planet.HasBlueprints, $"Planet {planet.Id} should have authoritative blueprints.");
+        Assert.AreEqual(expectedName, planet.Blueprints.Name);
+        Assert.AreEqual(expectedType, planet.Blueprints.ColonyType);
+        Assert.IsTrue(planet.Blueprints.PlannedBuildingNames.Contains(expectedBuilding),
+            $"Blueprints for planet {planet.Id} should include {expectedBuilding}.");
+        Assert.AreEqual(expectedType, planet.CType,
+            "Applying blueprints through the host should preserve the template-driven colony type change.");
     }
 
     static IShipDesign PickMobileBuildableShip(Empire empire)

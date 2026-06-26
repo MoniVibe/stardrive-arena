@@ -56,6 +56,8 @@ public enum AuthoritativePlayerCommandKind : byte
     ClearFleetPatrol = 41,
     CreateFleetPatrol = 42,
     QueuePlanetOrbitalBuild = 43,
+    ApplyColonyBlueprints = 44,
+    ClearColonyBlueprints = 45,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -185,6 +187,7 @@ public sealed class AuthoritativePlayerCommand
     public const int MaxWantedPlatforms = 15;
     public const int MaxWantedShipyards = 3;
     public const int MaxWantedStations = 10;
+    public const int MaxColonyBlueprintBuildings = 256;
 
     public int Sequence;
     public int EmpireId;
@@ -257,6 +260,26 @@ public sealed class AuthoritativePlayerCommand
             Kind = AuthoritativePlayerCommandKind.QueuePlanetOrbitalBuild,
             SubjectId = planetId,
             Text = designName ?? "",
+        };
+
+    public static AuthoritativePlayerCommand ApplyColonyBlueprints(int sequence, int empireId,
+        int planetId, BlueprintsTemplate template)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.ApplyColonyBlueprints,
+            SubjectId = planetId,
+            Text = EncodeBlueprintsTemplate(template),
+        };
+
+    public static AuthoritativePlayerCommand ClearColonyBlueprints(int sequence, int empireId, int planetId)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.ClearColonyBlueprints,
+            SubjectId = planetId,
         };
 
     public static AuthoritativePlayerCommand CancelDeepSpaceBuild(int sequence, int empireId, string designName,
@@ -948,6 +971,66 @@ public sealed class AuthoritativePlayerCommand
         }
 
         vector = new Vector2(FloatFromBits(xBits), FloatFromBits(yBits));
+        return true;
+    }
+
+    public static string EncodeBlueprintsTemplate(BlueprintsTemplate template)
+    {
+        IEnumerable<string> buildings = template?.PlannedBuildings ?? Enumerable.Empty<string>();
+        return string.Join("|",
+            EncodeText(template?.Name ?? ""),
+            EncodeText(template?.ModName ?? ""),
+            template?.Exclusive == true ? "1" : "0",
+            EncodeText(template?.LinkTo ?? ""),
+            ((int)(template?.ColonyType ?? Planet.ColonyType.Colony)).ToString(CultureInfo.InvariantCulture),
+            string.Join(",", buildings
+                .Where(name => name != null)
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .Select(EncodeText)));
+    }
+
+    public static bool TryParseBlueprintsTemplate(string payload, out BlueprintsTemplate template)
+    {
+        template = null;
+        string[] parts = (payload ?? "").Split('|');
+        if (parts.Length != 6
+            || !TryDecodeText(parts[0], out string name)
+            || !TryDecodeText(parts[1], out string modName)
+            || !TryDecodeText(parts[3], out string linkTo)
+            || !int.TryParse(parts[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int colonyType)
+            || !Enum.IsDefined(typeof(Planet.ColonyType), (Planet.ColonyType)colonyType))
+        {
+            return false;
+        }
+
+        if ((Planet.ColonyType)colonyType == Planet.ColonyType.TradeHub)
+            return false;
+
+        if (parts[2] is not ("0" or "1"))
+            return false;
+
+        var plannedBuildings = new HashSet<string>(StringComparer.Ordinal);
+        if (!string.IsNullOrEmpty(parts[5]))
+        {
+            string[] buildingParts = parts[5].Split(',');
+            if (buildingParts.Length > MaxColonyBlueprintBuildings)
+                return false;
+            foreach (string encoded in buildingParts)
+            {
+                if (!TryDecodeText(encoded, out string buildingName)
+                    || string.IsNullOrWhiteSpace(buildingName)
+                    || !plannedBuildings.Add(buildingName))
+                {
+                    return false;
+                }
+            }
+        }
+
+        template = new BlueprintsTemplate(name, parts[2] == "1", linkTo, plannedBuildings,
+            (Planet.ColonyType)colonyType)
+        {
+            ModName = string.IsNullOrWhiteSpace(modName) ? BlueprintsTemplate.CurrentModName : modName,
+        };
         return true;
     }
 

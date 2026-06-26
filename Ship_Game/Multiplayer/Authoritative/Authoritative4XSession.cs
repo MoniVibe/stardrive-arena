@@ -206,6 +206,11 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(p.ConstructionQueue.Count)
               .AppendLine();
 
+            if (p.HasBlueprints)
+                sb.Append("BP|").Append(p.Id)
+                  .Append('|').Append(BlueprintSignature(p))
+                  .AppendLine();
+
             QueueItem[] queue = p.Construction.GetConstructionQueueSnapshot();
             for (int i = 0; i < queue.Length; ++i)
             {
@@ -255,6 +260,27 @@ public sealed class AuthoritativeStateSnapshot
         var h = DetHash.New();
         h.AddString(payload);
         return "0x" + h.Value.ToString("X16", CultureInfo.InvariantCulture);
+    }
+
+    static string BlueprintSignature(Planet planet)
+    {
+        if (!planet.HasBlueprints)
+            return "";
+
+        var blueprints = planet.Blueprints;
+        return string.Join("|",
+            blueprints.Name ?? "",
+            blueprints.ModName ?? "",
+            blueprints.Exclusive ? "1" : "0",
+            blueprints.LinkedBlueprintsName ?? "",
+            ((int)blueprints.ColonyType).ToString(CultureInfo.InvariantCulture),
+            blueprints.PercentCompleted.ToString(CultureInfo.InvariantCulture),
+            blueprints.PercentAchievable.ToString(CultureInfo.InvariantCulture),
+            string.Join(",", blueprints.PlannedBuildingNames
+                .OrderBy(name => name, StringComparer.Ordinal)),
+            string.Join(",", blueprints.PlannedBuildingsWeCanBuild
+                .Select(building => building.Name)
+                .OrderBy(name => name, StringComparer.Ordinal)));
     }
 
     static string DesignSlotSignature(IShipDesign design)

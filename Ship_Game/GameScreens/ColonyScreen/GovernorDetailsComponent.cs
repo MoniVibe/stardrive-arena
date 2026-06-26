@@ -462,6 +462,13 @@ namespace Ship_Game
 
         public void OnBlueprintsChanged(BlueprintsTemplate template)
         {
+            if (HandleAuthoritativeGovernorResult(
+                    Authoritative4XClientContext.TrySubmitApplyColonyBlueprints(Planet, template)))
+            {
+                ColonyTypeList.ActiveValue = Planet.CType;
+                return;
+            }
+
             Planet.DontScrapBuildings = false;
             Planet.SetSpecializedTradeHub(false);
             Planet.AddBlueprints(template, Player);
@@ -745,6 +752,12 @@ namespace Ship_Game
 
         void OnClearBlueprintsClicked(UIButton b)
         {
+            if (HandleAuthoritativeGovernorResult(
+                    Authoritative4XClientContext.TrySubmitClearColonyBlueprints(Planet)))
+            {
+                return;
+            }
+
             Planet.RemoveBlueprints();
             BlueprintsName.Text = "";
         }

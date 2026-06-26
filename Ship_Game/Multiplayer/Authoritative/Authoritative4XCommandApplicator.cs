@@ -78,6 +78,8 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.QueueDeepSpaceBuild => ApplyDeepSpaceBuild(command, empire, result),
                 AuthoritativePlayerCommandKind.CancelDeepSpaceBuild => ApplyCancelDeepSpaceBuild(command, empire, result),
                 AuthoritativePlayerCommandKind.QueuePlanetOrbitalBuild => ApplyPlanetOrbitalBuild(command, empire, result),
+                AuthoritativePlayerCommandKind.ApplyColonyBlueprints => ApplyColonyBlueprints(command, empire, result),
+                AuthoritativePlayerCommandKind.ClearColonyBlueprints => ApplyClearColonyBlueprints(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipSpecialOrder => ApplyShipSpecialOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipLifecycleOrder => ApplyShipLifecycleOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.SetShipCombatStance => ApplyShipCombatStance(command, empire, result),
@@ -495,6 +497,91 @@ public sealed class Authoritative4XCommandApplicator
 
         planet.AddOrbital(design);
         return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyColonyBlueprints(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} was not found.");
+        if (planet.Owner != empire)
+            return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
+        if (!AuthoritativePlayerCommand.TryParseBlueprintsTemplate(command.Text, out BlueprintsTemplate template))
+            return Reject(result, "Invalid colony blueprints payload.");
+        if (!CanApplyColonyBlueprints(template, out string reason))
+            return Reject(result, reason);
+
+        planet.DontScrapBuildings = false;
+        planet.SetSpecializedTradeHub(false);
+        planet.AddBlueprints(template, empire);
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyClearColonyBlueprints(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} was not found.");
+        if (planet.Owner != empire)
+            return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
+
+        planet.RemoveBlueprints();
+        return Accept(result);
+    }
+
+    static bool CanApplyColonyBlueprints(BlueprintsTemplate template, out string reason)
+    {
+        reason = "";
+        if (template == null)
+        {
+            reason = "Blueprints payload was empty.";
+            return false;
+        }
+        if (string.IsNullOrWhiteSpace(template.Name))
+        {
+            reason = "Blueprints name was empty.";
+            return false;
+        }
+        if (!string.IsNullOrEmpty(template.LinkTo))
+        {
+            reason = "Linked colony blueprints are not supported in authoritative multiplayer.";
+            return false;
+        }
+        if (!Enum.IsDefined(typeof(Planet.ColonyType), template.ColonyType)
+            || template.ColonyType == Planet.ColonyType.TradeHub)
+        {
+            reason = $"Blueprints colony type '{template.ColonyType}' is not valid.";
+            return false;
+        }
+        if (template.PlannedBuildings == null || template.PlannedBuildings.Count == 0)
+        {
+            reason = "Blueprints must include at least one building.";
+            return false;
+        }
+        if (template.PlannedBuildings.Count > AuthoritativePlayerCommand.MaxColonyBlueprintBuildings)
+        {
+            reason = "Blueprints include too many buildings.";
+            return false;
+        }
+
+        foreach (string buildingName in template.PlannedBuildings)
+        {
+            if (string.IsNullOrWhiteSpace(buildingName)
+                || !ResourceManager.GetBuilding(buildingName, out Building building))
+            {
+                reason = $"Blueprints building '{buildingName}' was not found.";
+                return false;
+            }
+            if (!building.IsSuitableForBlueprints)
+            {
+                reason = $"Building '{buildingName}' is not suitable for colony blueprints.";
+                return false;
+            }
+        }
+
+        return true;
     }
 
     static bool CanQueuePlanetOrbitalBuild(Empire empire, Planet planet, IShipDesign design)

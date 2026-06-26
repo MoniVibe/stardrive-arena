@@ -20,9 +20,11 @@ namespace Ship_Game.Universe.SolarBodies
         [StarData] BlueprintsTemplate Template;
 
         public string Name => Template.Name;
+        public string ModName => Template.ModName ?? "";
         public string LinkedBlueprintsName => Template.LinkTo ?? "";
         public bool Exclusive => Template.Exclusive; // Build only these buildings and remove the rest
         HashSet<string> PlannedBuildings => Template.PlannedBuildings;
+        public IEnumerable<string> PlannedBuildingNames => PlannedBuildings;
         public ColonyType ColonyType => Template.ColonyType;
         bool Completed => PercentCompleted == 100;
 
