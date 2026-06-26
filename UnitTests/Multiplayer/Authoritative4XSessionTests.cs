@@ -90,6 +90,18 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(789, copy.SubjectId);
         Assert.AreEqual("Marine", copy.Text);
 
+        var budgetRequest = AuthoritativePlayerCommand.SetEmpireBudget(17, 2,
+                taxRate: 0.35f, treasuryGoal: 0.45f, autoTaxes: true)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(budgetRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetEmpireBudget, copy.Kind);
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParseEmpireBudgetPayload(copy.Text,
+            out float taxRate, out float treasuryGoal, out bool autoTaxes));
+        Assert.AreEqual(0.35f, taxRate);
+        Assert.AreEqual(0.45f, treasuryGoal);
+        Assert.IsTrue(autoTaxes);
+
         var cancelQueueRequest = AuthoritativePlayerCommand.CancelConstructionQueueItem(15, 2, 789, queueIndex: 3)
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(cancelQueueRequest, toPeer: 1));
@@ -673,6 +685,102 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitCancelConstructionQueueItem(world.EnemyPlanet, buildingItem));
                 Assert.AreEqual(2, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XEmpireBudget_SyncsAndRejectsInvalidValues_Headless()
+    {
+        const ulong Seed = 0xB0D6E7UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            authority.Player.AutoTaxes = false;
+            client.Player.AutoTaxes = false;
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetEmpireBudget(60, authority.Player.Id,
+                taxRate: 0.35f, treasuryGoal: 0.45f, autoTaxes: false));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(0.35f, authority.Player.data.TaxRate);
+            Assert.AreEqual(0.45f, authority.Player.data.treasuryGoal);
+            Assert.IsFalse(authority.Player.AutoTaxes);
+            Assert.AreEqual(authority.Player.data.TaxRate, client.Player.data.TaxRate);
+            Assert.AreEqual(authority.Player.data.treasuryGoal, client.Player.data.treasuryGoal);
+            Assert.AreEqual(authority.Player.AutoTaxes, client.Player.AutoTaxes);
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover empire budget settings.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetEmpireBudget(61, authority.Player.Id,
+                taxRate: 0.25f, treasuryGoal: 0.4f, autoTaxes: true));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.Player.AutoTaxes);
+            Assert.IsTrue(client.Player.AutoTaxes);
+            Assert.AreEqual(authority.Player.data.TaxRate, client.Player.data.TaxRate,
+                "Auto-tax planner output must replicate deterministically.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            float acceptedTax = authority.Player.data.TaxRate;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetEmpireBudget(62, authority.Player.Id,
+                taxRate: 1.25f, treasuryGoal: 0.5f, autoTaxes: false));
+            Assert.IsFalse(session.LastResult.Accepted, "Out-of-range tax values must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "between 0 and 1");
+            Assert.AreEqual(acceptedTax, authority.Player.data.TaxRate);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsEmpireBudgetWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xB0D6ECUL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            float originalTax = world.Player.data.TaxRate;
+            float originalTreasury = world.Player.data.treasuryGoal;
+            bool originalAutoTaxes = world.Player.AutoTaxes;
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 1800))
+            {
+                Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetEmpireBudget(world.Player,
+                    taxRate: 0.36f, treasuryGoal: 0.44f, autoTaxes: false));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(1800, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetEmpireBudget, submitted[0].Kind);
+                Assert.AreEqual(world.Player.Id, submitted[0].EmpireId);
+                Assert.IsTrue(AuthoritativePlayerCommand.TryParseEmpireBudgetPayload(submitted[0].Text,
+                    out float taxRate, out float treasuryGoal, out bool autoTaxes));
+                Assert.AreEqual(0.36f, taxRate);
+                Assert.AreEqual(0.44f, treasuryGoal);
+                Assert.IsFalse(autoTaxes);
+                Assert.AreEqual(originalTax, world.Player.data.TaxRate,
+                    "Passive MP clients must not locally change tax before host acceptance.");
+                Assert.AreEqual(originalTreasury, world.Player.data.treasuryGoal,
+                    "Passive MP clients must not locally change treasury goal before host acceptance.");
+                Assert.AreEqual(originalAutoTaxes, world.Player.AutoTaxes,
+                    "Passive MP clients must not locally change auto-tax before host acceptance.");
+
+                Assert.IsFalse(Authoritative4XClientContext.TrySubmitSetEmpireBudget(world.Enemy,
+                    taxRate: 0.2f, treasuryGoal: 0.3f, autoTaxes: true));
+                Assert.AreEqual(1, submitted.Count);
             }
         }
         finally

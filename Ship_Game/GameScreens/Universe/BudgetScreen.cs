@@ -7,6 +7,7 @@ using Ship_Game.UI;
 using System;
 using SDUtils;
 using Ship_Game.ExtensionMethods;
+using Ship_Game.Multiplayer.Authoritative;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
 
@@ -20,6 +21,7 @@ namespace Ship_Game.GameScreens
         FloatSlider TaxSlider;
         FloatSlider TreasuryGoal;
         UILabel EmpireNetIncome;
+        bool LoadingBudgetControls;
 
         public BudgetScreen(UniverseScreen screen) : base(screen, toPause: screen)
         {
@@ -92,8 +94,11 @@ namespace Ship_Game.GameScreens
             TreasuryGoal.Tip      = GameText.TreasuryGoalIsTheTarget;
             TreasuryGoal.OnChange = TreasurySliderOnChange;
 
-            TreasuryGoal.RelativeValue = Player.data.treasuryGoal; // trigger updates
+            LoadingBudgetControls = true;
+            TreasuryGoal.RelativeValue = Player.data.treasuryGoal;
             TaxSlider.RelativeValue    = Player.data.TaxRate;
+            LoadingBudgetControls = false;
+            UpdateTreasuryGoalText(TreasuryGoal);
 
             AutoTaxCheckBox(footerRect);
 
@@ -114,10 +119,25 @@ namespace Ship_Game.GameScreens
 
         private UICheckBox AutoTaxCheckBox(Rectangle footerRect)
         {
-            var autoTax = Checkbox(new Vector2(footerRect.X, footerRect.Y), () => Player.AutoTaxes, 
+            var autoTax = Checkbox(new Vector2(footerRect.X, footerRect.Y),
+                                   () => Player.AutoTaxes,
+                                   value =>
+                                   {
+                                       if (Authoritative4XClientContext.TrySubmitSetEmpireBudget(Player,
+                                               Player.data.TaxRate, Player.data.treasuryGoal, value))
+                                           return;
+                                       Player.AutoTaxes = value;
+                                   },
                                    GameText.AutoTaxes, GameText.YourEmpireWillAutomaticallyManage3);
             autoTax.OnChange = cb =>
             {
+                if (Authoritative4XClientContext.IsActiveFor(Player))
+                {
+                    TaxSlider.Enabled = !Player.AutoTaxes;
+                    TaxSlider.Text = Player.AutoTaxes ? GameText.AutoTaxes : GameText.TaxRate;
+                    return;
+                }
+
                 if (cb.Checked)
                 {
                     Player.AI.RunEconomicPlanner();
@@ -180,21 +200,40 @@ namespace Ship_Game.GameScreens
 
         private void TaxSliderOnChange(FloatSlider s)
         {
+            if (LoadingBudgetControls)
+                return;
+            if (Authoritative4XClientContext.TrySubmitSetEmpireBudget(Player, s.RelativeValue,
+                    Player.data.treasuryGoal, autoTaxes: false))
+                return;
+
             Player.data.TaxRate = s.RelativeValue;
             Player.UpdateNetPlanetIncomes();
         }
 
         private void TreasurySliderOnChange(FloatSlider s)
         {
+            if (LoadingBudgetControls)
+                return;
+            if (Authoritative4XClientContext.TrySubmitSetEmpireBudget(Player, Player.data.TaxRate,
+                    s.AbsoluteValue, Player.AutoTaxes))
+            {
+                UpdateTreasuryGoalText(s);
+                return;
+            }
+
             Player.data.treasuryGoal = s.RelativeValue;
             Player.data.treasuryGoal = s.AbsoluteValue;
-            
-            int goal = (int)Player.AI.TreasuryGoal(Player.Money) / 2;
-            s.Text = $"{Localizer.Token(GameText.TreasuryGoal)} : {goal}";
+            UpdateTreasuryGoalText(s);
             Player.AI.RunEconomicPlanner();
 
             if (Player.AutoTaxes)
                 TaxSlider.RelativeValue = Player.data.TaxRate;
+        }
+
+        void UpdateTreasuryGoalText(FloatSlider s)
+        {
+            int goal = (int)Player.AI.TreasuryGoal(Player.Money) / 2;
+            s.Text = $"{Localizer.Token(GameText.TreasuryGoal)} : {goal}";
         }
 
         // Dynamic Text label; this is invoked every time MoneyLabels are drawn

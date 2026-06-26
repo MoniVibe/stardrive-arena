@@ -204,6 +204,16 @@ public sealed class Authoritative4XClientContext : IDisposable
         return true;
     }
 
+    public static bool TrySubmitSetEmpireBudget(Empire empire, float taxRate, float treasuryGoal, bool autoTaxes)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return false;
+
+        context.Submit(AuthoritativePlayerCommand.SetEmpireBudget(context.Next(), context.EmpireId,
+            taxRate, treasuryGoal, autoTaxes));
+        return true;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitDesignShip(Empire empire, ShipDesign design)
     {
         if (!TryGetFor(empire, out Authoritative4XClientContext context))

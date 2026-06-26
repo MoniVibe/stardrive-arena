@@ -65,6 +65,9 @@ public sealed class AuthoritativeStateSnapshot
             sb.Append("E|").Append(e.Id)
               .Append('|').Append(e.Research.Topic ?? "")
               .Append('|').Append(FloatBits(e.Money))
+              .Append('|').Append(FloatBits(e.data.TaxRate))
+              .Append('|').Append(FloatBits(e.data.treasuryGoal))
+              .Append('|').Append(e.AutoTaxes ? 1 : 0)
               .AppendLine();
 
         foreach (Empire e in us.Empires.OrderBy(e => e.Id))

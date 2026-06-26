@@ -41,6 +41,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.SetColonyType => ApplyColonyType(command, empire, result),
                 AuthoritativePlayerCommandKind.SetColonyLabor => ApplyColonyLabor(command, empire, result),
                 AuthoritativePlayerCommandKind.SetResearchTopic => ApplyResearchTopic(command, empire, result),
+                AuthoritativePlayerCommandKind.SetEmpireBudget => ApplyEmpireBudget(command, empire, result),
                 AuthoritativePlayerCommandKind.DiplomacyProposal => ApplyDiplomacy(command, empire, result),
                 AuthoritativePlayerCommandKind.DiplomacyResponse => ApplyDiplomacy(command, empire, result),
                 AuthoritativePlayerCommandKind.DesignShip => ApplyDesignShip(command, empire, result),
@@ -255,6 +256,26 @@ public sealed class Authoritative4XCommandApplicator
         return Accept(result);
     }
 
+    AuthoritativeCommandResult ApplyEmpireBudget(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (!AuthoritativePlayerCommand.TryParseEmpireBudgetPayload(command.Text, out float taxRate,
+                out float treasuryGoal, out bool autoTaxes))
+        {
+            return Reject(result, $"Invalid empire budget payload '{command.Text}'.");
+        }
+        if (!IsUnitPercent(taxRate) || !IsUnitPercent(treasuryGoal))
+            return Reject(result, "Empire budget tax and treasury values must be finite values between 0 and 1.");
+
+        empire.AutoTaxes = autoTaxes;
+        empire.data.TaxRate = taxRate;
+        empire.data.treasuryGoal = treasuryGoal;
+        if (autoTaxes)
+            empire.AI.RunEconomicPlanner();
+        empire.UpdateNetPlanetIncomes();
+        return Accept(result);
+    }
+
     AuthoritativeCommandResult ApplyDesignShip(AuthoritativePlayerCommand command, Empire empire,
         AuthoritativeCommandResult result)
     {
@@ -455,6 +476,8 @@ public sealed class Authoritative4XCommandApplicator
 
     static bool IsValidLaborPercent(float value)
         => !float.IsNaN(value) && !float.IsInfinity(value) && value >= 0f && value <= 1f;
+
+    static bool IsUnitPercent(float value) => IsValidLaborPercent(value);
 
     bool TryGetOwnedQueueItem(AuthoritativePlayerCommand command, Empire empire, AuthoritativeCommandResult result,
         out Planet planet, out QueueItem item, out AuthoritativeCommandResult rejected)

@@ -23,6 +23,7 @@ public enum AuthoritativePlayerCommandKind : byte
     SetColonyLabor = 12,
     CancelConstructionQueueItem = 13,
     ReorderConstructionQueueItem = 14,
+    SetEmpireBudget = 15,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -111,6 +112,16 @@ public sealed class AuthoritativePlayerCommand
             EmpireId = empireId,
             Kind = AuthoritativePlayerCommandKind.SetResearchTopic,
             Text = techUid ?? "",
+        };
+
+    public static AuthoritativePlayerCommand SetEmpireBudget(int sequence, int empireId, float taxRate,
+        float treasuryGoal, bool autoTaxes)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.SetEmpireBudget,
+            Text = EncodeEmpireBudgetPayload(taxRate, treasuryGoal, autoTaxes),
         };
 
     public static AuthoritativePlayerCommand DiplomacyProposal(int sequence, int proposerEmpireId, int targetEmpireId,
@@ -281,6 +292,33 @@ public sealed class AuthoritativePlayerCommand
         foodLocked = (locks & 1) != 0;
         productionLocked = (locks & 2) != 0;
         researchLocked = (locks & 4) != 0;
+        return true;
+    }
+
+    public static string EncodeEmpireBudgetPayload(float taxRate, float treasuryGoal, bool autoTaxes)
+        => string.Create(CultureInfo.InvariantCulture,
+            $"{FloatBits(taxRate):X8}|{FloatBits(treasuryGoal):X8}|{(autoTaxes ? 1 : 0)}");
+
+    public static bool TryParseEmpireBudgetPayload(string payload, out float taxRate,
+        out float treasuryGoal, out bool autoTaxes)
+    {
+        taxRate = treasuryGoal = 0f;
+        autoTaxes = false;
+
+        string[] parts = (payload ?? "").Split('|');
+        if (parts.Length != 3)
+            return false;
+        if (!uint.TryParse(parts[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint taxBits)
+            || !uint.TryParse(parts[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint treasuryBits)
+            || !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int autoValue)
+            || autoValue is not (0 or 1))
+        {
+            return false;
+        }
+
+        taxRate = FloatFromBits(taxBits);
+        treasuryGoal = FloatFromBits(treasuryBits);
+        autoTaxes = autoValue == 1;
         return true;
     }
 
