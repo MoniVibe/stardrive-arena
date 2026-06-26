@@ -53,6 +53,30 @@ public partial class UniverseScreen
         return true;
     }
 
+    bool TryHandleAuthoritative4XPauseInput()
+    {
+        if (Authoritative4XLive == null)
+            return false;
+        if (Authoritative4XLive.IsHost)
+            Authoritative4XLive.TryTogglePause();
+        return true;
+    }
+
+    bool TryHandleAuthoritative4XGameSpeedInput(InputState input)
+    {
+        if (Authoritative4XLive == null)
+            return false;
+        if (!input.SpeedReset && !input.SpeedUp && !input.SpeedDown)
+            return false;
+
+        if (Authoritative4XLive.IsHost)
+        {
+            float speed = input.SpeedReset ? 1f : GetGameSpeedAdjust(input.SpeedUp);
+            Authoritative4XLive.TrySetGameSpeed(speed);
+        }
+        return true;
+    }
+
     void UpdateAuthoritative4XMultiplayer()
     {
         Authoritative4XLive?.Poll();

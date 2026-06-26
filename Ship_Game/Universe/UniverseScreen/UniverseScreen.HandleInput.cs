@@ -260,7 +260,10 @@ namespace Ship_Game
             Input = input;
 
             if (input.PauseGame && !GlobalStats.TakingInput)
-                UState.Paused = !UState.Paused;
+            {
+                if (!TryHandleAuthoritative4XPauseInput())
+                    UState.Paused = !UState.Paused;
+            }
 
             if (input.DebugMode)
             {

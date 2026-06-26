@@ -2501,6 +2501,64 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XLiveHost_BroadcastsPauseAndSpeedControl_Headless()
+    {
+        const ulong Seed = 0x41E40058UL;
+        const int HostPeer = 2;
+        const int RemotePeer = 3;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            int port = FreeTcpPort();
+            TcpLockstepTransport hostTransport = TcpLockstepTransport.Host(port, RemotePeer);
+            TcpLockstepTransport clientTransport = TcpLockstepTransport.Join("127.0.0.1", port,
+                Authoritative4XNetworkHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(3)),
+                "Authoritative live control proof did not connect to the loopback host.");
+
+            using var networkClient = new Authoritative4XNetworkClient(client.Screen, clientTransport, RemotePeer,
+                new[] { client.Player.Id, client.Enemy.Id });
+            Authoritative4XLiveSession liveHost = Authoritative4XLiveSession.HostGame(authority.Screen,
+                hostTransport, HostPeer, new Dictionary<int, int>
+                {
+                    [HostPeer] = authority.Player.Id,
+                    [RemotePeer] = authority.Enemy.Id,
+                },
+                new[] { authority.Player.Id, authority.Enemy.Id });
+            authority.Screen.AttachAuthoritative4XMultiplayer(liveHost);
+            authority.UState.Paused = false;
+            client.UState.Paused = false;
+            authority.UState.GameSpeed = 1f;
+            client.UState.GameSpeed = 1f;
+
+            Assert.IsTrue(liveHost.TryTogglePause(), "The host should own live pause control.");
+            PumpLiveTcpUntil(() => client.UState.Paused && Math.Abs(client.UState.GameSpeed - 1f) < 0.001f,
+                liveHost, networkClient);
+            Assert.IsTrue(authority.UState.Paused);
+            Assert.IsTrue(client.UState.Paused);
+
+            Assert.IsTrue(liveHost.TrySetGameSpeed(2f), "The host should own live speed control.");
+            PumpLiveTcpUntil(() => client.UState.Paused && Math.Abs(client.UState.GameSpeed - 2f) < 0.001f,
+                liveHost, networkClient);
+            Assert.AreEqual(2f, authority.UState.GameSpeed);
+            Assert.AreEqual(2f, client.UState.GameSpeed);
+
+            using var passiveTransport = TcpLockstepTransport.Host(FreeTcpPort(), RemotePeer);
+            using var passiveClient = Authoritative4XLiveSession.ClientGame(client.Screen,
+                passiveTransport, RemotePeer, client.Enemy.Id, new[] { client.Player.Id, client.Enemy.Id });
+            Assert.IsFalse(passiveClient.TryTogglePause(),
+                "Passive clients must not own live pause control.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void AuthoritativeDiplomacyPopupScreen_DoesNotPauseUniverseAndExposesResponses_Headless()
     {
         BuiltWorld world = BuildWorld(0xD1A1060UL);

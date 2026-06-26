@@ -362,6 +362,9 @@ namespace Ship_Game
 
         void HandleGameSpeedChange(InputState input)
         {
+            if (TryHandleAuthoritative4XGameSpeedInput(input))
+                return;
+
             if (input.SpeedReset)
                 UState.GameSpeed = 1f;
             else if (input.SpeedUp || input.SpeedDown)

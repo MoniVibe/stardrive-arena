@@ -19,6 +19,7 @@ public enum Authoritative4XLiveRole
 public sealed class Authoritative4XLiveSession : IDisposable
 {
     const int FirstHeartbeatSequence = -1;
+    static readonly float[] SpeedCycle = { 0.5f, 1f, 2f, 4f };
 
     readonly UniverseScreen Universe;
     readonly Authoritative4XNetworkHost Host;
@@ -31,6 +32,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
     public readonly Authoritative4XLiveRole Role;
     public readonly int LocalPeerId;
     public readonly int LocalEmpireId;
+    public bool IsHost => Role == Authoritative4XLiveRole.Host;
 
     public string LastError => Role == Authoritative4XLiveRole.Host
         ? Host?.LastError ?? ""
@@ -95,6 +97,52 @@ public sealed class Authoritative4XLiveSession : IDisposable
         }
     }
 
+    public bool TryTogglePause()
+    {
+        if (Disposed || Role != Authoritative4XLiveRole.Host)
+            return false;
+        SendControl(!Universe.UState.Paused, Universe.UState.GameSpeed);
+        return true;
+    }
+
+    public bool TrySetGameSpeed(float speed)
+    {
+        if (Disposed || Role != Authoritative4XLiveRole.Host)
+            return false;
+        SendControl(Universe.UState.Paused, ClampGameSpeed(speed));
+        return true;
+    }
+
+    public bool TryCycleGameSpeed()
+    {
+        if (Disposed || Role != Authoritative4XLiveRole.Host)
+            return false;
+
+        float current = ClampGameSpeed(Universe.UState.GameSpeed);
+        float next = SpeedCycle[0];
+        foreach (float candidate in SpeedCycle)
+        {
+            if (current < candidate - 0.001f)
+            {
+                next = candidate;
+                break;
+            }
+        }
+        if (current >= SpeedCycle[^1] - 0.001f)
+            next = SpeedCycle[0];
+
+        SendControl(Universe.UState.Paused, next);
+        return true;
+    }
+
+    public bool TryApplyHostControl(bool paused, float speed)
+    {
+        if (Disposed || Role != Authoritative4XLiveRole.Host)
+            return false;
+        SendControl(paused, ClampGameSpeed(speed));
+        return true;
+    }
+
     public bool TryDequeueDiplomacyPopup(out AuthoritativeDiplomacyPopup popup)
     {
         if (DiplomacyPopups.Count == 0)
@@ -123,6 +171,22 @@ public sealed class Authoritative4XLiveSession : IDisposable
         else
             Client.Submit(command);
     }
+
+    void SendControl(bool paused, float speed)
+    {
+        speed = ClampGameSpeed(speed);
+        ApplyControl(paused, speed);
+        Host.BroadcastControl(paused, speed);
+    }
+
+    void ApplyControl(bool paused, float speed)
+    {
+        Universe.UState.Paused = paused;
+        Universe.UState.GameSpeed = ClampGameSpeed(speed);
+    }
+
+    static float ClampGameSpeed(float speed)
+        => float.IsFinite(speed) ? Math.Clamp(speed, 0.25f, 8f) : 1f;
 
     void SubmitHeartbeat()
     {

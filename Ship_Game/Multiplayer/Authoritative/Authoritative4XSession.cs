@@ -330,6 +330,12 @@ public sealed class Authoritative4XClientReplica
                 $"client 0x{LastSnapshot.HashLo:X16}:0x{LastSnapshot.HashHi:X16}/{LastSnapshot.SyncDigest}");
         }
     }
+
+    public void ApplySessionControl(bool paused, float gameSpeed)
+    {
+        Universe.UState.Paused = paused;
+        Universe.UState.GameSpeed = float.IsFinite(gameSpeed) ? Math.Clamp(gameSpeed, 0.25f, 8f) : 1f;
+    }
 }
 
 public readonly struct Authoritative4XClientSpec
@@ -611,6 +617,21 @@ public sealed class Authoritative4XNetworkHost : IDisposable
         ProcessCommand(peerId, command);
     }
 
+    public void BroadcastControl(bool paused, float gameSpeed)
+    {
+        foreach (int peer in PeerIds)
+        {
+            if (peer == LocalPeerId)
+                continue;
+            Transport.Send(peer, new SessionControlMessage
+            {
+                FromPeer = HostPeerId,
+                Paused = paused,
+                GameSpeed = gameSpeed,
+            });
+        }
+    }
+
     void OnHostMessage(LockstepMessage message)
     {
         if (message is not AuthoritativeCommandRequestMessage request)
@@ -723,6 +744,9 @@ public sealed class Authoritative4XNetworkClient : IDisposable
                 break;
             case AuthoritativeDiplomacyPopupMessage popupMessage:
                 Popups.Add(AuthoritativeDiplomacyPopup.FromMessage(popupMessage));
+                break;
+            case SessionControlMessage controlMessage:
+                Replica.ApplySessionControl(controlMessage.Paused, controlMessage.GameSpeed);
                 break;
         }
     }
