@@ -1009,6 +1009,100 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitLaunchGroundTroop(Empire empire, Planet planet,
+        PlanetGridSquare tile, Troop troop)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!CanSubmitLaunchGroundTroop(empire, planet, tile, troop, out int troopIndex))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.GroundTroopOrder(context.Next(), context.EmpireId,
+            planet.Id, AuthoritativeGroundTroopOrderType.LaunchOne, tile.X, tile.Y, troopIndex,
+            expectedTroopName: troop.Name));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitLaunchGroundTroops(Empire empire, Planet planet)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (planet?.Habitable != true || planet.Troops.NumTroopsCanLaunchFor(empire) <= 0)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.GroundTroopOrder(context.Next(), context.EmpireId,
+            planet.Id, AuthoritativeGroundTroopOrderType.LaunchAll));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitRecallGroundTroops(Empire empire, Planet planet)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (planet?.Habitable != true || planet.Troops.NumTroopsCanLaunchFor(empire) <= 0)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.GroundTroopOrder(context.Next(), context.EmpireId,
+            planet.Id, AuthoritativeGroundTroopOrderType.RecallAll));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitMoveGroundTroop(Empire empire, Planet planet,
+        PlanetGridSquare sourceTile, Troop troop, PlanetGridSquare targetTile)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!CanSubmitMoveGroundTroop(empire, planet, sourceTile, troop, targetTile, out int troopIndex))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.GroundTroopOrder(context.Next(), context.EmpireId,
+            planet.Id, AuthoritativeGroundTroopOrderType.Move, sourceTile.X, sourceTile.Y, troopIndex,
+            targetTile.X, targetTile.Y, troop.Name));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitAttackGroundTroop(Empire empire, Planet planet,
+        PlanetGridSquare sourceTile, Troop troop, PlanetGridSquare targetTile)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!CanSubmitAttackGroundTroop(empire, planet, sourceTile, troop, targetTile, out int troopIndex))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.GroundTroopOrder(context.Next(), context.EmpireId,
+            planet.Id, AuthoritativeGroundTroopOrderType.AttackTroop, sourceTile.X, sourceTile.Y, troopIndex,
+            targetTile.X, targetTile.Y, troop.Name));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitAttackGroundBuilding(Empire empire, Planet planet,
+        PlanetGridSquare sourceTile, Troop troop, PlanetGridSquare targetTile)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!CanSubmitAttackGroundBuilding(empire, planet, sourceTile, troop, targetTile, out int troopIndex))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.GroundTroopOrder(context.Next(), context.EmpireId,
+            planet.Id, AuthoritativeGroundTroopOrderType.AttackBuilding, sourceTile.X, sourceTile.Y, troopIndex,
+            targetTile.X, targetTile.Y, troop.Name));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitBuildingAttackGroundTroop(Empire empire, Planet planet,
+        PlanetGridSquare buildingTile, PlanetGridSquare targetTile)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!CanSubmitBuildingAttackGroundTroop(empire, planet, buildingTile, targetTile, out int targetTroopIndex))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.GroundTroopOrder(context.Next(), context.EmpireId,
+            planet.Id, AuthoritativeGroundTroopOrderType.BuildingAttackTroop, buildingTile.X, buildingTile.Y,
+            targetTroopIndex, targetTile.X, targetTile.Y));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitCancelConstructionQueueItem(Planet planet, QueueItem item)
     {
         if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
@@ -1397,6 +1491,110 @@ public sealed class Authoritative4XClientContext : IDisposable
                                                        && ship.Loyalty.IsAtWarWith(planet.Owner)),
             _ => false,
         };
+    }
+
+    static bool CanSubmitLaunchGroundTroop(Empire empire, Planet planet, PlanetGridSquare tile, Troop troop,
+        out int troopIndex)
+    {
+        troopIndex = GroundTroopIndex(tile, troop);
+        return empire != null
+               && planet?.Habitable == true
+               && tile?.P == planet
+               && troop?.Loyalty == empire
+               && troopIndex >= 0
+               && troop.CanLaunch;
+    }
+
+    static bool CanSubmitMoveGroundTroop(Empire empire, Planet planet, PlanetGridSquare sourceTile,
+        Troop troop, PlanetGridSquare targetTile, out int troopIndex)
+    {
+        troopIndex = GroundTroopIndex(sourceTile, troop);
+        if (empire == null
+            || planet?.Habitable != true
+            || sourceTile?.P != planet
+            || targetTile?.P != planet
+            || sourceTile == targetTile
+            || troop?.Loyalty != empire
+            || troopIndex < 0
+            || !troop.CanMove
+            || !targetTile.IsTileFree(empire))
+        {
+            return false;
+        }
+
+        return Math.Abs(targetTile.X - sourceTile.X) <= troop.ActualRange
+               && Math.Abs(targetTile.Y - sourceTile.Y) <= troop.ActualRange;
+    }
+
+    static bool CanSubmitAttackGroundTroop(Empire empire, Planet planet, PlanetGridSquare sourceTile,
+        Troop troop, PlanetGridSquare targetTile, out int troopIndex)
+    {
+        troopIndex = GroundTroopIndex(sourceTile, troop);
+        return CanSubmitGroundTroopAttack(empire, planet, sourceTile, troop, targetTile, troopIndex)
+               && targetTile.LockOnEnemyTroop(empire, out _);
+    }
+
+    static bool CanSubmitAttackGroundBuilding(Empire empire, Planet planet, PlanetGridSquare sourceTile,
+        Troop troop, PlanetGridSquare targetTile, out int troopIndex)
+    {
+        troopIndex = GroundTroopIndex(sourceTile, troop);
+        return CanSubmitGroundTroopAttack(empire, planet, sourceTile, troop, targetTile, troopIndex)
+               && targetTile.CombatBuildingOnTile
+               && planet.Owner != empire;
+    }
+
+    static bool CanSubmitGroundTroopAttack(Empire empire, Planet planet, PlanetGridSquare sourceTile,
+        Troop troop, PlanetGridSquare targetTile, int troopIndex)
+    {
+        return empire != null
+               && planet?.Habitable == true
+               && sourceTile?.P == planet
+               && targetTile?.P == planet
+               && sourceTile != targetTile
+               && troop?.Loyalty == empire
+               && troopIndex >= 0
+               && troop.CanAttack
+               && Math.Abs(targetTile.X - sourceTile.X) <= troop.ActualRange
+               && Math.Abs(targetTile.Y - sourceTile.Y) <= troop.ActualRange;
+    }
+
+    static bool CanSubmitBuildingAttackGroundTroop(Empire empire, Planet planet, PlanetGridSquare buildingTile,
+        PlanetGridSquare targetTile, out int targetTroopIndex)
+    {
+        targetTroopIndex = -1;
+        if (empire == null
+            || planet?.Habitable != true
+            || planet.Owner != empire
+            || buildingTile?.P != planet
+            || targetTile?.P != planet
+            || buildingTile == targetTile
+            || !buildingTile.CombatBuildingOnTile
+            || !buildingTile.Building.CanAttack
+            || Math.Abs(targetTile.X - buildingTile.X) > 1
+            || Math.Abs(targetTile.Y - buildingTile.Y) > 1)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < targetTile.TroopsHere.Count; ++i)
+        {
+            if (targetTile.TroopsHere[i]?.Loyalty?.IsAtWarWith(empire) == true)
+            {
+                targetTroopIndex = i;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static int GroundTroopIndex(PlanetGridSquare tile, Troop troop)
+    {
+        if (tile == null || troop == null)
+            return -1;
+        for (int i = 0; i < tile.TroopsHere.Count; ++i)
+            if (ReferenceEquals(tile.TroopsHere[i], troop))
+                return i;
+        return -1;
     }
 
     static int QueueIndexOf(Planet planet, QueueItem item)

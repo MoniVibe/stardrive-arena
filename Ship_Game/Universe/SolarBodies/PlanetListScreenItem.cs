@@ -404,6 +404,17 @@ namespace Ship_Game
 
         void OnRecallTroopsClicked(UIButton b)
         {
+            switch (Authoritative4XClientContext.TrySubmitRecallGroundTroops(Player, Planet))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.EchoAffirmative();
+                    PerformLayout();
+                    return;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return;
+            }
+
             bool troopLaunched = false;
             foreach (Troop t in Planet.Troops.GetLaunchableTroops(Player))
             {

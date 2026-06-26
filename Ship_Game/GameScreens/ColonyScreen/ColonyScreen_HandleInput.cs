@@ -127,6 +127,18 @@ namespace Ship_Game
                         {
                             if (input.RightMouseClick && troop.Loyalty == Player)
                             {
+                                switch (Authoritative4XClientContext.TrySubmitLaunchGroundTroop(Player, P, pgs, troop))
+                                {
+                                    case Authoritative4XUiCommandResult.Submitted:
+                                        GameAudio.TroopTakeOff();
+                                        ClickedTroop = true;
+                                        return true;
+                                    case Authoritative4XUiCommandResult.Blocked:
+                                        GameAudio.NegativeClick();
+                                        ClickedTroop = true;
+                                        return true;
+                                }
+
                                 Ship troopShip = troop.Launch(pgs);
                                 if (troopShip != null)
                                 {

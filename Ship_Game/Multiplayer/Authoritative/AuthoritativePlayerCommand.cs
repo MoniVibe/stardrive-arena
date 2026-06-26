@@ -72,6 +72,7 @@ public enum AuthoritativePlayerCommandKind : byte
     SetFleetIcon = 56,
     RenameShip = 57,
     RenamePlanet = 58,
+    GroundTroopOrder = 59,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -157,6 +158,17 @@ public enum AuthoritativeColonyTileScrapKind : byte
 {
     Building = 1,
     Biosphere = 2,
+}
+
+public enum AuthoritativeGroundTroopOrderType : byte
+{
+    LaunchOne = 1,
+    LaunchAll = 2,
+    RecallAll = 3,
+    Move = 4,
+    AttackTroop = 5,
+    AttackBuilding = 6,
+    BuildingAttackTroop = 7,
 }
 
 [Flags]
@@ -943,6 +955,20 @@ public sealed class AuthoritativePlayerCommand
             Text = $"{(int)orderType}|{(clearOrders ? 1 : 0)}|{(int)moveOrder}",
         };
 
+    public static AuthoritativePlayerCommand GroundTroopOrder(int sequence, int empireId, int planetId,
+        AuthoritativeGroundTroopOrderType orderType, int tileX = -1, int tileY = -1, int troopIndex = -1,
+        int targetTileX = -1, int targetTileY = -1, string expectedTroopName = "")
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.GroundTroopOrder,
+            SubjectId = planetId,
+            TargetId = (int)orderType,
+            Position = new Vector2(tileX, tileY),
+            Text = EncodeGroundTroopOrderPayload(troopIndex, targetTileX, targetTileY, expectedTroopName),
+        };
+
     public AuthoritativeCommandRequestMessage ToMessage(int fromPeer)
         => new()
         {
@@ -1344,6 +1370,30 @@ public sealed class AuthoritativePlayerCommand
         x = (int)MathF.Round(position.X);
         y = (int)MathF.Round(position.Y);
         return true;
+    }
+
+    public static string EncodeGroundTroopOrderPayload(int troopIndex, int targetTileX, int targetTileY,
+        string expectedTroopName)
+        => string.Create(CultureInfo.InvariantCulture,
+            $"{troopIndex}|{targetTileX}|{targetTileY}|{EncodeText(expectedTroopName ?? "")}");
+
+    public static bool TryParseGroundTroopOrderPayload(string payload, out int troopIndex,
+        out int targetTileX, out int targetTileY, out string expectedTroopName)
+    {
+        troopIndex = targetTileX = targetTileY = -1;
+        expectedTroopName = "";
+
+        string[] parts = (payload ?? "").Split('|');
+        if (parts.Length != 4
+            || !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out troopIndex)
+            || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out targetTileX)
+            || !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out targetTileY)
+            || !TryDecodeText(parts[3], out expectedTroopName))
+        {
+            return false;
+        }
+
+        return troopIndex >= -1;
     }
 
     public static string EncodeBlueprintsTemplate(BlueprintsTemplate template)

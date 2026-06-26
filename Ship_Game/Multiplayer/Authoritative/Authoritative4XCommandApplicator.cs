@@ -72,6 +72,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.RenameFleet => ApplyRenameFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.RenameShip => ApplyRenameShip(command, empire, result),
                 AuthoritativePlayerCommandKind.RenamePlanet => ApplyRenamePlanet(command, empire, result),
+                AuthoritativePlayerCommandKind.GroundTroopOrder => ApplyGroundTroopOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.SetFleetIcon => ApplySetFleetIcon(command, empire, result),
                 AuthoritativePlayerCommandKind.AutoArrangeFleet => ApplyAutoArrangeFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.LoadFleetPatrol => ApplyLoadFleetPatrol(command, empire, result),
@@ -1081,6 +1082,279 @@ public sealed class Authoritative4XCommandApplicator
         planet.RefreshBuildingsWeCanBuildHere();
         return Accept(result);
     }
+
+    AuthoritativeCommandResult ApplyGroundTroopOrder(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
+            || !Enum.IsDefined(typeof(AuthoritativeGroundTroopOrderType),
+                (AuthoritativeGroundTroopOrderType)(byte)command.TargetId))
+        {
+            return Reject(result, $"Unsupported ground troop order {command.TargetId}.");
+        }
+
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} was not found.");
+        if (!planet.Habitable)
+            return Reject(result, $"Planet {planet.Id} cannot host ground troops.");
+        if (!AuthoritativePlayerCommand.TryParseGroundTroopOrderPayload(command.Text,
+                out int troopIndex, out int targetTileX, out int targetTileY, out string expectedTroopName))
+        {
+            return Reject(result, "Invalid ground troop payload.");
+        }
+
+        return (AuthoritativeGroundTroopOrderType)(byte)command.TargetId switch
+        {
+            AuthoritativeGroundTroopOrderType.LaunchOne =>
+                ApplyLaunchOneGroundTroop(command, empire, planet, troopIndex, expectedTroopName, result),
+            AuthoritativeGroundTroopOrderType.LaunchAll =>
+                ApplyLaunchGroundTroops(empire, planet, recall: false, result),
+            AuthoritativeGroundTroopOrderType.RecallAll =>
+                ApplyLaunchGroundTroops(empire, planet, recall: true, result),
+            AuthoritativeGroundTroopOrderType.Move =>
+                ApplyMoveGroundTroop(command, empire, planet, troopIndex, expectedTroopName,
+                    targetTileX, targetTileY, result),
+            AuthoritativeGroundTroopOrderType.AttackTroop =>
+                ApplyGroundTroopAttackTroop(command, empire, planet, troopIndex, expectedTroopName,
+                    targetTileX, targetTileY, result),
+            AuthoritativeGroundTroopOrderType.AttackBuilding =>
+                ApplyGroundTroopAttackBuilding(command, empire, planet, troopIndex, expectedTroopName,
+                    targetTileX, targetTileY, result),
+            AuthoritativeGroundTroopOrderType.BuildingAttackTroop =>
+                ApplyBuildingAttackGroundTroop(command, empire, planet, troopIndex,
+                    targetTileX, targetTileY, result),
+            _ => Reject(result, $"Unsupported ground troop order {command.TargetId}."),
+        };
+    }
+
+    AuthoritativeCommandResult ApplyLaunchOneGroundTroop(AuthoritativePlayerCommand command, Empire empire,
+        Planet planet, int troopIndex, string expectedTroopName, AuthoritativeCommandResult result)
+    {
+        if (!TryGetOwnedGroundTroop(command, empire, planet, troopIndex, expectedTroopName,
+                result, out PlanetGridSquare tile, out Troop troop, out AuthoritativeCommandResult rejected))
+        {
+            return rejected;
+        }
+        if (!troop.CanLaunch)
+            return Reject(result, $"Troop {troop.Name} at planet {planet.Id} tile {tile.X},{tile.Y} cannot launch.");
+
+        Ship troopShip = troop.Launch(tile);
+        return troopShip != null
+            ? Accept(result)
+            : Reject(result, $"Troop {troop.Name} at planet {planet.Id} failed to launch.");
+    }
+
+    AuthoritativeCommandResult ApplyLaunchGroundTroops(Empire empire, Planet planet, bool recall,
+        AuthoritativeCommandResult result)
+    {
+        Troop[] troops = planet.Troops.GetLaunchableTroops(empire).ToArray();
+        if (troops.Length == 0)
+            return Reject(result, $"Planet {planet.Id} has no launchable troops for empire {empire.Id}.");
+
+        bool launched = false;
+        foreach (Troop troop in troops)
+        {
+            Ship troopShip = troop.Launch();
+            if (troopShip == null)
+                continue;
+
+            launched = true;
+            if (recall)
+                troopShip.AI.OrderRebaseToNearest();
+        }
+
+        return launched
+            ? Accept(result)
+            : Reject(result, $"Planet {planet.Id} could not launch any troops for empire {empire.Id}.");
+    }
+
+    AuthoritativeCommandResult ApplyMoveGroundTroop(AuthoritativePlayerCommand command, Empire empire,
+        Planet planet, int troopIndex, string expectedTroopName, int targetTileX, int targetTileY,
+        AuthoritativeCommandResult result)
+    {
+        if (!TryGetOwnedGroundTroop(command, empire, planet, troopIndex, expectedTroopName,
+                result, out PlanetGridSquare sourceTile, out Troop troop, out AuthoritativeCommandResult rejected))
+        {
+            return rejected;
+        }
+
+        PlanetGridSquare targetTile = FindTile(planet, targetTileX, targetTileY);
+        if (targetTile == null)
+            return Reject(result, $"Planet {planet.Id} has no target tile at {targetTileX},{targetTileY}.");
+        if (sourceTile == targetTile)
+            return Reject(result, "Ground troop move target must differ from the source tile.");
+        if (!troop.CanMove)
+            return Reject(result, $"Troop {troop.Name} at planet {planet.Id} cannot move.");
+        if (!targetTile.IsTileFree(empire))
+            return Reject(result, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} is not free.");
+
+        int dx = Math.Abs(targetTile.X - sourceTile.X);
+        int dy = Math.Abs(targetTile.Y - sourceTile.Y);
+        if (dx > troop.ActualRange || dy > troop.ActualRange)
+            return Reject(result, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} is out of troop range.");
+
+        troop.facingRight = targetTile.X > sourceTile.X;
+        planet.Troops.MoveTowardsTarget(troop, sourceTile, targetTile);
+        if (sourceTile.TroopsHere.ContainsRef(troop))
+            return Reject(result, $"Troop {troop.Name} at planet {planet.Id} could not move toward {targetTile.X},{targetTile.Y}.");
+
+        planet.SetInGroundCombat(troop.Loyalty);
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyGroundTroopAttackTroop(AuthoritativePlayerCommand command, Empire empire,
+        Planet planet, int troopIndex, string expectedTroopName, int targetTileX, int targetTileY,
+        AuthoritativeCommandResult result)
+    {
+        if (!TryGetOwnedGroundTroop(command, empire, planet, troopIndex, expectedTroopName,
+                result, out PlanetGridSquare sourceTile, out Troop troop, out AuthoritativeCommandResult rejected))
+        {
+            return rejected;
+        }
+        if (!TryGetTargetTileInTroopRange(planet, sourceTile, troop.ActualRange, targetTileX, targetTileY,
+                result, out PlanetGridSquare targetTile, out rejected))
+        {
+            return rejected;
+        }
+        if (!troop.CanAttack)
+            return Reject(result, $"Troop {troop.Name} at planet {planet.Id} tile {sourceTile.X},{sourceTile.Y} cannot attack.");
+        if (!targetTile.LockOnEnemyTroop(empire, out Troop enemyTroop))
+            return Reject(result, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} has no attackable enemy troop.");
+
+        troop.FaceEnemy(targetTile, sourceTile);
+        troop.UpdateAttackActions(-1);
+        troop.ResetAttackTimer();
+        troop.UpdateMoveActions(-1);
+        troop.ResetMoveTimer();
+        CombatScreen.StartCombat(troop, enemyTroop, targetTile, planet);
+        planet.SetInGroundCombat(troop.Loyalty);
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyGroundTroopAttackBuilding(AuthoritativePlayerCommand command, Empire empire,
+        Planet planet, int troopIndex, string expectedTroopName, int targetTileX, int targetTileY,
+        AuthoritativeCommandResult result)
+    {
+        if (!TryGetOwnedGroundTroop(command, empire, planet, troopIndex, expectedTroopName,
+                result, out PlanetGridSquare sourceTile, out Troop troop, out AuthoritativeCommandResult rejected))
+        {
+            return rejected;
+        }
+        if (!TryGetTargetTileInTroopRange(planet, sourceTile, troop.ActualRange, targetTileX, targetTileY,
+                result, out PlanetGridSquare targetTile, out rejected))
+        {
+            return rejected;
+        }
+        if (!troop.CanAttack)
+            return Reject(result, $"Troop {troop.Name} at planet {planet.Id} tile {sourceTile.X},{sourceTile.Y} cannot attack.");
+        if (!targetTile.CombatBuildingOnTile || planet.Owner == empire)
+            return Reject(result, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} has no attackable enemy building.");
+
+        troop.FaceEnemy(targetTile, sourceTile);
+        CombatScreen.StartCombat(troop, targetTile.Building, targetTile, planet);
+        planet.SetInGroundCombat(troop.Loyalty);
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyBuildingAttackGroundTroop(AuthoritativePlayerCommand command, Empire empire,
+        Planet planet, int targetTroopIndex, int targetTileX, int targetTileY, AuthoritativeCommandResult result)
+    {
+        if (!AuthoritativePlayerCommand.TryParseTileCoordinates(command.Position, out int sourceTileX, out int sourceTileY))
+            return Reject(result, "Invalid ground building tile coordinate payload.");
+
+        PlanetGridSquare sourceTile = FindTile(planet, sourceTileX, sourceTileY);
+        if (sourceTile == null)
+            return Reject(result, $"Planet {planet.Id} has no tile at {sourceTileX},{sourceTileY}.");
+        if (planet.Owner != empire || !sourceTile.CombatBuildingOnTile || !sourceTile.Building.CanAttack)
+            return Reject(result, $"Planet {planet.Id} tile {sourceTile.X},{sourceTile.Y} has no owned building that can attack.");
+
+        PlanetGridSquare targetTile = FindTile(planet, targetTileX, targetTileY);
+        if (targetTile == null)
+            return Reject(result, $"Planet {planet.Id} has no target tile at {targetTileX},{targetTileY}.");
+        if (Math.Abs(targetTile.X - sourceTile.X) > 1 || Math.Abs(targetTile.Y - sourceTile.Y) > 1)
+            return Reject(result, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} is out of building range.");
+        if ((uint)targetTroopIndex >= targetTile.TroopsHere.Count
+            || targetTile.TroopsHere[targetTroopIndex]?.Loyalty?.IsAtWarWith(empire) != true)
+        {
+            return Reject(result, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} has no attackable troop index {targetTroopIndex}.");
+        }
+
+        sourceTile.Building.UpdateAttackActions(-1);
+        sourceTile.Building.ResetAttackTimer();
+        CombatScreen.StartCombat(sourceTile.Building, targetTile.TroopsHere[targetTroopIndex], targetTile, planet);
+        planet.SetInGroundCombat(empire);
+        return Accept(result);
+    }
+
+    bool TryGetTargetTileInTroopRange(Planet planet, PlanetGridSquare sourceTile, int range,
+        int targetTileX, int targetTileY, AuthoritativeCommandResult result,
+        out PlanetGridSquare targetTile, out AuthoritativeCommandResult rejected)
+    {
+        rejected = null;
+        targetTile = FindTile(planet, targetTileX, targetTileY);
+        if (targetTile == null)
+        {
+            rejected = Reject(result, $"Planet {planet.Id} has no target tile at {targetTileX},{targetTileY}.");
+            return false;
+        }
+        if (sourceTile == targetTile)
+        {
+            rejected = Reject(result, "Ground troop attack target must differ from the source tile.");
+            return false;
+        }
+        if (Math.Abs(targetTile.X - sourceTile.X) > range || Math.Abs(targetTile.Y - sourceTile.Y) > range)
+        {
+            rejected = Reject(result, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} is out of troop range.");
+            return false;
+        }
+        return true;
+    }
+
+    bool TryGetOwnedGroundTroop(AuthoritativePlayerCommand command, Empire empire, Planet planet, int troopIndex,
+        string expectedTroopName, AuthoritativeCommandResult result, out PlanetGridSquare tile, out Troop troop,
+        out AuthoritativeCommandResult rejected)
+    {
+        tile = null;
+        troop = null;
+        rejected = null;
+
+        if (!AuthoritativePlayerCommand.TryParseTileCoordinates(command.Position, out int tileX, out int tileY))
+        {
+            rejected = Reject(result, "Invalid ground troop tile coordinate payload.");
+            return false;
+        }
+
+        tile = FindTile(planet, tileX, tileY);
+        if (tile == null)
+        {
+            rejected = Reject(result, $"Planet {planet.Id} has no tile at {tileX},{tileY}.");
+            return false;
+        }
+        if ((uint)troopIndex >= tile.TroopsHere.Count)
+        {
+            rejected = Reject(result, $"Planet {planet.Id} tile {tileX},{tileY} has no troop index {troopIndex}.");
+            return false;
+        }
+
+        troop = tile.TroopsHere[troopIndex];
+        if (troop?.Loyalty != empire)
+        {
+            rejected = Reject(result, $"Planet {planet.Id} tile {tileX},{tileY} troop {troopIndex} is not owned by empire {empire.Id}.");
+            return false;
+        }
+        if (!string.IsNullOrEmpty(expectedTroopName)
+            && !string.Equals(troop.Name, expectedTroopName, StringComparison.Ordinal))
+        {
+            rejected = Reject(result, $"Planet {planet.Id} tile {tileX},{tileY} troop {troopIndex} no longer matches {expectedTroopName}.");
+            return false;
+        }
+
+        return true;
+    }
+
+    static PlanetGridSquare FindTile(Planet planet, int x, int y)
+        => planet.TilesList.FirstOrDefault(t => t.X == x && t.Y == y);
 
     static bool CanApplyColonyBlueprints(BlueprintsTemplate template, out string reason)
     {

@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SDGraphics;
 using SDLockstep;
+using SDUtils;
 using Ship_Game;
 using Ship_Game.AI;
 using Ship_Game.Commands.Goals;
@@ -5421,6 +5422,160 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XGroundTroopOrders_LaunchMoveAndSync_Headless()
+    {
+        const ulong Seed = 0x6700D101UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            PlanetGridSquare[] authorityTiles = PrepareGroundTroopTiles(authority.Planet, columns: 2, rows: 1);
+            PlanetGridSquare[] clientTiles = PrepareGroundTroopTiles(client.Planet, columns: 2, rows: 1);
+            Troop authorityMover = PlaceGroundTroop(authority.Planet, authority.Player, authorityTiles[0]);
+            Troop clientMover = PlaceGroundTroop(client.Planet, client.Player, clientTiles[0]);
+            Troop authorityLauncher = PlaceGroundTroop(authority.Planet, authority.Player, authorityTiles[1]);
+            Troop clientLauncher = PlaceGroundTroop(client.Planet, client.Player, clientTiles[1]);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.GroundTroopOrder(900, authority.Player.Id,
+                authority.Planet.Id, AuthoritativeGroundTroopOrderType.Move, authorityTiles[0].X,
+                authorityTiles[0].Y, troopIndex: 0, targetTileX: authorityTiles[1].X,
+                targetTileY: authorityTiles[1].Y, expectedTroopName: authorityMover.Name));
+            Assert.IsFalse(session.LastResult.Accepted,
+                "Moving onto a tile that already contains a friendly troop must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "not free");
+            Assert.IsTrue(authorityTiles[0].TroopsHere.ContainsRef(authorityMover));
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.GroundTroopOrder(901, authority.Player.Id,
+                authority.Planet.Id, AuthoritativeGroundTroopOrderType.LaunchOne, authorityTiles[1].X,
+                authorityTiles[1].Y, troopIndex: 0, expectedTroopName: authorityLauncher.Name));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsFalse(authorityTiles[1].TroopsHere.ContainsRef(authorityLauncher));
+            Assert.IsFalse(clientTiles[1].TroopsHere.ContainsRef(clientLauncher));
+            Assert.IsTrue(authority.UState.Ships.Any(s => s.Loyalty == authority.Player && s.GetOurTroops().Count > 0),
+                "Launching one ground troop should create a troop ship on the authority.");
+            Assert.IsTrue(client.UState.Ships.Any(s => s.Loyalty == client.Player && s.GetOurTroops().Count > 0),
+                "The client replica should launch the same troop ship after host acceptance.");
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The canonical sync digest must cover launched ship-carried troops.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, "ST|");
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.GroundTroopOrder(902, authority.Player.Id,
+                authority.Planet.Id, AuthoritativeGroundTroopOrderType.Move, authorityTiles[0].X,
+                authorityTiles[0].Y, troopIndex: 0, targetTileX: authorityTiles[1].X,
+                targetTileY: authorityTiles[1].Y, expectedTroopName: authorityMover.Name));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsFalse(authorityTiles[0].TroopsHere.ContainsRef(authorityMover));
+            Assert.IsTrue(authorityTiles[1].TroopsHere.ContainsRef(authorityMover));
+            Assert.IsFalse(clientTiles[0].TroopsHere.ContainsRef(clientMover));
+            Assert.IsTrue(clientTiles[1].TroopsHere.ContainsRef(clientMover));
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, "GT|");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XGroundTroopOrders_AttacksAndSync_Headless()
+    {
+        const ulong Seed = 0x6700D102UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            MakeAtWar(authority.Player, authority.Enemy);
+            MakeAtWar(client.Player, client.Enemy);
+
+            PlanetGridSquare[] authorityHomeTiles = PrepareGroundTroopTiles(authority.Planet, columns: 2, rows: 2);
+            PlanetGridSquare[] clientHomeTiles = PrepareGroundTroopTiles(client.Planet, columns: 2, rows: 2);
+            PlanetGridSquare[] authorityEnemyTiles = PrepareGroundTroopTiles(authority.EnemyPlanet, columns: 2, rows: 1);
+            PlanetGridSquare[] clientEnemyTiles = PrepareGroundTroopTiles(client.EnemyPlanet, columns: 2, rows: 1);
+
+            Troop authorityAttacker = PlaceGroundTroop(authority.Planet, authority.Player, authorityHomeTiles[0]);
+            Troop clientAttacker = PlaceGroundTroop(client.Planet, client.Player, clientHomeTiles[0]);
+            PlaceGroundTroop(authority.Planet, authority.Enemy, authorityHomeTiles[1]);
+            PlaceGroundTroop(client.Planet, client.Enemy, clientHomeTiles[1]);
+            PlaceCombatBuilding(authority.Planet, authorityHomeTiles[2]);
+            PlaceCombatBuilding(client.Planet, clientHomeTiles[2]);
+            PlaceGroundTroop(authority.Planet, authority.Enemy, authorityHomeTiles[3]);
+            PlaceGroundTroop(client.Planet, client.Enemy, clientHomeTiles[3]);
+
+            Troop authorityInvader = PlaceGroundTroop(authority.EnemyPlanet, authority.Player, authorityEnemyTiles[0]);
+            Troop clientInvader = PlaceGroundTroop(client.EnemyPlanet, client.Player, clientEnemyTiles[0]);
+            PlaceCombatBuilding(authority.EnemyPlanet, authorityEnemyTiles[1]);
+            PlaceCombatBuilding(client.EnemyPlanet, clientEnemyTiles[1]);
+
+            string beforeAttackDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+            int beforeHomeCombats = authority.Planet.ActiveCombats.Count;
+            session.SubmitFromClient(AuthoritativePlayerCommand.GroundTroopOrder(910, authority.Player.Id,
+                authority.Planet.Id, AuthoritativeGroundTroopOrderType.AttackTroop, authorityHomeTiles[0].X,
+                authorityHomeTiles[0].Y, troopIndex: 0, targetTileX: authorityHomeTiles[1].X,
+                targetTileY: authorityHomeTiles[1].Y, expectedTroopName: authorityAttacker.Name));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.Planet.ActiveCombats.Count > beforeHomeCombats,
+                "The accepted troop attack should start ground combat on the authority.");
+            Assert.AreEqual(authority.Planet.ActiveCombats.Count, client.Planet.ActiveCombats.Count);
+            Assert.AreEqual(0, authorityAttacker.AvailableAttackActions);
+            Assert.AreEqual(0, clientAttacker.AvailableAttackActions);
+            Assert.AreNotEqual(beforeAttackDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The canonical sync digest must cover active troop-vs-troop ground combat.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, "GC|");
+
+            beforeHomeCombats = authority.Planet.ActiveCombats.Count;
+            session.SubmitFromClient(AuthoritativePlayerCommand.GroundTroopOrder(911, authority.Player.Id,
+                authority.Planet.Id, AuthoritativeGroundTroopOrderType.BuildingAttackTroop,
+                authorityHomeTiles[2].X, authorityHomeTiles[2].Y, troopIndex: 0,
+                targetTileX: authorityHomeTiles[3].X, targetTileY: authorityHomeTiles[3].Y));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.Planet.ActiveCombats.Count > beforeHomeCombats,
+                "The accepted building attack should start another ground combat on the authority.");
+            Assert.AreEqual(authority.Planet.ActiveCombats.Count, client.Planet.ActiveCombats.Count);
+            Assert.AreEqual(0, authorityHomeTiles[2].Building.AvailableAttackActions);
+            Assert.AreEqual(0, clientHomeTiles[2].Building.AvailableAttackActions);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            int beforeEnemyPlanetCombats = authority.EnemyPlanet.ActiveCombats.Count;
+            session.SubmitFromClient(AuthoritativePlayerCommand.GroundTroopOrder(912, authority.Player.Id,
+                authority.EnemyPlanet.Id, AuthoritativeGroundTroopOrderType.AttackBuilding,
+                authorityEnemyTiles[0].X, authorityEnemyTiles[0].Y, troopIndex: 0,
+                targetTileX: authorityEnemyTiles[1].X, targetTileY: authorityEnemyTiles[1].Y,
+                expectedTroopName: authorityInvader.Name));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.EnemyPlanet.ActiveCombats.Count > beforeEnemyPlanetCombats,
+                "The accepted troop-vs-building attack should start ground combat on the target planet.");
+            Assert.AreEqual(authority.EnemyPlanet.ActiveCombats.Count, client.EnemyPlanet.ActiveCombats.Count);
+            Assert.AreEqual(authorityInvader.Name, clientInvader.Name);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.GroundTroopOrder(913, authority.Enemy.Id,
+                authority.EnemyPlanet.Id, AuthoritativeGroundTroopOrderType.AttackBuilding,
+                authorityEnemyTiles[0].X, authorityEnemyTiles[0].Y, troopIndex: 0,
+                targetTileX: authorityEnemyTiles[1].X, targetTileY: authorityEnemyTiles[1].Y,
+                expectedTroopName: authorityInvader.Name));
+            Assert.IsFalse(session.LastResult.Accepted,
+                "A remote empire must not order another empire's invading ground troop.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XConstructionRush_ToggleAndRushSync_Headless()
     {
         const ulong Seed = 0xC0DE705UL;
@@ -6025,6 +6180,78 @@ public class Authoritative4XSessionTests : StarDriveTest
 
             Assert.IsFalse(Authoritative4XClientContext.IsActive,
                 "Disposing the context should restore the single-player/no-context default.");
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsGroundTroopOrdersWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0x6700D103UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            MakeAtWar(world.Player, world.Enemy);
+            PlanetGridSquare[] homeTiles = PrepareGroundTroopTiles(world.Planet, columns: 3, rows: 2);
+            PlanetGridSquare[] enemyTiles = PrepareGroundTroopTiles(world.EnemyPlanet, columns: 2, rows: 1);
+            Troop mover = PlaceGroundTroop(world.Planet, world.Player, homeTiles[0]);
+            Troop launcher = PlaceGroundTroop(world.Planet, world.Player, homeTiles[1]);
+            PlaceCombatBuilding(world.Planet, homeTiles[2]);
+            PlaceGroundTroop(world.Planet, world.Enemy, homeTiles[3]);
+            Troop invader = PlaceGroundTroop(world.EnemyPlanet, world.Player, enemyTiles[0]);
+            PlaceCombatBuilding(world.EnemyPlanet, enemyTiles[1]);
+
+            int originalHomeTroops = world.Planet.TilesList.Sum(t => t.TroopsHere.Count);
+            int originalEnemyPlanetCombats = world.EnemyPlanet.ActiveCombats.Count;
+            var submitted = new List<AuthoritativePlayerCommand>();
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2600))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitLaunchGroundTroop(world.Player, world.Planet,
+                        homeTiles[1], launcher));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.GroundTroopOrder, submitted[0].Kind);
+                Assert.AreEqual((int)AuthoritativeGroundTroopOrderType.LaunchOne, submitted[0].TargetId);
+                Assert.IsTrue(homeTiles[1].TroopsHere.ContainsRef(launcher),
+                    "Passive MP clients must not locally launch ground troops before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitMoveGroundTroop(world.Player, world.Planet,
+                        homeTiles[0], mover, homeTiles[7]));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual((int)AuthoritativeGroundTroopOrderType.Move, submitted[1].TargetId);
+                Assert.IsTrue(homeTiles[0].TroopsHere.ContainsRef(mover));
+                Assert.IsFalse(homeTiles[7].TroopsHere.ContainsRef(mover));
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitBuildingAttackGroundTroop(world.Player, world.Planet,
+                        homeTiles[2], homeTiles[3]));
+                Assert.AreEqual(3, submitted.Count);
+                Assert.AreEqual((int)AuthoritativeGroundTroopOrderType.BuildingAttackTroop, submitted[2].TargetId);
+                Assert.AreEqual(0, world.Planet.ActiveCombats.Count,
+                    "Passive MP clients must not locally start building-vs-troop combat before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitAttackGroundBuilding(world.Player, world.EnemyPlanet,
+                        enemyTiles[0], invader, enemyTiles[1]));
+                Assert.AreEqual(4, submitted.Count);
+                Assert.AreEqual((int)AuthoritativeGroundTroopOrderType.AttackBuilding, submitted[3].TargetId);
+                Assert.AreEqual(originalEnemyPlanetCombats, world.EnemyPlanet.ActiveCombats.Count,
+                    "Passive MP clients must not locally start troop-vs-building combat before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitLaunchGroundTroop(world.Enemy, world.Planet,
+                        homeTiles[3], homeTiles[3].TroopsHere[0]));
+                Assert.AreEqual(4, submitted.Count);
+            }
+
+            Assert.AreEqual(originalHomeTroops, world.Planet.TilesList.Sum(t => t.TroopsHere.Count),
+                "Submitting ground troop commands must leave the passive replica's tile troops untouched.");
         }
         finally
         {
@@ -8357,6 +8584,58 @@ public class Authoritative4XSessionTests : StarDriveTest
         planet.TilesList.Add(new PlanetGridSquare(planet, 0, 0, b: null, hab: true, terraformable: false));
         planet.TilesList.Add(new PlanetGridSquare(planet, 1, 0, b: null, hab: true, terraformable: false));
         planet.RefreshBuildingsWeCanBuildHere();
+    }
+
+    static PlanetGridSquare[] PrepareGroundTroopTiles(Planet planet, int columns, int rows)
+    {
+        planet.TilesList.Clear();
+        int width = SolarSystemBody.TileMaxX;
+        int height = SolarSystemBody.TileMaxY;
+        Assert.IsTrue(columns <= width && rows <= height,
+            $"Requested {columns}x{rows} ground-test tiles exceeds the engine {width}x{height} tile grid.");
+        var tiles = new List<PlanetGridSquare>(width * height);
+        for (int y = 0; y < height; ++y)
+        {
+            for (int x = 0; x < width; ++x)
+            {
+                var tile = new PlanetGridSquare(planet, x, y, b: null, hab: true, terraformable: false);
+                planet.TilesList.Add(tile);
+                tiles.Add(tile);
+            }
+        }
+        planet.RefreshBuildingsWeCanBuildHere();
+        return tiles.ToArray();
+    }
+
+    static Troop PlaceGroundTroop(Planet planet, Empire empire, PlanetGridSquare tile)
+    {
+        Troop template = PickBuildableTroop(empire);
+        Assert.IsTrue(ResourceManager.TryCreateTroop(template.Name, empire, out Troop troop),
+            $"Could not create troop '{template.Name}' for empire {empire.Id}.");
+        Assert.IsTrue(troop.TryLandTroop(planet, tile),
+            $"Could not place troop '{troop.Name}' at planet {planet.Id} tile {tile.X},{tile.Y}.");
+        troop.AvailableMoveActions = troop.MaxStoredActions;
+        troop.AvailableAttackActions = troop.MaxStoredActions;
+        troop.MoveTimer = 0f;
+        troop.AttackTimer = 0f;
+        Assert.IsTrue(tile.TroopsHere.ContainsRef(troop),
+            $"Troop '{troop.Name}' should occupy requested planet {planet.Id} tile {tile.X},{tile.Y}.");
+        return troop;
+    }
+
+    static Building PlaceCombatBuilding(Planet planet, PlanetGridSquare tile)
+    {
+        Building template = ResourceManager.BuildingsDict.FilterValues(b => b.CombatStrength > 0)
+            .OrderBy(b => b.ActualCost(planet.Owner))
+            .ThenBy(b => b.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(template, "Ground combat proofs need at least one attackable building template.");
+        Building building = ResourceManager.CreateBuilding(planet, template.Name);
+        building.AvailableAttackActions = 1;
+        tile.PlaceBuilding(building, planet);
+        Assert.IsTrue(tile.CombatBuildingOnTile, $"Tile {tile.X},{tile.Y} should contain an attackable building.");
+        Assert.IsTrue(tile.Building.CanAttack, $"Building '{tile.Building.Name}' should be ready to attack.");
+        return building;
     }
 
     static QueueItem LastQueuedBuilding(Planet planet, string buildingName)

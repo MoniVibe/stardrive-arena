@@ -269,6 +269,46 @@ public sealed class AuthoritativeStateSnapshot
                   .AppendLine();
             }
 
+            foreach (PlanetGridSquare tile in p.TilesList
+                         .Where(t => t.TroopsHere.Count > 0)
+                         .OrderBy(t => t.X)
+                         .ThenBy(t => t.Y))
+            {
+                for (int i = 0; i < tile.TroopsHere.Count; ++i)
+                {
+                    Troop troop = tile.TroopsHere[i];
+                    sb.Append("GT|").Append(p.Id)
+                      .Append('|').Append(tile.X)
+                      .Append('|').Append(tile.Y)
+                      .Append('|').Append(i)
+                      .Append('|').Append(troop.Loyalty?.Id ?? 0)
+                      .Append('|').Append(troop.Name ?? "")
+                      .Append('|').Append(FloatBits(troop.Strength))
+                      .Append('|').Append(troop.AvailableMoveActions)
+                      .Append('|').Append(troop.AvailableAttackActions)
+                      .Append('|').Append(FloatBits(troop.MoveTimer))
+                      .Append('|').Append(FloatBits(troop.AttackTimer))
+                      .AppendLine();
+                }
+            }
+
+            for (int i = 0; i < p.ActiveCombats.Count; ++i)
+            {
+                Combat combat = p.ActiveCombats[i];
+                sb.Append("GC|").Append(p.Id)
+                  .Append('|').Append(i)
+                  .Append('|').Append(combat.Phase)
+                  .Append('|').Append(FloatBits(combat.Timer))
+                  .Append('|').Append(combat.AttackerLoyalty?.Id ?? 0)
+                  .Append('|').Append(combat.DefenseTile?.X ?? -1)
+                  .Append('|').Append(combat.DefenseTile?.Y ?? -1)
+                  .Append('|').Append(GroundTroopRef(p, combat.AttackingTroop))
+                  .Append('|').Append(GroundTroopRef(p, combat.DefendingTroop))
+                  .Append('|').Append(GroundBuildingRef(p, combat.AttackingBuilding))
+                  .Append('|').Append(GroundBuildingRef(p, combat.DefendingBuilding))
+                  .AppendLine();
+            }
+
             QueueItem[] queue = p.Construction.GetConstructionQueueSnapshot();
             for (int i = 0; i < queue.Length; ++i)
             {
@@ -326,7 +366,57 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(AreaOfOperationSignature(s))
               .AppendLine();
 
+        foreach (Ship s in us.Ships.OrderBy(s => s.Id))
+        {
+            IReadOnlyList<Troop> troops = s.GetOurTroops();
+            for (int i = 0; i < troops.Count; ++i)
+            {
+                Troop troop = troops[i];
+                sb.Append("ST|").Append(s.Id)
+                  .Append('|').Append(i)
+                  .Append('|').Append(troop.Loyalty?.Id ?? 0)
+                  .Append('|').Append(troop.Name ?? "")
+                  .Append('|').Append(FloatBits(troop.Strength))
+                  .Append('|').Append(troop.AvailableMoveActions)
+                  .Append('|').Append(troop.AvailableAttackActions)
+                  .Append('|').Append(FloatBits(troop.MoveTimer))
+                  .Append('|').Append(FloatBits(troop.AttackTimer))
+                  .AppendLine();
+            }
+        }
+
         return sb.ToString();
+    }
+
+    static string GroundTroopRef(Planet planet, Troop troop)
+    {
+        if (troop == null)
+            return "-";
+        foreach (PlanetGridSquare tile in planet.TilesList.OrderBy(t => t.X).ThenBy(t => t.Y))
+        {
+            for (int i = 0; i < tile.TroopsHere.Count; ++i)
+            {
+                if (ReferenceEquals(tile.TroopsHere[i], troop))
+                    return string.Create(CultureInfo.InvariantCulture,
+                        $"{tile.X},{tile.Y},{i},{troop.Loyalty?.Id ?? 0},{FloatBits(troop.Strength)}");
+            }
+        }
+        return string.Create(CultureInfo.InvariantCulture,
+            $"off,{troop.Loyalty?.Id ?? 0},{FloatBits(troop.Strength)}");
+    }
+
+    static string GroundBuildingRef(Planet planet, Building building)
+    {
+        if (building == null)
+            return "-";
+        foreach (PlanetGridSquare tile in planet.TilesList.OrderBy(t => t.X).ThenBy(t => t.Y))
+        {
+            if (ReferenceEquals(tile.Building, building))
+                return string.Create(CultureInfo.InvariantCulture,
+                    $"{tile.X},{tile.Y},{building.Name},{FloatBits(building.Strength)}");
+        }
+        return string.Create(CultureInfo.InvariantCulture,
+            $"off,{building.Name},{FloatBits(building.Strength)}");
     }
 
     static string Digest(string payload)

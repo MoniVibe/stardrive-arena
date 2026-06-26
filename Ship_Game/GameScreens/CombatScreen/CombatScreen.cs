@@ -439,6 +439,17 @@ namespace Ship_Game
 
         void OnLaunchAllClicked(UIButton b)
         {
+            switch (Authoritative4XClientContext.TrySubmitLaunchGroundTroops(Player, P))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.TroopTakeOff();
+                    ResetNextFrame = true;
+                    return;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return;
+            }
+
             bool play = false;
             foreach (PlanetGridSquare pgs in P.TilesList)
             {
@@ -693,6 +704,18 @@ namespace Ship_Game
                         && ActiveTile.Building.CanAttack  // Attacking building
                         && pgs.LockOnEnemyTroop(Player, out Troop enemy))
                     {
+                        switch (Authoritative4XClientContext.TrySubmitBuildingAttackGroundTroop(Player, P,
+                                    ActiveTile, pgs))
+                        {
+                            case Authoritative4XUiCommandResult.Submitted:
+                                capturedInput = true;
+                                continue;
+                            case Authoritative4XUiCommandResult.Blocked:
+                                GameAudio.NegativeClick();
+                                capturedInput = true;
+                                continue;
+                        }
+
                         ActiveTile.Building.UpdateAttackActions(-1);
                         ActiveTile.Building.ResetAttackTimer();
                         StartCombat(ActiveTile.Building, enemy, pgs, P);
@@ -703,11 +726,35 @@ namespace Ship_Game
                         {
                             if (pgs.CombatBuildingOnTile) // Defending building
                             {
+                                switch (Authoritative4XClientContext.TrySubmitAttackGroundBuilding(Player, P,
+                                            ActiveTile, ourTroop, pgs))
+                                {
+                                    case Authoritative4XUiCommandResult.Submitted:
+                                        capturedInput = true;
+                                        continue;
+                                    case Authoritative4XUiCommandResult.Blocked:
+                                        GameAudio.NegativeClick();
+                                        capturedInput = true;
+                                        continue;
+                                }
+
                                 StartCombat(ourTroop, pgs.Building, pgs, P);
                                 capturedInput = true;
                             }
                             else if (pgs.LockOnEnemyTroop(Player, out Troop enemyTroop))
                             {
+                                switch (Authoritative4XClientContext.TrySubmitAttackGroundTroop(Player, P,
+                                            ActiveTile, ourTroop, pgs))
+                                {
+                                    case Authoritative4XUiCommandResult.Submitted:
+                                        capturedInput = true;
+                                        continue;
+                                    case Authoritative4XUiCommandResult.Blocked:
+                                        GameAudio.NegativeClick();
+                                        capturedInput = true;
+                                        continue;
+                                }
+
                                 ourTroop.UpdateAttackActions(-1);
                                 ourTroop.ResetAttackTimer();
                                 ourTroop.UpdateMoveActions(-1);
@@ -719,6 +766,21 @@ namespace Ship_Game
 
                         if (ourTroop.CanMove && MovementTiles.Contains(pgs))
                         {
+                            switch (Authoritative4XClientContext.TrySubmitMoveGroundTroop(Player, P,
+                                        ActiveTile, ourTroop, pgs))
+                            {
+                                case Authoritative4XUiCommandResult.Submitted:
+                                    GameAudio.PlaySfxAsync(ourTroop.MovementCue);
+                                    ActiveTile = pgs;
+                                    MovementTiles.Remove(pgs);
+                                    capturedInput = true;
+                                    continue;
+                                case Authoritative4XUiCommandResult.Blocked:
+                                    GameAudio.NegativeClick();
+                                    capturedInput = true;
+                                    continue;
+                            }
+
                             ourTroop.facingRight = pgs.X > ActiveTile.X;
 
                             P.Troops.MoveTowardsTarget(ourTroop, ActiveTile, pgs);
@@ -910,7 +972,17 @@ namespace Ship_Game
             if (tile == null || tile.TroopsHere.Count < 1)
                 return false;
 
-            Ship launched = tile.TroopsHere[0].Launch(tile);
+            Troop troop = tile.TroopsHere[0];
+            switch (Authoritative4XClientContext.TrySubmitLaunchGroundTroop(Player, P, tile, troop))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    ActiveTile = null;
+                    return true;
+                case Authoritative4XUiCommandResult.Blocked:
+                    return false;
+            }
+
+            Ship launched = troop.Launch(tile);
             if (launched == null)
                 return false;
 

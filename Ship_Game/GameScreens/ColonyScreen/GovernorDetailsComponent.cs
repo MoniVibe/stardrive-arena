@@ -789,6 +789,17 @@ namespace Ship_Game
 
         void OnLaunchTroopsClicked(UIButton b)
         {
+            switch (Authoritative4XClientContext.TrySubmitLaunchGroundTroops(Player, Planet))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.TroopTakeOff();
+                    UpdateButtons();
+                    return;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return;
+            }
+
             bool play = false;
             foreach (PlanetGridSquare pgs in Planet.TilesList)
             {
@@ -812,16 +823,31 @@ namespace Ship_Game
         {
             foreach (Troop troop in Planet.Troops.GetLaunchableTroops(Planet.Universe.Player))
             {
+                PlanetGridSquare tile = FindTroopTile(troop);
+                switch (Authoritative4XClientContext.TrySubmitLaunchGroundTroop(Player, Planet, tile, troop))
+                {
+                    case Authoritative4XUiCommandResult.Submitted:
+                        GameAudio.TroopTakeOff();
+                        UpdateButtons();
+                        return;
+                    case Authoritative4XUiCommandResult.Blocked:
+                        GameAudio.NegativeClick();
+                        return;
+                }
+
                 if (troop.Launch() != null)
                 {
                     GameAudio.TroopTakeOff();
                     UpdateButtons();
-                    break;
+                    return;
                 }
             }
 
             GameAudio.NegativeClick();
         }
+
+        PlanetGridSquare FindTroopTile(Troop troop)
+            => Planet.TilesList.FirstOrDefault(tile => tile.TroopsHere.ContainsRef(troop));
 
         void UpdateButtons()
         {
