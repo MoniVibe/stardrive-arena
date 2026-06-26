@@ -761,6 +761,7 @@
     <Compile Include="Ship_Game\Multiplayer\Authoritative\AuthoritativePlayerCommand.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\AuthoritativeHumanPlayers.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\AuthoritativeDiplomacy.cs" />
+    <Compile Include="Ship_Game\Multiplayer\Authoritative\AuthoritativeDiplomacyProposalScreen.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\AuthoritativeDiplomacyPopupScreen.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XCommandApplicator.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XClientContext.cs" />

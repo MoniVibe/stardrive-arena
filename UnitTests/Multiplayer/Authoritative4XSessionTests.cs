@@ -521,6 +521,17 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual(709, submitted[9].Sequence);
                 Assert.AreEqual(world.ResearchUid, submitted[9].Text);
 
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitDiplomacyProposal(world.Enemy,
+                        AuthoritativeDiplomacyProposalType.TradeDeal, "trade terms"));
+                Assert.AreEqual(11, submitted.Count);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.DiplomacyProposal, submitted[10].Kind);
+                Assert.AreEqual(710, submitted[10].Sequence);
+                Assert.AreEqual(world.Player.Id, submitted[10].EmpireId);
+                Assert.AreEqual(world.Enemy.Id, submitted[10].SubjectId);
+                Assert.AreEqual((int)AuthoritativeDiplomacyProposalType.TradeDeal, submitted[10].TargetId);
+                Assert.AreEqual("trade terms", submitted[10].Text);
+
                 int beforeWrongEmpire = submitted.Count;
                 Assert.IsFalse(Authoritative4XClientContext.TrySubmitQueueBuilding(world.EnemyPlanet, buildable.Name),
                     "An active client context must only handle its own empire's UI commands.");
@@ -876,6 +887,32 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsTrue(noticeScreen.Find(AuthoritativeDiplomacyPopupScreen.OkButtonName, out UIButton _),
                 "A notification popup should expose a single acknowledgement.");
             noticeScreen.Dispose();
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void AuthoritativeDiplomacyProposalScreen_DoesNotPauseUniverseAndExposesProposalButtons_Headless()
+    {
+        BuiltWorld world = BuildWorld(0xD1A1062UL);
+        try
+        {
+            world.UState.Paused = false;
+            var screen = new AuthoritativeDiplomacyProposalScreen(world.Screen, world.Screen, world.Enemy);
+            screen.LoadContent();
+
+            Assert.IsFalse(world.UState.Paused,
+                "The human proposal picker must not pause only the local authoritative peer.");
+            Assert.IsTrue(screen.Find(AuthoritativeDiplomacyProposalScreen.NonAggressionButtonName, out UIButton _));
+            Assert.IsTrue(screen.Find(AuthoritativeDiplomacyProposalScreen.TradeButtonName, out UIButton _));
+            Assert.IsTrue(screen.Find(AuthoritativeDiplomacyProposalScreen.AllianceButtonName, out UIButton _));
+            Assert.IsTrue(screen.Find(AuthoritativeDiplomacyProposalScreen.PeaceButtonName, out UIButton _));
+            Assert.IsTrue(screen.Find(AuthoritativeDiplomacyProposalScreen.DeclareWarButtonName, out UIButton _));
+            Assert.IsTrue(screen.Find(AuthoritativeDiplomacyProposalScreen.BackButtonName, out UIButton _));
+            screen.Dispose();
         }
         finally
         {

@@ -7,6 +7,7 @@ using SDUtils;
 using Ship_Game.Audio;
 using Ship_Game.Gameplay;
 using Ship_Game.GameScreens.DiplomacyScreen;
+using Ship_Game.Multiplayer.Authoritative;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
 using Ship_Game.Graphics;
@@ -48,7 +49,8 @@ namespace Ship_Game
         Font Font20Bold = Fonts.Arial20Bold;
 
 
-        public MainDiplomacyScreen(UniverseScreen screen) : base(screen, toPause: screen)
+        public MainDiplomacyScreen(UniverseScreen screen)
+            : base(screen, toPause: screen.IsAuthoritative4XMultiplayer ? null : screen)
         {
             Universe = screen;
             IsPopup = true;
@@ -665,7 +667,10 @@ namespace Ship_Game
 
             if (SelectedEmpire != Player && !SelectedEmpire.IsDefeated && Contact.HandleInput(input))
             {
-                DiplomacyScreen.Show(SelectedEmpire, "Greeting", parent: this);
+                if (UseAuthoritativeHumanDiplomacy(SelectedEmpire))
+                    ScreenManager.AddScreen(new AuthoritativeDiplomacyProposalScreen(this, Universe, SelectedEmpire));
+                else
+                    DiplomacyScreen.Show(SelectedEmpire, "Greeting", parent: this);
             }
 
             foreach (RaceEntry race in Races)
@@ -686,6 +691,10 @@ namespace Ship_Game
 
             return base.HandleInput(input);
         }
+
+        bool UseAuthoritativeHumanDiplomacy(Empire target)
+            => Universe.IsAuthoritative4XMultiplayer
+               && AuthoritativeHumanPlayers.IsHumanVsHuman(Player, target);
 
         public override void LoadContent()
         {
