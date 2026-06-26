@@ -4,6 +4,7 @@ using Microsoft.Xna.Framework.Graphics;
 using SDGraphics;
 using SDLockstep;
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.UI;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
@@ -14,6 +15,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 {
     public const int DefaultPort = 47377;
     public const int DefaultTurns = 600;
+    const int AuthorityPeerId = Authoritative4XLobby.AuthorityPeerId;
+    const int HostPlayerPeerId4X = 2;
+    const int JoinPlayerPeerId4X = 3;
     const string DefaultHost = "127.0.0.1";
     static readonly GalSize[] GalaxyOptions =
     {
@@ -33,7 +37,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     ArenaMultiplayerRole? LocalRole;
     LobbyPeer LocalPeer = new() { PlayerName = "Local", RacePreference = "United", LoadoutTrait = "Wingmates" };
     LobbyPeer RemotePeer = new() { PlayerName = "Remote", RacePreference = "-", LoadoutTrait = "-", Ready = false };
-    ArenaMultiplayerSettings PendingLaunchSettings;
+    SessionStartMessage Pending4XStart;
     ArenaMultiplayerRunResult LastResult;
     string StatusText = "Idle. Host, join, ready up, then host launches.";
     string[] RaceOptions = Array.Empty<string>();
@@ -184,8 +188,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         ApplyLocalSelection();
         LobbyTelemetry?.Dispose();
         LobbyTelemetry = ArenaMultiplayerTelemetry.Start("Host", "lobby", CreateDefaultSettings(ParseTurns()));
-        Transport = TcpLockstepTransport.Host(ParsePort(), ArenaMultiplayerSession.JoinPlayerPeerId);
-        Transport.AddObserver(LockstepHost.HostPeerId, OnHostMessage);
+        Transport = TcpLockstepTransport.HostMulti(ParsePort());
+        Transport.AddObserver(AuthorityPeerId, OnHostMessage);
         SendLocalLobby();
         SetStatus($"HOST listening on port {ParsePort()}\nPick setup, ready, then launch when remote is ready.");
         LobbyTelemetry.Event("HOST_LISTEN", $"port={ParsePort()}");
@@ -209,12 +213,12 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         ApplyLocalSelection();
         LobbyTelemetry?.Dispose();
         LobbyTelemetry = ArenaMultiplayerTelemetry.Start("Join", "lobby", CreateDefaultSettings(ParseTurns()));
-        Transport = TcpLockstepTransport.Join(host, ParsePort(), LockstepHost.HostPeerId);
-        Transport.AddObserver(ArenaMultiplayerSession.JoinPlayerPeerId, OnJoinMessage);
-        Transport.Send(LockstepHost.HostPeerId, new SessionHelloMessage
+        Transport = TcpLockstepTransport.JoinAsPeer(host, ParsePort(), JoinPlayerPeerId4X, AuthorityPeerId);
+        Transport.AddObserver(JoinPlayerPeerId4X, OnJoinMessage);
+        Transport.Send(AuthorityPeerId, new SessionHelloMessage
         {
-            FromPeer = ArenaMultiplayerSession.JoinPlayerPeerId,
-            PeerId = ArenaMultiplayerSession.JoinPlayerPeerId,
+            FromPeer = JoinPlayerPeerId4X,
+            PeerId = JoinPlayerPeerId4X,
             ProtocolVersion = ArenaMultiplayerSettings.ProtocolVersion,
             PlayerName = LocalPeer.PlayerName,
             BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
@@ -262,27 +266,27 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             return;
         }
 
-        ArenaMultiplayerSettings settings = BuildHostSettings().WithResolvedFleets();
         string error = ArenaMultiplayerPeerSignature.ValidateEnvironment(RemotePeer.BuildHash, RemotePeer.BuildSummary, "remote");
         if (error.NotEmpty())
         {
-            Transport.Send(ArenaMultiplayerSession.JoinPlayerPeerId,
-                new SessionErrorMessage { FromPeer = LockstepHost.HostPeerId, Error = error });
+            Transport.Send(JoinPlayerPeerId4X,
+                new SessionErrorMessage { FromPeer = AuthorityPeerId, Error = error });
             SetStatus(error);
             LobbyTelemetry?.Event("PREFLIGHT_REJECT", error);
             GameAudio.NegativeClick();
             return;
         }
 
+        SessionStartMessage start = Build4XStartMessage();
         LobbyTelemetry?.Event("LAUNCH_HOST",
-            $"settingsHash={settings.SettingsHash} sessionHash={ArenaMultiplayerPeerSignature.Hash(settings)}");
-        Transport.Send(ArenaMultiplayerSession.JoinPlayerPeerId, settings.ToStartMessage());
-        LaunchVisibleMatch(ArenaMultiplayerRole.Host, settings);
+            $"settingsHash={start.SettingsHash} mode=4x");
+        Transport.Send(JoinPlayerPeerId4X, start);
+        LaunchVisible4X(Authoritative4XLiveRole.Host, start);
     }
 
     void OnHostMessage(LockstepMessage message)
     {
-        if (message is SessionHelloMessage h && h.PeerId == ArenaMultiplayerSession.JoinPlayerPeerId)
+        if (message is SessionHelloMessage h && h.PeerId == JoinPlayerPeerId4X)
         {
             string error = h.ProtocolVersion != ArenaMultiplayerSettings.ProtocolVersion
                 ? $"Arena multiplayer protocol mismatch. Local {ArenaMultiplayerSettings.ProtocolVersion}, remote {h.ProtocolVersion}."
@@ -297,7 +301,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                 LobbyTelemetry?.Event("HELLO", $"peer={h.PeerId} summary='{h.BuildSummary}'");
             }
         }
-        if (message is SessionLobbyMessage lobby && lobby.PeerId == ArenaMultiplayerSession.JoinPlayerPeerId)
+        if (message is SessionLobbyMessage lobby && lobby.PeerId == JoinPlayerPeerId4X)
         {
             RemotePeer = LobbyPeer.From(lobby, "Join");
             SetStatus($"Remote lobby updated.\n{RemotePeer.Summary}");
@@ -313,16 +317,11 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
     void OnJoinMessage(LockstepMessage message)
     {
-        if (message is SessionLobbyMessage lobby && lobby.PeerId == ArenaMultiplayerSession.HostPlayerPeerId)
+        if (message is SessionLobbyMessage lobby && lobby.PeerId == HostPlayerPeerId4X)
             RemotePeer = LobbyPeer.From(lobby, "Host");
         if (message is SessionStartMessage start)
         {
-            ArenaMultiplayerSettings settings = ArenaMultiplayerSettings.FromStartMessage(start).WithResolvedFleets();
-            string error = start.ProtocolVersion != ArenaMultiplayerSettings.ProtocolVersion
-                ? $"Arena multiplayer protocol mismatch. Local {ArenaMultiplayerSettings.ProtocolVersion}, host {start.ProtocolVersion}."
-                : !string.Equals(start.SettingsHash, settings.SettingsHash, StringComparison.Ordinal)
-                    ? $"Arena multiplayer settings mismatch. Host {start.SettingsHash}, local {settings.SettingsHash}."
-                    : ArenaMultiplayerPeerSignature.ValidateSession(start.BuildHash, start.BuildSummary, settings, "host");
+            string error = Validate4XStart(start);
             if (error.NotEmpty())
             {
                 SetStatus(error);
@@ -330,8 +329,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                 return;
             }
             LobbyTelemetry?.Event("START_RECEIVED",
-                $"settingsHash={settings.SettingsHash} sessionHash={ArenaMultiplayerPeerSignature.Hash(settings)}");
-            PendingLaunchSettings = settings;
+                $"settingsHash={start.SettingsHash} mode=4x");
+            Pending4XStart = start;
         }
         if (message is SessionErrorMessage e)
         {
@@ -345,11 +344,11 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         if (Transport == null || LocalRole == null)
             return;
         int peerId = LocalRole == ArenaMultiplayerRole.Host
-            ? ArenaMultiplayerSession.HostPlayerPeerId
-            : ArenaMultiplayerSession.JoinPlayerPeerId;
+            ? HostPlayerPeerId4X
+            : JoinPlayerPeerId4X;
         int toPeer = LocalRole == ArenaMultiplayerRole.Host
-            ? ArenaMultiplayerSession.JoinPlayerPeerId
-            : LockstepHost.HostPeerId;
+            ? JoinPlayerPeerId4X
+            : AuthorityPeerId;
         Transport.Send(toPeer, new SessionLobbyMessage
         {
             FromPeer = peerId,
@@ -363,21 +362,26 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         });
     }
 
-    void LaunchVisibleMatch(ArenaMultiplayerRole role, ArenaMultiplayerSettings settings)
+    void LaunchVisible4X(Authoritative4XLiveRole role, SessionStartMessage start)
     {
         if (Transport == null)
             return;
         Launching = true;
         TcpLockstepTransport transport = Transport;
         Transport = null;
-        LobbyTelemetry?.Event("LAUNCH_VISIBLE", $"role={role}");
+        LobbyTelemetry?.Event("LAUNCH_VISIBLE_4X", $"role={role}");
         LobbyTelemetry?.Dispose();
         LobbyTelemetry = null;
-        var live = new ArenaMultiplayerLiveSession(role, transport, settings);
-        ArenaFightScreen screen = ArenaFightScreen.Create(settings.HostRacePreference, settings.MatchSeed,
-            startAtHub: false, opponentPreference: settings.JoinRacePreference);
-        screen.ArmMultiplayerLive(live);
-        ScreenManager.GoToScreen(screen, clear3DObjects: true);
+
+        Authoritative4XGeneratedGameStart generated = CreateGenerated4XGame(start);
+        int localPeer = role == Authoritative4XLiveRole.Host ? HostPlayerPeerId4X : JoinPlayerPeerId4X;
+        Authoritative4XLiveSession live = role == Authoritative4XLiveRole.Host
+            ? Authoritative4XLiveSession.HostGame(generated.AuthorityUniverse, transport, localPeer,
+                generated.EmpireIdByPeer, generated.HumanEmpireIds)
+            : Authoritative4XLiveSession.ClientGame(generated.AuthorityUniverse, transport, localPeer,
+                generated.EmpireIdForPeer(localPeer), generated.HumanEmpireIds);
+        generated.AuthorityUniverse.AttachAuthoritative4XMultiplayer(live);
+        ScreenManager.GoToScreen(generated.AuthorityUniverse, clear3DObjects: true);
     }
 
     ArenaMultiplayerSettings BuildHostSettings()
@@ -397,6 +401,118 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             StartPaused = StartPaused,
         };
 
+    SessionStartMessage Build4XStartMessage()
+    {
+        Authoritative4XGameSettings settings = Build4XSettings();
+        return new SessionStartMessage
+        {
+            FromPeer = AuthorityPeerId,
+            ProtocolVersion = ArenaMultiplayerSettings.ProtocolVersion,
+            MatchSeed = settings.GenerationSeed,
+            RngSeed = (uint)settings.GenerationSeed ^ 0x4D505547u,
+            InputDelay = 0,
+            MaxTurns = ParseTurns(),
+            CommandEveryTurns = 1,
+            GameSpeed = settings.GameSpeed,
+            StartPaused = settings.StartPaused,
+            SettingsHash = settings.SettingsHash,
+            BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
+            BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
+            HostRacePreference = LocalPeer.RacePreference,
+            JoinRacePreference = RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference,
+            IsAuthoritative4X = true,
+            AuthoritativeHostPeerId = HostPlayerPeerId4X,
+            AuthoritativeJoinPeerId = JoinPlayerPeerId4X,
+            GenerationSeed = settings.GenerationSeed,
+            GalaxySize = (int)settings.GalaxySize,
+            StarsCount = (int)settings.StarsCount,
+            GameMode = (int)settings.Mode,
+            Difficulty = (int)settings.Difficulty,
+            NumOpponents = settings.NumOpponents,
+            Pace = settings.Pace,
+            TurnTimer = settings.TurnTimer,
+            ExtraPlanets = settings.ExtraPlanets,
+            StartingPlanetRichnessBonus = settings.StartingPlanetRichnessBonus,
+        };
+    }
+
+    Authoritative4XGameSettings Build4XSettings()
+        => new Authoritative4XGameSettings
+        {
+            GenerationSeed = ParseSeed(),
+            Mode = RaceDesignScreen.GameMode.Sandbox,
+            StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+            GalaxySize = RegularSettings.GalaxySize,
+            Difficulty = GameDifficulty.Normal,
+            NumOpponents = 1,
+            Pace = 1f,
+            TurnTimer = 5,
+            ExtraPlanets = 0,
+            StartingPlanetRichnessBonus = 0f,
+            GameSpeed = ParseSpeed(),
+            StartPaused = StartPaused,
+        }.Normalized(2);
+
+    string Validate4XStart(SessionStartMessage start)
+    {
+        if (!start.IsAuthoritative4X)
+            return "Host sent a non-4X session start.";
+        if (start.ProtocolVersion != ArenaMultiplayerSettings.ProtocolVersion)
+            return $"Arena multiplayer protocol mismatch. Local {ArenaMultiplayerSettings.ProtocolVersion}, host {start.ProtocolVersion}.";
+        string error = ArenaMultiplayerPeerSignature.ValidateEnvironment(start.BuildHash, start.BuildSummary, "host");
+        if (error.NotEmpty())
+            return error;
+        if (start.AuthoritativeHostPeerId != HostPlayerPeerId4X || start.AuthoritativeJoinPeerId != JoinPlayerPeerId4X)
+            return $"Authoritative peer mismatch. Host {start.AuthoritativeHostPeerId}, join {start.AuthoritativeJoinPeerId}.";
+        Authoritative4XGameSettings settings = SettingsFrom4XStart(start).Normalized(2);
+        return string.Equals(start.SettingsHash, settings.SettingsHash, StringComparison.Ordinal)
+            ? ""
+            : $"Authoritative 4X settings mismatch. Host {start.SettingsHash}, local {settings.SettingsHash}.";
+    }
+
+    Authoritative4XGeneratedGameStart CreateGenerated4XGame(SessionStartMessage start)
+    {
+        Authoritative4XGameSettings settings = SettingsFrom4XStart(start).Normalized(2);
+        var lobby = new Authoritative4XLobby(HostPlayerPeerId4X, "Host");
+        lobby.Join(JoinPlayerPeerId4X, "Join");
+        Authoritative4XLobbyValidation set = lobby.SetSettings(HostPlayerPeerId4X, settings);
+        if (!set.Valid)
+            throw new InvalidOperationException(set.Reason);
+        Authoritative4XLobbyValidation host = lobby.SetPlayerSelection(HostPlayerPeerId4X,
+            start.HostRacePreference, SplitTraits(start.HostTraitOptions));
+        if (!host.Valid)
+            throw new InvalidOperationException(host.Reason);
+        Authoritative4XLobbyValidation join = lobby.SetPlayerSelection(JoinPlayerPeerId4X,
+            start.JoinRacePreference, SplitTraits(start.JoinTraitOptions));
+        if (!join.Valid)
+            throw new InvalidOperationException(join.Reason);
+        lobby.SetReady(HostPlayerPeerId4X, true);
+        lobby.SetReady(JoinPlayerPeerId4X, true);
+        return lobby.StartGeneratedGame();
+    }
+
+    static Authoritative4XGameSettings SettingsFrom4XStart(SessionStartMessage start)
+        => new()
+        {
+            GenerationSeed = start.GenerationSeed,
+            Mode = (RaceDesignScreen.GameMode)start.GameMode,
+            StarsCount = (RaceDesignScreen.StarsAbundance)start.StarsCount,
+            GalaxySize = (GalSize)start.GalaxySize,
+            Difficulty = (GameDifficulty)start.Difficulty,
+            NumOpponents = start.NumOpponents,
+            Pace = start.Pace,
+            TurnTimer = start.TurnTimer,
+            ExtraPlanets = start.ExtraPlanets,
+            StartingPlanetRichnessBonus = start.StartingPlanetRichnessBonus,
+            GameSpeed = start.GameSpeed,
+            StartPaused = start.StartPaused,
+        };
+
+    static string[] SplitTraits(string traits)
+        => traits.IsEmpty()
+            ? Array.Empty<string>()
+            : traits.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
     public override void Update(float fixedDeltaTime)
     {
         base.Update(fixedDeltaTime);
@@ -414,11 +530,11 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                 LobbyTelemetry?.Event("CLIENT_CONNECTED");
             }
         }
-        if (PendingLaunchSettings != null)
+        if (Pending4XStart != null)
         {
-            ArenaMultiplayerSettings settings = PendingLaunchSettings;
-            PendingLaunchSettings = null;
-            LaunchVisibleMatch(ArenaMultiplayerRole.Join, settings);
+            SessionStartMessage start = Pending4XStart;
+            Pending4XStart = null;
+            LaunchVisible4X(Authoritative4XLiveRole.Client, start);
         }
     }
 

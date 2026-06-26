@@ -522,18 +522,20 @@ public sealed class Authoritative4XNetworkHost : IDisposable
     readonly Dictionary<int, int> EmpireByPeer;
     readonly Dictionary<int, int> PeerByEmpire;
     readonly int[] PeerIds;
+    readonly int LocalPeerId;
 
     public AuthoritativeCommandResult LastResult { get; private set; }
     public AuthoritativeStateSnapshot LastAuthoritySnapshot { get; private set; }
     public string LastError => Transport.LastError;
 
     public Authoritative4XNetworkHost(UniverseScreen authorityUniverse, TcpLockstepTransport transport,
-        IReadOnlyDictionary<int, int> empireByPeer, int[] humanEmpireIds = null)
+        IReadOnlyDictionary<int, int> empireByPeer, int[] humanEmpireIds = null, int localPeerId = 0)
     {
         Transport = transport;
         EmpireByPeer = new Dictionary<int, int>(empireByPeer);
         PeerByEmpire = empireByPeer.ToDictionary(kv => kv.Value, kv => kv.Key);
         PeerIds = empireByPeer.Keys.OrderBy(peer => peer).ToArray();
+        LocalPeerId = localPeerId;
         if (humanEmpireIds != null)
             AuthoritativeHumanPlayers.SetHumanControlledEmpires(authorityUniverse.UState, humanEmpireIds);
         Authority = new Authoritative4XAuthority(authorityUniverse, humanEmpireIds: humanEmpireIds);
@@ -569,6 +571,8 @@ public sealed class Authoritative4XNetworkHost : IDisposable
         LastAuthoritySnapshot = snapshot;
         foreach (int peer in PeerIds)
         {
+            if (peer == LocalPeerId)
+                continue;
             Transport.Send(peer, command.ToMessage(fromPeer));
             Transport.Send(peer, result.ToMessage(HostPeerId));
             Transport.Send(peer, snapshot.ToMessage(HostPeerId));
@@ -576,8 +580,11 @@ public sealed class Authoritative4XNetworkHost : IDisposable
 
         foreach (AuthoritativeDiplomacyPopup popup in Authority.DrainDiplomacyPopups())
         {
-            if (PeerByEmpire.TryGetValue(popup.TargetEmpireId, out int targetPeer))
+            if (PeerByEmpire.TryGetValue(popup.TargetEmpireId, out int targetPeer)
+                && targetPeer != LocalPeerId)
+            {
                 Transport.Send(targetPeer, popup.ToMessage(HostPeerId));
+            }
         }
     }
 }

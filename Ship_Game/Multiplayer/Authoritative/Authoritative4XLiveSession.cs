@@ -62,7 +62,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
         if (empireByPeer == null || !empireByPeer.TryGetValue(localPeerId, out int localEmpireId))
             throw new ArgumentException($"Peer {localPeerId} is not mapped to an empire.", nameof(empireByPeer));
 
-        var host = new Authoritative4XNetworkHost(universe, transport, empireByPeer, humanEmpireIds);
+        var host = new Authoritative4XNetworkHost(universe, transport, empireByPeer, humanEmpireIds, localPeerId);
         return new Authoritative4XLiveSession(universe, Authoritative4XLiveRole.Host,
             localPeerId, localEmpireId, host, client: null);
     }

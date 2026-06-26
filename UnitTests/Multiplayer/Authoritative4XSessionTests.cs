@@ -793,27 +793,32 @@ public class Authoritative4XSessionTests : StarDriveTest
     public void Authoritative4XLiveHost_AttachesPollsAndBroadcastsHeartbeat_Headless()
     {
         const ulong Seed = 0x41E40057UL;
-        const int Peer = 2;
+        const int HostPeer = 2;
+        const int RemotePeer = 3;
         BuiltWorld authority = BuildWorld(Seed);
         BuiltWorld client = BuildWorld(Seed);
 
         try
         {
             int port = FreeTcpPort();
-            TcpLockstepTransport hostTransport = TcpLockstepTransport.Host(port, Peer);
+            TcpLockstepTransport hostTransport = TcpLockstepTransport.Host(port, RemotePeer);
             TcpLockstepTransport clientTransport = TcpLockstepTransport.Join("127.0.0.1", port,
                 Authoritative4XNetworkHost.HostPeerId);
             Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(3)),
                 "Authoritative live host did not accept the loopback client.");
 
-            using var networkClient = new Authoritative4XNetworkClient(client.Screen, clientTransport, Peer,
-                new[] { client.Player.Id });
+            using var networkClient = new Authoritative4XNetworkClient(client.Screen, clientTransport, RemotePeer,
+                new[] { client.Player.Id, client.Enemy.Id });
             Authoritative4XLiveSession liveHost = Authoritative4XLiveSession.HostGame(authority.Screen,
-                hostTransport, Peer, new Dictionary<int, int> { [Peer] = authority.Player.Id },
-                new[] { authority.Player.Id });
+                hostTransport, HostPeer, new Dictionary<int, int>
+                {
+                    [HostPeer] = authority.Player.Id,
+                    [RemotePeer] = authority.Enemy.Id,
+                },
+                new[] { authority.Player.Id, authority.Enemy.Id });
             authority.Screen.AttachAuthoritative4XMultiplayer(liveHost);
 
-            PumpLiveTcpUntil(() => NetworkClientCaughtHeartbeat(networkClient, Peer),
+            PumpLiveTcpUntil(() => NetworkClientCaughtHeartbeat(networkClient, HostPeer),
                 liveHost, networkClient);
             Assert.IsNotNull(authority.Screen.Authoritative4XMultiplayer,
                 "The visible universe should own the live authoritative session.");
