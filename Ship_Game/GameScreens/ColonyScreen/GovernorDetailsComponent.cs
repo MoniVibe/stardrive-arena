@@ -145,7 +145,13 @@ namespace Ship_Game
             Prioritized    = Add(new UICheckBox(() => Planet.PrioritizedPort, Font, title: GameText.PrioritizedPort, tooltip: GameText.PrioritizedPortTip));
 
             SpecializedTradeHub = Add(new UICheckBox(() => p.SpecializedTradeHub, Font, title: GameText.SpecializedTradeHub, tooltip: GameText.SpecializedTradeHubTip));
-            SpecializedTradeHub.OnChange = cb => { Planet.SetSpecializedTradeHub(cb.Checked); };
+            SpecializedTradeHub.OnChange = cb =>
+            {
+                if (TrySubmitAuthoritativeGovernorOptions(cb, value => Planet.SetSpecializedTradeHub(value)))
+                    return;
+
+                Planet.SetSpecializedTradeHub(cb.Checked);
+            };
             SpecializedTradeHub.TextColor = Quarantine.TextColor = Prioritized.TextColor = Color.Gray;
             Quarantine.CheckedTextColor = Color.Red;
             Prioritized.CheckedTextColor = Color.Purple;
@@ -342,12 +348,25 @@ namespace Ship_Game
 
             GovOrbitals.OnChange = cb =>
             {
+                if (TrySubmitAuthoritativeGovernorOptions(cb, value => Planet.GovOrbitals = value))
+                    return;
+
                 if (cb.Checked)
                 {
                     UpdateOrbitalTextPos();
                     UpdateGovOrbitalStats();
                 }
             };
+            AutoTroops.OnChange = cb =>
+                TrySubmitAuthoritativeGovernorOptions(cb, value => Planet.AutoBuildTroops = value);
+            GovNoScrap.OnChange = cb =>
+                TrySubmitAuthoritativeGovernorOptions(cb, value => Planet.DontScrapBuildings = value);
+            Quarantine.OnChange = cb =>
+                TrySubmitAuthoritativeGovernorOptions(cb, value => Planet.Quarantine = value);
+            ManualOrbitals.OnChange = cb =>
+                TrySubmitAuthoritativeGovernorOptions(cb, value => Planet.ManualOrbitals = value);
+            GovGround.OnChange = cb =>
+                TrySubmitAuthoritativeGovernorOptions(cb, value => Planet.GovGroundDefense = value);
 
             OverrideCiv.OnChange = cb =>
             {
@@ -928,6 +947,18 @@ namespace Ship_Game
                 Authoritative4XUiCommandResult.NotActive => Authoritative4XClientContext.IsActive,
                 _ => false,
             };
+        }
+
+        bool TrySubmitAuthoritativeGovernorOptions(UICheckBox cb, Action<bool> restore)
+        {
+            if (!HandleAuthoritativeGovernorResult(
+                    Authoritative4XClientContext.TrySubmitSetPlanetGovernorOptions(Planet)))
+            {
+                return false;
+            }
+
+            restore(!cb.Checked);
+            return true;
         }
 
         static bool NearlyEqual(float a, float b)

@@ -61,6 +61,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.SetPlanetGoodsState => ApplyPlanetGoodsState(command, empire, result),
                 AuthoritativePlayerCommandKind.SetPlanetPrioritizedPort => ApplyPlanetPrioritizedPort(command, empire, result),
                 AuthoritativePlayerCommandKind.SetPlanetManualBudget => ApplyPlanetManualBudget(command, empire, result),
+                AuthoritativePlayerCommandKind.SetPlanetGovernorOptions => ApplyPlanetGovernorOptions(command, empire, result),
                 AuthoritativePlayerCommandKind.SetFleetAssignment => ApplyFleetAssignment(command, empire, result),
                 AuthoritativePlayerCommandKind.MoveFleet => ApplyMoveFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.RenameFleet => ApplyRenameFleet(command, empire, result),
@@ -977,6 +978,29 @@ public sealed class Authoritative4XCommandApplicator
             default:
                 return Reject(result, $"Unsupported planet budget kind {command.TargetId}.");
         }
+    }
+
+    AuthoritativeCommandResult ApplyPlanetGovernorOptions(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} not found.");
+        if (planet.Owner != empire)
+            return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
+
+        var options = (AuthoritativePlanetGovernorOptions)command.TargetId;
+        if ((options & ~AuthoritativePlanetGovernorOptions.All) != 0)
+            return Reject(result, $"Unsupported planet governor option flags {command.TargetId}.");
+
+        planet.GovOrbitals = options.HasFlag(AuthoritativePlanetGovernorOptions.GovOrbitals);
+        planet.AutoBuildTroops = options.HasFlag(AuthoritativePlanetGovernorOptions.AutoBuildTroops);
+        planet.DontScrapBuildings = options.HasFlag(AuthoritativePlanetGovernorOptions.DontScrapBuildings);
+        planet.Quarantine = options.HasFlag(AuthoritativePlanetGovernorOptions.Quarantine);
+        planet.ManualOrbitals = options.HasFlag(AuthoritativePlanetGovernorOptions.ManualOrbitals);
+        planet.GovGroundDefense = options.HasFlag(AuthoritativePlanetGovernorOptions.GovGroundDefense);
+        planet.SetSpecializedTradeHub(options.HasFlag(AuthoritativePlanetGovernorOptions.SpecializedTradeHub));
+        return Accept(result);
     }
 
     AuthoritativeCommandResult ApplyFleetAssignment(AuthoritativePlayerCommand command, Empire empire,

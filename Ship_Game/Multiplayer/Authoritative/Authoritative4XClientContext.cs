@@ -680,6 +680,29 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitSetPlanetGovernorOptions(Planet planet)
+    {
+        if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+
+        context.Submit(AuthoritativePlayerCommand.SetPlanetGovernorOptions(context.Next(), context.EmpireId,
+            planet.Id, PlanetGovernorOptions(planet)));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    static AuthoritativePlanetGovernorOptions PlanetGovernorOptions(Planet planet)
+    {
+        AuthoritativePlanetGovernorOptions options = AuthoritativePlanetGovernorOptions.None;
+        if (planet.GovOrbitals) options |= AuthoritativePlanetGovernorOptions.GovOrbitals;
+        if (planet.AutoBuildTroops) options |= AuthoritativePlanetGovernorOptions.AutoBuildTroops;
+        if (planet.DontScrapBuildings) options |= AuthoritativePlanetGovernorOptions.DontScrapBuildings;
+        if (planet.Quarantine) options |= AuthoritativePlanetGovernorOptions.Quarantine;
+        if (planet.ManualOrbitals) options |= AuthoritativePlanetGovernorOptions.ManualOrbitals;
+        if (planet.GovGroundDefense) options |= AuthoritativePlanetGovernorOptions.GovGroundDefense;
+        if (planet.SpecializedTradeHub) options |= AuthoritativePlanetGovernorOptions.SpecializedTradeHub;
+        return options;
+    }
+
     public static bool IsActiveFor(Empire empire)
         => TryGetFor(empire, out _);
 

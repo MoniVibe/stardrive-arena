@@ -47,6 +47,7 @@ public enum AuthoritativePlayerCommandKind : byte
     SetFleetLayout = 33,
     QueueDeepSpaceBuild = 34,
     CancelDeepSpaceBuild = 35,
+    SetPlanetGovernorOptions = 36,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -92,6 +93,21 @@ public enum AuthoritativePlanetBudgetKind : byte
     Civilian = 1,
     GroundDefense = 2,
     SpaceDefense = 3,
+}
+
+[Flags]
+public enum AuthoritativePlanetGovernorOptions
+{
+    None = 0,
+    GovOrbitals = 1 << 0,
+    AutoBuildTroops = 1 << 1,
+    DontScrapBuildings = 1 << 2,
+    Quarantine = 1 << 3,
+    ManualOrbitals = 1 << 4,
+    GovGroundDefense = 1 << 5,
+    SpecializedTradeHub = 1 << 6,
+    All = GovOrbitals | AutoBuildTroops | DontScrapBuildings | Quarantine
+        | ManualOrbitals | GovGroundDefense | SpecializedTradeHub,
 }
 
 public enum AuthoritativeFleetAssignmentMode : byte
@@ -442,6 +458,17 @@ public sealed class AuthoritativePlayerCommand
             SubjectId = planetId,
             TargetId = (int)budget,
             Position = new Vector2(value, 0f),
+        };
+
+    public static AuthoritativePlayerCommand SetPlanetGovernorOptions(int sequence, int empireId, int planetId,
+        AuthoritativePlanetGovernorOptions options)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.SetPlanetGovernorOptions,
+            SubjectId = planetId,
+            TargetId = (int)options,
         };
 
     public static AuthoritativePlayerCommand SetFleetAssignment(int sequence, int empireId, int fleetKey,

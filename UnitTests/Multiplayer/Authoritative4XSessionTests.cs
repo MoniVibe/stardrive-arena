@@ -215,7 +215,19 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual((int)AuthoritativePlanetBudgetKind.GroundDefense, copy.TargetId);
         Assert.AreEqual(17.25f, copy.X);
 
-        var fleetRequest = AuthoritativePlayerCommand.SetFleetAssignment(26, 2, 7,
+        var governorOptions = AuthoritativePlanetGovernorOptions.GovOrbitals
+                              | AuthoritativePlanetGovernorOptions.Quarantine
+                              | AuthoritativePlanetGovernorOptions.SpecializedTradeHub;
+        var governorOptionsRequest = AuthoritativePlayerCommand.SetPlanetGovernorOptions(26, 2, 789,
+                governorOptions)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(governorOptionsRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetPlanetGovernorOptions, copy.Kind);
+        Assert.AreEqual(789, copy.SubjectId);
+        Assert.AreEqual((int)governorOptions, copy.TargetId);
+
+        var fleetRequest = AuthoritativePlayerCommand.SetFleetAssignment(27, 2, 7,
                 AuthoritativeFleetAssignmentMode.Replace, new[] { 99, 100 })
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(fleetRequest, toPeer: 1));
@@ -226,7 +238,7 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.IsTrue(AuthoritativePlayerCommand.TryParseIdList(copy.Text, out int[] fleetShipIds));
         CollectionAssert.AreEqual(new[] { 99, 100 }, fleetShipIds);
 
-        var moveFleetRequest = AuthoritativePlayerCommand.MoveFleet(27, 2, 7,
+        var moveFleetRequest = AuthoritativePlayerCommand.MoveFleet(28, 2, 7,
                 new Vector2(12_345f, -67_890f), new Vector2(0f, -1f),
                 MoveOrder.StandGround | MoveOrder.ForceReassembly)
             .ToMessage(fromPeer: 2);
@@ -1191,14 +1203,34 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "The sync digest must cover prioritized-port changes.");
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
-            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualBudget(94,
+            var governorOptions = AuthoritativePlanetGovernorOptions.GovOrbitals
+                                  | AuthoritativePlanetGovernorOptions.AutoBuildTroops
+                                  | AuthoritativePlanetGovernorOptions.Quarantine
+                                  | AuthoritativePlanetGovernorOptions.ManualOrbitals
+                                  | AuthoritativePlanetGovernorOptions.GovGroundDefense
+                                  | AuthoritativePlanetGovernorOptions.SpecializedTradeHub;
+            string beforeGovernorOptionsDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetGovernorOptions(94,
+                authority.Player.Id, authority.Planet.Id, governorOptions));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            AssertGovernorOptions(authority.Planet, expectedGovOrbitals: true, expectedAutoTroops: true,
+                expectedNoScrap: false, expectedQuarantine: true, expectedManualOrbitals: true,
+                expectedGovGround: true, expectedSpecializedTradeHub: true);
+            AssertGovernorOptions(client.Planet, expectedGovOrbitals: true, expectedAutoTroops: true,
+                expectedNoScrap: false, expectedQuarantine: true, expectedManualOrbitals: true,
+                expectedGovGround: true, expectedSpecializedTradeHub: true);
+            Assert.AreNotEqual(beforeGovernorOptionsDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover governor option flag changes.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualBudget(95,
                 authority.Enemy.Id, authority.Planet.Id, AuthoritativePlanetBudgetKind.Civilian, 1f));
             Assert.IsFalse(session.LastResult.Accepted, "An empire must not change another empire's governor budget.");
             StringAssert.Contains(session.LastResult.Reason, "not owned");
             Assert.AreEqual(12.5f, authority.Planet.ManualCivilianBudget);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
-            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualBudget(95,
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualBudget(96,
                 authority.Player.Id, authority.Planet.Id, AuthoritativePlanetBudgetKind.Civilian, -1f));
             Assert.IsFalse(session.LastResult.Accepted, "Negative manual budgets must be rejected.");
             StringAssert.Contains(session.LastResult.Reason, "finite non-negative");
@@ -1207,7 +1239,7 @@ public class Authoritative4XSessionTests : StarDriveTest
 
             authority.Planet.HasSpacePort = false;
             client.Planet.HasSpacePort = false;
-            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetPrioritizedPort(96,
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetPrioritizedPort(97,
                 authority.Player.Id, authority.Planet.Id, true));
             Assert.IsFalse(session.LastResult.Accepted,
                 "A planet without a space port must not be marked as a prioritized port.");
@@ -1215,11 +1247,45 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsTrue(authority.Planet.PrioritizedPort,
                 "Rejected prioritized-port requests must not mutate the existing port preference.");
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRejectedGovernorDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetGovernorOptions(98,
+                authority.Enemy.Id, authority.Planet.Id, AuthoritativePlanetGovernorOptions.Quarantine));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not change another empire's governor options.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            AssertGovernorOptions(authority.Planet, expectedGovOrbitals: true, expectedAutoTroops: true,
+                expectedNoScrap: false, expectedQuarantine: true, expectedManualOrbitals: true,
+                expectedGovGround: true, expectedSpecializedTradeHub: true);
+            Assert.AreEqual(beforeRejectedGovernorDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetGovernorOptions(99,
+                authority.Player.Id, authority.Planet.Id, (AuthoritativePlanetGovernorOptions)(1 << 12)));
+            Assert.IsFalse(session.LastResult.Accepted, "Unsupported governor option bits must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "Unsupported planet governor option flags");
+            AssertGovernorOptions(authority.Planet, expectedGovOrbitals: true, expectedAutoTroops: true,
+                expectedNoScrap: false, expectedQuarantine: true, expectedManualOrbitals: true,
+                expectedGovGround: true, expectedSpecializedTradeHub: true);
+            Assert.AreEqual(beforeRejectedGovernorDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
         }
         finally
         {
             authority.Screen.Dispose();
             client.Screen.Dispose();
+        }
+
+        static void AssertGovernorOptions(Planet planet, bool expectedGovOrbitals, bool expectedAutoTroops,
+            bool expectedNoScrap, bool expectedQuarantine, bool expectedManualOrbitals, bool expectedGovGround,
+            bool expectedSpecializedTradeHub)
+        {
+            Assert.AreEqual(expectedGovOrbitals, planet.GovOrbitals);
+            Assert.AreEqual(expectedAutoTroops, planet.AutoBuildTroops);
+            Assert.AreEqual(expectedNoScrap, planet.DontScrapBuildings);
+            Assert.AreEqual(expectedQuarantine, planet.Quarantine);
+            Assert.AreEqual(expectedManualOrbitals, planet.ManualOrbitals);
+            Assert.AreEqual(expectedGovGround, planet.GovGroundDefense);
+            Assert.AreEqual(expectedSpecializedTradeHub, planet.SpecializedTradeHub);
         }
     }
 
@@ -1234,6 +1300,18 @@ public class Authoritative4XSessionTests : StarDriveTest
             world.Planet.HasSpacePort = true;
             float originalCivilian = world.Planet.ManualCivilianBudget;
             bool originalPrioritized = world.Planet.PrioritizedPort;
+            world.Planet.GovOrbitals = true;
+            world.Planet.AutoBuildTroops = true;
+            world.Planet.DontScrapBuildings = false;
+            world.Planet.Quarantine = true;
+            world.Planet.ManualOrbitals = false;
+            world.Planet.GovGroundDefense = true;
+            world.Planet.SetSpecializedTradeHub(true);
+            var expectedGovernorOptions = AuthoritativePlanetGovernorOptions.GovOrbitals
+                                          | AuthoritativePlanetGovernorOptions.AutoBuildTroops
+                                          | AuthoritativePlanetGovernorOptions.Quarantine
+                                          | AuthoritativePlanetGovernorOptions.GovGroundDefense
+                                          | AuthoritativePlanetGovernorOptions.SpecializedTradeHub;
             var submitted = new List<AuthoritativePlayerCommand>();
 
             using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
@@ -1260,10 +1338,24 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual(originalPrioritized, world.Planet.PrioritizedPort,
                     "Passive MP clients must not locally change prioritized-port state before host acceptance.");
 
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetPlanetGovernorOptions(world.Planet));
+                Assert.AreEqual(3, submitted.Count);
+                Assert.AreEqual(2052, submitted[2].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetPlanetGovernorOptions, submitted[2].Kind);
+                Assert.AreEqual(world.Planet.Id, submitted[2].SubjectId);
+                Assert.AreEqual((int)expectedGovernorOptions, submitted[2].TargetId);
+                Assert.IsTrue(world.Planet.Quarantine);
+                Assert.IsTrue(world.Planet.SpecializedTradeHub);
+
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitSetPlanetManualBudget(world.EnemyPlanet,
                         AuthoritativePlanetBudgetKind.Civilian, 1f));
-                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(3, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetPlanetGovernorOptions(world.EnemyPlanet));
+                Assert.AreEqual(3, submitted.Count);
             }
         }
         finally
