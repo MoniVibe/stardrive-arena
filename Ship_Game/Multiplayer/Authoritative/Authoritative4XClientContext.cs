@@ -298,6 +298,41 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitRenameFleetPatrol(Empire empire,
+        FleetPatrol patrol, string newName)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (patrol == null
+            || !empire.FleetPatrols.Any(p => ReferenceEquals(p, patrol))
+            || !AuthoritativePlayerCommand.IsLegalPatrolName(newName)
+            || string.Equals(patrol.Name, newName, StringComparison.Ordinal)
+            || empire.FleetPatrols.Any(p => !ReferenceEquals(p, patrol)
+                                            && string.Equals(p.Name, newName, StringComparison.Ordinal)))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.RenameFleetPatrol(context.Next(), context.EmpireId,
+            patrol.Name, newName));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitDeleteFleetPatrol(Empire empire, FleetPatrol patrol)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (patrol == null
+            || string.IsNullOrWhiteSpace(patrol.Name)
+            || !empire.FleetPatrols.Any(p => ReferenceEquals(p, patrol)))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.DeleteFleetPatrol(context.Next(), context.EmpireId, patrol.Name));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitSetFleetAssignment(Empire empire, int fleetKey,
         AuthoritativeFleetAssignmentMode mode, Ship[] ships)
     {

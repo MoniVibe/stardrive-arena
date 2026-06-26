@@ -69,6 +69,8 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.RenameFleet => ApplyRenameFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.AutoArrangeFleet => ApplyAutoArrangeFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.LoadFleetPatrol => ApplyLoadFleetPatrol(command, empire, result),
+                AuthoritativePlayerCommandKind.RenameFleetPatrol => ApplyRenameFleetPatrol(command, empire, result),
+                AuthoritativePlayerCommandKind.DeleteFleetPatrol => ApplyDeleteFleetPatrol(command, empire, result),
                 AuthoritativePlayerCommandKind.SetFleetLayout => ApplyFleetLayout(command, empire, result),
                 AuthoritativePlayerCommandKind.QueueDeepSpaceBuild => ApplyDeepSpaceBuild(command, empire, result),
                 AuthoritativePlayerCommandKind.CancelDeepSpaceBuild => ApplyCancelDeepSpaceBuild(command, empire, result),
@@ -1270,6 +1272,56 @@ public sealed class Authoritative4XCommandApplicator
 
         fleet.LoadPatrol(patrol);
         fleet.Update(FixedSimTime.Zero);
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyRenameFleetPatrol(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (!AuthoritativePlayerCommand.TryParsePatrolRenamePayload(command.Text,
+                out string oldName, out string newName))
+        {
+            return Reject(result, $"Invalid fleet patrol rename payload '{command.Text}'.");
+        }
+        if (string.Equals(oldName, newName, StringComparison.Ordinal))
+            return Reject(result, "Fleet patrol rename must change the name.");
+
+        FleetPatrol patrol = empire.FleetPatrols.FirstOrDefault(p =>
+            string.Equals(p.Name, oldName, StringComparison.Ordinal));
+        if (patrol == null)
+            return Reject(result, $"Patrol plan '{oldName}' not found.");
+        if (empire.FleetPatrols.Any(p => !ReferenceEquals(p, patrol)
+                                        && string.Equals(p.Name, newName, StringComparison.Ordinal)))
+        {
+            return Reject(result, $"Patrol plan '{newName}' already exists.");
+        }
+
+        patrol.ChangeName(newName);
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyDeleteFleetPatrol(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        string patrolName = command.Text?.Trim() ?? "";
+        if (!AuthoritativePlayerCommand.IsLegalPatrolName(patrolName))
+            return Reject(result, $"Invalid fleet patrol name '{command.Text}'.");
+
+        FleetPatrol patrol = empire.FleetPatrols.FirstOrDefault(p =>
+            string.Equals(p.Name, patrolName, StringComparison.Ordinal));
+        if (patrol == null)
+            return Reject(result, $"Patrol plan '{patrolName}' not found.");
+
+        foreach (Fleet fleet in empire.AllFleets)
+        {
+            if (fleet.HasPatrolPlan && string.Equals(fleet.Patrol.Name, patrolName, StringComparison.Ordinal))
+            {
+                fleet.ClearPatrol();
+                fleet.Update(FixedSimTime.Zero);
+            }
+        }
+
+        empire.FleetPatrols.Remove(patrol);
         return Accept(result);
     }
 

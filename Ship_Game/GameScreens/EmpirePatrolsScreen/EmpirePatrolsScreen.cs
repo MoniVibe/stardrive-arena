@@ -11,6 +11,7 @@ using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
 using Ship_Game.Universe;
 using Ship_Game.Fleets;
+using Ship_Game.Multiplayer.Authoritative;
 
 namespace Ship_Game
 {
@@ -193,6 +194,16 @@ namespace Ship_Game
 
         public void DeletePatrol(FleetPatrol patrol)
         {
+            switch (Authoritative4XClientContext.TrySubmitDeleteFleetPatrol(Player, patrol))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.EchoAffirmative();
+                    return;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return;
+            }
+
             lock (Player.FleetPatrols)
             {
                 foreach (Fleet fleet in Player.AllFleets)
@@ -209,6 +220,16 @@ namespace Ship_Game
 
         public bool RenamePatrol(FleetPatrol patrol, string newName)
         {
+            switch (Authoritative4XClientContext.TrySubmitRenameFleetPatrol(Player, patrol, newName))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.EchoAffirmative();
+                    return true;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return false;
+            }
+
             lock (Player.FleetPatrols)
             {
                 patrol.ChangeName(newName);

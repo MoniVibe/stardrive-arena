@@ -50,6 +50,8 @@ public enum AuthoritativePlayerCommandKind : byte
     SetPlanetGovernorOptions = 36,
     SetPlanetManualTradeSlots = 37,
     SetPlanetDefenseTargets = 38,
+    RenameFleetPatrol = 39,
+    DeleteFleetPatrol = 40,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -570,6 +572,25 @@ public sealed class AuthoritativePlayerCommand
             Text = patrolName ?? "",
         };
 
+    public static AuthoritativePlayerCommand RenameFleetPatrol(int sequence, int empireId,
+        string oldName, string newName)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.RenameFleetPatrol,
+            Text = EncodePatrolRenamePayload(oldName, newName),
+        };
+
+    public static AuthoritativePlayerCommand DeleteFleetPatrol(int sequence, int empireId, string patrolName)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.DeleteFleetPatrol,
+            Text = patrolName ?? "",
+        };
+
     public static AuthoritativePlayerCommand ShipSpecialOrder(int sequence, int empireId, int shipId,
         AuthoritativeShipSpecialOrderType orderType)
         => new()
@@ -783,6 +804,25 @@ public sealed class AuthoritativePlayerCommand
            && IsInRange(wantedPlatforms, 0, MaxWantedPlatforms)
            && IsInRange(wantedShipyards, 0, MaxWantedShipyards)
            && IsInRange(wantedStations, 0, MaxWantedStations);
+
+    public static string EncodePatrolRenamePayload(string oldName, string newName)
+        => string.Join("|", EncodeText(oldName ?? ""), EncodeText(newName ?? ""));
+
+    public static bool TryParsePatrolRenamePayload(string payload, out string oldName, out string newName)
+    {
+        oldName = newName = "";
+        string[] parts = (payload ?? "").Split('|');
+        if (parts.Length != 2 || !TryDecodeText(parts[0], out oldName) || !TryDecodeText(parts[1], out newName))
+            return false;
+        return IsLegalPatrolName(oldName) && IsLegalPatrolName(newName);
+    }
+
+    public static bool IsLegalPatrolName(string name)
+    {
+        string trimmed = name?.Trim() ?? "";
+        return trimmed.Length is > 0 and <= 40
+            && trimmed.All(c => !char.IsControl(c));
+    }
 
     public static string EncodeIdList(IEnumerable<int> ids)
         => ids == null ? "" : string.Join(",", ids);

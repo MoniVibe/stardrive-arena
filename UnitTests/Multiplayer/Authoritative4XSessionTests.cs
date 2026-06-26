@@ -373,6 +373,24 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(7, copy.SubjectId);
         Assert.AreEqual("Alpha Patrol", copy.Text);
 
+        var renamePatrolRequest = AuthoritativePlayerCommand.RenameFleetPatrol(36, 2,
+                "Alpha Patrol", "Beta Patrol")
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(renamePatrolRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.RenameFleetPatrol, copy.Kind);
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParsePatrolRenamePayload(copy.Text,
+            out string oldPatrolName, out string newPatrolName));
+        Assert.AreEqual("Alpha Patrol", oldPatrolName);
+        Assert.AreEqual("Beta Patrol", newPatrolName);
+
+        var deletePatrolRequest = AuthoritativePlayerCommand.DeleteFleetPatrol(37, 2, "Beta Patrol")
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(deletePatrolRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.DeleteFleetPatrol, copy.Kind);
+        Assert.AreEqual("Beta Patrol", copy.Text);
+
         var specialOrderRequest = AuthoritativePlayerCommand.ShipSpecialOrder(28, 2, 99,
                 AuthoritativeShipSpecialOrderType.Explore)
             .ToMessage(fromPeer: 2);
@@ -2122,6 +2140,105 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XFleetPatrolManagement_RenamesDeletesAndSyncs_Headless()
+    {
+        const ulong Seed = 0xF1EE4A14UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetFleetAssignment(149,
+                authority.Player.Id, fleetKey: 3, AuthoritativeFleetAssignmentMode.Replace,
+                new[] { authority.Ship.Id, authority.WingShip.Id }));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+
+            Fleet authorityFleet = authority.Player.GetFleetOrNull(3);
+            Fleet clientFleet = client.Player.GetFleetOrNull(3);
+            Assert.IsNotNull(authorityFleet);
+            Assert.IsNotNull(clientFleet);
+            FleetPatrol authorityPatrol = authority.Player.AddPatrolRoute(authorityFleet,
+                TestPatrolWaypoints(authorityFleet.FinalPosition));
+            FleetPatrol clientPatrol = client.Player.AddPatrolRoute(clientFleet,
+                TestPatrolWaypoints(clientFleet.FinalPosition));
+            FleetPatrol authorityOtherPatrol = authority.Player.AddPatrolRoute(authorityFleet,
+                TestPatrolWaypoints(authorityFleet.FinalPosition + new Vector2(3_000f, 0f)));
+            FleetPatrol clientOtherPatrol = client.Player.AddPatrolRoute(clientFleet,
+                TestPatrolWaypoints(clientFleet.FinalPosition + new Vector2(3_000f, 0f)));
+            Assert.AreEqual(authorityPatrol.Name, clientPatrol.Name);
+            Assert.AreEqual(authorityOtherPatrol.Name, clientOtherPatrol.Name);
+            string originalName = authorityPatrol.Name;
+            string otherName = authorityOtherPatrol.Name;
+
+            string savedPlanDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+            Assert.AreEqual(savedPlanDigest, AuthoritativeStateSnapshot.Capture(client.Screen, 0).SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.RenameFleetPatrol(150,
+                authority.Player.Id, originalName, "Renamed Patrol"));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual("Renamed Patrol", authorityPatrol.Name);
+            Assert.AreEqual("Renamed Patrol", clientPatrol.Name);
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, $"FP|{authority.Player.Id}|Renamed Patrol");
+            Assert.AreNotEqual(savedPlanDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover saved patrol plan renames.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.RenameFleetPatrol(151,
+                authority.Player.Id, "Renamed Patrol", otherName));
+            Assert.IsFalse(session.LastResult.Accepted, "Duplicate patrol names must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "already exists");
+            Assert.AreEqual("Renamed Patrol", authorityPatrol.Name);
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.RenameFleetPatrol(152,
+                authority.Enemy.Id, "Renamed Patrol", "Enemy Rename"));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not rename another empire's patrol plan.");
+            StringAssert.Contains(session.LastResult.Reason, "not found");
+            Assert.AreEqual("Renamed Patrol", authorityPatrol.Name);
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.LoadFleetPatrol(153,
+                authority.Player.Id, fleetKey: 3, "Renamed Patrol"));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authorityFleet.HasPatrolPlan);
+            Assert.IsTrue(clientFleet.HasPatrolPlan);
+            Assert.AreEqual("Renamed Patrol", authorityFleet.Patrol.Name);
+            Assert.AreEqual("Renamed Patrol", clientFleet.Patrol.Name);
+
+            string beforeDeleteDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.DeleteFleetPatrol(154,
+                authority.Player.Id, "Renamed Patrol"));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsFalse(authority.Player.FleetPatrols.Any(p => p.Name == "Renamed Patrol"));
+            Assert.IsFalse(client.Player.FleetPatrols.Any(p => p.Name == "Renamed Patrol"));
+            Assert.IsFalse(authorityFleet.HasPatrolPlan,
+                "Deleting a saved patrol must clear any fleet currently assigned to it on the authority.");
+            Assert.IsFalse(clientFleet.HasPatrolPlan,
+                "Deleting a saved patrol must clear any fleet currently assigned to it on replicas.");
+            Assert.AreNotEqual(beforeDeleteDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover saved patrol deletion and active fleet patrol clearing.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeMissingDeleteDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.DeleteFleetPatrol(155,
+                authority.Player.Id, "Renamed Patrol"));
+            Assert.IsFalse(session.LastResult.Accepted, "Missing patrol deletes must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "not found");
+            Assert.AreEqual(beforeMissingDeleteDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XShipSpecialOrder_ExploreSyncsAndRejectsInvalidRequests_Headless()
     {
         const ulong Seed = 0xE7010EUL;
@@ -2704,6 +2821,76 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitLoadFleetPatrol(enemyFleet, enemyPatrol));
                 Assert.AreEqual(1, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsFleetPatrolManagementWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xF1EE7C1DUL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            Fleet fleet = world.Player.CreateFleet(4, null);
+            fleet.AddShips(new[] { world.Ship, world.WingShip });
+            fleet.SetCommandShip(null);
+            fleet.AutoArrange();
+            fleet.Update(FixedSimTime.Zero);
+            FleetPatrol patrol = world.Player.AddPatrolRoute(fleet, TestPatrolWaypoints(fleet.FinalPosition));
+            FleetPatrol otherPatrol = world.Player.AddPatrolRoute(fleet,
+                TestPatrolWaypoints(fleet.FinalPosition + new Vector2(2_500f, 0f)));
+            string originalName = patrol.Name;
+            int originalPatrolCount = world.Player.FleetPatrols.Count;
+
+            var submitted = new List<AuthoritativePlayerCommand>();
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2175))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitRenameFleetPatrol(world.Player, patrol, "Renamed Patrol"));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2175, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.RenameFleetPatrol, submitted[0].Kind);
+                Assert.IsTrue(AuthoritativePlayerCommand.TryParsePatrolRenamePayload(submitted[0].Text,
+                    out string oldName, out string newName));
+                Assert.AreEqual(originalName, oldName);
+                Assert.AreEqual("Renamed Patrol", newName);
+                Assert.AreEqual(originalName, patrol.Name,
+                    "Passive MP clients must not locally rename saved patrol plans before host acceptance.");
+                Assert.AreEqual(originalPatrolCount, world.Player.FleetPatrols.Count);
+
+                fleet.LoadPatrol(patrol);
+                Assert.IsTrue(fleet.HasPatrolPlan);
+                Assert.AreSame(patrol, fleet.Patrol);
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitDeleteFleetPatrol(world.Player, patrol));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(2176, submitted[1].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.DeleteFleetPatrol, submitted[1].Kind);
+                Assert.AreEqual(originalName, submitted[1].Text);
+                Assert.AreEqual(originalPatrolCount, world.Player.FleetPatrols.Count,
+                    "Passive MP clients must not locally delete saved patrol plans before host acceptance.");
+                Assert.IsTrue(fleet.HasPatrolPlan,
+                    "Passive MP clients must not locally clear fleets assigned to a deleted patrol before host acceptance.");
+                Assert.AreSame(patrol, fleet.Patrol);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitRenameFleetPatrol(world.Player, patrol, otherPatrol.Name));
+                Assert.AreEqual(2, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitRenameFleetPatrol(world.Enemy, patrol, "Enemy Rename"));
+                Assert.AreEqual(2, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitDeleteFleetPatrol(world.Enemy, patrol));
+                Assert.AreEqual(2, submitted.Count);
             }
         }
         finally
