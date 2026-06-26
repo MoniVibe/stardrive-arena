@@ -6802,6 +6802,87 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XSnapshot_ToleratesSubQuantumShipMovementDrift_Headless()
+    {
+        LoadAllGameData();
+
+        IEmpireData[] races = ResourceManager.MajorRaces
+            .Where(r => !r.IsFactionOrMinorRace)
+            .OrderBy(r => RacePreference(r), StringComparer.Ordinal)
+            .Take(2)
+            .ToArray();
+        Assert.IsTrue(races.Length >= 2, "The ship movement digest proof needs two playable races.");
+        string hostRace = RacePreference(races[0]);
+        string joinRace = RacePreference(races[1]);
+
+        var settings = new Authoritative4XGameSettings
+        {
+            GenerationSeed = 24237,
+            GalaxySize = GalSize.Tiny,
+            StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+            Mode = RaceDesignScreen.GameMode.Sandbox,
+            Difficulty = GameDifficulty.Normal,
+            NumOpponents = 1,
+            Pace = 1f,
+            TurnTimer = 10,
+            ExtraPlanets = 0,
+            StartingPlanetRichnessBonus = 0f,
+            GameSpeed = 1f,
+            StartPaused = false,
+        };
+
+        var flow = new Authoritative4XLobbyNetworkFlow(2, 3);
+        var lobby = new Authoritative4XLobby(2, "Host");
+        lobby.Join(3, "Join");
+        Assert.IsTrue(lobby.SetSettings(2, settings).Valid);
+        Assert.IsTrue(lobby.SetPlayerSelection(2, hostRace, Array.Empty<string>()).Valid);
+        Assert.IsTrue(lobby.SetPlayerSelection(3, joinRace, Array.Empty<string>()).Valid);
+        Assert.IsTrue(lobby.SetReady(2, true).Valid);
+        Assert.IsTrue(lobby.SetReady(3, true).Valid);
+        SessionStartMessage start = flow.BuildStartMessage(lobby, ArenaMultiplayerSettings.ProtocolVersion,
+            "0xUNITTEST", "unit-test", maxTurns: 600);
+        Authoritative4XGeneratedGameStart authority = flow.CreateGeneratedGame(start);
+        Authoritative4XGeneratedGameStart client = flow.CreateGeneratedGame(start);
+
+        try
+        {
+            var step = new FixedSimTime(1f / 60f);
+            for (int i = 0; i < 31; ++i)
+            {
+                authority.AuthorityUniverse.SingleSimulationStep(step);
+                client.AuthorityUniverse.SingleSimulationStep(step);
+            }
+
+            Ship authorityShip = authority.AuthorityUniverse.UState.Ships.OrderBy(s => s.Id).First();
+            Ship clientShip = client.AuthorityUniverse.UState.Ships.First(s => s.Id == authorityShip.Id);
+            float authorityX = BitConverter.Int32BitsToSingle(unchecked((int)1234658415u));
+            float clientX = BitConverter.Int32BitsToSingle(unchecked((int)1234658390u));
+            Assert.AreEqual(3.125f, authorityX - clientX,
+                "This proof should preserve the live turn-31 ship-position drift that caused the crash.");
+
+            authorityShip.Position = new Vector2(authorityX, 25_000f);
+            clientShip.Position = new Vector2(clientX, 25_000f);
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.AuthorityUniverse, 0);
+            AuthoritativeStateSnapshot clientSnapshot = AuthoritativeStateSnapshot.Capture(client.AuthorityUniverse, 0);
+
+            Assert.AreEqual(authoritySnapshot.SyncDigest, clientSnapshot.SyncDigest,
+                "Sub-quantum ship movement drift must not be treated as an authoritative gameplay-state mismatch.");
+
+            clientShip.Position = new Vector2(authorityX + 128f, 25_000f);
+            AuthoritativeStateSnapshot materialDrift = AuthoritativeStateSnapshot.Capture(client.AuthorityUniverse, 0);
+            Assert.AreNotEqual(authoritySnapshot.SyncDigest, materialDrift.SyncDigest,
+                "The sync digest must still catch material ship-position divergence. authority='"
+                + ShipPayloadRowForTest(authoritySnapshot.Payload, authorityShip.Id) + "' client='"
+                + ShipPayloadRowForTest(materialDrift.Payload, clientShip.Id) + "'");
+        }
+        finally
+        {
+            authority.Dispose();
+            client.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XLiveHost_AttachesPollsAndBroadcastsHeartbeat_Headless()
     {
         const ulong Seed = 0x41E40057UL;
@@ -8413,6 +8494,14 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(client.LastAuthoritySnapshot.HashHi, client.LastClientSnapshot.HashHi);
             Assert.AreEqual(client.LastAuthoritySnapshot.SyncDigest, client.LastClientSnapshot.SyncDigest);
         }
+    }
+
+    static string ShipPayloadRowForTest(string payload, int shipId)
+    {
+        string prefix = $"S|{shipId}|";
+        return (payload ?? "").Split('\n')
+            .Select(line => line.TrimEnd('\r'))
+            .FirstOrDefault(line => line.StartsWith(prefix, StringComparison.Ordinal)) ?? "<missing>";
     }
 
     static string FirstPayloadDifferenceForTest(string authorityPayload, string clientPayload)
