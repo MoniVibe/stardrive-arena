@@ -3,6 +3,7 @@ using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using SDUtils;
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
 
@@ -133,12 +134,19 @@ namespace Ship_Game
             {
                 if (CancelProdHover && P.IsConstructing)
                 {
+                    QueueItem item = P.Construction.NotEmpty ? P.ConstructionQueue[0] : null;
+                    if (HandleAuthoritativeQueueResult(
+                            Authoritative4XClientContext.TrySubmitCancelConstructionQueueItem(P, item)))
+                    {
+                        return true;
+                    }
+
                     Screen.Universe.RunOnSimThread(() =>
                     {
-                        QueueItem item = P.Construction.GetConstructionQueue()[0];
-                        if (!item.IsComplete)
+                        QueueItem queueItem = P.Construction.GetConstructionQueue()[0];
+                        if (!queueItem.IsComplete)
                         {
-                            P.Construction.Cancel(item);
+                            P.Construction.Cancel(queueItem);
                             GameAudio.AcceptClick();
                         }
                         else
@@ -153,9 +161,27 @@ namespace Ship_Game
                 if (ApplyProdHover && P.IsConstructing)
                 {
                     float maxAmount = input.IsCtrlKeyDown ? 10000f : 10f;
+                    bool hasValidConstruction = P.Construction.NotEmpty && !P.ConstructionQueue[0].IsComplete;
+                    QueueItem item = hasValidConstruction ? P.ConstructionQueue[0] : null;
+                    if (input.IsShiftKeyDown)
+                    {
+                        if (HandleAuthoritativeQueueResult(
+                                Authoritative4XClientContext.TrySubmitToggleConstructionRush(P, item)))
+                        {
+                            return true;
+                        }
+                    }
+                    else if (hasValidConstruction)
+                    {
+                        if (HandleAuthoritativeQueueResult(
+                                Authoritative4XClientContext.TrySubmitRushConstructionQueueItem(P, item, maxAmount)))
+                        {
+                            return true;
+                        }
+                    }
+
                     Universe.RunOnSimThread(() =>
                     {
-                        bool hasValidConstruction = P.Construction.NotEmpty && !P.ConstructionQueue[0].IsComplete;
                         if (input.IsShiftKeyDown)
                         {
                             P.ConstructionQueue[0].Rush = !P.ConstructionQueue[0].Rush;
@@ -204,6 +230,28 @@ namespace Ship_Game
                 }
             }
             return base.HandleInput(input);
+        }
+
+        bool HandleAuthoritativeQueueResult(Authoritative4XUiCommandResult result)
+        {
+            switch (result)
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.AcceptClick();
+                    return true;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return true;
+                case Authoritative4XUiCommandResult.NotActive:
+                    if (Authoritative4XClientContext.IsActive)
+                    {
+                        GameAudio.NegativeClick();
+                        return true;
+                    }
+                    return false;
+                default:
+                    return false;
+            }
         }
 
         public override void Draw(SpriteBatch batch, DrawTimes elapsed)

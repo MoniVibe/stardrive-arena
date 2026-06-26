@@ -338,6 +338,35 @@ public sealed class Authoritative4XClientContext : IDisposable
         return TrySubmitReorderConstructionQueueItem(planet, item, queueIndex + relativeChange);
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitRushConstructionQueueItem(Planet planet,
+        QueueItem item, float maxAmount)
+    {
+        if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+
+        int queueIndex = QueueIndexOf(planet, item);
+        if (queueIndex < 0 || item.IsComplete || float.IsNaN(maxAmount) || float.IsInfinity(maxAmount) || maxAmount <= 0f)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.RushConstructionQueueItem(context.Next(), context.EmpireId,
+            planet.Id, queueIndex, maxAmount));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitToggleConstructionRush(Planet planet, QueueItem item)
+    {
+        if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+
+        int queueIndex = QueueIndexOf(planet, item);
+        if (queueIndex < 0 || item.IsComplete)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.ToggleConstructionRush(context.Next(), context.EmpireId,
+            planet.Id, queueIndex));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static bool IsActiveFor(Empire empire)
         => TryGetFor(empire, out _);
 

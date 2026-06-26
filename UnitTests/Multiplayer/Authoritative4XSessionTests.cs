@@ -143,6 +143,25 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(4, copy.TargetId);
         Assert.AreEqual(1f, copy.X);
 
+        var rushQueueRequest = AuthoritativePlayerCommand.RushConstructionQueueItem(21, 2, 789,
+                queueIndex: 4, maxAmount: 12.5f)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(rushQueueRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.RushConstructionQueueItem, copy.Kind);
+        Assert.AreEqual(789, copy.SubjectId);
+        Assert.AreEqual(4, copy.TargetId);
+        Assert.AreEqual(12.5f, copy.X);
+
+        var toggleRushRequest = AuthoritativePlayerCommand.ToggleConstructionRush(22, 2, 789,
+                queueIndex: 4)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(toggleRushRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.ToggleConstructionRush, copy.Kind);
+        Assert.AreEqual(789, copy.SubjectId);
+        Assert.AreEqual(4, copy.TargetId);
+
         var attackRequest = AuthoritativePlayerCommand.AttackShip(12, 2, 99, 100, queue: true)
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(attackRequest, toPeer: 1));
@@ -752,6 +771,78 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XConstructionRush_ToggleAndRushSync_Headless()
+    {
+        const ulong Seed = 0xC0DE705UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            EnsureSingleBuildTile(authority.Planet);
+            EnsureSingleBuildTile(client.Planet);
+            Building buildable = PickBuildableBuilding(authority.Planet);
+            authority.Player.Money = client.Player.Money = 100_000f;
+            authority.Planet.ProdHere = client.Planet.ProdHere = 100f;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueBuilding(70, authority.Player.Id,
+                authority.Planet.Id, buildable.Name));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+
+            QueueItem authorityItem = authority.Planet.ConstructionQueue[0];
+            QueueItem clientItem = client.Planet.ConstructionQueue[0];
+            Assert.IsFalse(authorityItem.Rush);
+            string beforeToggleDigest = session.LastAuthoritySnapshot.SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.ToggleConstructionRush(71,
+                authority.Player.Id, authority.Planet.Id, queueIndex: 0));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.Planet.ConstructionQueue[0].Rush);
+            Assert.IsTrue(client.Planet.ConstructionQueue[0].Rush);
+            Assert.AreNotEqual(beforeToggleDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The canonical sync digest must cover construction continuous-rush flags.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.RushConstructionQueueItem(74,
+                authority.Player.Id, authority.Planet.Id, queueIndex: 0, maxAmount: float.NaN));
+            Assert.IsFalse(session.LastResult.Accepted, "Non-finite rush amounts must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "not valid");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            float beforeMoney = authority.Player.Money;
+            float beforeSpent = authorityItem.ProductionSpent;
+            session.SubmitFromClient(AuthoritativePlayerCommand.RushConstructionQueueItem(72,
+                authority.Player.Id, authority.Planet.Id, queueIndex: 0, maxAmount: 1f));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.Player.Money < beforeMoney,
+                "Rush production should charge the authoritative empire.");
+            Assert.AreEqual(authority.Player.Money, client.Player.Money,
+                "Client replica money must match the authority after rush production.");
+            bool productionApplied = authority.Planet.ConstructionQueue.Count == 0
+                                     || authority.Planet.ConstructionQueue[0].ProductionSpent > beforeSpent;
+            Assert.IsTrue(productionApplied,
+                "Rush production must either add production to the queued item or complete it.");
+            Assert.AreEqual(authority.Planet.ConstructionQueue.Count, client.Planet.ConstructionQueue.Count);
+            if (authority.Planet.ConstructionQueue.Count > 0)
+                Assert.AreEqual(authority.Planet.ConstructionQueue[0].ProductionSpent,
+                    client.Planet.ConstructionQueue[0].ProductionSpent);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.RushConstructionQueueItem(73,
+                authority.Player.Id, authority.Planet.Id, queueIndex: 99, maxAmount: 1f));
+            Assert.IsFalse(session.LastResult.Accepted, "A stale rush queue index must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "outside");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientContext_SubmitsConstructionQueueManagementWithoutLocalMutation_Headless()
     {
         const ulong Seed = 0xC0DE0C1UL;
@@ -794,9 +885,31 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual(2, world.Planet.ConstructionQueue.Count,
                     "Passive MP clients must not locally cancel construction before host acceptance.");
 
+                bool originalRush = buildingItem.Rush;
+                float originalProductionSpent = buildingItem.ProductionSpent;
+                float originalMoney = world.Player.Money;
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitToggleConstructionRush(world.Planet, buildingItem));
+                Assert.AreEqual(3, submitted.Count);
+                Assert.AreEqual(1702, submitted[2].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.ToggleConstructionRush, submitted[2].Kind);
+                Assert.AreEqual(originalRush, buildingItem.Rush,
+                    "Passive MP clients must not locally toggle continuous rush before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitRushConstructionQueueItem(world.Planet,
+                        buildingItem, maxAmount: 5f));
+                Assert.AreEqual(4, submitted.Count);
+                Assert.AreEqual(1703, submitted[3].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.RushConstructionQueueItem, submitted[3].Kind);
+                Assert.AreEqual(originalProductionSpent, buildingItem.ProductionSpent,
+                    "Passive MP clients must not locally apply rushed production before host acceptance.");
+                Assert.AreEqual(originalMoney, world.Player.Money,
+                    "Passive MP clients must not locally spend rush credits before host acceptance.");
+
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitCancelConstructionQueueItem(world.EnemyPlanet, buildingItem));
-                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(4, submitted.Count);
             }
         }
         finally

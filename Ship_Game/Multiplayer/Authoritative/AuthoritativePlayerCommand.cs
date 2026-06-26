@@ -27,6 +27,8 @@ public enum AuthoritativePlayerCommandKind : byte
     QueueResearch = 16,
     RemoveResearchQueueItem = 17,
     MoveResearchQueueItem = 18,
+    RushConstructionQueueItem = 19,
+    ToggleConstructionRush = 20,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -248,6 +250,29 @@ public sealed class AuthoritativePlayerCommand
             SubjectId = planetId,
             TargetId = currentIndex,
             Position = new Vector2(moveToIndex, 0f),
+        };
+
+    public static AuthoritativePlayerCommand RushConstructionQueueItem(int sequence, int empireId, int planetId,
+        int queueIndex, float maxAmount)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.RushConstructionQueueItem,
+            SubjectId = planetId,
+            TargetId = queueIndex,
+            Position = new Vector2(maxAmount, 0f),
+        };
+
+    public static AuthoritativePlayerCommand ToggleConstructionRush(int sequence, int empireId, int planetId,
+        int queueIndex)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.ToggleConstructionRush,
+            SubjectId = planetId,
+            TargetId = queueIndex,
         };
 
     public static AuthoritativePlayerCommand AttackShip(int sequence, int empireId, int shipId, int targetShipId,

@@ -128,11 +128,24 @@ namespace Ship_Game
             InputState input = GameBase.ScreenManager.input;
             if (input.IsShiftKeyDown)
             {
+                if (HandleAuthoritativeQueueResult(
+                        Authoritative4XClientContext.TrySubmitToggleConstructionRush(Planet, Item)))
+                {
+                    return;
+                }
+
                 Universe.RunOnSimThread(() => Item.Rush = !Item.Rush);
                 return;
             }
 
             float maxAmount = (input.IsCtrlKeyDown ? Planet.ProdHere : 10f).UpperBound(Item.ProductionNeeded);
+            if (HandleAuthoritativeQueueResult(
+                    Authoritative4XClientContext.TrySubmitRushConstructionQueueItem(Planet, Item,
+                        maxAmount.UpperBound(Planet.ProdHere))))
+            {
+                return;
+            }
+
             Universe.RunOnSimThread(() => RushProduction(Item, maxAmount.UpperBound(Planet.ProdHere)));
         }
 

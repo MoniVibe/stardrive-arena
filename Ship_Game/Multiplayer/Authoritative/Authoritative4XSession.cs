@@ -133,6 +133,7 @@ public sealed class AuthoritativeStateSnapshot
                   .Append('|').Append(q.pgs?.Y ?? -1)
                   .Append('|').Append(FloatBits(q.Cost))
                   .Append('|').Append(FloatBits(q.ProductionSpent))
+                  .Append('|').Append(q.Rush ? 1 : 0)
                   .AppendLine();
             }
         }

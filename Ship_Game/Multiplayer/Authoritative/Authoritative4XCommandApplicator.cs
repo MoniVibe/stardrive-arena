@@ -53,6 +53,8 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.QueueTroop => ApplyQueueTroop(command, empire, result),
                 AuthoritativePlayerCommandKind.CancelConstructionQueueItem => ApplyCancelConstructionQueueItem(command, empire, result),
                 AuthoritativePlayerCommandKind.ReorderConstructionQueueItem => ApplyReorderConstructionQueueItem(command, empire, result),
+                AuthoritativePlayerCommandKind.RushConstructionQueueItem => ApplyRushConstructionQueueItem(command, empire, result),
+                AuthoritativePlayerCommandKind.ToggleConstructionRush => ApplyToggleConstructionRush(command, empire, result),
                 AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
@@ -505,6 +507,41 @@ public sealed class Authoritative4XCommandApplicator
         return Accept(result);
     }
 
+    AuthoritativeCommandResult ApplyRushConstructionQueueItem(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (!TryGetOwnedQueueItem(command, empire, result, out Planet planet, out QueueItem item,
+                out AuthoritativeCommandResult rejected))
+        {
+            return rejected;
+        }
+        if (item.IsComplete)
+            return Reject(result, $"Construction queue item {command.TargetId} at planet {planet.Id} is already complete.");
+
+        float maxAmount = command.Position.X;
+        if (!IsFinitePositive(maxAmount))
+            return Reject(result, $"Rush production amount {maxAmount} is not valid.");
+
+        return planet.Construction.RushProduction(command.TargetId, maxAmount, rushButton: true)
+            ? Accept(result)
+            : Reject(result, $"Planet {planet.Id} could not rush construction queue item {command.TargetId}.");
+    }
+
+    AuthoritativeCommandResult ApplyToggleConstructionRush(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (!TryGetOwnedQueueItem(command, empire, result, out Planet planet, out QueueItem item,
+                out AuthoritativeCommandResult rejected))
+        {
+            return rejected;
+        }
+        if (item.IsComplete)
+            return Reject(result, $"Construction queue item {command.TargetId} at planet {planet.Id} is already complete.");
+
+        item.Rush = !item.Rush;
+        return Accept(result);
+    }
+
     static IShipDesign RegisterPlayerDesign(ShipDesign design, out string rejectReason)
     {
         if (ResourceManager.Ships.GetDesign(design.Name, out IShipDesign existing))
@@ -561,6 +598,9 @@ public sealed class Authoritative4XCommandApplicator
         => !float.IsNaN(value) && !float.IsInfinity(value) && value >= 0f && value <= 1f;
 
     static bool IsUnitPercent(float value) => IsValidLaborPercent(value);
+
+    static bool IsFinitePositive(float value)
+        => !float.IsNaN(value) && !float.IsInfinity(value) && value > 0f;
 
     bool TryGetOwnedQueueItem(AuthoritativePlayerCommand command, Empire empire, AuthoritativeCommandResult result,
         out Planet planet, out QueueItem item, out AuthoritativeCommandResult rejected)
