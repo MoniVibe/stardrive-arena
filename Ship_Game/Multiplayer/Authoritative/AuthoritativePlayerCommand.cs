@@ -35,6 +35,7 @@ public enum AuthoritativePlayerCommandKind : byte
     SetPlanetManualBudget = 23,
     SetFleetAssignment = 24,
     MoveFleet = 25,
+    ShipSpecialOrder = 26,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -87,6 +88,11 @@ public enum AuthoritativeFleetAssignmentMode : byte
     Replace = 1,
     Add = 2,
     Clear = 3,
+}
+
+public enum AuthoritativeShipSpecialOrderType : byte
+{
+    Explore = 1,
 }
 
 /// <summary>
@@ -359,6 +365,17 @@ public sealed class AuthoritativePlayerCommand
             TargetId = (int)order,
             Position = destination,
             Text = EncodeVectorPayload(direction),
+        };
+
+    public static AuthoritativePlayerCommand ShipSpecialOrder(int sequence, int empireId, int shipId,
+        AuthoritativeShipSpecialOrderType orderType)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.ShipSpecialOrder,
+            SubjectId = shipId,
+            TargetId = (int)orderType,
         };
 
     public static AuthoritativePlayerCommand AttackShip(int sequence, int empireId, int shipId, int targetShipId,

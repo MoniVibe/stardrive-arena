@@ -2,6 +2,7 @@ using System;
 using Ship_Game.AI;
 using Ship_Game.Commands.Goals;
 using Ship_Game.GameScreens.DiplomacyScreen;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 
 namespace Ship_Game
@@ -34,6 +35,14 @@ namespace Ship_Game
 
         public void DoExplore(Ship s)
         {
+            switch (Authoritative4XClientContext.TrySubmitShipSpecialOrder(s,
+                        AuthoritativeShipSpecialOrderType.Explore))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    return;
+            }
+
             s.AI.OrderExplore();
         }
 

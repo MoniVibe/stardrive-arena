@@ -171,6 +171,22 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitShipSpecialOrder(Ship ship,
+        AuthoritativeShipSpecialOrderType orderType)
+    {
+        if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!Enum.IsDefined(typeof(AuthoritativeShipSpecialOrderType), orderType)
+            || !CanSubmitShipSpecialOrder(ship, orderType))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.ShipSpecialOrder(context.Next(), context.EmpireId,
+            ship.Id, orderType));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitAttackShip(Ship ship, Ship target, bool queue)
     {
         if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
@@ -482,6 +498,14 @@ public sealed class Authoritative4XClientContext : IDisposable
 
     static bool CanSubmitFleetMoveShip(Ship ship)
         => ship?.Active == true && ship.PlayerShipCanTakeFleetOrders();
+
+    static bool CanSubmitShipSpecialOrder(Ship ship, AuthoritativeShipSpecialOrderType orderType)
+        => orderType == AuthoritativeShipSpecialOrderType.Explore
+           && ship?.Active == true
+           && ship.PlayerShipCanTakeFleetOrders()
+           && !ship.IsPlatformOrStation
+           && !ship.IsSubspaceProjector
+           && ship.ShipData.Role != RoleName.troop;
 
     static bool CanSubmitShipAttack(Ship ship, Ship target)
         => CanSubmitShipMove(ship) && ship.ShipData.Role != RoleName.troop && ship != target

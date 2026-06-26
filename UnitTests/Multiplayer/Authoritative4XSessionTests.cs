@@ -216,6 +216,15 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.IsTrue(AuthoritativePlayerCommand.TryParseVectorPayload(copy.Text, out Vector2 moveFleetDirection));
         Assert.AreEqual(new Vector2(0f, -1f), moveFleetDirection);
 
+        var specialOrderRequest = AuthoritativePlayerCommand.ShipSpecialOrder(28, 2, 99,
+                AuthoritativeShipSpecialOrderType.Explore)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(specialOrderRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.ShipSpecialOrder, copy.Kind);
+        Assert.AreEqual(99, copy.SubjectId);
+        Assert.AreEqual((int)AuthoritativeShipSpecialOrderType.Explore, copy.TargetId);
+
         var attackRequest = AuthoritativePlayerCommand.AttackShip(12, 2, 99, 100, queue: true)
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(attackRequest, toPeer: 1));
@@ -1140,6 +1149,60 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XShipSpecialOrder_ExploreSyncsAndRejectsInvalidRequests_Headless()
+    {
+        const ulong Seed = 0xE7010EUL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.ShipSpecialOrder(130,
+                authority.Player.Id, authority.Ship.Id, AuthoritativeShipSpecialOrderType.Explore));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(AIState.Explore, authority.Ship.AI.State);
+            Assert.AreEqual(AIState.Explore, client.Ship.AI.State);
+            Assert.IsTrue(authority.Ship.AI.OrderQueue.ToArray().Any(g => g.Plan == ShipAI.Plan.Explore),
+                "The authority should apply Explore through the real ship AI order queue.");
+            Assert.IsTrue(client.Ship.AI.OrderQueue.ToArray().Any(g => g.Plan == ShipAI.Plan.Explore),
+                "The client replica should replay the accepted Explore order deterministically.");
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover ship special-order state.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.ShipSpecialOrder(131,
+                authority.Enemy.Id, authority.Ship.Id, AuthoritativeShipSpecialOrderType.Explore));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not issue explore orders for another empire's ship.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(AIState.Explore, authority.Ship.AI.State);
+            Assert.AreEqual(AIState.Explore, client.Ship.AI.State);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(new AuthoritativePlayerCommand
+            {
+                Sequence = 132,
+                EmpireId = authority.Player.Id,
+                Kind = AuthoritativePlayerCommandKind.ShipSpecialOrder,
+                SubjectId = authority.Ship.Id,
+                TargetId = 255,
+            });
+            Assert.IsFalse(session.LastResult.Accepted, "Unknown special-order types must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "Unsupported");
+            Assert.AreEqual(AIState.Explore, authority.Ship.AI.State);
+            Assert.AreEqual(AIState.Explore, client.Ship.AI.State);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientContext_SubmitsFleetAssignmentWithoutLocalMutation_Headless()
     {
         const ulong Seed = 0xF1EE7C17UL;
@@ -1237,6 +1300,50 @@ public class Authoritative4XSessionTests : StarDriveTest
                 enemyFleet.AutoArrange();
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitMoveFleet(enemyFleet, destination, direction, order));
+                Assert.AreEqual(1, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsShipSpecialOrderWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xE7010CUL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            AIState originalState = world.Ship.AI.State;
+            int originalOrders = world.Ship.AI.OrderQueue.Count;
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2170))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitShipSpecialOrder(world.Ship,
+                        AuthoritativeShipSpecialOrderType.Explore));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2170, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.ShipSpecialOrder, submitted[0].Kind);
+                Assert.AreEqual(world.Ship.Id, submitted[0].SubjectId);
+                Assert.AreEqual((int)AuthoritativeShipSpecialOrderType.Explore, submitted[0].TargetId);
+                Assert.AreEqual(originalState, world.Ship.AI.State,
+                    "Passive MP clients must not locally start exploration before host acceptance.");
+                Assert.AreEqual(originalOrders, world.Ship.AI.OrderQueue.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitShipSpecialOrder(world.EnemyShip,
+                        AuthoritativeShipSpecialOrderType.Explore));
+                Assert.AreEqual(1, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitShipSpecialOrder(world.Ship,
+                        (AuthoritativeShipSpecialOrderType)255));
                 Assert.AreEqual(1, submitted.Count);
             }
         }

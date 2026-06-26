@@ -62,6 +62,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.SetPlanetManualBudget => ApplyPlanetManualBudget(command, empire, result),
                 AuthoritativePlayerCommandKind.SetFleetAssignment => ApplyFleetAssignment(command, empire, result),
                 AuthoritativePlayerCommandKind.MoveFleet => ApplyMoveFleet(command, empire, result),
+                AuthoritativePlayerCommandKind.ShipSpecialOrder => ApplyShipSpecialOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
@@ -125,6 +126,42 @@ public sealed class Authoritative4XCommandApplicator
 
         fleet.MoveTo(command.Position, direction.Normalized(), order);
         return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyShipSpecialOrder(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
+            || !Enum.IsDefined(typeof(AuthoritativeShipSpecialOrderType),
+                (AuthoritativeShipSpecialOrderType)(byte)command.TargetId))
+        {
+            return Reject(result, $"Unsupported ship special order {command.TargetId}.");
+        }
+
+        Ship ship = UState.Objects.FindShip(command.SubjectId);
+        if (ship == null)
+            return Reject(result, $"Ship {command.SubjectId} not found.");
+        if (!ship.Active)
+            return Reject(result, $"Ship {command.SubjectId} is inactive.");
+        if (ship.Loyalty != empire)
+            return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
+
+        switch ((AuthoritativeShipSpecialOrderType)command.TargetId)
+        {
+            case AuthoritativeShipSpecialOrderType.Explore:
+                if (!ship.PlayerShipCanTakeFleetOrders()
+                    || ship.IsPlatformOrStation
+                    || ship.IsSubspaceProjector
+                    || ship.ShipData.Role == RoleName.troop)
+                {
+                    return Reject(result, $"Ship {ship.Id} cannot receive an explore order.");
+                }
+                ship.AI.OrderExplore();
+                return Accept(result);
+
+            default:
+                return Reject(result, $"Unsupported ship special order {command.TargetId}.");
+        }
     }
 
     AuthoritativeCommandResult ApplyAttackShip(AuthoritativePlayerCommand command, Empire empire,
