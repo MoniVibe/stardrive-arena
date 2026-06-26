@@ -7,6 +7,7 @@ public partial class UniverseScreen
 {
     Authoritative4XLiveSession Authoritative4XLive;
     Empire Authoritative4XLocalPlayer;
+    bool AuthoritativeDiplomacyPopupOpen;
 
     public Authoritative4XLiveSession Authoritative4XMultiplayer => Authoritative4XLive;
     public bool IsAuthoritative4XMultiplayer => Authoritative4XLive != null;
@@ -55,6 +56,22 @@ public partial class UniverseScreen
     void UpdateAuthoritative4XMultiplayer()
     {
         Authoritative4XLive?.Poll();
+        ShowAuthoritativeDiplomacyPopupIfNeeded();
+    }
+
+    void ShowAuthoritativeDiplomacyPopupIfNeeded()
+    {
+        if (Authoritative4XLive == null || AuthoritativeDiplomacyPopupOpen || ScreenManager == null)
+            return;
+        if (!UState.CanShowDiplomacyScreen)
+            return;
+        if (!Authoritative4XLive.TryDequeueDiplomacyPopup(out AuthoritativeDiplomacyPopup popup))
+            return;
+
+        AuthoritativeDiplomacyPopupOpen = true;
+        var screen = new AuthoritativeDiplomacyPopupScreen(this, popup);
+        screen.OnExit += () => AuthoritativeDiplomacyPopupOpen = false;
+        ScreenManager.AddScreen(screen);
     }
 
     void DetachAuthoritative4XMultiplayer()
@@ -62,6 +79,7 @@ public partial class UniverseScreen
         Authoritative4XLive?.Dispose();
         Authoritative4XLive = null;
         Authoritative4XLocalPlayer = null;
+        AuthoritativeDiplomacyPopupOpen = false;
         if (EmpireUI != null)
             EmpireUI.Player = UState.Player;
     }

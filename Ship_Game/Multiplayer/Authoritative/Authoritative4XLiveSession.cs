@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using SDLockstep;
 
 namespace Ship_Game.Multiplayer.Authoritative;
@@ -23,6 +24,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
     readonly Authoritative4XNetworkHost Host;
     readonly Authoritative4XNetworkClient Client;
     readonly Authoritative4XClientContext UiContext;
+    readonly Queue<AuthoritativeDiplomacyPopup> DiplomacyPopups = new();
     int HeartbeatSequence = FirstHeartbeatSequence;
     bool Disposed;
 
@@ -84,11 +86,31 @@ public sealed class Authoritative4XLiveSession : IDisposable
         {
             Host.Poll();
             SubmitHeartbeat();
+            EnqueuePopups(Host.DrainLocalPopups());
         }
         else
         {
             Client.Poll();
+            EnqueuePopups(Client.DrainPopupsForClient());
         }
+    }
+
+    public bool TryDequeueDiplomacyPopup(out AuthoritativeDiplomacyPopup popup)
+    {
+        if (DiplomacyPopups.Count == 0)
+        {
+            popup = null;
+            return false;
+        }
+
+        popup = DiplomacyPopups.Dequeue();
+        return true;
+    }
+
+    void EnqueuePopups(IEnumerable<AuthoritativeDiplomacyPopup> popups)
+    {
+        foreach (AuthoritativeDiplomacyPopup popup in popups ?? Enumerable.Empty<AuthoritativeDiplomacyPopup>())
+            DiplomacyPopups.Enqueue(popup);
     }
 
     void SubmitFromUi(AuthoritativePlayerCommand command)

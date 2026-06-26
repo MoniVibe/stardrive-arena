@@ -523,10 +523,17 @@ public sealed class Authoritative4XNetworkHost : IDisposable
     readonly Dictionary<int, int> PeerByEmpire;
     readonly int[] PeerIds;
     readonly int LocalPeerId;
+    readonly List<AuthoritativeDiplomacyPopup> LocalPopups = new();
 
     public AuthoritativeCommandResult LastResult { get; private set; }
     public AuthoritativeStateSnapshot LastAuthoritySnapshot { get; private set; }
     public string LastError => Transport.LastError;
+    public AuthoritativeDiplomacyPopup[] DrainLocalPopups()
+    {
+        AuthoritativeDiplomacyPopup[] popups = LocalPopups.ToArray();
+        LocalPopups.Clear();
+        return popups;
+    }
 
     public Authoritative4XNetworkHost(UniverseScreen authorityUniverse, TcpLockstepTransport transport,
         IReadOnlyDictionary<int, int> empireByPeer, int[] humanEmpireIds = null, int localPeerId = 0)
@@ -580,11 +587,12 @@ public sealed class Authoritative4XNetworkHost : IDisposable
 
         foreach (AuthoritativeDiplomacyPopup popup in Authority.DrainDiplomacyPopups())
         {
-            if (PeerByEmpire.TryGetValue(popup.TargetEmpireId, out int targetPeer)
-                && targetPeer != LocalPeerId)
-            {
+            if (!PeerByEmpire.TryGetValue(popup.TargetEmpireId, out int targetPeer))
+                continue;
+            if (targetPeer == LocalPeerId)
+                LocalPopups.Add(popup);
+            else
                 Transport.Send(targetPeer, popup.ToMessage(HostPeerId));
-            }
         }
     }
 }
@@ -624,6 +632,12 @@ public sealed class Authoritative4XNetworkClient : IDisposable
 
     public void Poll() => Transport.Poll();
     public AuthoritativeDiplomacyPopup[] PopupsForClient() => Popups.ToArray();
+    public AuthoritativeDiplomacyPopup[] DrainPopupsForClient()
+    {
+        AuthoritativeDiplomacyPopup[] popups = Popups.ToArray();
+        Popups.Clear();
+        return popups;
+    }
     public void Dispose() => Transport.Dispose();
 
     void OnClientMessage(LockstepMessage message)

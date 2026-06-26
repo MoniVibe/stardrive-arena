@@ -833,6 +833,129 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void AuthoritativeDiplomacyPopupScreen_DoesNotPauseUniverseAndExposesResponses_Headless()
+    {
+        BuiltWorld world = BuildWorld(0xD1A1060UL);
+        try
+        {
+            world.UState.Paused = false;
+            var offer = new AuthoritativeDiplomacyPopup
+            {
+                ProposalId = 7,
+                ProposerEmpireId = world.Enemy.Id,
+                TargetEmpireId = world.Player.Id,
+                ProposalType = AuthoritativeDiplomacyProposalType.TradeDeal,
+                Terms = "minerals for trade access",
+                RequiresResponse = true,
+                Message = "Diplomacy proposal received.",
+            };
+
+            var offerScreen = new AuthoritativeDiplomacyPopupScreen(world.Screen, offer);
+            offerScreen.LoadContent();
+            Assert.IsFalse(world.UState.Paused,
+                "Authoritative diplomacy popups must not pause only the local peer.");
+            Assert.IsTrue(offerScreen.Find(AuthoritativeDiplomacyPopupScreen.AcceptButtonName, out UIButton _),
+                "A response-required popup should expose ACCEPT.");
+            Assert.IsTrue(offerScreen.Find(AuthoritativeDiplomacyPopupScreen.RejectButtonName, out UIButton _),
+                "A response-required popup should expose REJECT.");
+            offerScreen.Dispose();
+
+            var notice = new AuthoritativeDiplomacyPopup
+            {
+                ProposalId = 0,
+                ProposerEmpireId = world.Enemy.Id,
+                TargetEmpireId = world.Player.Id,
+                ProposalType = AuthoritativeDiplomacyProposalType.DeclareWar,
+                RequiresResponse = false,
+                Message = "War declared.",
+            };
+
+            var noticeScreen = new AuthoritativeDiplomacyPopupScreen(world.Screen, notice);
+            noticeScreen.LoadContent();
+            Assert.IsFalse(world.UState.Paused);
+            Assert.IsTrue(noticeScreen.Find(AuthoritativeDiplomacyPopupScreen.OkButtonName, out UIButton _),
+                "A notification popup should expose a single acknowledgement.");
+            noticeScreen.Dispose();
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XLiveHost_RoutesLocalHumanDiplomacyPopupAndResponse_Headless()
+    {
+        const ulong Seed = 0xD1A1061UL;
+        const int HostPeer = 2;
+        const int RemotePeer = 3;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            int port = FreeTcpPort();
+            TcpLockstepTransport hostTransport = TcpLockstepTransport.Host(port, RemotePeer);
+            TcpLockstepTransport clientTransport = TcpLockstepTransport.Join("127.0.0.1", port,
+                Authoritative4XNetworkHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(3)),
+                "Authoritative diplomacy live proof did not connect to the loopback host.");
+
+            using var networkClient = new Authoritative4XNetworkClient(client.Screen, clientTransport, RemotePeer,
+                new[] { client.Player.Id, client.Enemy.Id });
+            Authoritative4XLiveSession liveHost = Authoritative4XLiveSession.HostGame(authority.Screen,
+                hostTransport, HostPeer, new Dictionary<int, int>
+                {
+                    [HostPeer] = authority.Player.Id,
+                    [RemotePeer] = authority.Enemy.Id,
+                },
+                new[] { authority.Player.Id, authority.Enemy.Id });
+            authority.Screen.AttachAuthoritative4XMultiplayer(liveHost);
+            authority.UState.Paused = true; // keep the proof focused on diplomacy, not live heartbeat churn
+            client.UState.Paused = true;
+
+            networkClient.Submit(AuthoritativePlayerCommand.DiplomacyProposal(400,
+                authority.Enemy.Id, authority.Player.Id, AuthoritativeDiplomacyProposalType.TradeDeal,
+                "live trade"));
+
+            AuthoritativeDiplomacyPopup popup = null;
+            bool CapturePopup()
+            {
+                if (popup != null)
+                    return true;
+                return liveHost.TryDequeueDiplomacyPopup(out popup);
+            }
+            PumpLiveTcpUntil(CapturePopup,
+                liveHost, networkClient);
+            Assert.IsNotNull(popup);
+            Assert.AreEqual(authority.Enemy.Id, popup.ProposerEmpireId);
+            Assert.AreEqual(authority.Player.Id, popup.TargetEmpireId);
+            Assert.AreEqual(AuthoritativeDiplomacyProposalType.TradeDeal, popup.ProposalType);
+            Assert.IsTrue(popup.RequiresResponse);
+            Assert.IsFalse(authority.Player.IsTradeTreaty(authority.Enemy),
+                "The target human must explicitly accept before a proposal applies.");
+
+            Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                Authoritative4XClientContext.TrySubmitDiplomacyResponse(popup.ProposalId,
+                    AuthoritativeDiplomacyResponseKind.Accept),
+                "The visible host popup should respond through the authoritative UI command context.");
+
+            PumpLiveTcpUntil(() => NetworkClientCaughtUp(networkClient, HostPeer, 1),
+                liveHost, networkClient);
+            Assert.IsTrue(liveHost.LastResult.Accepted, liveHost.LastResult.Reason);
+            Assert.IsTrue(authority.Player.IsTradeTreaty(authority.Enemy));
+            Assert.IsTrue(client.Player.IsTradeTreaty(client.Enemy));
+            Assert.AreEqual(networkClient.LastAuthoritySnapshot.SyncDigest,
+                networkClient.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XLiveClient_SubmitsUiCommandThroughTcpHost_Headless()
     {
         const ulong Seed = 0xC11E475UL;

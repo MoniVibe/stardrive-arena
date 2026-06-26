@@ -197,6 +197,32 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitDiplomacyProposal(Empire target,
+        AuthoritativeDiplomacyProposalType proposalType, string terms = "")
+    {
+        if (Active == null)
+            return Authoritative4XUiCommandResult.NotActive;
+        if (target == null || target.Id == Active.EmpireId)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        Active.Submit(AuthoritativePlayerCommand.DiplomacyProposal(Active.Next(), Active.EmpireId,
+            target.Id, proposalType, terms));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitDiplomacyResponse(int proposalId,
+        AuthoritativeDiplomacyResponseKind response, string terms = "")
+    {
+        if (Active == null)
+            return Authoritative4XUiCommandResult.NotActive;
+        if (proposalId <= 0)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        Active.Submit(AuthoritativePlayerCommand.DiplomacyResponse(Active.Next(), Active.EmpireId,
+            proposalId, response, terms));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitQueueTroop(Planet planet, Troop troop, int repeat)
     {
         if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
