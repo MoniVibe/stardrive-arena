@@ -61,6 +61,19 @@ public sealed class Authoritative4XClientContext : IDisposable
         return true;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitSetColonizationGoal(Empire empire, Planet planet,
+        bool enabled)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (planet == null || planet.Owner != null || !planet.Habitable)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.SetColonizationGoal(context.Next(), context.EmpireId,
+            planet.Id, enabled));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static bool TrySubmitSetColonyLabor(Planet planet, float food, float production, float research,
         bool foodLocked, bool productionLocked, bool researchLocked)
     {

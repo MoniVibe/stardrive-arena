@@ -41,6 +41,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.NoOp => Accept(result),
                 AuthoritativePlayerCommandKind.MoveShip => ApplyMove(command, empire, result),
                 AuthoritativePlayerCommandKind.SetColonyType => ApplyColonyType(command, empire, result),
+                AuthoritativePlayerCommandKind.SetColonizationGoal => ApplyColonizationGoal(command, empire, result),
                 AuthoritativePlayerCommandKind.SetColonyLabor => ApplyColonyLabor(command, empire, result),
                 AuthoritativePlayerCommandKind.SetResearchTopic => ApplyResearchTopic(command, empire, result),
                 AuthoritativePlayerCommandKind.QueueResearch => ApplyQueueResearch(command, empire, result),
@@ -346,6 +347,33 @@ public sealed class Authoritative4XCommandApplicator
             planet.RemoveBlueprints();
             planet.SetSpecializedTradeHub(false);
         }
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyColonizationGoal(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} not found.");
+        if (planet.Owner != null)
+            return Reject(result, $"Planet {planet.Id} is already owned.");
+        if (!planet.Habitable)
+            return Reject(result, $"Planet {planet.Id} is not habitable.");
+        if (command.TargetId is not (0 or 1))
+            return Reject(result, $"Unsupported colonization goal state {command.TargetId}.");
+
+        bool enabled = command.TargetId == 1;
+        bool alreadyMarked = empire.AI.HasGoal(g => g.IsColonizationGoal(planet));
+        if (enabled)
+        {
+            if (!alreadyMarked)
+                empire.AI.AddGoalAndEvaluate(new MarkForColonization(planet, empire, isManual: true));
+            return Accept(result);
+        }
+
+        if (alreadyMarked)
+            empire.AI.CancelColonization(planet);
         return Accept(result);
     }
 

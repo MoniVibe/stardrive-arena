@@ -3,6 +3,7 @@ using Color = Microsoft.Xna.Framework.Color;
 using Ship_Game.AI;
 using Ship_Game.Audio;
 using Ship_Game.Commands.Goals;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using System.Linq;
 using SDGraphics;
@@ -414,9 +415,19 @@ namespace Ship_Game
 
         void OnColonizeClicked(UIButton b)
         {
-            GameAudio.EchoAffirmative();
             if (!MarkedForColonization)
             {
+                switch (Authoritative4XClientContext.TrySubmitSetColonizationGoal(Player, Planet, enabled: true))
+                {
+                    case Authoritative4XUiCommandResult.Submitted:
+                        GameAudio.EchoAffirmative();
+                        return;
+                    case Authoritative4XUiCommandResult.Blocked:
+                        GameAudio.NegativeClick();
+                        return;
+                }
+
+                GameAudio.EchoAffirmative();
                 Player.AI.AddGoalAndEvaluate(new MarkForColonization(Planet, Planet.Universe.Player, isManual:true));
                 Colonize.Text = "Cancel Colonize";
                 Colonize.Style = ButtonStyle.Default;
@@ -424,6 +435,17 @@ namespace Ship_Game
                 return;
             }
 
+            switch (Authoritative4XClientContext.TrySubmitSetColonizationGoal(Player, Planet, enabled: false))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.EchoAffirmative();
+                    return;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return;
+            }
+
+            GameAudio.EchoAffirmative();
             Planet.Universe.Player.AI.CancelColonization(Planet);
             MarkedForColonization = false;
             Colonize.Text  = "Colonize";

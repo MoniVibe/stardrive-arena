@@ -7,6 +7,7 @@ using SDLockstep;
 using SDUtils;
 using SDUtils.Deterministic;
 using Ship_Game.AI;
+using Ship_Game.Commands.Goals;
 using Ship_Game.Determinism;
 using Ship_Game.Fleets;
 using Ship_Game.Gameplay;
@@ -106,6 +107,18 @@ public sealed class AuthoritativeStateSnapshot
 
         foreach (Empire e in us.Empires.OrderBy(e => e.Id))
         {
+            foreach (MarkForColonization goal in e.AI.FindGoals<MarkForColonization>()
+                         .OrderBy(g => g.TargetPlanet?.Id ?? 0)
+                         .ThenBy(g => g.FinishedShip?.Id ?? 0))
+            {
+                sb.Append("G|").Append(e.Id)
+                  .Append("|MarkForColonization")
+                  .Append('|').Append(goal.TargetPlanet?.Id ?? 0)
+                  .Append('|').Append(goal.IsManualColonizationOrder ? 1 : 0)
+                  .Append('|').Append(goal.FinishedShip?.Id ?? 0)
+                  .AppendLine();
+            }
+
             foreach (FleetPatrol patrol in e.FleetPatrols.OrderBy(p => p.Name ?? "", StringComparer.Ordinal))
                 sb.Append("FP|").Append(e.Id)
                   .Append('|').Append(FleetPatrolPlanSignature(patrol))

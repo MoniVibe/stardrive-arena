@@ -9,6 +9,7 @@ using Ship_Game.AI;
 using Ship_Game.AI.Budget;
 using Ship_Game.Audio;
 using Ship_Game.Commands.Goals;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
@@ -487,7 +488,18 @@ namespace Ship_Game
             }
             if (P.Owner == null && MarkedRect.HitTest(input.CursorPosition) && input.InGameSelect)
             {
-                if (Player.AI.HasGoal(g => g.IsColonizationGoal(P)))
+                bool marked = Player.AI.HasGoal(g => g.IsColonizationGoal(P));
+                switch (Authoritative4XClientContext.TrySubmitSetColonizationGoal(Player, P, !marked))
+                {
+                    case Authoritative4XUiCommandResult.Submitted:
+                        GameAudio.EchoAffirmative();
+                        return true;
+                    case Authoritative4XUiCommandResult.Blocked:
+                        GameAudio.NegativeClick();
+                        return true;
+                }
+
+                if (marked)
                 {
                     Player.AI.CancelColonization(P);
                     GameAudio.EchoAffirmative();

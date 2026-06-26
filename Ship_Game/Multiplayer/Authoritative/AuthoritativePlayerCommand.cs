@@ -41,6 +41,7 @@ public enum AuthoritativePlayerCommandKind : byte
     AutoArrangeFleet = 29,
     ShipLifecycleOrder = 30,
     LoadFleetPatrol = 31,
+    SetColonizationGoal = 32,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -148,6 +149,17 @@ public sealed class AuthoritativePlayerCommand
             Kind = AuthoritativePlayerCommandKind.SetColonyType,
             SubjectId = planetId,
             TargetId = (int)type,
+        };
+
+    public static AuthoritativePlayerCommand SetColonizationGoal(int sequence, int empireId, int planetId,
+        bool enabled)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.SetColonizationGoal,
+            SubjectId = planetId,
+            TargetId = enabled ? 1 : 0,
         };
 
     public static AuthoritativePlayerCommand SetColonyLabor(int sequence, int empireId, int planetId,

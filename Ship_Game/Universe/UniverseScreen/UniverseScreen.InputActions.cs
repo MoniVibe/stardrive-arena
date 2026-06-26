@@ -64,6 +64,13 @@ namespace Ship_Game
 
         void MarkForColonization(Planet p)
         {
+            switch (Authoritative4XClientContext.TrySubmitSetColonizationGoal(Player, p, enabled: true))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    return;
+            }
+
             Player.AI.AddGoalAndEvaluate(new MarkForColonization(p, Player, isManual:true));
         }
     }

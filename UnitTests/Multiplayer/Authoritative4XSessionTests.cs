@@ -29,6 +29,7 @@ public class Authoritative4XSessionTests : StarDriveTest
         public Empire Enemy;
         public Planet Planet;
         public Planet EnemyPlanet;
+        public Planet NeutralPlanet;
         public Ship Ship;
         public Ship WingShip;
         public Ship EnemyShip;
@@ -62,6 +63,14 @@ public class Authoritative4XSessionTests : StarDriveTest
         copy = (AuthoritativeCommandRequestMessage)decoded.Message;
         Assert.AreEqual((byte)AuthoritativePlayerCommandKind.MoveShip, copy.Kind);
         Assert.AreEqual((int)(MoveOrder.Aggressive | MoveOrder.AddWayPoint), copy.TargetId);
+
+        var colonizationRequest = AuthoritativePlayerCommand.SetColonizationGoal(34, 2, 456, enabled: true)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(colonizationRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetColonizationGoal, copy.Kind);
+        Assert.AreEqual(456, copy.SubjectId);
+        Assert.AreEqual(1, copy.TargetId);
 
         var designRequest = AuthoritativePlayerCommand.DesignShip(8, 2, "BASE64-DESIGN")
             .ToMessage(fromPeer: 2);
@@ -537,6 +546,56 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XColonizationGoal_MarksCancelsAndSyncs_Headless()
+    {
+        const ulong Seed = 0xC010412EUL;
+        BuiltWorld authority = BuildWorld(Seed, includeNeutralPlanet: true);
+        BuiltWorld client = BuildWorld(Seed, includeNeutralPlanet: true);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+            Assert.IsFalse(authority.Player.AI.HasGoal(g => g.IsColonizationGoal(authority.NeutralPlanet)));
+            Assert.IsFalse(client.Player.AI.HasGoal(g => g.IsColonizationGoal(client.NeutralPlanet)));
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetColonizationGoal(9,
+                authority.Player.Id, authority.NeutralPlanet.Id, enabled: true));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.Player.AI.HasGoal(g => g.IsColonizationGoal(authority.NeutralPlanet)));
+            Assert.IsTrue(client.Player.AI.HasGoal(g => g.IsColonizationGoal(client.NeutralPlanet)));
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover manual colonization goals.");
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload,
+                $"G|{authority.Player.Id}|MarkForColonization|{authority.NeutralPlanet.Id}|1|");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string markedDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetColonizationGoal(10,
+                authority.Player.Id, authority.NeutralPlanet.Id, enabled: false));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsFalse(authority.Player.AI.HasGoal(g => g.IsColonizationGoal(authority.NeutralPlanet)));
+            Assert.IsFalse(client.Player.AI.HasGoal(g => g.IsColonizationGoal(client.NeutralPlanet)));
+            Assert.AreNotEqual(markedDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "Canceling a colonization goal must be visible in the sync digest.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string canceledDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetColonizationGoal(11,
+                authority.Player.Id, authority.Planet.Id, enabled: true));
+            Assert.IsFalse(session.LastResult.Accepted, "Owned planets must not be marked for colonization.");
+            StringAssert.Contains(session.LastResult.Reason, "already owned");
+            Assert.AreEqual(canceledDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XResearchQueue_AddMoveRemoveSync_Headless()
     {
         const ulong Seed = 0xA47E5EAUL;
@@ -810,6 +869,53 @@ public class Authoritative4XSessionTests : StarDriveTest
         {
             authority.Screen.Dispose();
             client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsColonizationGoalWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xC010C1EUL;
+        BuiltWorld world = BuildWorld(Seed, includeNeutralPlanet: true);
+
+        try
+        {
+            var submitted = new List<AuthoritativePlayerCommand>();
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 1490))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetColonizationGoal(world.Player,
+                        world.NeutralPlanet, enabled: true));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(1490, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetColonizationGoal, submitted[0].Kind);
+                Assert.AreEqual(world.Player.Id, submitted[0].EmpireId);
+                Assert.AreEqual(world.NeutralPlanet.Id, submitted[0].SubjectId);
+                Assert.AreEqual(1, submitted[0].TargetId);
+                Assert.IsFalse(world.Player.AI.HasGoal(g => g.IsColonizationGoal(world.NeutralPlanet)),
+                    "Passive MP clients must not locally mark colonization goals before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetColonizationGoal(world.Player,
+                        world.NeutralPlanet, enabled: false));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(0, submitted[1].TargetId);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetColonizationGoal(world.Player,
+                        world.Planet, enabled: true));
+                Assert.AreEqual(2, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetColonizationGoal(world.Enemy,
+                        world.NeutralPlanet, enabled: true));
+                Assert.AreEqual(2, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
         }
     }
 
@@ -3916,7 +4022,8 @@ public class Authoritative4XSessionTests : StarDriveTest
         return clone;
     }
 
-    BuiltWorld BuildWorld(ulong seed, bool extraPlayerPlanet = false, bool includePlatform = false)
+    BuiltWorld BuildWorld(ulong seed, bool extraPlayerPlanet = false, bool includePlatform = false,
+        bool includeNeutralPlanet = false)
     {
         if (includePlatform)
             LoadStarterShips("Platform Base mk1-a");
@@ -3926,6 +4033,10 @@ public class Authoritative4XSessionTests : StarDriveTest
         if (extraPlayerPlanet)
             AddDummyPlanetToEmpire(new Vector2(240_000, 200_000), Player, fertility: 1f, minerals: 1f, maxPop: 5f);
         Planet enemyPlanet = AddDummyPlanetToEmpire(new Vector2(-200_000, -200_000), Enemy, fertility: 1f, minerals: 1f, maxPop: 5f);
+        Planet neutralPlanet = includeNeutralPlanet
+            ? AddDummyPlanet(new Vector2(0, 240_000), fertility: 1f, minerals: 1f, pop: 5f,
+                pos: new Vector2(5_000, 245_000), explored: true)
+            : null;
         Ship ship = SpawnShip("Vulcan Scout", Player, new Vector2(0, 0));
         Ship wingShip = SpawnShip("Vulcan Scout", Player, new Vector2(2_000, 0));
         Ship enemyShip = SpawnShip("Vulcan Scout", Enemy, new Vector2(35_000, 0));
@@ -3953,6 +4064,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             Enemy = Enemy,
             Planet = planet,
             EnemyPlanet = enemyPlanet,
+            NeutralPlanet = neutralPlanet,
             Ship = ship,
             WingShip = wingShip,
             EnemyShip = enemyShip,
