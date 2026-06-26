@@ -6,6 +6,7 @@ using Ship_Game.AI;
 using Ship_Game.Data;
 using Ship_Game.GameScreens.DiplomacyScreen;
 using Ship_Game.Gameplay;
+using Ship_Game.Fleets;
 using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Ship_Game.Universe;
@@ -189,6 +190,17 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(789, copy.SubjectId);
         Assert.AreEqual((int)AuthoritativePlanetBudgetKind.GroundDefense, copy.TargetId);
         Assert.AreEqual(17.25f, copy.X);
+
+        var fleetRequest = AuthoritativePlayerCommand.SetFleetAssignment(26, 2, 7,
+                AuthoritativeFleetAssignmentMode.Replace, new[] { 99, 100 })
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(fleetRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetFleetAssignment, copy.Kind);
+        Assert.AreEqual(7, copy.SubjectId);
+        Assert.AreEqual((int)AuthoritativeFleetAssignmentMode.Replace, copy.TargetId);
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParseIdList(copy.Text, out int[] fleetShipIds));
+        CollectionAssert.AreEqual(new[] { 99, 100 }, fleetShipIds);
 
         var attackRequest = AuthoritativePlayerCommand.AttackShip(12, 2, 99, 100, queue: true)
             .ToMessage(fromPeer: 2);
@@ -405,7 +417,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(client.EnemyShip, client.Ship.AI.Target);
             Assert.IsTrue(authority.Ship.AI.HasPriorityTarget);
             StringAssert.Contains(session.LastAuthoritySnapshot.Payload,
-                $"S|{authority.Ship.Id}|{authority.Player.Id}|{(int)AIState.AttackTarget}|");
+                $"S|{authority.Ship.Id}|{authority.Player.Id}|0|0|{(int)AIState.AttackTarget}|");
             StringAssert.Contains(session.LastAuthoritySnapshot.Payload, $"|{authority.EnemyShip.Id}|1|{authority.EnemyShip.Id}");
             Assert.AreNotEqual(beforeAttackDigest, session.LastAuthoritySnapshot.SyncDigest,
                 "The authoritative sync digest must cover accepted ship target orders.");
@@ -956,6 +968,127 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitSetPlanetManualBudget(world.EnemyPlanet,
                         AuthoritativePlanetBudgetKind.Civilian, 1f));
+                Assert.AreEqual(2, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XFleetAssignment_ReplacesAddsClearsAndSyncs_Headless()
+    {
+        const ulong Seed = 0xF1EE7A55UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetFleetAssignment(100,
+                authority.Player.Id, fleetKey: 3, AuthoritativeFleetAssignmentMode.Replace,
+                new[] { authority.Ship.Id }));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Fleet authorityFleet = authority.Player.GetFleetOrNull(3);
+            Fleet clientFleet = client.Player.GetFleetOrNull(3);
+            Assert.IsNotNull(authorityFleet);
+            Assert.IsNotNull(clientFleet);
+            Assert.AreEqual(1, authorityFleet.Ships.Count);
+            Assert.AreEqual(1, clientFleet.Ships.Count);
+            Assert.AreSame(authorityFleet, authority.Ship.Fleet);
+            Assert.AreSame(clientFleet, client.Ship.Fleet);
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover fleet assignment state.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeAddDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetFleetAssignment(101,
+                authority.Player.Id, fleetKey: 3, AuthoritativeFleetAssignmentMode.Add,
+                new[] { authority.WingShip.Id }));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(2, authorityFleet.Ships.Count);
+            Assert.AreEqual(2, clientFleet.Ships.Count);
+            Assert.AreSame(authorityFleet, authority.WingShip.Fleet);
+            Assert.AreSame(clientFleet, client.WingShip.Fleet);
+            Assert.AreNotEqual(beforeAddDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover added fleet membership.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetFleetAssignment(102,
+                authority.Enemy.Id, fleetKey: 3, AuthoritativeFleetAssignmentMode.Replace,
+                new[] { authority.Ship.Id }));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not assign another empire's ships.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(2, authorityFleet.Ships.Count);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetFleetAssignment(103,
+                authority.Player.Id, fleetKey: 3, AuthoritativeFleetAssignmentMode.Replace,
+                new[] { authority.Ship.Id, authority.Ship.Id }));
+            Assert.IsFalse(session.LastResult.Accepted, "Duplicate ship ids must not be accepted.");
+            StringAssert.Contains(session.LastResult.Reason, "unique");
+            Assert.AreEqual(2, authorityFleet.Ships.Count);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetFleetAssignment(104,
+                authority.Player.Id, fleetKey: 3, AuthoritativeFleetAssignmentMode.Clear,
+                Array.Empty<int>()));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsNull(authority.Player.GetFleetOrNull(3));
+            Assert.IsNull(client.Player.GetFleetOrNull(3));
+            Assert.IsNull(authority.Ship.Fleet);
+            Assert.IsNull(client.Ship.Fleet);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsFleetAssignmentWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xF1EE7C17UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2150))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetFleetAssignment(world.Player, 4,
+                        AuthoritativeFleetAssignmentMode.Replace, new[] { world.Ship, world.WingShip }));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2150, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetFleetAssignment, submitted[0].Kind);
+                Assert.AreEqual(4, submitted[0].SubjectId);
+                Assert.AreEqual((int)AuthoritativeFleetAssignmentMode.Replace, submitted[0].TargetId);
+                Assert.IsTrue(AuthoritativePlayerCommand.TryParseIdList(submitted[0].Text, out int[] ids));
+                CollectionAssert.AreEqual(new[] { world.Ship.Id, world.WingShip.Id }, ids);
+                Assert.IsNull(world.Player.GetFleetOrNull(4),
+                    "Passive MP clients must not locally create fleets before host acceptance.");
+                Assert.IsNull(world.Ship.Fleet);
+                Assert.IsNull(world.WingShip.Fleet);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetFleetAssignment(world.Player, 4,
+                        AuthoritativeFleetAssignmentMode.Replace, Array.Empty<Ship>()));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual((int)AuthoritativeFleetAssignmentMode.Replace, submitted[1].TargetId);
+                Assert.AreEqual("", submitted[1].Text);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetFleetAssignment(world.Enemy, 4,
+                        AuthoritativeFleetAssignmentMode.Replace, new[] { world.Ship }));
                 Assert.AreEqual(2, submitted.Count);
             }
         }

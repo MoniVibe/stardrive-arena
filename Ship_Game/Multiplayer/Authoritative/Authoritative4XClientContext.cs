@@ -124,7 +124,32 @@ public sealed class Authoritative4XClientContext : IDisposable
 
         foreach (Ship ship in ownedShips)
             context.Submit(AuthoritativePlayerCommand.MoveShip(context.Next(), context.EmpireId, ship.Id,
-                destination, order));
+            destination, order));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitSetFleetAssignment(Empire empire, int fleetKey,
+        AuthoritativeFleetAssignmentMode mode, Ship[] ships)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (fleetKey is < Empire.FirstFleetKey or > Empire.LastFleetKey
+            || !Enum.IsDefined(typeof(AuthoritativeFleetAssignmentMode), mode))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        Ship[] selected = ships ?? Array.Empty<Ship>();
+        if (mode == AuthoritativeFleetAssignmentMode.Add && selected.Length == 0)
+            return Authoritative4XUiCommandResult.Blocked;
+        if ((mode is AuthoritativeFleetAssignmentMode.Replace or AuthoritativeFleetAssignmentMode.Add)
+            && selected.Any(s => s?.Active != true || s.Loyalty?.Id != context.EmpireId || !s.CanBeAddedToFleets()))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.SetFleetAssignment(context.Next(), context.EmpireId,
+            fleetKey, mode, selected.Select(s => s.Id).Distinct()));
         return Authoritative4XUiCommandResult.Submitted;
     }
 

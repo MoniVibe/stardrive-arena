@@ -10,6 +10,7 @@ using Ship_Game.Audio;
 using Ship_Game.Fleets;
 using Ship_Game.GameScreens;
 using Ship_Game.GameScreens.FleetDesign;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Spatial;
 using Keys = SDGraphics.Input.Keys;
 using Vector2 = SDGraphics.Vector2;
@@ -224,10 +225,14 @@ namespace Ship_Game
 
             if (Input.ReplaceFleet)
             {
+                if (TrySubmitAuthoritativeFleetAssignment(b.FleetKey, AuthoritativeFleetAssignmentMode.Replace))
+                    return;
                 CreateNewFleet(selectedFleet, b.FleetKey);
             }
             else if (Input.AddToFleet)
             {
+                if (TrySubmitAuthoritativeFleetAssignment(b.FleetKey, AuthoritativeFleetAssignmentMode.Add))
+                    return;
                 AddShipsToExistingFleet(selectedFleet, b.FleetKey);
             }
             else
@@ -418,8 +423,26 @@ namespace Ship_Game
 
             // create new fleet
             Fleet fleet = CreateNewFleet(index, SelectedShipList);
-            if (fleet != null) 
+            if (fleet != null)
                 SetSelectedFleet(fleet);
+        }
+
+        bool TrySubmitAuthoritativeFleetAssignment(int fleetKey, AuthoritativeFleetAssignmentMode mode)
+        {
+            Ship[] selectedShips = SelectedShipList?.ToArray() ?? Empty<Ship>.Array;
+            switch (Authoritative4XClientContext.TrySubmitSetFleetAssignment(Player, fleetKey, mode, selectedShips))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.FleetClicked();
+                    return true;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return true;
+                case Authoritative4XUiCommandResult.NotActive:
+                    return Authoritative4XClientContext.IsActive;
+                default:
+                    return false;
+            }
         }
 
         void AddShipsToExistingFleet(Fleet selectedFleet, int index)

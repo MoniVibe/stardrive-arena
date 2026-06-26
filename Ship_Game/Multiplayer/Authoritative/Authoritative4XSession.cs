@@ -8,6 +8,7 @@ using SDUtils;
 using SDUtils.Deterministic;
 using Ship_Game.AI;
 using Ship_Game.Determinism;
+using Ship_Game.Fleets;
 using Ship_Game.Gameplay;
 using Ship_Game.Ships;
 using Ship_Game.Universe;
@@ -102,6 +103,24 @@ public sealed class AuthoritativeStateSnapshot
                   .AppendLine();
         }
 
+        foreach (Empire e in us.Empires.OrderBy(e => e.Id))
+        {
+            foreach (Fleet f in e.AllFleets.Where(f => f != null).OrderBy(f => f.Key).ThenBy(f => f.Id))
+                sb.Append("F|").Append(e.Id)
+                  .Append('|').Append(f.Id)
+                  .Append('|').Append(f.Key)
+                  .Append('|').Append(f.Name ?? "")
+                  .Append('|').Append(f.FleetIconIndex)
+                  .Append('|').Append(f.CommandShip?.Id ?? 0)
+                  .Append('|').Append(FloatBits(f.FinalPosition.X))
+                  .Append('|').Append(FloatBits(f.FinalPosition.Y))
+                  .Append('|').Append(FloatBits(f.FinalDirection.X))
+                  .Append('|').Append(FloatBits(f.FinalDirection.Y))
+                  .Append('|').Append(FleetShipSignature(f))
+                  .Append('|').Append(FleetNodeSignature(f))
+                  .AppendLine();
+        }
+
         foreach (Planet p in us.Planets.OrderBy(p => p.Id))
         {
             sb.Append("P|").Append(p.Id)
@@ -147,6 +166,8 @@ public sealed class AuthoritativeStateSnapshot
         foreach (Ship s in us.Ships.OrderBy(s => s.Id))
             sb.Append("S|").Append(s.Id)
               .Append('|').Append(s.Loyalty?.Id ?? 0)
+              .Append('|').Append(s.Fleet?.Id ?? 0)
+              .Append('|').Append(s.Fleet?.Key ?? 0)
               .Append('|').Append((int)s.AI.State)
               .Append('|').Append(FloatBits(s.Position.X))
               .Append('|').Append(FloatBits(s.Position.Y))
@@ -194,6 +215,18 @@ public sealed class AuthoritativeStateSnapshot
 
     static string ResearchQueueSignature(Empire empire)
         => string.Join(",", empire.data.ResearchQueue);
+
+    static string FleetShipSignature(Fleet fleet)
+        => string.Join(",", fleet.Ships.OrderBy(s => s.Id).Select(s => s.Id.ToString(CultureInfo.InvariantCulture)));
+
+    static string FleetNodeSignature(Fleet fleet)
+        => string.Join(";", fleet.DataNodes
+            .OrderBy(n => n.Ship?.Id ?? int.MaxValue)
+            .ThenBy(n => n.ShipName ?? "", StringComparer.Ordinal)
+            .ThenBy(n => n.RelativeFleetOffset.X)
+            .ThenBy(n => n.RelativeFleetOffset.Y)
+            .Select(n => string.Create(CultureInfo.InvariantCulture,
+                $"{n.Ship?.Id ?? 0},{n.ShipName ?? ""},{FloatBits(n.RelativeFleetOffset.X):X8},{FloatBits(n.RelativeFleetOffset.Y):X8}")));
 
     static string ShipOrderQueueSignature(Ship ship)
     {

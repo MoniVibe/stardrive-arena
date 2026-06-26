@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Ship_Game.AI;
 using Ship_Game.Commands.Goals;
 using Ship_Game.Determinism.Lockstep;
+using Ship_Game.Fleets;
 using Ship_Game.Ships;
 using Ship_Game.Universe;
 using SDUtils;
@@ -58,6 +60,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.SetPlanetGoodsState => ApplyPlanetGoodsState(command, empire, result),
                 AuthoritativePlayerCommandKind.SetPlanetPrioritizedPort => ApplyPlanetPrioritizedPort(command, empire, result),
                 AuthoritativePlayerCommandKind.SetPlanetManualBudget => ApplyPlanetManualBudget(command, empire, result),
+                AuthoritativePlayerCommandKind.SetFleetAssignment => ApplyFleetAssignment(command, empire, result),
                 AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
@@ -631,6 +634,95 @@ public sealed class Authoritative4XCommandApplicator
                 return Accept(result);
             default:
                 return Reject(result, $"Unsupported planet budget kind {command.TargetId}.");
+        }
+    }
+
+    AuthoritativeCommandResult ApplyFleetAssignment(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
+            return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
+        if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
+            || !Enum.IsDefined(typeof(AuthoritativeFleetAssignmentMode),
+                (AuthoritativeFleetAssignmentMode)(byte)command.TargetId))
+        {
+            return Reject(result, $"Unsupported fleet assignment mode {command.TargetId}.");
+        }
+        if (!AuthoritativePlayerCommand.TryParseIdList(command.Text, out int[] shipIds))
+            return Reject(result, $"Invalid fleet ship id payload '{command.Text}'.");
+        if (new HashSet<int>(shipIds).Count != shipIds.Length)
+            return Reject(result, "Fleet assignment ship ids must be unique.");
+
+        var mode = (AuthoritativeFleetAssignmentMode)command.TargetId;
+        if (mode == AuthoritativeFleetAssignmentMode.Add && shipIds.Length == 0)
+            return Reject(result, "Adding to a fleet requires at least one ship.");
+
+        Ship[] ships = Array.Empty<Ship>();
+        if (shipIds.Length > 0)
+        {
+            var resolved = new Ship[shipIds.Length];
+            for (int i = 0; i < shipIds.Length; ++i)
+            {
+                Ship ship = UState.Objects.FindShip(shipIds[i]);
+                if (ship == null)
+                    return Reject(result, $"Ship {shipIds[i]} not found.");
+                if (!ship.Active)
+                    return Reject(result, $"Ship {ship.Id} is inactive.");
+                if (ship.Loyalty != empire)
+                    return Reject(result, $"Ship {ship.Id} is not owned by empire {empire.Id}.");
+                if (!ship.CanBeAddedToFleets())
+                    return Reject(result, $"Ship {ship.Id} cannot be assigned to fleets.");
+                resolved[i] = ship;
+            }
+            ships = resolved;
+        }
+
+        Fleet existing = empire.GetFleetOrNull(command.SubjectId);
+        switch (mode)
+        {
+            case AuthoritativeFleetAssignmentMode.Clear:
+                existing?.Reset(fleeIfInCombat: false);
+                return Accept(result);
+
+            case AuthoritativeFleetAssignmentMode.Replace:
+                existing?.Reset(fleeIfInCombat: false, clearOrders: ships.Length == 0);
+                if (ships.Length == 0)
+                    return Accept(result);
+                Fleet replacement = empire.CreateFleet(command.SubjectId, null);
+                AddShipsToFleet(replacement, ships);
+                return Accept(result);
+
+            case AuthoritativeFleetAssignmentMode.Add:
+                Fleet fleet = existing?.Ships.Count > 0 ? existing : empire.CreateFleet(command.SubjectId, null);
+                Ship[] newShips = ships.Where(s => s.Fleet != fleet).ToArray();
+                if (newShips.Length == 0)
+                    return Reject(result, "No selected ships can be added to the target fleet.");
+                AddShipsToFleet(fleet, newShips);
+                if (fleet.Name.IsEmpty() || fleet.Name.Contains("Fleet"))
+                    fleet.Name = Fleet.GetDefaultFleetName(command.SubjectId);
+                fleet.Update(FixedSimTime.Zero);
+                return Accept(result);
+
+            default:
+                return Reject(result, $"Unsupported fleet assignment mode {command.TargetId}.");
+        }
+    }
+
+    static void AddShipsToFleet(Fleet fleet, IReadOnlyList<Ship> ships)
+    {
+        ClearShipFleetsWithDataNodes(ships);
+        fleet.AddShips(ships);
+        fleet.SetCommandShip(null);
+        fleet.AutoArrange();
+        fleet.Update(FixedSimTime.Zero);
+    }
+
+    static void ClearShipFleetsWithDataNodes(IReadOnlyList<Ship> ships)
+    {
+        foreach (Ship ship in ships.Where(s => s.CanBeAddedToFleets()))
+        {
+            ship.Fleet?.DataNodes.RemoveFirst(n => n.Ship == ship);
+            ship.ClearFleet(returnToManagedPools: false, clearOrders: false);
         }
     }
 

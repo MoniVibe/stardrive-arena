@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using SDLockstep;
 using Ship_Game.AI;
@@ -32,6 +33,7 @@ public enum AuthoritativePlayerCommandKind : byte
     SetPlanetGoodsState = 21,
     SetPlanetPrioritizedPort = 22,
     SetPlanetManualBudget = 23,
+    SetFleetAssignment = 24,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -77,6 +79,13 @@ public enum AuthoritativePlanetBudgetKind : byte
     Civilian = 1,
     GroundDefense = 2,
     SpaceDefense = 3,
+}
+
+public enum AuthoritativeFleetAssignmentMode : byte
+{
+    Replace = 1,
+    Add = 2,
+    Clear = 3,
 }
 
 /// <summary>
@@ -326,6 +335,18 @@ public sealed class AuthoritativePlayerCommand
             Position = new Vector2(value, 0f),
         };
 
+    public static AuthoritativePlayerCommand SetFleetAssignment(int sequence, int empireId, int fleetKey,
+        AuthoritativeFleetAssignmentMode mode, IEnumerable<int> shipIds)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.SetFleetAssignment,
+            SubjectId = fleetKey,
+            TargetId = (int)mode,
+            Text = EncodeIdList(shipIds),
+        };
+
     public static AuthoritativePlayerCommand AttackShip(int sequence, int empireId, int shipId, int targetShipId,
         bool queue = false)
         => new()
@@ -435,6 +456,27 @@ public sealed class AuthoritativePlayerCommand
         taxRate = FloatFromBits(taxBits);
         treasuryGoal = FloatFromBits(treasuryBits);
         autoTaxes = autoValue == 1;
+        return true;
+    }
+
+    public static string EncodeIdList(IEnumerable<int> ids)
+        => ids == null ? "" : string.Join(",", ids);
+
+    public static bool TryParseIdList(string payload, out int[] ids)
+    {
+        ids = Array.Empty<int>();
+        if (string.IsNullOrWhiteSpace(payload))
+            return true;
+
+        string[] parts = payload.Split(',');
+        var parsed = new int[parts.Length];
+        for (int i = 0; i < parts.Length; ++i)
+        {
+            if (!int.TryParse(parts[i], NumberStyles.Integer, CultureInfo.InvariantCulture, out int id))
+                return false;
+            parsed[i] = id;
+        }
+        ids = parsed;
         return true;
     }
 
