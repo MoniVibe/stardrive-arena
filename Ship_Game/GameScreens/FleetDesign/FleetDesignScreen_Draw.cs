@@ -371,7 +371,8 @@ namespace Ship_Game
                     return;
 
                 Vector2 cursor1 = new Vector2(SelectedStuffRect.X + 20, SelectedStuffRect.Y + 10);
-                FleetNameEntry.Text = f.Name;
+                if (!FleetNameEntry.HandlingInput)
+                    ResetFleetNameEntryText(f.Name);
                 FleetNameEntry.SetPos(cursor1);
                 FleetNameEntry.Draw(batch, elapsed);
 

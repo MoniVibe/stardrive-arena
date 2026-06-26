@@ -216,6 +216,14 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.IsTrue(AuthoritativePlayerCommand.TryParseVectorPayload(copy.Text, out Vector2 moveFleetDirection));
         Assert.AreEqual(new Vector2(0f, -1f), moveFleetDirection);
 
+        var renameFleetRequest = AuthoritativePlayerCommand.RenameFleet(30, 2, 7, "Alpha Wing")
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(renameFleetRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.RenameFleet, copy.Kind);
+        Assert.AreEqual(7, copy.SubjectId);
+        Assert.AreEqual("Alpha Wing", copy.Text);
+
         var specialOrderRequest = AuthoritativePlayerCommand.ShipSpecialOrder(28, 2, 99,
                 AuthoritativeShipSpecialOrderType.Explore)
             .ToMessage(fromPeer: 2);
@@ -1158,6 +1166,66 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XFleetRename_ValidatesAndSyncs_Headless()
+    {
+        const ulong Seed = 0xF1EE4A11UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetFleetAssignment(130,
+                authority.Player.Id, fleetKey: 3, AuthoritativeFleetAssignmentMode.Replace,
+                new[] { authority.Ship.Id, authority.WingShip.Id }));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+
+            Fleet authorityFleet = authority.Player.GetFleetOrNull(3);
+            Fleet clientFleet = client.Player.GetFleetOrNull(3);
+            Assert.IsNotNull(authorityFleet);
+            Assert.IsNotNull(clientFleet);
+            string beforeRenameDigest = session.LastAuthoritySnapshot.SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.RenameFleet(131,
+                authority.Player.Id, fleetKey: 3, "  Alpha Wing  "));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual("Alpha Wing", authorityFleet.Name);
+            Assert.AreEqual("Alpha Wing", clientFleet.Name);
+            Assert.AreNotEqual(beforeRenameDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover fleet names.");
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, "|Alpha Wing|");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.RenameFleet(132,
+                authority.Player.Id, fleetKey: 3, ""));
+            Assert.IsFalse(session.LastResult.Accepted, "Empty fleet names must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "empty");
+            Assert.AreEqual("Alpha Wing", authorityFleet.Name);
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.RenameFleet(133,
+                authority.Player.Id, fleetKey: 3, new string('A', 41)));
+            Assert.IsFalse(session.LastResult.Accepted, "Overlong fleet names must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "too long");
+            Assert.AreEqual("Alpha Wing", authorityFleet.Name);
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.RenameFleet(134,
+                authority.Player.Id, fleetKey: 3, "Bad\nName"));
+            Assert.IsFalse(session.LastResult.Accepted, "Control characters must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "control");
+            Assert.AreEqual("Alpha Wing", authorityFleet.Name);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XShipSpecialOrder_ExploreSyncsAndRejectsInvalidRequests_Headless()
     {
         const ulong Seed = 0xE7010EUL;
@@ -1364,6 +1432,56 @@ public class Authoritative4XSessionTests : StarDriveTest
                 enemyFleet.AutoArrange();
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitMoveFleet(enemyFleet, destination, direction, order));
+                Assert.AreEqual(1, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsFleetRenameWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xF1EE7C19UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            Fleet fleet = world.Player.CreateFleet(4, null);
+            fleet.AddShips(new[] { world.Ship });
+            fleet.SetCommandShip(null);
+            fleet.AutoArrange();
+            fleet.Name = "Old Fleet";
+            string originalName = fleet.Name;
+
+            var submitted = new List<AuthoritativePlayerCommand>();
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2165))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitRenameFleet(fleet, "New Fleet"));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2165, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.RenameFleet, submitted[0].Kind);
+                Assert.AreEqual(4, submitted[0].SubjectId);
+                Assert.AreEqual("New Fleet", submitted[0].Text);
+                Assert.AreEqual(originalName, fleet.Name,
+                    "Passive MP clients must not locally rename fleets before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitRenameFleet(fleet, ""));
+                Assert.AreEqual(1, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitRenameFleet(fleet, new string('A', 41)));
+                Assert.AreEqual(1, submitted.Count);
+
+                Fleet enemyFleet = world.Enemy.CreateFleet(4, null);
+                enemyFleet.AddShips(new[] { world.EnemyShip });
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitRenameFleet(enemyFleet, "Enemy Fleet"));
                 Assert.AreEqual(1, submitted.Count);
             }
         }

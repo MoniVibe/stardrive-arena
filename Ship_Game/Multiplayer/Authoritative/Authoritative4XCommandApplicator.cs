@@ -62,6 +62,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.SetPlanetManualBudget => ApplyPlanetManualBudget(command, empire, result),
                 AuthoritativePlayerCommandKind.SetFleetAssignment => ApplyFleetAssignment(command, empire, result),
                 AuthoritativePlayerCommandKind.MoveFleet => ApplyMoveFleet(command, empire, result),
+                AuthoritativePlayerCommandKind.RenameFleet => ApplyRenameFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipSpecialOrder => ApplyShipSpecialOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.SetShipCombatStance => ApplyShipCombatStance(command, empire, result),
                 AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
@@ -794,6 +795,28 @@ public sealed class Authoritative4XCommandApplicator
             default:
                 return Reject(result, $"Unsupported fleet assignment mode {command.TargetId}.");
         }
+    }
+
+    AuthoritativeCommandResult ApplyRenameFleet(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
+            return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
+
+        Fleet fleet = empire.GetFleetOrNull(command.SubjectId);
+        if (fleet == null)
+            return Reject(result, $"Fleet {command.SubjectId} not found.");
+
+        string name = command.Text?.Trim() ?? "";
+        if (name.Length == 0)
+            return Reject(result, "Fleet name cannot be empty.");
+        if (name.Length > 40)
+            return Reject(result, $"Fleet name is too long ({name.Length}/40).");
+        if (name.Any(char.IsControl))
+            return Reject(result, "Fleet name cannot contain control characters.");
+
+        fleet.Name = name;
+        return Accept(result);
     }
 
     static void AddShipsToFleet(Fleet fleet, IReadOnlyList<Ship> ships)

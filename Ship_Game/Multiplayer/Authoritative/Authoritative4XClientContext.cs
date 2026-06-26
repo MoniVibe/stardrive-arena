@@ -146,6 +146,18 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitRenameFleet(Fleet fleet, string name)
+    {
+        if (!TryGetFor(fleet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (fleet.Key is < Empire.FirstFleetKey or > Empire.LastFleetKey || !IsLegalFleetName(name))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.RenameFleet(context.Next(), context.EmpireId,
+            fleet.Key, name.Trim()));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitSetFleetAssignment(Empire empire, int fleetKey,
         AuthoritativeFleetAssignmentMode mode, Ship[] ships)
     {
@@ -523,6 +535,13 @@ public sealed class Authoritative4XClientContext : IDisposable
 
     static bool CanSubmitFleetMoveShip(Ship ship)
         => ship?.Active == true && ship.PlayerShipCanTakeFleetOrders();
+
+    static bool IsLegalFleetName(string name)
+    {
+        string trimmed = name?.Trim() ?? "";
+        return trimmed.Length is > 0 and <= 40
+            && trimmed.All(c => !char.IsControl(c));
+    }
 
     static bool CanSubmitShipSpecialOrder(Ship ship, AuthoritativeShipSpecialOrderType orderType)
         => orderType == AuthoritativeShipSpecialOrderType.Explore

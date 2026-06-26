@@ -16,6 +16,7 @@ using System.Linq;
 using Ship_Game.Data.Yaml;
 using System.IO;
 using Ship_Game.GameScreens.FleetDesign;
+using Ship_Game.Multiplayer.Authoritative;
 using SynapseGaming.LightingSystem.Lights;
 // SunBurn + MonoGame both define DirectionalLight; we want SunBurn's here.
 using DirectionalLight = SynapseGaming.LightingSystem.Lights.DirectionalLight;
@@ -81,6 +82,7 @@ namespace Ship_Game
         readonly Array<ClickableSquad> ClickableSquads = new();
 
         readonly UITextEntry FleetNameEntry;
+        bool SuppressFleetNameChange;
         Selector StuffSelector;
         Selector OperationsSelector;
         Selector PrioritySelector;
@@ -105,7 +107,7 @@ namespace Ship_Game
             ShipInfoOverlay = Add(new ShipInfoOverlayComponent(this, u.UState));
 
             FleetNameEntry = new();
-            FleetNameEntry.OnTextChanged = (text) => SelectedFleet.Name = text;
+            FleetNameEntry.OnTextChanged = OnFleetNameChanged;
             FleetNameEntry.SetColors(Colors.Cream, Color.Orange);
             
             GameAudio.PlaySfxAsync(audioCue);
@@ -114,6 +116,35 @@ namespace Ship_Game
             Fleet anyFleet = Player.ActiveFleets.ToArrayList().Sorted(f => f.Key).FirstOrDefault();
             int fleetId = (anyFleet?.Key ?? Empire.FirstFleetKey).Clamped(Empire.FirstFleetKey, Empire.LastFleetKey);
             ChangeFleet(fleetId);
+        }
+
+        void OnFleetNameChanged(string text)
+        {
+            if (SuppressFleetNameChange || SelectedFleet == null)
+                return;
+
+            switch (Authoritative4XClientContext.TrySubmitRenameFleet(SelectedFleet, text))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    return;
+                case Authoritative4XUiCommandResult.NotActive:
+                    SelectedFleet.Name = text;
+                    return;
+            }
+        }
+
+        void ResetFleetNameEntryText(string text)
+        {
+            SuppressFleetNameChange = true;
+            try
+            {
+                FleetNameEntry.Text = text ?? "";
+            }
+            finally
+            {
+                SuppressFleetNameChange = false;
+            }
         }
 
         public void ChangeFleet(int fleetKey)
@@ -159,6 +190,7 @@ namespace Ship_Game
                     node.Ship.RelativeFleetOffset = node.RelativeFleetOffset;
             }
 
+            ResetFleetNameEntryText(fleet.Name);
             FleetNameEntry.Size = FleetNameEntry.Font.MeasureString(fleet.Name);
         }
 
