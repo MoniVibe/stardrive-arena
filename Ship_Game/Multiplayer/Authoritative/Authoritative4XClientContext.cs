@@ -7,6 +7,7 @@ using Ship_Game.AI;
 using Ship_Game.Commands.Goals;
 using Ship_Game.Fleets;
 using Ship_Game.Ships;
+using Ship_Game.Ships.AI;
 using Vector2 = SDGraphics.Vector2;
 
 namespace Ship_Game.Multiplayer.Authoritative;
@@ -345,6 +346,26 @@ public sealed class Authoritative4XClientContext : IDisposable
         }
 
         context.Submit(AuthoritativePlayerCommand.ClearFleetPatrol(context.Next(), context.EmpireId, fleet.Key));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitCreateFleetPatrol(Fleet fleet, WayPoint[] waypoints)
+    {
+        if (!TryGetFor(fleet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (fleet.Key is < Empire.FirstFleetKey or > Empire.LastFleetKey
+            || fleet.Ships.Count == 0
+            || fleet.HasPatrolPlan
+            || waypoints == null
+            || !AuthoritativePlayerCommand.ArePatrolWaypointCountsValid(waypoints.Length)
+            || waypoints.Any(w => !float.IsFinite(w.Position.X) || !float.IsFinite(w.Position.Y)
+                                  || !float.IsFinite(w.Direction.X) || !float.IsFinite(w.Direction.Y)))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.CreateFleetPatrol(context.Next(), context.EmpireId,
+            fleet.Key, waypoints));
         return Authoritative4XUiCommandResult.Submitted;
     }
 

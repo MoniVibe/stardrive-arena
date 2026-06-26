@@ -6,6 +6,7 @@ using Ship_Game.Commands.Goals;
 using Ship_Game.Determinism.Lockstep;
 using Ship_Game.Fleets;
 using Ship_Game.Ships;
+using Ship_Game.Ships.AI;
 using Ship_Game.Universe;
 using SDUtils;
 using Vector2 = SDGraphics.Vector2;
@@ -72,6 +73,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.RenameFleetPatrol => ApplyRenameFleetPatrol(command, empire, result),
                 AuthoritativePlayerCommandKind.DeleteFleetPatrol => ApplyDeleteFleetPatrol(command, empire, result),
                 AuthoritativePlayerCommandKind.ClearFleetPatrol => ApplyClearFleetPatrol(command, empire, result),
+                AuthoritativePlayerCommandKind.CreateFleetPatrol => ApplyCreateFleetPatrol(command, empire, result),
                 AuthoritativePlayerCommandKind.SetFleetLayout => ApplyFleetLayout(command, empire, result),
                 AuthoritativePlayerCommandKind.QueueDeepSpaceBuild => ApplyDeepSpaceBuild(command, empire, result),
                 AuthoritativePlayerCommandKind.CancelDeepSpaceBuild => ApplyCancelDeepSpaceBuild(command, empire, result),
@@ -1339,6 +1341,27 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, $"Fleet {command.SubjectId} has no active patrol.");
 
         fleet.ClearPatrol();
+        fleet.Update(FixedSimTime.Zero);
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyCreateFleetPatrol(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
+            return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
+
+        Fleet fleet = empire.GetFleetOrNull(command.SubjectId);
+        if (fleet == null || fleet.Ships.Count == 0)
+            return Reject(result, $"Fleet {command.SubjectId} not found or empty.");
+        if (fleet.HasPatrolPlan)
+            return Reject(result, $"Fleet {command.SubjectId} already has an active patrol.");
+        if (!AuthoritativePlayerCommand.TryParsePatrolWaypoints(command.Text, out WayPoint[] points))
+            return Reject(result, "Invalid fleet patrol waypoint payload.");
+
+        var waypoints = new WayPoints();
+        waypoints.Set(points);
+        fleet.CreatePatrol(waypoints);
         fleet.Update(FixedSimTime.Zero);
         return Accept(result);
     }

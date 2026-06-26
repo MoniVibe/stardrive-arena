@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using SDLockstep;
 using Ship_Game.AI;
+using Ship_Game.Ships.AI;
 using Vector2 = SDGraphics.Vector2;
 
 namespace Ship_Game.Multiplayer.Authoritative;
@@ -53,6 +54,7 @@ public enum AuthoritativePlayerCommandKind : byte
     RenameFleetPatrol = 39,
     DeleteFleetPatrol = 40,
     ClearFleetPatrol = 41,
+    CreateFleetPatrol = 42,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -601,6 +603,17 @@ public sealed class AuthoritativePlayerCommand
             SubjectId = fleetKey,
         };
 
+    public static AuthoritativePlayerCommand CreateFleetPatrol(int sequence, int empireId, int fleetKey,
+        IEnumerable<WayPoint> waypoints)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.CreateFleetPatrol,
+            SubjectId = fleetKey,
+            Text = EncodePatrolWaypoints(waypoints),
+        };
+
     public static AuthoritativePlayerCommand ShipSpecialOrder(int sequence, int empireId, int shipId,
         AuthoritativeShipSpecialOrderType orderType)
         => new()
@@ -833,6 +846,58 @@ public sealed class AuthoritativePlayerCommand
         return trimmed.Length is > 0 and <= 40
             && trimmed.All(c => !char.IsControl(c));
     }
+
+    public static string EncodePatrolWaypoints(IEnumerable<WayPoint> waypoints)
+    {
+        if (waypoints == null)
+            return "";
+
+        return string.Join(";", waypoints.Select(w => string.Join("|",
+            Hex(FloatBits(w.Position.X)),
+            Hex(FloatBits(w.Position.Y)),
+            Hex(FloatBits(w.Direction.X)),
+            Hex(FloatBits(w.Direction.Y)),
+            w.IsDetour ? "1" : "0")));
+    }
+
+    public static bool TryParsePatrolWaypoints(string payload, out WayPoint[] waypoints)
+    {
+        waypoints = Array.Empty<WayPoint>();
+        if (string.IsNullOrWhiteSpace(payload))
+            return false;
+
+        string[] entries = payload.Split(';');
+        if (!ArePatrolWaypointCountsValid(entries.Length))
+            return false;
+
+        var parsed = new WayPoint[entries.Length];
+        for (int i = 0; i < entries.Length; ++i)
+        {
+            string[] parts = entries[i].Split('|');
+            if (parts.Length != 5
+                || !uint.TryParse(parts[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint pxBits)
+                || !uint.TryParse(parts[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint pyBits)
+                || !uint.TryParse(parts[2], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint dxBits)
+                || !uint.TryParse(parts[3], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint dyBits)
+                || !int.TryParse(parts[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int detour)
+                || detour is not (0 or 1))
+            {
+                return false;
+            }
+
+            var position = new Vector2(FloatFromBits(pxBits), FloatFromBits(pyBits));
+            var direction = new Vector2(FloatFromBits(dxBits), FloatFromBits(dyBits));
+            if (!IsFinite(position.X, position.Y, direction.X, direction.Y))
+                return false;
+            parsed[i] = new WayPoint(position, direction, detour == 1);
+        }
+
+        waypoints = parsed;
+        return true;
+    }
+
+    public static bool ArePatrolWaypointCountsValid(int count)
+        => count is >= 2 and <= 128;
 
     public static string EncodeIdList(IEnumerable<int> ids)
         => ids == null ? "" : string.Join(",", ids);

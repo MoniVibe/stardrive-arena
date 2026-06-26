@@ -247,8 +247,19 @@ namespace Ship_Game
             else
             {
                 WayPoints waypoints = new WayPoints();
-                waypoints.Set(firstShip.AI.CopyWayPoints());
-                Fleet.CreatePatrol(waypoints);  
+                var copiedWaypoints = firstShip.AI.CopyWayPoints();
+                switch (Authoritative4XClientContext.TrySubmitCreateFleetPatrol(Fleet, copiedWaypoints))
+                {
+                    case Authoritative4XUiCommandResult.Submitted:
+                        GameAudio.EchoAffirmative();
+                        return;
+                    case Authoritative4XUiCommandResult.Blocked:
+                        GameAudio.NegativeClick();
+                        return;
+                }
+
+                waypoints.Set(copiedWaypoints);
+                Fleet.CreatePatrol(waypoints);
             }
         }
     }
