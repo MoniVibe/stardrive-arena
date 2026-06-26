@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using SDUtils.Deterministic;
 
 namespace Ship_Game.Multiplayer.Authoritative;
 
@@ -85,6 +86,19 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
             $"origin={result.OriginPeer} seq={result.Sequence} tick={result.Tick} "
             + $"accepted={result.Accepted} reason='{result.Reason ?? ""}' hash={hash} "
             + $"digest='{snapshot?.SyncDigest ?? ""}'");
+        Snapshot(snapshot);
+    }
+
+    public void Snapshot(AuthoritativeStateSnapshot snapshot)
+    {
+        if (snapshot?.Payload == null)
+            return;
+
+        var payloadHash = DetHash.New();
+        payloadHash.AddString(snapshot.Payload);
+        Write("SNAPSHOT",
+            $"tick={snapshot.Tick} digest='{snapshot.SyncDigest}' payloadHash=0x{payloadHash.Value:X16} "
+            + $"payloadChars={snapshot.Payload.Length} rows='{PayloadRowCounts(snapshot.Payload)}'");
     }
 
     public void Control(string source, bool paused, float gameSpeed)
@@ -135,5 +149,24 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
         if (empireByPeer == null || empireByPeer.Count == 0)
             return "";
         return string.Join(",", empireByPeer.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key}:{kv.Value}"));
+    }
+
+    static string PayloadRowCounts(string payload)
+    {
+        if (string.IsNullOrEmpty(payload))
+            return "";
+
+        var counts = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        foreach (string line in payload.Split('\n'))
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+            int pipe = line.IndexOf('|');
+            string key = pipe > 0 ? line[..pipe] : line;
+            counts.TryGetValue(key, out int count);
+            counts[key] = count + 1;
+        }
+
+        return string.Join(",", counts.Select(kv => $"{kv.Key}:{kv.Value}"));
     }
 }

@@ -2927,6 +2927,11 @@ public class Authoritative4XSessionTests : StarDriveTest
             StringAssert.Contains(text, "seq=600");
             StringAssert.Contains(text, "RESULT origin=");
             StringAssert.Contains(text, "accepted=True");
+            StringAssert.Contains(text, "SNAPSHOT tick=");
+            StringAssert.Contains(text, "payloadHash=0x");
+            StringAssert.Contains(text, "rows='");
+            StringAssert.Contains(text, "P:");
+            StringAssert.Contains(text, "S:");
             StringAssert.Contains(text, "CONTROL source=host");
             StringAssert.Contains(text, "END utc=");
         }
