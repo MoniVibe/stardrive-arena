@@ -222,7 +222,19 @@ namespace Ship_Game
             if (input.RightMouseClick)
             {
                 if (Fleet.HasPatrolPlan)
+                {
+                    switch (Authoritative4XClientContext.TrySubmitClearFleetPatrol(Fleet))
+                    {
+                        case Authoritative4XUiCommandResult.Submitted:
+                            GameAudio.EchoAffirmative();
+                            return;
+                        case Authoritative4XUiCommandResult.Blocked:
+                            GameAudio.NegativeClick();
+                            return;
+                    }
+
                     Fleet.ClearPatrol();
+                }
 
                 return;
             }

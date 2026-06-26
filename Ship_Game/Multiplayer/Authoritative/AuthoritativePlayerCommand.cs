@@ -52,6 +52,7 @@ public enum AuthoritativePlayerCommandKind : byte
     SetPlanetDefenseTargets = 38,
     RenameFleetPatrol = 39,
     DeleteFleetPatrol = 40,
+    ClearFleetPatrol = 41,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -589,6 +590,15 @@ public sealed class AuthoritativePlayerCommand
             EmpireId = empireId,
             Kind = AuthoritativePlayerCommandKind.DeleteFleetPatrol,
             Text = patrolName ?? "",
+        };
+
+    public static AuthoritativePlayerCommand ClearFleetPatrol(int sequence, int empireId, int fleetKey)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.ClearFleetPatrol,
+            SubjectId = fleetKey,
         };
 
     public static AuthoritativePlayerCommand ShipSpecialOrder(int sequence, int empireId, int shipId,
