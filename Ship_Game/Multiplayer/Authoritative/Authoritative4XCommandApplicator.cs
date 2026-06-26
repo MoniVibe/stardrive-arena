@@ -241,6 +241,10 @@ public sealed class Authoritative4XCommandApplicator
                 ship.AI.OrderExplore();
                 return Accept(result);
 
+            case AuthoritativeShipSpecialOrderType.Resupply:
+                ship.Supply.ResupplyFromButton();
+                return Accept(result);
+
             default:
                 return Reject(result, $"Unsupported ship special order {command.TargetId}.");
         }

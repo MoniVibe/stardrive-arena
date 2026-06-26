@@ -165,6 +165,7 @@ public enum AuthoritativeShipSpecialOrderType : byte
 {
     Explore = 1,
     ClearOrders = 2,
+    Resupply = 3,
 }
 
 public enum AuthoritativeShipLifecycleOrderType : byte

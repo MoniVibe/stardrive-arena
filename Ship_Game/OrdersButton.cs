@@ -171,7 +171,18 @@ namespace Ship_Game
                                     break;
                             }
                             break;
-                        case OrderType.OrderResupply:      ship.Supply.ResupplyFromButton();                       break;
+                        case OrderType.OrderResupply:
+                            switch (Authoritative4XClientContext.TrySubmitShipSpecialOrder(ship,
+                                        AuthoritativeShipSpecialOrderType.Resupply))
+                            {
+                                case Authoritative4XUiCommandResult.Submitted:
+                                case Authoritative4XUiCommandResult.Blocked:
+                                    break;
+                                default:
+                                    ship.Supply.ResupplyFromButton();
+                                    break;
+                            }
+                            break;
                         case OrderType.Scrap:
                             switch (Authoritative4XClientContext.TrySubmitShipLifecycleOrder(ship,
                                         AuthoritativeShipLifecycleOrderType.Scrap))

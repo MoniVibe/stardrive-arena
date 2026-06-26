@@ -2863,9 +2863,21 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "The authoritative sync digest must cover order-clearing state.");
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
+            string beforeResupplyDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.ShipSpecialOrder(134,
+                authority.Player.Id, authority.Ship.Id, AuthoritativeShipSpecialOrderType.Resupply));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.Ship.Resupplying,
+                "The authority should apply Resupply through the real ship supply order path.");
+            Assert.IsTrue(client.Ship.Resupplying,
+                "The client replica should replay the accepted Resupply order deterministically.");
+            Assert.AreNotEqual(beforeResupplyDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover ship resupply-order state.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
             session.SubmitFromClient(new AuthoritativePlayerCommand
             {
-                Sequence = 134,
+                Sequence = 135,
                 EmpireId = authority.Player.Id,
                 Kind = AuthoritativePlayerCommandKind.ShipSpecialOrder,
                 SubjectId = authority.Ship.Id,
@@ -3588,15 +3600,27 @@ public class Authoritative4XSessionTests : StarDriveTest
                     "Passive MP clients must not locally clear ship orders before host acceptance.");
                 Assert.AreEqual(exploringOrders, world.Ship.AI.OrderQueue.Count);
 
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitShipSpecialOrder(world.Ship,
+                        AuthoritativeShipSpecialOrderType.Resupply));
+                Assert.AreEqual(3, submitted.Count);
+                Assert.AreEqual(2172, submitted[2].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.ShipSpecialOrder, submitted[2].Kind);
+                Assert.AreEqual(world.Ship.Id, submitted[2].SubjectId);
+                Assert.AreEqual((int)AuthoritativeShipSpecialOrderType.Resupply, submitted[2].TargetId);
+                Assert.AreEqual(exploringState, world.Ship.AI.State,
+                    "Passive MP clients must not locally enqueue resupply before host acceptance.");
+                Assert.AreEqual(exploringOrders, world.Ship.AI.OrderQueue.Count);
+
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitShipSpecialOrder(world.EnemyShip,
                         AuthoritativeShipSpecialOrderType.Explore));
-                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(3, submitted.Count);
 
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitShipSpecialOrder(world.Ship,
                         (AuthoritativeShipSpecialOrderType)255));
-                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(3, submitted.Count);
             }
         }
         finally

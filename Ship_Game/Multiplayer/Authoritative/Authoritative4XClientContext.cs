@@ -969,6 +969,7 @@ public sealed class Authoritative4XClientContext : IDisposable
                 && !ship.IsPlatformOrStation
                 && !ship.IsSubspaceProjector
                 && ship.ShipData.Role != RoleName.troop,
+            AuthoritativeShipSpecialOrderType.Resupply => true,
             _ => false,
         };
     }

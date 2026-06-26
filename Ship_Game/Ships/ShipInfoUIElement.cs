@@ -609,7 +609,19 @@ namespace Ship_Game.Ships
             {
                 OrdersButton resupply = new(s, OrderType.OrderResupply, GameText.OrdersSelectedShipOrShips)
                 {
-                    ValueToModify = new(() => s.DoingResupply, x => s.DoingResupply = x)
+                    ValueToModify = new(() => s.DoingResupply, _ =>
+                    {
+                        switch (Authoritative4XClientContext.TrySubmitShipSpecialOrder(s,
+                                    AuthoritativeShipSpecialOrderType.Resupply))
+                        {
+                            case Authoritative4XUiCommandResult.Submitted:
+                            case Authoritative4XUiCommandResult.Blocked:
+                                break;
+                            default:
+                                s.Supply.ResupplyFromButton();
+                                break;
+                        }
+                    })
                 };
                 Orders.Add(resupply);
             }
