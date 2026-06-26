@@ -234,6 +234,19 @@ namespace Ship_Game
 
         void OnConstructionItemReorder(ConstructionQueueScrollListItem item, int relativeChange)
         {
+            switch (Authoritative4XClientContext.TrySubmitReorderConstructionQueueItemRelative(P, item.Item, relativeChange))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.AcceptClick();
+                    return;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return;
+                case Authoritative4XUiCommandResult.NotActive when Authoritative4XClientContext.IsActive:
+                    GameAudio.NegativeClick();
+                    return;
+            }
+
             P.Construction.Reorder(item.Item, relativeChange);
         }
 

@@ -47,6 +47,8 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.QueueBuild => ApplyQueueBuild(command, empire, result),
                 AuthoritativePlayerCommandKind.QueueBuilding => ApplyQueueBuilding(command, empire, result),
                 AuthoritativePlayerCommandKind.QueueTroop => ApplyQueueTroop(command, empire, result),
+                AuthoritativePlayerCommandKind.CancelConstructionQueueItem => ApplyCancelConstructionQueueItem(command, empire, result),
+                AuthoritativePlayerCommandKind.ReorderConstructionQueueItem => ApplyReorderConstructionQueueItem(command, empire, result),
                 AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
@@ -369,6 +371,36 @@ public sealed class Authoritative4XCommandApplicator
         return Accept(result);
     }
 
+    AuthoritativeCommandResult ApplyCancelConstructionQueueItem(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (!TryGetOwnedQueueItem(command, empire, result, out Planet planet, out QueueItem item, out AuthoritativeCommandResult rejected))
+            return rejected;
+        if (item.IsComplete)
+            return Reject(result, $"Construction queue item {command.TargetId} at planet {planet.Id} is already complete.");
+
+        planet.Construction.Cancel(item);
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyReorderConstructionQueueItem(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (!TryGetOwnedQueueItem(command, empire, result, out Planet planet, out _, out AuthoritativeCommandResult rejected))
+            return rejected;
+
+        int currentIndex = command.TargetId;
+        int moveToIndex = (int)command.Position.X;
+        int queueCount = planet.ConstructionQueue.Count;
+        if ((uint)moveToIndex >= queueCount)
+            return Reject(result, $"Construction queue target index {moveToIndex} is outside planet {planet.Id} queue.");
+        if (currentIndex == moveToIndex)
+            return Accept(result);
+
+        planet.Construction.MoveTo(moveToIndex, currentIndex);
+        return Accept(result);
+    }
+
     static IShipDesign RegisterPlayerDesign(ShipDesign design, out string rejectReason)
     {
         if (ResourceManager.Ships.GetDesign(design.Name, out IShipDesign existing))
@@ -423,6 +455,36 @@ public sealed class Authoritative4XCommandApplicator
 
     static bool IsValidLaborPercent(float value)
         => !float.IsNaN(value) && !float.IsInfinity(value) && value >= 0f && value <= 1f;
+
+    bool TryGetOwnedQueueItem(AuthoritativePlayerCommand command, Empire empire, AuthoritativeCommandResult result,
+        out Planet planet, out QueueItem item, out AuthoritativeCommandResult rejected)
+    {
+        planet = null;
+        item = null;
+        rejected = null;
+
+        planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+        {
+            rejected = Reject(result, $"Planet {command.SubjectId} not found.");
+            return false;
+        }
+        if (planet.Owner != empire)
+        {
+            rejected = Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
+            return false;
+        }
+
+        int queueIndex = command.TargetId;
+        if ((uint)queueIndex >= planet.ConstructionQueue.Count)
+        {
+            rejected = Reject(result, $"Construction queue index {queueIndex} is outside planet {planet.Id} queue.");
+            return false;
+        }
+
+        item = planet.ConstructionQueue[queueIndex];
+        return true;
+    }
 
     static bool TryParsePlanetOrder(string text, out AuthoritativeShipPlanetOrderType orderType,
         out bool clearOrders, out MoveOrder moveOrder)

@@ -4,6 +4,7 @@ using Microsoft.Xna.Framework.Graphics;
 using SDGraphics;
 using SDUtils;
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Utils;
 using Vector2 = SDGraphics.Vector2;
 
@@ -33,6 +34,16 @@ namespace Ship_Game
         void OnUpClicked()
         {
             InputState input = GameBase.ScreenManager.input;
+            if (input.IsCtrlKeyDown)
+            {
+                if (TrySubmitAuthoritativeMoveTo(0))
+                    return;
+            }
+            else if (TrySubmitAuthoritativeRelativeMove(-1))
+            {
+                return;
+            }
+
             if (input.IsCtrlKeyDown)
             {
                 Universe.RunOnSimThread(() =>
@@ -68,6 +79,16 @@ namespace Ship_Game
         void OnDownClicked()
         {
             InputState input = GameBase.ScreenManager.input;
+            if (input.IsCtrlKeyDown)
+            {
+                if (TrySubmitAuthoritativeMoveTo(Planet.ConstructionQueue.Count - 1))
+                    return;
+            }
+            else if (TrySubmitAuthoritativeRelativeMove(1))
+            {
+                return;
+            }
+
             if (input.IsCtrlKeyDown)
             {
                 Universe.RunOnSimThread(() =>
@@ -131,6 +152,19 @@ namespace Ship_Game
         }
         void OnCancelClicked()
         {
+            switch (Authoritative4XClientContext.TrySubmitCancelConstructionQueueItem(Planet, Item))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.AcceptClick();
+                    return;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return;
+                case Authoritative4XUiCommandResult.NotActive when Authoritative4XClientContext.IsActive:
+                    GameAudio.NegativeClick();
+                    return;
+            }
+
             Universe.RunOnSimThread(() =>
             {
                 int index = Planet.ConstructionQueue.IndexOf(Item);
@@ -158,6 +192,40 @@ namespace Ship_Game
         {
             Planet.Construction.MoveTo(moveTo, currentIndex);
             GameAudio.AcceptClick();
+        }
+
+        bool TrySubmitAuthoritativeRelativeMove(int relativeChange)
+        {
+            return HandleAuthoritativeQueueResult(
+                Authoritative4XClientContext.TrySubmitReorderConstructionQueueItemRelative(Planet, Item, relativeChange));
+        }
+
+        bool TrySubmitAuthoritativeMoveTo(int moveToIndex)
+        {
+            return HandleAuthoritativeQueueResult(
+                Authoritative4XClientContext.TrySubmitReorderConstructionQueueItem(Planet, Item, moveToIndex));
+        }
+
+        static bool HandleAuthoritativeQueueResult(Authoritative4XUiCommandResult result)
+        {
+            switch (result)
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.AcceptClick();
+                    return true;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return true;
+                case Authoritative4XUiCommandResult.NotActive:
+                    if (Authoritative4XClientContext.IsActive)
+                    {
+                        GameAudio.NegativeClick();
+                        return true;
+                    }
+                    return false;
+                default:
+                    return false;
+            }
         }
         
         public override void Draw(SpriteBatch batch, DrawTimes elapsed)

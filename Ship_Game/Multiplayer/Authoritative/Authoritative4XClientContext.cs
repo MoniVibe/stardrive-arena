@@ -255,6 +255,44 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitCancelConstructionQueueItem(Planet planet, QueueItem item)
+    {
+        if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+
+        int queueIndex = QueueIndexOf(planet, item);
+        if (queueIndex < 0 || item.IsComplete)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.CancelConstructionQueueItem(context.Next(), context.EmpireId,
+            planet.Id, queueIndex));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitReorderConstructionQueueItem(Planet planet,
+        QueueItem item, int moveToIndex)
+    {
+        if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+
+        int queueIndex = QueueIndexOf(planet, item);
+        if (queueIndex < 0 || (uint)moveToIndex >= planet.ConstructionQueue.Count)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.ReorderConstructionQueueItem(context.Next(), context.EmpireId,
+            planet.Id, queueIndex, moveToIndex));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitReorderConstructionQueueItemRelative(Planet planet,
+        QueueItem item, int relativeChange)
+    {
+        int queueIndex = QueueIndexOf(planet, item);
+        if (queueIndex < 0)
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        return TrySubmitReorderConstructionQueueItem(planet, item, queueIndex + relativeChange);
+    }
+
     public static bool IsActiveFor(Empire empire)
         => TryGetFor(empire, out _);
 
@@ -288,6 +326,20 @@ public sealed class Authoritative4XClientContext : IDisposable
 
     static bool CanSubmitShipPlanetOrder(Ship ship)
         => ship?.Active == true && !ship.IsConstructor && !ship.IsPlatformOrStation && !ship.IsSubspaceProjector;
+
+    static int QueueIndexOf(Planet planet, QueueItem item)
+    {
+        if (planet == null || item == null)
+            return -1;
+
+        var queue = planet.ConstructionQueue;
+        for (int i = 0; i < queue.Count; ++i)
+        {
+            if (ReferenceEquals(queue[i], item))
+                return i;
+        }
+        return -1;
+    }
 
     int Next() => Interlocked.Increment(ref NextSequence) - 1;
 

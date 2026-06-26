@@ -90,6 +90,24 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(789, copy.SubjectId);
         Assert.AreEqual("Marine", copy.Text);
 
+        var cancelQueueRequest = AuthoritativePlayerCommand.CancelConstructionQueueItem(15, 2, 789, queueIndex: 3)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(cancelQueueRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.CancelConstructionQueueItem, copy.Kind);
+        Assert.AreEqual(789, copy.SubjectId);
+        Assert.AreEqual(3, copy.TargetId);
+
+        var reorderQueueRequest = AuthoritativePlayerCommand.ReorderConstructionQueueItem(16, 2, 789,
+                currentIndex: 4, moveToIndex: 1)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(reorderQueueRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.ReorderConstructionQueueItem, copy.Kind);
+        Assert.AreEqual(789, copy.SubjectId);
+        Assert.AreEqual(4, copy.TargetId);
+        Assert.AreEqual(1f, copy.X);
+
         var attackRequest = AuthoritativePlayerCommand.AttackShip(12, 2, 99, 100, queue: true)
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(attackRequest, toPeer: 1));
@@ -532,6 +550,129 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.IsFalse(Authoritative4XClientContext.TrySubmitSetColonyLabor(world.EnemyPlanet,
                     0.25f, 0.5f, 0.25f, foodLocked: false, productionLocked: false, researchLocked: false));
                 Assert.AreEqual(1, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XConstructionQueue_CancelAndReorderSync_Headless()
+    {
+        const ulong Seed = 0xC0DE011UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            EnsureSingleBuildTile(authority.Planet);
+            EnsureSingleBuildTile(client.Planet);
+            Building buildable = PickBuildableBuilding(authority.Planet);
+            Troop troop = PickBuildableTroop(authority.Player);
+            authority.Planet.HasSpacePort = true;
+            client.Planet.HasSpacePort = true;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueBuilding(50, authority.Player.Id,
+                authority.Planet.Id, buildable.Name));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueueTroop(51, authority.Player.Id,
+                authority.Planet.Id, troop.Name));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(2, authority.Planet.ConstructionQueue.Count);
+            Assert.IsTrue(authority.Planet.ConstructionQueue[0].isBuilding);
+            Assert.IsTrue(authority.Planet.ConstructionQueue[1].isTroop);
+
+            string beforeReorderDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.ReorderConstructionQueueItem(52,
+                authority.Player.Id, authority.Planet.Id, currentIndex: 1, moveToIndex: 0));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.Planet.ConstructionQueue[0].isTroop);
+            Assert.IsTrue(authority.Planet.ConstructionQueue[1].isBuilding);
+            Assert.IsTrue(client.Planet.ConstructionQueue[0].isTroop);
+            Assert.IsTrue(client.Planet.ConstructionQueue[1].isBuilding);
+            Assert.AreNotEqual(beforeReorderDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover construction queue order.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.CancelConstructionQueueItem(53,
+                authority.Player.Id, authority.Planet.Id, queueIndex: 0));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(1, authority.Planet.ConstructionQueue.Count);
+            Assert.AreEqual(1, client.Planet.ConstructionQueue.Count);
+            Assert.IsTrue(authority.Planet.ConstructionQueue[0].isBuilding);
+            Assert.IsTrue(client.Planet.ConstructionQueue[0].isBuilding);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.CancelConstructionQueueItem(54,
+                authority.Enemy.Id, authority.Planet.Id, queueIndex: 0));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not cancel another empire's construction queue.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(1, authority.Planet.ConstructionQueue.Count);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.ReorderConstructionQueueItem(55,
+                authority.Player.Id, authority.Planet.Id, currentIndex: 2, moveToIndex: 0));
+            Assert.IsFalse(session.LastResult.Accepted, "A stale construction queue index must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "outside");
+            Assert.AreEqual(1, authority.Planet.ConstructionQueue.Count);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsConstructionQueueManagementWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xC0DE0C1UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            EnsureSingleBuildTile(world.Planet);
+            Building buildable = PickBuildableBuilding(world.Planet);
+            Troop troop = PickBuildableTroop(world.Player);
+            world.Planet.HasSpacePort = true;
+            Assert.IsTrue(world.Planet.Construction.Enqueue(buildable, where: null, playerAdded: true));
+            world.Planet.Construction.Enqueue(troop, QueueItemType.Troop);
+            QueueItem buildingItem = world.Planet.ConstructionQueue[0];
+            QueueItem troopItem = world.Planet.ConstructionQueue[1];
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 1700))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitReorderConstructionQueueItem(world.Planet,
+                        troopItem, moveToIndex: 0));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(1700, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.ReorderConstructionQueueItem, submitted[0].Kind);
+                Assert.AreEqual(world.Planet.Id, submitted[0].SubjectId);
+                Assert.AreEqual(1, submitted[0].TargetId);
+                Assert.AreEqual(0f, submitted[0].Position.X);
+                Assert.AreSame(buildingItem, world.Planet.ConstructionQueue[0],
+                    "Passive MP clients must not locally reorder construction before host acceptance.");
+                Assert.AreSame(troopItem, world.Planet.ConstructionQueue[1]);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitCancelConstructionQueueItem(world.Planet, buildingItem));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(1701, submitted[1].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.CancelConstructionQueueItem, submitted[1].Kind);
+                Assert.AreEqual(0, submitted[1].TargetId);
+                Assert.AreEqual(2, world.Planet.ConstructionQueue.Count,
+                    "Passive MP clients must not locally cancel construction before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitCancelConstructionQueueItem(world.EnemyPlanet, buildingItem));
+                Assert.AreEqual(2, submitted.Count);
             }
         }
         finally

@@ -21,6 +21,8 @@ public enum AuthoritativePlayerCommandKind : byte
     AttackShip = 10,
     ShipPlanetOrder = 11,
     SetColonyLabor = 12,
+    CancelConstructionQueueItem = 13,
+    ReorderConstructionQueueItem = 14,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -172,6 +174,29 @@ public sealed class AuthoritativePlayerCommand
             Kind = AuthoritativePlayerCommandKind.QueueTroop,
             SubjectId = planetId,
             Text = troopName ?? "",
+        };
+
+    public static AuthoritativePlayerCommand CancelConstructionQueueItem(int sequence, int empireId, int planetId,
+        int queueIndex)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.CancelConstructionQueueItem,
+            SubjectId = planetId,
+            TargetId = queueIndex,
+        };
+
+    public static AuthoritativePlayerCommand ReorderConstructionQueueItem(int sequence, int empireId, int planetId,
+        int currentIndex, int moveToIndex)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.ReorderConstructionQueueItem,
+            SubjectId = planetId,
+            TargetId = currentIndex,
+            Position = new Vector2(moveToIndex, 0f),
         };
 
     public static AuthoritativePlayerCommand AttackShip(int sequence, int empireId, int shipId, int targetShipId,
