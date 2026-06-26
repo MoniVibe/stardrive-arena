@@ -49,6 +49,7 @@ public enum AuthoritativePlayerCommandKind : byte
     CancelDeepSpaceBuild = 35,
     SetPlanetGovernorOptions = 36,
     SetPlanetManualTradeSlots = 37,
+    SetPlanetDefenseTargets = 38,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -174,6 +175,10 @@ public sealed class AuthoritativePlayerCommand
 {
     public const int MaxManualImportTradeSlots = 20;
     public const int MaxManualExportTradeSlots = 25;
+    public const int MaxPlanetGarrisonSize = 25;
+    public const int MaxWantedPlatforms = 15;
+    public const int MaxWantedShipyards = 3;
+    public const int MaxWantedStations = 10;
 
     public int Sequence;
     public int EmpireId;
@@ -489,6 +494,17 @@ public sealed class AuthoritativePlayerCommand
                 foodExport, prodExport, coloExport),
         };
 
+    public static AuthoritativePlayerCommand SetPlanetDefenseTargets(int sequence, int empireId, int planetId,
+        int garrisonSize, int wantedPlatforms, int wantedShipyards, int wantedStations)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.SetPlanetDefenseTargets,
+            SubjectId = planetId,
+            Text = EncodePlanetDefenseTargetsPayload(garrisonSize, wantedPlatforms, wantedShipyards, wantedStations),
+        };
+
     public static AuthoritativePlayerCommand SetFleetAssignment(int sequence, int empireId, int fleetKey,
         AuthoritativeFleetAssignmentMode mode, IEnumerable<int> shipIds)
         => new()
@@ -736,6 +752,37 @@ public sealed class AuthoritativePlayerCommand
 
     static bool IsInRange(int value, int min, int max)
         => value >= min && value <= max;
+
+    public static string EncodePlanetDefenseTargetsPayload(int garrisonSize, int wantedPlatforms,
+        int wantedShipyards, int wantedStations)
+        => string.Create(CultureInfo.InvariantCulture,
+            $"{garrisonSize}|{wantedPlatforms}|{wantedShipyards}|{wantedStations}");
+
+    public static bool TryParsePlanetDefenseTargetsPayload(string payload, out int garrisonSize,
+        out int wantedPlatforms, out int wantedShipyards, out int wantedStations)
+    {
+        garrisonSize = wantedPlatforms = wantedShipyards = wantedStations = 0;
+
+        string[] parts = (payload ?? "").Split('|');
+        if (parts.Length != 4)
+            return false;
+        if (!int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out garrisonSize)
+            || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out wantedPlatforms)
+            || !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out wantedShipyards)
+            || !int.TryParse(parts[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out wantedStations))
+        {
+            return false;
+        }
+
+        return ArePlanetDefenseTargetsValid(garrisonSize, wantedPlatforms, wantedShipyards, wantedStations);
+    }
+
+    public static bool ArePlanetDefenseTargetsValid(int garrisonSize, int wantedPlatforms,
+        int wantedShipyards, int wantedStations)
+        => IsInRange(garrisonSize, 0, MaxPlanetGarrisonSize)
+           && IsInRange(wantedPlatforms, 0, MaxWantedPlatforms)
+           && IsInRange(wantedShipyards, 0, MaxWantedShipyards)
+           && IsInRange(wantedStations, 0, MaxWantedStations);
 
     public static string EncodeIdList(IEnumerable<int> ids)
         => ids == null ? "" : string.Join(",", ids);

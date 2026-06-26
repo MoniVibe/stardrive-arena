@@ -513,7 +513,7 @@ namespace Ship_Game
                     && !Planet.HasBlueprints;
 
                 int numTroopsCanLaunch    = DefenseTabView ? Planet.NumTroopsCanLaunchFor(Planet.Universe.Player) : 0;
-                Planet.GarrisonSize       = (int)Math.Round(Garrison.AbsoluteValue);
+                int garrisonSize          = (int)Math.Round(Garrison.AbsoluteValue);
                 CallTroops.Visible        = DefenseTabView && Planet.OwnerIsPlayer;
                 LaunchSingleTroop.Visible = CallTroops.Visible && numTroopsCanLaunch > 0;
                 LaunchAllTroops.Visible   = CallTroops.Visible && numTroopsCanLaunch > 1;
@@ -544,12 +544,20 @@ namespace Ship_Game
 
                 if (ManualOrbitals.Visible && Planet.ManualOrbitals)
                 {
-                    Planet.SetWantedPlatforms((byte)ManualPlatforms.AbsoluteValue);
-                    Planet.SetWantedShipyards((byte)ManualShipyards.AbsoluteValue);
-                    Planet.SetWantedStations((byte)ManualStations.AbsoluteValue);
+                    int wantedPlatforms = (int)Math.Round(ManualPlatforms.AbsoluteValue);
+                    int wantedShipyards = (int)Math.Round(ManualShipyards.AbsoluteValue);
+                    int wantedStations = (int)Math.Round(ManualStations.AbsoluteValue);
+                    if (DefenseTargetsChanged(garrisonSize, wantedPlatforms, wantedShipyards, wantedStations))
+                        ApplyDefenseTargets(garrisonSize, wantedPlatforms, wantedShipyards, wantedStations);
                 }
                 else
                 {
+                    if (Planet.GarrisonSize != garrisonSize)
+                    {
+                        ApplyDefenseTargets(garrisonSize, Planet.WantedPlatforms,
+                            Planet.WantedShipyards, Planet.WantedStations);
+                    }
+
                     ManualPlatforms.AbsoluteValue = Planet.WantedPlatforms;
                     ManualShipyards.AbsoluteValue = Planet.WantedShipyards;
                     ManualStations.AbsoluteValue  = Planet.WantedStations;
@@ -610,6 +618,39 @@ namespace Ship_Game
                 case 2: DrawBudgetsTab(batch);    break;
                 case 3: DrawBlueprintsTab(batch); break;
             }
+        }
+
+        bool DefenseTargetsChanged(int garrisonSize, int wantedPlatforms, int wantedShipyards, int wantedStations)
+            => Planet.GarrisonSize != garrisonSize
+               || Planet.WantedPlatforms != wantedPlatforms
+               || Planet.WantedShipyards != wantedShipyards
+               || Planet.WantedStations != wantedStations;
+
+        void ApplyDefenseTargets(int garrisonSize, int wantedPlatforms, int wantedShipyards, int wantedStations)
+        {
+            switch (Authoritative4XClientContext.TrySubmitSetPlanetDefenseTargets(Planet,
+                        garrisonSize, wantedPlatforms, wantedShipyards, wantedStations))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    ResetDefenseTargetSliders();
+                    break;
+
+                case Authoritative4XUiCommandResult.NotActive:
+                    Planet.GarrisonSize = garrisonSize;
+                    Planet.SetWantedPlatforms((byte)wantedPlatforms);
+                    Planet.SetWantedShipyards((byte)wantedShipyards);
+                    Planet.SetWantedStations((byte)wantedStations);
+                    break;
+            }
+        }
+
+        void ResetDefenseTargetSliders()
+        {
+            Garrison.AbsoluteValue = Planet.GarrisonSize;
+            ManualPlatforms.AbsoluteValue = Planet.WantedPlatforms;
+            ManualShipyards.AbsoluteValue = Planet.WantedShipyards;
+            ManualStations.AbsoluteValue = Planet.WantedStations;
         }
 
         void DrawGovernorTab(SpriteBatch batch)

@@ -63,6 +63,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.SetPlanetManualBudget => ApplyPlanetManualBudget(command, empire, result),
                 AuthoritativePlayerCommandKind.SetPlanetGovernorOptions => ApplyPlanetGovernorOptions(command, empire, result),
                 AuthoritativePlayerCommandKind.SetPlanetManualTradeSlots => ApplyPlanetManualTradeSlots(command, empire, result),
+                AuthoritativePlayerCommandKind.SetPlanetDefenseTargets => ApplyPlanetDefenseTargets(command, empire, result),
                 AuthoritativePlayerCommandKind.SetFleetAssignment => ApplyFleetAssignment(command, empire, result),
                 AuthoritativePlayerCommandKind.MoveFleet => ApplyMoveFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.RenameFleet => ApplyRenameFleet(command, empire, result),
@@ -1036,6 +1037,27 @@ public sealed class Authoritative4XCommandApplicator
         planet.ManualFoodExportSlots = foodExport;
         planet.ManualProdExportSlots = prodExport;
         planet.ManualColoExportSlots = coloExport;
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyPlanetDefenseTargets(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} not found.");
+        if (planet.Owner != empire)
+            return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
+        if (!AuthoritativePlayerCommand.TryParsePlanetDefenseTargetsPayload(command.Text,
+                out int garrisonSize, out int wantedPlatforms, out int wantedShipyards, out int wantedStations))
+        {
+            return Reject(result, $"Invalid planet defense target payload '{command.Text}'.");
+        }
+
+        planet.GarrisonSize = garrisonSize;
+        planet.SetWantedPlatforms((byte)wantedPlatforms);
+        planet.SetWantedShipyards((byte)wantedShipyards);
+        planet.SetWantedStations((byte)wantedStations);
         return Accept(result);
     }
 

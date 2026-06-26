@@ -706,6 +706,22 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitSetPlanetDefenseTargets(Planet planet,
+        int garrisonSize, int wantedPlatforms, int wantedShipyards, int wantedStations)
+    {
+        if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!AuthoritativePlayerCommand.ArePlanetDefenseTargetsValid(garrisonSize, wantedPlatforms,
+                wantedShipyards, wantedStations))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.SetPlanetDefenseTargets(context.Next(), context.EmpireId,
+            planet.Id, garrisonSize, wantedPlatforms, wantedShipyards, wantedStations));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     static AuthoritativePlanetGovernorOptions PlanetGovernorOptions(Planet planet)
     {
         AuthoritativePlanetGovernorOptions options = AuthoritativePlanetGovernorOptions.None;

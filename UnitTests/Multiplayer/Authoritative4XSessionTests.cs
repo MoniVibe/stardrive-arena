@@ -241,6 +241,19 @@ public class Authoritative4XSessionTests : StarDriveTest
             expectedFoodImport: 2, expectedProdImport: 3, expectedColoImport: 4,
             expectedFoodExport: 5, expectedProdExport: 6, expectedColoExport: 7);
 
+        var defenseTargetsRequest = AuthoritativePlayerCommand.SetPlanetDefenseTargets(28, 2, 789,
+                garrisonSize: 9, wantedPlatforms: 10, wantedShipyards: 2, wantedStations: 6)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(defenseTargetsRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetPlanetDefenseTargets, copy.Kind);
+        Assert.AreEqual(789, copy.SubjectId);
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParsePlanetDefenseTargetsPayload(copy.Text,
+            out int garrisonSize, out int wantedPlatforms, out int wantedShipyards, out int wantedStations));
+        AssertDefenseTargets(garrisonSize, wantedPlatforms, wantedShipyards, wantedStations,
+            expectedGarrisonSize: 9, expectedWantedPlatforms: 10,
+            expectedWantedShipyards: 2, expectedWantedStations: 6);
+
         var fleetRequest = AuthoritativePlayerCommand.SetFleetAssignment(27, 2, 7,
                 AuthoritativeFleetAssignmentMode.Replace, new[] { 99, 100 })
             .ToMessage(fromPeer: 2);
@@ -1271,6 +1284,19 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "The sync digest must cover manual trade slot changes.");
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
+            string beforeDefenseTargetsDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetDefenseTargets(104,
+                authority.Player.Id, authority.Planet.Id,
+                garrisonSize: 8, wantedPlatforms: 9, wantedShipyards: 2, wantedStations: 6));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            AssertPlanetDefenseTargets(authority.Planet, expectedGarrisonSize: 8,
+                expectedWantedPlatforms: 9, expectedWantedShipyards: 2, expectedWantedStations: 6);
+            AssertPlanetDefenseTargets(client.Planet, expectedGarrisonSize: 8,
+                expectedWantedPlatforms: 9, expectedWantedShipyards: 2, expectedWantedStations: 6);
+            Assert.AreNotEqual(beforeDefenseTargetsDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover defense target changes.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
             session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualBudget(96,
                 authority.Enemy.Id, authority.Planet.Id, AuthoritativePlanetBudgetKind.Civilian, 1f));
             Assert.IsFalse(session.LastResult.Accepted, "An empire must not change another empire's governor budget.");
@@ -1326,6 +1352,36 @@ public class Authoritative4XSessionTests : StarDriveTest
             AssertPlanetManualTradeSlots(authority.Planet,
                 expectedFoodImport: 2, expectedProdImport: 3, expectedColoImport: 4,
                 expectedFoodExport: 5, expectedProdExport: 6, expectedColoExport: 7);
+            Assert.AreEqual(beforeRejectedGovernorDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetDefenseTargets(105,
+                authority.Enemy.Id, authority.Planet.Id,
+                garrisonSize: 1, wantedPlatforms: 1, wantedShipyards: 1, wantedStations: 1));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not change another empire's defense targets.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            AssertPlanetDefenseTargets(authority.Planet, expectedGarrisonSize: 8,
+                expectedWantedPlatforms: 9, expectedWantedShipyards: 2, expectedWantedStations: 6);
+            Assert.AreEqual(beforeRejectedGovernorDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetDefenseTargets(106,
+                authority.Player.Id, authority.Planet.Id,
+                garrisonSize: 26, wantedPlatforms: 0, wantedShipyards: 0, wantedStations: 0));
+            Assert.IsFalse(session.LastResult.Accepted, "Garrison size must stay within the slider range.");
+            StringAssert.Contains(session.LastResult.Reason, "Invalid planet defense target payload");
+            AssertPlanetDefenseTargets(authority.Planet, expectedGarrisonSize: 8,
+                expectedWantedPlatforms: 9, expectedWantedShipyards: 2, expectedWantedStations: 6);
+            Assert.AreEqual(beforeRejectedGovernorDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetDefenseTargets(107,
+                authority.Player.Id, authority.Planet.Id,
+                garrisonSize: 0, wantedPlatforms: 0, wantedShipyards: 4, wantedStations: 0));
+            Assert.IsFalse(session.LastResult.Accepted, "Wanted shipyards must stay within the slider range.");
+            StringAssert.Contains(session.LastResult.Reason, "Invalid planet defense target payload");
+            AssertPlanetDefenseTargets(authority.Planet, expectedGarrisonSize: 8,
+                expectedWantedPlatforms: 9, expectedWantedShipyards: 2, expectedWantedStations: 6);
             Assert.AreEqual(beforeRejectedGovernorDigest, session.LastAuthoritySnapshot.SyncDigest);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
@@ -1387,6 +1443,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             AssertPlanetManualTradeSlots(world.Planet,
                 expectedFoodImport: 0, expectedProdImport: 0, expectedColoImport: 0,
                 expectedFoodExport: 0, expectedProdExport: 0, expectedColoExport: 0);
+            AssertPlanetDefenseTargets(world.Planet, expectedGarrisonSize: 0,
+                expectedWantedPlatforms: 0, expectedWantedShipyards: 0, expectedWantedStations: 0);
             world.Planet.GovOrbitals = true;
             world.Planet.AutoBuildTroops = true;
             world.Planet.DontScrapBuildings = false;
@@ -1453,26 +1511,51 @@ public class Authoritative4XSessionTests : StarDriveTest
                     expectedFoodImport: 0, expectedProdImport: 0, expectedColoImport: 0,
                     expectedFoodExport: 0, expectedProdExport: 0, expectedColoExport: 0);
 
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetPlanetDefenseTargets(world.Planet,
+                        garrisonSize: 8, wantedPlatforms: 9, wantedShipyards: 2, wantedStations: 6));
+                Assert.AreEqual(5, submitted.Count);
+                Assert.AreEqual(2054, submitted[4].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetPlanetDefenseTargets, submitted[4].Kind);
+                Assert.AreEqual(world.Planet.Id, submitted[4].SubjectId);
+                Assert.IsTrue(AuthoritativePlayerCommand.TryParsePlanetDefenseTargetsPayload(submitted[4].Text,
+                    out int garrisonSize, out int wantedPlatforms, out int wantedShipyards, out int wantedStations));
+                AssertDefenseTargets(garrisonSize, wantedPlatforms, wantedShipyards, wantedStations,
+                    expectedGarrisonSize: 8, expectedWantedPlatforms: 9,
+                    expectedWantedShipyards: 2, expectedWantedStations: 6);
+                AssertPlanetDefenseTargets(world.Planet, expectedGarrisonSize: 0,
+                    expectedWantedPlatforms: 0, expectedWantedShipyards: 0, expectedWantedStations: 0);
+
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitSetPlanetManualBudget(world.EnemyPlanet,
                         AuthoritativePlanetBudgetKind.Civilian, 1f));
-                Assert.AreEqual(4, submitted.Count);
+                Assert.AreEqual(5, submitted.Count);
 
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitSetPlanetGovernorOptions(world.EnemyPlanet));
-                Assert.AreEqual(4, submitted.Count);
+                Assert.AreEqual(5, submitted.Count);
 
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitSetPlanetManualTradeSlots(world.EnemyPlanet,
                         foodImport: 1, prodImport: 1, coloImport: 1,
                         foodExport: 1, prodExport: 1, coloExport: 1));
-                Assert.AreEqual(4, submitted.Count);
+                Assert.AreEqual(5, submitted.Count);
 
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitSetPlanetManualTradeSlots(world.Planet,
                         foodImport: 21, prodImport: 0, coloImport: 0,
                         foodExport: 0, prodExport: 0, coloExport: 0));
-                Assert.AreEqual(4, submitted.Count);
+                Assert.AreEqual(5, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetPlanetDefenseTargets(world.EnemyPlanet,
+                        garrisonSize: 1, wantedPlatforms: 1, wantedShipyards: 1, wantedStations: 1));
+                Assert.AreEqual(5, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetPlanetDefenseTargets(world.Planet,
+                        garrisonSize: 0, wantedPlatforms: 16, wantedShipyards: 0, wantedStations: 0));
+                Assert.AreEqual(5, submitted.Count);
             }
         }
         finally
@@ -4629,6 +4712,22 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(expectedFoodExport, foodExport, "Food export slots did not match.");
         Assert.AreEqual(expectedProdExport, prodExport, "Production export slots did not match.");
         Assert.AreEqual(expectedColoExport, coloExport, "Colonist export slots did not match.");
+    }
+
+    static void AssertPlanetDefenseTargets(Planet planet, int expectedGarrisonSize,
+        int expectedWantedPlatforms, int expectedWantedShipyards, int expectedWantedStations)
+        => AssertDefenseTargets(planet.GarrisonSize, planet.WantedPlatforms,
+            planet.WantedShipyards, planet.WantedStations, expectedGarrisonSize,
+            expectedWantedPlatforms, expectedWantedShipyards, expectedWantedStations);
+
+    static void AssertDefenseTargets(int garrisonSize, int wantedPlatforms,
+        int wantedShipyards, int wantedStations, int expectedGarrisonSize,
+        int expectedWantedPlatforms, int expectedWantedShipyards, int expectedWantedStations)
+    {
+        Assert.AreEqual(expectedGarrisonSize, garrisonSize, "Garrison target did not match.");
+        Assert.AreEqual(expectedWantedPlatforms, wantedPlatforms, "Wanted platform target did not match.");
+        Assert.AreEqual(expectedWantedShipyards, wantedShipyards, "Wanted shipyard target did not match.");
+        Assert.AreEqual(expectedWantedStations, wantedStations, "Wanted station target did not match.");
     }
 
     static void PumpTcpUntil(Func<bool> done, Authoritative4XNetworkHost host, Authoritative4XNetworkClient client)
