@@ -3,6 +3,7 @@ using Microsoft.Xna.Framework.Graphics;
 using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using SDUtils;
+using Ship_Game.Multiplayer.Authoritative;
 
 namespace Ship_Game
 {
@@ -71,17 +72,59 @@ namespace Ship_Game
             IncomingProdAmount.Text = $"({IncomingProd.String()})";
             IncomingColoAmount.Text = $"({IncomingPopString})";
 
-            P.ManualFoodImportSlots = (int)Math.Round(ImportFoodSlotSlider.AbsoluteValue);
-            P.ManualProdImportSlots = (int)Math.Round(ImportProdSlotSlider.AbsoluteValue);
-            P.ManualColoImportSlots = (int)Math.Round(ImportColoSlotSlider.AbsoluteValue);
-            P.ManualFoodExportSlots = (int)Math.Round(ExportFoodSlotSlider.AbsoluteValue);
-            P.ManualProdExportSlots = (int)Math.Round(ExportProdSlotSlider.AbsoluteValue);
-            P.ManualColoExportSlots = (int)Math.Round(ExportColoSlotSlider.AbsoluteValue);
+            int foodImportSlots = (int)Math.Round(ImportFoodSlotSlider.AbsoluteValue);
+            int prodImportSlots = (int)Math.Round(ImportProdSlotSlider.AbsoluteValue);
+            int coloImportSlots = (int)Math.Round(ImportColoSlotSlider.AbsoluteValue);
+            int foodExportSlots = (int)Math.Round(ExportFoodSlotSlider.AbsoluteValue);
+            int prodExportSlots = (int)Math.Round(ExportProdSlotSlider.AbsoluteValue);
+            int coloExportSlots = (int)Math.Round(ExportColoSlotSlider.AbsoluteValue);
+
+            if (ManualTradeSlotsChanged(foodImportSlots, prodImportSlots, coloImportSlots,
+                    foodExportSlots, prodExportSlots, coloExportSlots))
+            {
+                switch (Authoritative4XClientContext.TrySubmitSetPlanetManualTradeSlots(P,
+                            foodImportSlots, prodImportSlots, coloImportSlots,
+                            foodExportSlots, prodExportSlots, coloExportSlots))
+                {
+                    case Authoritative4XUiCommandResult.Submitted:
+                    case Authoritative4XUiCommandResult.Blocked:
+                        ResetManualTradeSlotSliders();
+                        break;
+
+                    case Authoritative4XUiCommandResult.NotActive:
+                        P.ManualFoodImportSlots = foodImportSlots;
+                        P.ManualProdImportSlots = prodImportSlots;
+                        P.ManualColoImportSlots = coloImportSlots;
+                        P.ManualFoodExportSlots = foodExportSlots;
+                        P.ManualProdExportSlots = prodExportSlots;
+                        P.ManualColoExportSlots = coloExportSlots;
+                        break;
+                }
+            }
 
             IncomingTradeTitle.Color = GetIncomingTradeTitleColor();
             OutgoingTradeTitle.Color = GetOutgoingTradeTitleColor();
             ManualImportTitle.Color  = GetManualImportSlotsOverrideColor();
             ManualExportTitle.Color  = GetManualExportSlotsOverrideColor();
+        }
+
+        bool ManualTradeSlotsChanged(int foodImportSlots, int prodImportSlots, int coloImportSlots,
+            int foodExportSlots, int prodExportSlots, int coloExportSlots)
+            => P.ManualFoodImportSlots != foodImportSlots
+               || P.ManualProdImportSlots != prodImportSlots
+               || P.ManualColoImportSlots != coloImportSlots
+               || P.ManualFoodExportSlots != foodExportSlots
+               || P.ManualProdExportSlots != prodExportSlots
+               || P.ManualColoExportSlots != coloExportSlots;
+
+        void ResetManualTradeSlotSliders()
+        {
+            ImportFoodSlotSlider.AbsoluteValue = P.ManualFoodImportSlots;
+            ImportProdSlotSlider.AbsoluteValue = P.ManualProdImportSlots;
+            ImportColoSlotSlider.AbsoluteValue = P.ManualColoImportSlots;
+            ExportFoodSlotSlider.AbsoluteValue = P.ManualFoodExportSlots;
+            ExportProdSlotSlider.AbsoluteValue = P.ManualProdExportSlots;
+            ExportColoSlotSlider.AbsoluteValue = P.ManualColoExportSlots;
         }
 
         void UpdateDysonSwarmTab()

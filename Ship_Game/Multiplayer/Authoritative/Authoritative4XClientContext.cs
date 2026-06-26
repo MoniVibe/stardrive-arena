@@ -690,6 +690,22 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitSetPlanetManualTradeSlots(Planet planet,
+        int foodImport, int prodImport, int coloImport, int foodExport, int prodExport, int coloExport)
+    {
+        if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!AuthoritativePlayerCommand.AreManualTradeSlotsValid(foodImport, prodImport, coloImport,
+                foodExport, prodExport, coloExport))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.SetPlanetManualTradeSlots(context.Next(), context.EmpireId,
+            planet.Id, foodImport, prodImport, coloImport, foodExport, prodExport, coloExport));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     static AuthoritativePlanetGovernorOptions PlanetGovernorOptions(Planet planet)
     {
         AuthoritativePlanetGovernorOptions options = AuthoritativePlanetGovernorOptions.None;

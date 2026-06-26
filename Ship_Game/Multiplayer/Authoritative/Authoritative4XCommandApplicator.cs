@@ -62,6 +62,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.SetPlanetPrioritizedPort => ApplyPlanetPrioritizedPort(command, empire, result),
                 AuthoritativePlayerCommandKind.SetPlanetManualBudget => ApplyPlanetManualBudget(command, empire, result),
                 AuthoritativePlayerCommandKind.SetPlanetGovernorOptions => ApplyPlanetGovernorOptions(command, empire, result),
+                AuthoritativePlayerCommandKind.SetPlanetManualTradeSlots => ApplyPlanetManualTradeSlots(command, empire, result),
                 AuthoritativePlayerCommandKind.SetFleetAssignment => ApplyFleetAssignment(command, empire, result),
                 AuthoritativePlayerCommandKind.MoveFleet => ApplyMoveFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.RenameFleet => ApplyRenameFleet(command, empire, result),
@@ -1011,6 +1012,30 @@ public sealed class Authoritative4XCommandApplicator
         planet.ManualOrbitals = options.HasFlag(AuthoritativePlanetGovernorOptions.ManualOrbitals);
         planet.GovGroundDefense = options.HasFlag(AuthoritativePlanetGovernorOptions.GovGroundDefense);
         planet.SetSpecializedTradeHub(options.HasFlag(AuthoritativePlanetGovernorOptions.SpecializedTradeHub));
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyPlanetManualTradeSlots(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} not found.");
+        if (planet.Owner != empire)
+            return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
+        if (!AuthoritativePlayerCommand.TryParseManualTradeSlotsPayload(command.Text,
+                out int foodImport, out int prodImport, out int coloImport,
+                out int foodExport, out int prodExport, out int coloExport))
+        {
+            return Reject(result, $"Invalid planet manual trade slot payload '{command.Text}'.");
+        }
+
+        planet.ManualFoodImportSlots = foodImport;
+        planet.ManualProdImportSlots = prodImport;
+        planet.ManualColoImportSlots = coloImport;
+        planet.ManualFoodExportSlots = foodExport;
+        planet.ManualProdExportSlots = prodExport;
+        planet.ManualColoExportSlots = coloExport;
         return Accept(result);
     }
 

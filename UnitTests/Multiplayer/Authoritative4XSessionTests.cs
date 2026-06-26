@@ -227,6 +227,20 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(789, copy.SubjectId);
         Assert.AreEqual((int)governorOptions, copy.TargetId);
 
+        var manualTradeSlotsRequest = AuthoritativePlayerCommand.SetPlanetManualTradeSlots(27, 2, 789,
+                foodImport: 2, prodImport: 3, coloImport: 4, foodExport: 5, prodExport: 6, coloExport: 7)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(manualTradeSlotsRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetPlanetManualTradeSlots, copy.Kind);
+        Assert.AreEqual(789, copy.SubjectId);
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParseManualTradeSlotsPayload(copy.Text,
+            out int foodImport, out int prodImport, out int coloImport,
+            out int foodExport, out int prodExport, out int coloExport));
+        AssertManualTradeSlots(foodImport, prodImport, coloImport, foodExport, prodExport, coloExport,
+            expectedFoodImport: 2, expectedProdImport: 3, expectedColoImport: 4,
+            expectedFoodExport: 5, expectedProdExport: 6, expectedColoExport: 7);
+
         var fleetRequest = AuthoritativePlayerCommand.SetFleetAssignment(27, 2, 7,
                 AuthoritativeFleetAssignmentMode.Replace, new[] { 99, 100 })
             .ToMessage(fromPeer: 2);
@@ -1241,14 +1255,30 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "The sync digest must cover governor option flag changes.");
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
-            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualBudget(95,
+            string beforeManualTradeSlotsDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualTradeSlots(95,
+                authority.Player.Id, authority.Planet.Id,
+                foodImport: 2, prodImport: 3, coloImport: 4,
+                foodExport: 5, prodExport: 6, coloExport: 7));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            AssertPlanetManualTradeSlots(authority.Planet,
+                expectedFoodImport: 2, expectedProdImport: 3, expectedColoImport: 4,
+                expectedFoodExport: 5, expectedProdExport: 6, expectedColoExport: 7);
+            AssertPlanetManualTradeSlots(client.Planet,
+                expectedFoodImport: 2, expectedProdImport: 3, expectedColoImport: 4,
+                expectedFoodExport: 5, expectedProdExport: 6, expectedColoExport: 7);
+            Assert.AreNotEqual(beforeManualTradeSlotsDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover manual trade slot changes.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualBudget(96,
                 authority.Enemy.Id, authority.Planet.Id, AuthoritativePlanetBudgetKind.Civilian, 1f));
             Assert.IsFalse(session.LastResult.Accepted, "An empire must not change another empire's governor budget.");
             StringAssert.Contains(session.LastResult.Reason, "not owned");
             Assert.AreEqual(12.5f, authority.Planet.ManualCivilianBudget);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
-            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualBudget(96,
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualBudget(97,
                 authority.Player.Id, authority.Planet.Id, AuthoritativePlanetBudgetKind.Civilian, -1f));
             Assert.IsFalse(session.LastResult.Accepted, "Negative manual budgets must be rejected.");
             StringAssert.Contains(session.LastResult.Reason, "finite non-negative");
@@ -1257,7 +1287,7 @@ public class Authoritative4XSessionTests : StarDriveTest
 
             authority.Planet.HasSpacePort = false;
             client.Planet.HasSpacePort = false;
-            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetPrioritizedPort(97,
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetPrioritizedPort(98,
                 authority.Player.Id, authority.Planet.Id, true));
             Assert.IsFalse(session.LastResult.Accepted,
                 "A planet without a space port must not be marked as a prioritized port.");
@@ -1267,7 +1297,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
             string beforeRejectedGovernorDigest = session.LastAuthoritySnapshot.SyncDigest;
-            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetGovernorOptions(98,
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetGovernorOptions(99,
                 authority.Enemy.Id, authority.Planet.Id, AuthoritativePlanetGovernorOptions.Quarantine));
             Assert.IsFalse(session.LastResult.Accepted, "An empire must not change another empire's governor options.");
             StringAssert.Contains(session.LastResult.Reason, "not owned");
@@ -1277,13 +1307,49 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(beforeRejectedGovernorDigest, session.LastAuthoritySnapshot.SyncDigest);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
-            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetGovernorOptions(99,
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetGovernorOptions(100,
                 authority.Player.Id, authority.Planet.Id, (AuthoritativePlanetGovernorOptions)(1 << 12)));
             Assert.IsFalse(session.LastResult.Accepted, "Unsupported governor option bits must be rejected.");
             StringAssert.Contains(session.LastResult.Reason, "Unsupported planet governor option flags");
             AssertGovernorOptions(authority.Planet, expectedGovOrbitals: true, expectedAutoTroops: true,
                 expectedNoScrap: false, expectedQuarantine: true, expectedManualOrbitals: true,
                 expectedGovGround: true, expectedSpecializedTradeHub: true);
+            Assert.AreEqual(beforeRejectedGovernorDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualTradeSlots(101,
+                authority.Enemy.Id, authority.Planet.Id,
+                foodImport: 1, prodImport: 1, coloImport: 1,
+                foodExport: 1, prodExport: 1, coloExport: 1));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not change another empire's manual trade slots.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            AssertPlanetManualTradeSlots(authority.Planet,
+                expectedFoodImport: 2, expectedProdImport: 3, expectedColoImport: 4,
+                expectedFoodExport: 5, expectedProdExport: 6, expectedColoExport: 7);
+            Assert.AreEqual(beforeRejectedGovernorDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualTradeSlots(102,
+                authority.Player.Id, authority.Planet.Id,
+                foodImport: 21, prodImport: 0, coloImport: 0,
+                foodExport: 0, prodExport: 0, coloExport: 0));
+            Assert.IsFalse(session.LastResult.Accepted, "Import slot overrides must stay within the slider range.");
+            StringAssert.Contains(session.LastResult.Reason, "Invalid planet manual trade slot payload");
+            AssertPlanetManualTradeSlots(authority.Planet,
+                expectedFoodImport: 2, expectedProdImport: 3, expectedColoImport: 4,
+                expectedFoodExport: 5, expectedProdExport: 6, expectedColoExport: 7);
+            Assert.AreEqual(beforeRejectedGovernorDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetManualTradeSlots(103,
+                authority.Player.Id, authority.Planet.Id,
+                foodImport: 0, prodImport: 0, coloImport: 0,
+                foodExport: 0, prodExport: 26, coloExport: 0));
+            Assert.IsFalse(session.LastResult.Accepted, "Export slot overrides must stay within the slider range.");
+            StringAssert.Contains(session.LastResult.Reason, "Invalid planet manual trade slot payload");
+            AssertPlanetManualTradeSlots(authority.Planet,
+                expectedFoodImport: 2, expectedProdImport: 3, expectedColoImport: 4,
+                expectedFoodExport: 5, expectedProdExport: 6, expectedColoExport: 7);
             Assert.AreEqual(beforeRejectedGovernorDigest, session.LastAuthoritySnapshot.SyncDigest);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
         }
@@ -1318,6 +1384,9 @@ public class Authoritative4XSessionTests : StarDriveTest
             world.Planet.HasSpacePort = true;
             float originalCivilian = world.Planet.ManualCivilianBudget;
             bool originalPrioritized = world.Planet.PrioritizedPort;
+            AssertPlanetManualTradeSlots(world.Planet,
+                expectedFoodImport: 0, expectedProdImport: 0, expectedColoImport: 0,
+                expectedFoodExport: 0, expectedProdExport: 0, expectedColoExport: 0);
             world.Planet.GovOrbitals = true;
             world.Planet.AutoBuildTroops = true;
             world.Planet.DontScrapBuildings = false;
@@ -1366,14 +1435,44 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.IsTrue(world.Planet.Quarantine);
                 Assert.IsTrue(world.Planet.SpecializedTradeHub);
 
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetPlanetManualTradeSlots(world.Planet,
+                        foodImport: 2, prodImport: 3, coloImport: 4,
+                        foodExport: 5, prodExport: 6, coloExport: 7));
+                Assert.AreEqual(4, submitted.Count);
+                Assert.AreEqual(2053, submitted[3].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetPlanetManualTradeSlots, submitted[3].Kind);
+                Assert.AreEqual(world.Planet.Id, submitted[3].SubjectId);
+                Assert.IsTrue(AuthoritativePlayerCommand.TryParseManualTradeSlotsPayload(submitted[3].Text,
+                    out int foodImport, out int prodImport, out int coloImport,
+                    out int foodExport, out int prodExport, out int coloExport));
+                AssertManualTradeSlots(foodImport, prodImport, coloImport, foodExport, prodExport, coloExport,
+                    expectedFoodImport: 2, expectedProdImport: 3, expectedColoImport: 4,
+                    expectedFoodExport: 5, expectedProdExport: 6, expectedColoExport: 7);
+                AssertPlanetManualTradeSlots(world.Planet,
+                    expectedFoodImport: 0, expectedProdImport: 0, expectedColoImport: 0,
+                    expectedFoodExport: 0, expectedProdExport: 0, expectedColoExport: 0);
+
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitSetPlanetManualBudget(world.EnemyPlanet,
                         AuthoritativePlanetBudgetKind.Civilian, 1f));
-                Assert.AreEqual(3, submitted.Count);
+                Assert.AreEqual(4, submitted.Count);
 
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitSetPlanetGovernorOptions(world.EnemyPlanet));
-                Assert.AreEqual(3, submitted.Count);
+                Assert.AreEqual(4, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetPlanetManualTradeSlots(world.EnemyPlanet,
+                        foodImport: 1, prodImport: 1, coloImport: 1,
+                        foodExport: 1, prodExport: 1, coloExport: 1));
+                Assert.AreEqual(4, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetPlanetManualTradeSlots(world.Planet,
+                        foodImport: 21, prodImport: 0, coloImport: 0,
+                        foodExport: 0, prodExport: 0, coloExport: 0));
+                Assert.AreEqual(4, submitted.Count);
             }
         }
         finally
@@ -4510,6 +4609,26 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(session.LastAuthoritySnapshot.HashHi, session.LastClientSnapshotFor(peer).HashHi);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshotFor(peer).SyncDigest);
         }
+    }
+
+    static void AssertPlanetManualTradeSlots(Planet planet, int expectedFoodImport, int expectedProdImport,
+        int expectedColoImport, int expectedFoodExport, int expectedProdExport, int expectedColoExport)
+        => AssertManualTradeSlots(planet.ManualFoodImportSlots, planet.ManualProdImportSlots,
+            planet.ManualColoImportSlots, planet.ManualFoodExportSlots, planet.ManualProdExportSlots,
+            planet.ManualColoExportSlots, expectedFoodImport, expectedProdImport, expectedColoImport,
+            expectedFoodExport, expectedProdExport, expectedColoExport);
+
+    static void AssertManualTradeSlots(int foodImport, int prodImport, int coloImport,
+        int foodExport, int prodExport, int coloExport,
+        int expectedFoodImport, int expectedProdImport, int expectedColoImport,
+        int expectedFoodExport, int expectedProdExport, int expectedColoExport)
+    {
+        Assert.AreEqual(expectedFoodImport, foodImport, "Food import slots did not match.");
+        Assert.AreEqual(expectedProdImport, prodImport, "Production import slots did not match.");
+        Assert.AreEqual(expectedColoImport, coloImport, "Colonist import slots did not match.");
+        Assert.AreEqual(expectedFoodExport, foodExport, "Food export slots did not match.");
+        Assert.AreEqual(expectedProdExport, prodExport, "Production export slots did not match.");
+        Assert.AreEqual(expectedColoExport, coloExport, "Colonist export slots did not match.");
     }
 
     static void PumpTcpUntil(Func<bool> done, Authoritative4XNetworkHost host, Authoritative4XNetworkClient client)

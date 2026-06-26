@@ -48,6 +48,7 @@ public enum AuthoritativePlayerCommandKind : byte
     QueueDeepSpaceBuild = 34,
     CancelDeepSpaceBuild = 35,
     SetPlanetGovernorOptions = 36,
+    SetPlanetManualTradeSlots = 37,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -171,6 +172,9 @@ public readonly struct AuthoritativeFleetLayoutNode
 /// </summary>
 public sealed class AuthoritativePlayerCommand
 {
+    public const int MaxManualImportTradeSlots = 20;
+    public const int MaxManualExportTradeSlots = 25;
+
     public int Sequence;
     public int EmpireId;
     public AuthoritativePlayerCommandKind Kind;
@@ -473,6 +477,18 @@ public sealed class AuthoritativePlayerCommand
             TargetId = (int)options,
         };
 
+    public static AuthoritativePlayerCommand SetPlanetManualTradeSlots(int sequence, int empireId, int planetId,
+        int foodImport, int prodImport, int coloImport, int foodExport, int prodExport, int coloExport)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.SetPlanetManualTradeSlots,
+            SubjectId = planetId,
+            Text = EncodeManualTradeSlotsPayload(foodImport, prodImport, coloImport,
+                foodExport, prodExport, coloExport),
+        };
+
     public static AuthoritativePlayerCommand SetFleetAssignment(int sequence, int empireId, int fleetKey,
         AuthoritativeFleetAssignmentMode mode, IEnumerable<int> shipIds)
         => new()
@@ -682,6 +698,44 @@ public sealed class AuthoritativePlayerCommand
         autoTaxes = autoValue == 1;
         return true;
     }
+
+    public static string EncodeManualTradeSlotsPayload(int foodImport, int prodImport, int coloImport,
+        int foodExport, int prodExport, int coloExport)
+        => string.Create(CultureInfo.InvariantCulture,
+            $"{foodImport}|{prodImport}|{coloImport}|{foodExport}|{prodExport}|{coloExport}");
+
+    public static bool TryParseManualTradeSlotsPayload(string payload, out int foodImport, out int prodImport,
+        out int coloImport, out int foodExport, out int prodExport, out int coloExport)
+    {
+        foodImport = prodImport = coloImport = foodExport = prodExport = coloExport = 0;
+
+        string[] parts = (payload ?? "").Split('|');
+        if (parts.Length != 6)
+            return false;
+        if (!int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out foodImport)
+            || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out prodImport)
+            || !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out coloImport)
+            || !int.TryParse(parts[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out foodExport)
+            || !int.TryParse(parts[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out prodExport)
+            || !int.TryParse(parts[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out coloExport))
+        {
+            return false;
+        }
+
+        return AreManualTradeSlotsValid(foodImport, prodImport, coloImport, foodExport, prodExport, coloExport);
+    }
+
+    public static bool AreManualTradeSlotsValid(int foodImport, int prodImport, int coloImport,
+        int foodExport, int prodExport, int coloExport)
+        => IsInRange(foodImport, 0, MaxManualImportTradeSlots)
+           && IsInRange(prodImport, 0, MaxManualImportTradeSlots)
+           && IsInRange(coloImport, 0, MaxManualImportTradeSlots)
+           && IsInRange(foodExport, 0, MaxManualExportTradeSlots)
+           && IsInRange(prodExport, 0, MaxManualExportTradeSlots)
+           && IsInRange(coloExport, 0, MaxManualExportTradeSlots);
+
+    static bool IsInRange(int value, int min, int max)
+        => value >= min && value <= max;
 
     public static string EncodeIdList(IEnumerable<int> ids)
         => ids == null ? "" : string.Join(",", ids);
