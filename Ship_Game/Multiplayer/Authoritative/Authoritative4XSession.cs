@@ -746,7 +746,22 @@ public sealed class Authoritative4XSyncMismatchException : InvalidOperationExcep
            $"authority 0x{authoritySnapshot?.HashLo ?? 0UL:X16}:0x{authoritySnapshot?.HashHi ?? 0UL:X16}/" +
            $"{authoritySnapshot?.SyncDigest ?? ""}, client " +
            $"0x{clientSnapshot?.HashLo ?? 0UL:X16}:0x{clientSnapshot?.HashHi ?? 0UL:X16}/" +
-           $"{clientSnapshot?.SyncDigest ?? ""}";
+           $"{clientSnapshot?.SyncDigest ?? ""}; {FirstPayloadDifference(authoritySnapshot?.Payload, clientSnapshot?.Payload)}";
+
+    static string FirstPayloadDifference(string authorityPayload, string clientPayload)
+    {
+        string[] authority = (authorityPayload ?? "").Split('\n');
+        string[] client = (clientPayload ?? "").Split('\n');
+        int count = Math.Max(authority.Length, client.Length);
+        for (int i = 0; i < count; ++i)
+        {
+            string a = i < authority.Length ? authority[i].TrimEnd('\r') : "<missing>";
+            string c = i < client.Length ? client[i].TrimEnd('\r') : "<missing>";
+            if (!string.Equals(a, c, StringComparison.Ordinal))
+                return $"firstDiff line={i + 1} authority='{a}' client='{c}'";
+        }
+        return "payloads matched";
+    }
 }
 
 public readonly struct Authoritative4XClientSpec

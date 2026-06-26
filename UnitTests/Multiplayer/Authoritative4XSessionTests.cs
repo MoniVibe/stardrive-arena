@@ -7159,6 +7159,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsNotNull(mismatch, "The deliberately perturbed client replica should report a sync mismatch.");
             Assert.AreEqual(1, mismatch.Result.Sequence);
             Assert.AreEqual(AuthoritativePlayerCommandKind.SetColonyType, mismatch.Command.Kind);
+            StringAssert.Contains(mismatch.Message, "firstDiff",
+                "Live crash text should include the first canonical payload difference for cross-machine triage.");
 
             liveClient.Dispose();
             string text = File.ReadAllText(path);
@@ -7979,6 +7981,104 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XLiveGeneratedStart_UnpausedHeartbeatsStayCanonicalSynced_Headless()
+    {
+        LoadAllGameData();
+
+        const int HostPeer = 2;
+        const int JoinPeer = 3;
+        IEmpireData[] races = ResourceManager.MajorRaces
+            .Where(r => !r.IsFactionOrMinorRace)
+            .OrderBy(r => RacePreference(r), StringComparer.Ordinal)
+            .Take(2)
+            .ToArray();
+        Assert.IsTrue(races.Length >= 2, "The unpaused heartbeat proof needs two playable races.");
+        string hostRace = ResourceManager.MajorRaces.Any(r => string.Equals(RacePreference(r), "Cordrazine", StringComparison.OrdinalIgnoreCase))
+            ? "Cordrazine" : RacePreference(races[0]);
+        string joinRace = ResourceManager.MajorRaces.Any(r => string.Equals(RacePreference(r), "Dauntless", StringComparison.OrdinalIgnoreCase))
+            ? "Dauntless" : RacePreference(races[1]);
+
+        var settings = new Authoritative4XGameSettings
+        {
+            GenerationSeed = 24237,
+            GalaxySize = GalSize.Tiny,
+            StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+            Mode = RaceDesignScreen.GameMode.Sandbox,
+            Difficulty = GameDifficulty.Normal,
+            NumOpponents = 1,
+            Pace = 1f,
+            TurnTimer = 10,
+            ExtraPlanets = 0,
+            StartingPlanetRichnessBonus = 0f,
+            GameSpeed = 1f,
+            StartPaused = false,
+        };
+
+        TcpLockstepTransport hostTransport = null;
+        TcpLockstepTransport joinTransport = null;
+        Authoritative4XGeneratedGameStart hostGenerated = null;
+        Authoritative4XGeneratedGameStart joinGenerated = null;
+        Authoritative4XLiveSession liveHost = null;
+        Authoritative4XLiveSession liveJoin = null;
+
+        try
+        {
+            var flow = new Authoritative4XLobbyNetworkFlow(HostPeer, JoinPeer);
+            var lobby = new Authoritative4XLobby(HostPeer, "Host");
+            lobby.Join(JoinPeer, "Join");
+            Assert.IsTrue(lobby.SetSettings(HostPeer, settings).Valid);
+            Assert.IsTrue(lobby.SetPlayerSelection(HostPeer, hostRace, Array.Empty<string>()).Valid);
+            Assert.IsTrue(lobby.SetPlayerSelection(JoinPeer, joinRace, Array.Empty<string>()).Valid);
+            Assert.IsTrue(lobby.SetReady(HostPeer, true).Valid);
+            Assert.IsTrue(lobby.SetReady(JoinPeer, true).Valid);
+            SessionStartMessage start = flow.BuildStartMessage(lobby, ArenaMultiplayerSettings.ProtocolVersion,
+                "0xUNITTEST", "unit-test", maxTurns: 600);
+
+            int port = FreeTcpPort();
+            hostTransport = TcpLockstepTransport.HostMulti(port);
+            joinTransport = TcpLockstepTransport.JoinAsPeer("127.0.0.1", port, JoinPeer,
+                Authoritative4XLobby.AuthorityPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnections(1, TimeSpan.FromSeconds(3)),
+                "Heartbeat proof TCP host did not accept the joiner.");
+
+            hostGenerated = flow.CreateGeneratedGame(start);
+            joinGenerated = flow.CreateGeneratedGame(start);
+            liveHost = flow.AttachLiveSession(hostGenerated, hostTransport, HostPeer,
+                Authoritative4XLiveRole.Host, start);
+            liveJoin = flow.AttachLiveSession(joinGenerated, joinTransport, JoinPeer,
+                Authoritative4XLiveRole.Client, start);
+            Assert.IsFalse(hostGenerated.AuthorityUniverse.UState.Paused);
+            Assert.IsFalse(joinGenerated.AuthorityUniverse.UState.Paused);
+
+            try
+            {
+                PumpLiveTcpUntil(() => liveJoin.LastResult?.OriginPeer == HostPeer
+                                      && liveJoin.LastResult.Sequence <= -40
+                                      && liveJoin.LastSnapshot != null
+                                      && liveHost.LastSnapshot != null,
+                    liveHost, liveJoin);
+            }
+            catch (Authoritative4XSyncMismatchException e)
+            {
+                Assert.Fail("Unpaused authoritative heartbeat diverged: "
+                            + FirstPayloadDifferenceForTest(e.AuthoritySnapshot?.Payload, e.ClientSnapshot?.Payload));
+            }
+
+            Assert.AreEqual(liveHost.LastSnapshot.SyncDigest, liveJoin.LastSnapshot.SyncDigest,
+                FirstPayloadDifferenceForTest(liveHost.LastSnapshot.Payload, liveJoin.LastSnapshot.Payload));
+        }
+        finally
+        {
+            liveHost?.Dispose();
+            liveJoin?.Dispose();
+            hostGenerated?.Dispose();
+            joinGenerated?.Dispose();
+            hostTransport?.Dispose();
+            joinTransport?.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void ArenaMultiplayerLobby_JoinFailureReturnsStatusError_Headless()
     {
         int closedPort = FreeTcpPort();
@@ -8313,6 +8413,21 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(client.LastAuthoritySnapshot.HashHi, client.LastClientSnapshot.HashHi);
             Assert.AreEqual(client.LastAuthoritySnapshot.SyncDigest, client.LastClientSnapshot.SyncDigest);
         }
+    }
+
+    static string FirstPayloadDifferenceForTest(string authorityPayload, string clientPayload)
+    {
+        string[] authority = (authorityPayload ?? "").Split('\n');
+        string[] client = (clientPayload ?? "").Split('\n');
+        int count = Math.Max(authority.Length, client.Length);
+        for (int i = 0; i < count; ++i)
+        {
+            string a = i < authority.Length ? authority[i].TrimEnd('\r') : "<missing>";
+            string c = i < client.Length ? client[i].TrimEnd('\r') : "<missing>";
+            if (!string.Equals(a, c, StringComparison.Ordinal))
+                return $"firstDiff line={i + 1} authority='{a}' client='{c}'";
+        }
+        return "payloads matched";
     }
 
     static Building PickBuildableBuilding(Planet planet)
