@@ -281,6 +281,10 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
                     : "payload=ShipRefit invalid=true";
             case AuthoritativePlayerCommandKind.RenameFleet:
                 return $"payload=RenameFleet name='{OneLine(command.Text)}'";
+            case AuthoritativePlayerCommandKind.RenameShip:
+                return $"payload=RenameShip name='{OneLine(command.Text)}'";
+            case AuthoritativePlayerCommandKind.RenamePlanet:
+                return $"payload=RenamePlanet name='{OneLine(command.Text)}'";
             case AuthoritativePlayerCommandKind.SetFleetIcon:
                 return $"payload=SetFleetIcon index={command.TargetId}";
             case AuthoritativePlayerCommandKind.AutoArrangeFleet:

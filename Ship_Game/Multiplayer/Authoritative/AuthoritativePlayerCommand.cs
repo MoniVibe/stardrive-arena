@@ -70,6 +70,8 @@ public enum AuthoritativePlayerCommandKind : byte
     QueueFleetRequisition = 54,
     ShipTargetOrder = 55,
     SetFleetIcon = 56,
+    RenameShip = 57,
+    RenamePlanet = 58,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -272,6 +274,8 @@ public sealed class AuthoritativePlayerCommand
     public const int MaxWantedStations = 10;
     public const int MaxColonyBlueprintBuildings = 256;
     public const int MaxAutomationDesignNameLength = 128;
+    public const int MaxShipRenameLength = 40;
+    public const int MaxPlanetRenameLength = 20;
 
     public int Sequence;
     public int EmpireId;
@@ -699,6 +703,26 @@ public sealed class AuthoritativePlayerCommand
             Text = name ?? "",
         };
 
+    public static AuthoritativePlayerCommand RenameShip(int sequence, int empireId, int shipId, string name)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.RenameShip,
+            SubjectId = shipId,
+            Text = name ?? "",
+        };
+
+    public static AuthoritativePlayerCommand RenamePlanet(int sequence, int empireId, int planetId, string name)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.RenamePlanet,
+            SubjectId = planetId,
+            Text = name ?? "",
+        };
+
     public static AuthoritativePlayerCommand SetFleetIcon(int sequence, int empireId, int fleetKey, int iconIndex)
         => new()
         {
@@ -1046,6 +1070,20 @@ public sealed class AuthoritativePlayerCommand
     public static bool IsLegalAutomationDesignName(string name)
         => (name ?? "").Length <= MaxAutomationDesignNameLength
            && (name ?? "").All(c => !char.IsControl(c));
+
+    public static bool IsLegalShipRename(string name)
+        => IsLegalRenameName(name, MaxShipRenameLength);
+
+    public static bool IsLegalPlanetRename(string name)
+        => IsLegalRenameName(name, MaxPlanetRenameLength);
+
+    public static bool IsLegalRenameName(string name, int maxLength)
+    {
+        string trimmed = name?.Trim() ?? "";
+        return trimmed.Length > 0
+               && trimmed.Length <= maxLength
+               && trimmed.All(c => !char.IsControl(c));
+    }
 
     public static string EncodeManualTradeSlotsPayload(int foodImport, int prodImport, int coloImport,
         int foodExport, int prodExport, int coloExport)

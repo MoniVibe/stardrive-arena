@@ -367,6 +367,19 @@ namespace Ship_Game
                     return;
                 }
 
+                switch (Authoritative4XClientContext.TrySubmitShipPlanetOrder(troopShip, Planet,
+                            AuthoritativeShipPlanetOrderType.LandTroops, clearOrders: true, AI.MoveOrder.Regular))
+                {
+                    case Authoritative4XUiCommandResult.Submitted:
+                        GameAudio.EchoAffirmative();
+                        Screen.RefreshSendTroopButtonsVisibility();
+                        UpdateButtonSendTroops();
+                        return;
+                    case Authoritative4XUiCommandResult.Blocked:
+                        GameAudio.NegativeClick();
+                        return;
+                }
+
                 GameAudio.EchoAffirmative();
                 troopShip.AI.OrderLandAllTroops(Planet, clearOrders: true);
                 Screen.RefreshSendTroopButtonsVisibility();

@@ -1067,6 +1067,41 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XShipPlanetOrder_LandsFriendlyTroopsAndSyncs_Headless()
+    {
+        const ulong Seed = 0x5147E73UL;
+        BuiltWorld authority = BuildWorld(Seed, includeTroopShips: true);
+        BuiltWorld client = BuildWorld(Seed, includeTroopShips: true);
+
+        try
+        {
+            EnsureTroopLoaded(authority.TroopShip);
+            EnsureTroopLoaded(client.TroopShip);
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string beforeLandingDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            var land = AuthoritativePlayerCommand.ShipPlanetOrder(30, authority.Player.Id,
+                authority.TroopShip.Id, authority.Planet.Id, AuthoritativeShipPlanetOrderType.LandTroops,
+                clearOrders: true, MoveOrder.Regular);
+            session.SubmitFromClient(land);
+
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            AssertShipPlan(authority.TroopShip, ShipAI.Plan.LandTroop,
+                "The authority should apply friendly troop landings through the real ship AI order queue.");
+            AssertShipPlan(client.TroopShip, ShipAI.Plan.LandTroop,
+                "The client replica should apply accepted friendly troop landings deterministically.");
+            Assert.AreNotEqual(beforeLandingDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover accepted troop landing orders.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XShipPlanetOrder_ColonizeAssignsShipAndSyncs_Headless()
     {
         const ulong Seed = 0xC010C01UL;
@@ -2547,6 +2582,63 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XShipPlanetRename_ValidatesAndSyncs_Headless()
+    {
+        const ulong Seed = 0xF1EE4A12UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.RenameShip(140,
+                authority.Player.Id, authority.Ship.Id, "  Spear One  "));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual("Spear One", authority.Ship.VanityName);
+            Assert.AreEqual("Spear One", client.Ship.VanityName);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.RenamePlanet(141,
+                authority.Player.Id, authority.Planet.Id, "  Anchor  "));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual("Anchor", authority.Planet.Name);
+            Assert.AreEqual("Anchor", client.Planet.Name);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.RenameShip(142,
+                authority.Player.Id, authority.EnemyShip.Id, "Enemy Rename"));
+            Assert.IsFalse(session.LastResult.Accepted, "A player must not rename enemy ships.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.RenamePlanet(143,
+                authority.Player.Id, authority.EnemyPlanet.Id, "Enemy World"));
+            Assert.IsFalse(session.LastResult.Accepted, "A player must not rename enemy planets.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.RenameShip(144,
+                authority.Player.Id, authority.Ship.Id, new string('A', AuthoritativePlayerCommand.MaxShipRenameLength + 1)));
+            Assert.IsFalse(session.LastResult.Accepted, "Overlong ship names must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "too long");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.RenamePlanet(145,
+                authority.Player.Id, authority.Planet.Id, "Bad\nName"));
+            Assert.IsFalse(session.LastResult.Accepted, "Control characters must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "control");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XFleetDesignLoadCommands_ReplaceRenameIconAndSync_Headless()
     {
         const ulong Seed = 0xF1EE4A13UL;
@@ -3656,6 +3748,10 @@ public class Authoritative4XSessionTests : StarDriveTest
             fleet.AutoArrange();
             fleet.Name = "Old Fleet";
             string originalName = fleet.Name;
+            world.Ship.VanityName = "Old Ship";
+            world.Planet.Name = "Old Planet";
+            string originalShipName = world.Ship.VanityName;
+            string originalPlanetName = world.Planet.Name;
 
             var submitted = new List<AuthoritativePlayerCommand>();
             using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
@@ -3671,19 +3767,56 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual(originalName, fleet.Name,
                     "Passive MP clients must not locally rename fleets before host acceptance.");
 
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitRenameShip(world.Ship, "New Ship"));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(2166, submitted[1].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.RenameShip, submitted[1].Kind);
+                Assert.AreEqual(world.Ship.Id, submitted[1].SubjectId);
+                Assert.AreEqual("New Ship", submitted[1].Text);
+                Assert.AreEqual(originalShipName, world.Ship.VanityName,
+                    "Passive MP clients must not locally rename ships before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitRenamePlanet(world.Planet, "New Planet"));
+                Assert.AreEqual(3, submitted.Count);
+                Assert.AreEqual(2167, submitted[2].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.RenamePlanet, submitted[2].Kind);
+                Assert.AreEqual(world.Planet.Id, submitted[2].SubjectId);
+                Assert.AreEqual("New Planet", submitted[2].Text);
+                Assert.AreEqual(originalPlanetName, world.Planet.Name,
+                    "Passive MP clients must not locally rename planets before host acceptance.");
+
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitRenameFleet(fleet, ""));
-                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(3, submitted.Count);
 
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitRenameFleet(fleet, new string('A', 41)));
-                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(3, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitRenameShip(world.Ship,
+                        new string('A', AuthoritativePlayerCommand.MaxShipRenameLength + 1)));
+                Assert.AreEqual(3, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitRenamePlanet(world.Planet, "Bad\nName"));
+                Assert.AreEqual(3, submitted.Count);
 
                 Fleet enemyFleet = world.Enemy.CreateFleet(4, null);
                 enemyFleet.AddShips(new[] { world.EnemyShip });
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitRenameFleet(enemyFleet, "Enemy Fleet"));
-                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(3, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitRenameShip(world.EnemyShip, "Enemy Ship"));
+                Assert.AreEqual(3, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitRenamePlanet(world.EnemyPlanet, "Enemy Planet"));
+                Assert.AreEqual(3, submitted.Count);
             }
         }
         finally
@@ -5985,6 +6118,66 @@ public class Authoritative4XSessionTests : StarDriveTest
                     Authoritative4XClientContext.TrySubmitShipTargetOrder(world.TroopShip, world.WingShip,
                         AuthoritativeShipTargetOrderType.TransferTroops, queue: false));
                 Assert.AreEqual(4, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsTroopLandingAndBombardmentWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0x5147E72UL;
+        BuiltWorld world = BuildWorld(Seed, includeTroopShips: true);
+
+        try
+        {
+            EnsureTroopLoaded(world.TroopShip);
+            MakeAtWar(world.Player, world.Enemy);
+            world.Ship.BombBays.Add(null);
+            int originalTroopOrders = world.TroopShip.AI.OrderQueue.Count;
+            int originalBomberOrders = world.Ship.AI.OrderQueue.Count;
+            AIState originalTroopState = world.TroopShip.AI.State;
+            AIState originalBomberState = world.Ship.AI.State;
+
+            var submitted = new List<AuthoritativePlayerCommand>();
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 940))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitShipPlanetOrder(world.TroopShip, world.Planet,
+                        AuthoritativeShipPlanetOrderType.LandTroops, clearOrders: true, MoveOrder.Regular));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.ShipPlanetOrder, submitted[0].Kind);
+                Assert.AreEqual(world.TroopShip.Id, submitted[0].SubjectId);
+                Assert.AreEqual(world.Planet.Id, submitted[0].TargetId);
+                Assert.AreEqual($"{(int)AuthoritativeShipPlanetOrderType.LandTroops}|1|{(int)MoveOrder.Regular}",
+                    submitted[0].Text);
+                Assert.AreEqual(originalTroopOrders, world.TroopShip.AI.OrderQueue.Count,
+                    "Passive MP clients must not locally enqueue troop landing before host acceptance.");
+                Assert.AreEqual(originalTroopState, world.TroopShip.AI.State);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitShipPlanetOrders(new[] { world.Ship },
+                        world.EnemyPlanet, clearOrders: true, MoveOrder.Aggressive,
+                        _ => AuthoritativeShipPlanetOrderType.Bombard));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.ShipPlanetOrder, submitted[1].Kind);
+                Assert.AreEqual(world.Ship.Id, submitted[1].SubjectId);
+                Assert.AreEqual(world.EnemyPlanet.Id, submitted[1].TargetId);
+                Assert.AreEqual($"{(int)AuthoritativeShipPlanetOrderType.Bombard}|1|{(int)MoveOrder.Aggressive}",
+                    submitted[1].Text);
+                Assert.AreEqual(originalBomberOrders, world.Ship.AI.OrderQueue.Count,
+                    "Passive MP clients must not locally enqueue bombardment before host acceptance.");
+                Assert.AreEqual(originalBomberState, world.Ship.AI.State);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitShipPlanetOrders(new[] { world.Ship },
+                        world.Planet, clearOrders: true, MoveOrder.Aggressive,
+                        _ => AuthoritativeShipPlanetOrderType.Bombard));
+                Assert.AreEqual(2, submitted.Count);
             }
         }
         finally

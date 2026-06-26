@@ -70,6 +70,8 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.SetFleetAssignment => ApplyFleetAssignment(command, empire, result),
                 AuthoritativePlayerCommandKind.MoveFleet => ApplyMoveFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.RenameFleet => ApplyRenameFleet(command, empire, result),
+                AuthoritativePlayerCommandKind.RenameShip => ApplyRenameShip(command, empire, result),
+                AuthoritativePlayerCommandKind.RenamePlanet => ApplyRenamePlanet(command, empire, result),
                 AuthoritativePlayerCommandKind.SetFleetIcon => ApplySetFleetIcon(command, empire, result),
                 AuthoritativePlayerCommandKind.AutoArrangeFleet => ApplyAutoArrangeFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.LoadFleetPatrol => ApplyLoadFleetPatrol(command, empire, result),
@@ -808,12 +810,13 @@ public sealed class Authoritative4XCommandApplicator
                 return Accept(result);
 
             case AuthoritativeShipPlanetOrderType.LandTroops:
-                if (!ship.Carrier.AnyAssaultOpsAvailable)
+                if (!ship.Carrier.AnyAssaultOpsAvailable && !IsSingleTroopTargetOrderShip(ship)
+                                                        && !ship.IsDefaultAssaultShuttle)
                     return Reject(result, $"Ship {ship.Id} has no assault troops available.");
                 if (!planet.Habitable)
                     return Reject(result, $"Planet {planet.Id} is not habitable.");
                 bool legalLanding = planet.Owner == null
-                                    || planet.Owner == empire && planet.ForeignTroopHere(empire)
+                                    || planet.Owner == empire
                                     || planet.Owner != empire && empire.IsAtWarWith(planet.Owner);
                 if (!legalLanding)
                     return Reject(result, $"Empire {empire.Id} cannot land troops on planet {planet.Id}.");
@@ -1825,6 +1828,46 @@ public sealed class Authoritative4XCommandApplicator
         return Accept(result);
     }
 
+    AuthoritativeCommandResult ApplyRenameShip(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Ship ship = UState.Objects.FindShip(command.SubjectId);
+        if (ship == null)
+            return Reject(result, $"Ship {command.SubjectId} not found.");
+        if (!ship.Active)
+            return Reject(result, $"Ship {command.SubjectId} is inactive.");
+        if (ship.Loyalty != empire)
+            return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
+
+        if (!TryValidateRename(command.Text, AuthoritativePlayerCommand.MaxShipRenameLength,
+                "Ship", out string name, out string reason))
+        {
+            return Reject(result, reason);
+        }
+
+        ship.VanityName = name;
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyRenamePlanet(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} not found.");
+        if (planet.Owner != empire)
+            return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
+
+        if (!TryValidateRename(command.Text, AuthoritativePlayerCommand.MaxPlanetRenameLength,
+                "Planet", out string name, out string reason))
+        {
+            return Reject(result, reason);
+        }
+
+        planet.Name = name;
+        return Accept(result);
+    }
+
     AuthoritativeCommandResult ApplySetFleetIcon(AuthoritativePlayerCommand command, Empire empire,
         AuthoritativeCommandResult result)
     {
@@ -2290,6 +2333,28 @@ public sealed class Authoritative4XCommandApplicator
         if (!design.IsShipGoodToBuild(empire) || !predicate(design))
         {
             reason = $"Automation {label} design '{designName}' is not buildable by empire {empire.Id}.";
+            return false;
+        }
+        return true;
+    }
+
+    static bool TryValidateRename(string rawName, int maxLength, string label, out string name, out string reason)
+    {
+        name = rawName?.Trim() ?? "";
+        reason = "";
+        if (name.Length == 0)
+        {
+            reason = $"{label} name cannot be empty.";
+            return false;
+        }
+        if (name.Length > maxLength)
+        {
+            reason = $"{label} name is too long ({name.Length}/{maxLength}).";
+            return false;
+        }
+        if (name.Any(char.IsControl))
+        {
+            reason = $"{label} name cannot contain control characters.";
             return false;
         }
         return true;

@@ -45,6 +45,7 @@ namespace Ship_Game.Ships
         private readonly Rectangle TroopRect;
         private readonly Rectangle FlagRect;  //fbedard
         private bool CanRename   = true;
+        bool UpdatingShipNameArea;
         private bool ShowModules = true;
         private Vector2 StatusArea;
 
@@ -63,11 +64,9 @@ namespace Ship_Game.Ships
             RightRect = new Rectangle(LeftRect.X + LeftRect.Width, LeftRect.Y, 220, LeftRect.Height);
             int spacing = 2;
             ShipNameArea = new UITextEntry(Housing.X + 41, Housing.Y + 65, 200, Fonts.Arial14Bold, "");
-            ShipNameArea.OnTextChanged = (text) =>
-            {
-                if (Ship != null)
-                    Ship.VanityName = text;
-            };
+            ShipNameArea.MaxCharacters = AuthoritativePlayerCommand.MaxShipRenameLength;
+            ShipNameArea.OnTextChanged = OnShipNameChanged;
+            ShipNameArea.OnTextSubmit = OnShipNameSubmit;
             ShipNameArea.Color = tColor;
             
             Power = new Rectangle(Housing.X + 187, Housing.Y + 110, 20, 20);
@@ -498,6 +497,38 @@ namespace Ship_Game.Ships
 
         public bool IsHandlingNameInput => ShipNameArea.HandlingInput;
 
+        void OnShipNameChanged(string text)
+        {
+            if (UpdatingShipNameArea || Ship == null || Authoritative4XClientContext.IsActive)
+                return;
+            if (CanRename)
+                Ship.VanityName = text;
+        }
+
+        void OnShipNameSubmit(string name)
+        {
+            if (Ship == null)
+                return;
+
+            switch (Authoritative4XClientContext.TrySubmitRenameShip(Ship, name))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    ResetShipNameArea();
+                    return;
+            }
+
+            if (CanRename)
+                Ship.VanityName = name;
+        }
+
+        void ResetShipNameArea()
+        {
+            UpdatingShipNameArea = true;
+            ShipNameArea.Reset(Ship?.ShipName ?? "");
+            UpdatingShipNameArea = false;
+        }
+
         public override bool HandleInput(InputState input)
         {
             if (Universe.SelectedShip == null || Universe.LookingAtPlanet)
@@ -592,9 +623,9 @@ namespace Ship_Game.Ships
                 return;
 
             Ship = s;
-            CanRename = s.Loyalty == Player;
+            CanRename = Universe.IsLocalShipForUi(s);
             ShipNameArea.Enabled = CanRename;
-            ShipNameArea.Reset(s.ShipName);
+            ResetShipNameArea();
 
             Orders.Clear();
             OrdersButtons.ResetButtons(s);

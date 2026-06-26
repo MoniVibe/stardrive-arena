@@ -581,16 +581,27 @@ namespace Ship_Game
 
         void OnPlanetNameSubmit(string name)
         {
-            P.Name = name;
-            if (string.IsNullOrWhiteSpace(P.Name))
+            if (string.IsNullOrWhiteSpace(name))
             {
-                P.Name = P.GetDefaultPlanetName();
-                PlanetName.Reset(P.Name);
+                name = P.GetDefaultPlanetName();
+                PlanetName.Reset(name);
             }
+
+            switch (Authoritative4XClientContext.TrySubmitRenamePlanet(P, name))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    return;
+            }
+
+            P.Name = name;
         }
 
         void OnPlanetNameChanged(string name)
         {
+            if (Authoritative4XClientContext.IsActive)
+                return;
+
             P.Name = name;
         }
 

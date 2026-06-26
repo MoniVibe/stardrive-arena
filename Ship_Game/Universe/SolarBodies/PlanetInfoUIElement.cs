@@ -514,6 +514,17 @@ namespace Ship_Game
             {
                 if (Player.GetTroopShipForRebase(out Ship troopShip, P.Position, P.Name))
                 {
+                    switch (Authoritative4XClientContext.TrySubmitShipPlanetOrder(troopShip, P,
+                                AuthoritativeShipPlanetOrderType.LandTroops, clearOrders: true, AI.MoveOrder.Regular))
+                    {
+                        case Authoritative4XUiCommandResult.Submitted:
+                            GameAudio.EchoAffirmative();
+                            return true;
+                        case Authoritative4XUiCommandResult.Blocked:
+                            GameAudio.NegativeClick();
+                            return true;
+                    }
+
                     if (!troopShip.AI.OrderLandAllTroops(P, clearOrders: true, input.CursorPosition))
                     {
                         GameAudio.NegativeClick();

@@ -334,6 +334,30 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitRenameShip(Ship ship, string name)
+    {
+        if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (ship?.Active != true || !AuthoritativePlayerCommand.IsLegalShipRename(name))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.RenameShip(context.Next(), context.EmpireId,
+            ship.Id, name.Trim()));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitRenamePlanet(Planet planet, string name)
+    {
+        if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!AuthoritativePlayerCommand.IsLegalPlanetRename(name))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.RenamePlanet(context.Next(), context.EmpireId,
+            planet.Id, name.Trim()));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitSetFleetIcon(Fleet fleet, int iconIndex)
     {
         if (!TryGetFor(fleet?.Owner, out Authoritative4XClientContext context))
@@ -1364,10 +1388,11 @@ public sealed class Authoritative4XClientContext : IDisposable
                 ship.HasBombs && planet.Owner != null && planet.Owner != ship.Loyalty
                               && ship.Loyalty.IsEmpireAttackable(planet.Owner),
             AuthoritativeShipPlanetOrderType.LandTroops =>
-                ship.Carrier.AnyAssaultOpsAvailable && planet.Habitable
+                (ship.Carrier.AnyAssaultOpsAvailable || IsSingleTroopTargetOrderShip(ship)
+                                                       || ship.IsDefaultAssaultShuttle)
+                                                   && planet.Habitable
                                                    && (planet.Owner == null
                                                        || planet.Owner == ship.Loyalty
-                                                       && planet.ForeignTroopHere(ship.Loyalty)
                                                        || planet.Owner != ship.Loyalty
                                                        && ship.Loyalty.IsAtWarWith(planet.Owner)),
             _ => false,

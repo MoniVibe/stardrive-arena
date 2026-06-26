@@ -70,7 +70,22 @@ namespace Ship_Game
             ShipNameEntry = new UITextEntry(new Vector2(ShipIconRect.Right + 10, 2 + SysNameRect.CenterY() - Fonts.Arial12Bold.LineSpacing / 2),
                                             Fonts.Arial12Bold, Ship.ShipName);
             ShipNameEntry.Color = Colors.Cream;
-            ShipNameEntry.OnTextChanged = (text) => Ship.VanityName = text;
+            ShipNameEntry.MaxCharacters = AuthoritativePlayerCommand.MaxShipRenameLength;
+            ShipNameEntry.OnTextChanged = (text) =>
+            {
+                if (!Authoritative4XClientContext.IsActive)
+                    Ship.VanityName = text;
+            };
+            ShipNameEntry.OnTextSubmit = (text) =>
+            {
+                switch (Authoritative4XClientContext.TrySubmitRenameShip(Ship, text))
+                {
+                    case Authoritative4XUiCommandResult.Submitted:
+                    case Authoritative4XUiCommandResult.Blocked:
+                        return;
+                }
+                Ship.VanityName = text;
+            };
 
             float width = (int)(OrdersRect.Width * 0.8f);
             while (width % 10f != 0f)

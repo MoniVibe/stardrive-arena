@@ -13,6 +13,7 @@ using Rectangle = SDGraphics.Rectangle;
 using Ship_Game.Universe;
 using Ship_Game.UI;
 using Ship_Game.Spatial;
+using Ship_Game.Multiplayer.Authoritative;
 
 namespace Ship_Game
 {
@@ -483,12 +484,36 @@ namespace Ship_Game
             var bombingNowList = bomberList.Filter(s => s.AI.State == AI.AIState.Bombard && s.AI.OrderQueue.Any(o => o.TargetPlanet == P));
             if (bombingNowList.Length > 0) // need to cancel bombing
             {
+                switch (Authoritative4XClientContext.TrySubmitShipPlanetOrders(bombingNowList, P,
+                            clearOrders: !Input.IsShiftKeyDown, AI.MoveOrder.Aggressive,
+                            _ => AuthoritativeShipPlanetOrderType.Orbit))
+                {
+                    case Authoritative4XUiCommandResult.Submitted:
+                        Bombard.Style = ButtonStyle.DanButtonBlue;
+                        return;
+                    case Authoritative4XUiCommandResult.Blocked:
+                        GameAudio.NegativeClick();
+                        return;
+                }
+
                 Bombard.Style = ButtonStyle.DanButtonBlue;
                 foreach (Ship bomber in bombingNowList)
                     bomber.OrderToOrbit(P, clearOrders:!Input.IsShiftKeyDown, AI.MoveOrder.Aggressive);
             }
             else
             {
+                switch (Authoritative4XClientContext.TrySubmitShipPlanetOrders(bomberList, P,
+                            clearOrders: true, AI.MoveOrder.Aggressive,
+                            _ => AuthoritativeShipPlanetOrderType.Bombard))
+                {
+                    case Authoritative4XUiCommandResult.Submitted:
+                        Bombard.Style = ButtonStyle.DanButtonRed;
+                        return;
+                    case Authoritative4XUiCommandResult.Blocked:
+                        GameAudio.NegativeClick();
+                        return;
+                }
+
                 // Cancel bombardment 
                 Bombard.Style = ButtonStyle.DanButtonRed;
                 foreach (Ship bomber in bomberList)
