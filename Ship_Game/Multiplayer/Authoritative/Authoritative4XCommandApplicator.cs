@@ -64,6 +64,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.MoveFleet => ApplyMoveFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.RenameFleet => ApplyRenameFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.AutoArrangeFleet => ApplyAutoArrangeFleet(command, empire, result),
+                AuthoritativePlayerCommandKind.LoadFleetPatrol => ApplyLoadFleetPatrol(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipSpecialOrder => ApplyShipSpecialOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipLifecycleOrder => ApplyShipLifecycleOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.SetShipCombatStance => ApplyShipCombatStance(command, empire, result),
@@ -873,6 +874,30 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, $"Fleet {command.SubjectId} not found or empty.");
 
         fleet.AutoArrange();
+        fleet.Update(FixedSimTime.Zero);
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyLoadFleetPatrol(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
+            return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
+
+        Fleet fleet = empire.GetFleetOrNull(command.SubjectId);
+        if (fleet == null || fleet.Ships.Count == 0)
+            return Reject(result, $"Fleet {command.SubjectId} not found or empty.");
+
+        string patrolName = command.Text?.Trim() ?? "";
+        if (patrolName.Length == 0)
+            return Reject(result, "Patrol name cannot be empty.");
+
+        FleetPatrol patrol = empire.FleetPatrols.FirstOrDefault(p =>
+            string.Equals(p.Name, patrolName, StringComparison.Ordinal));
+        if (patrol == null)
+            return Reject(result, $"Patrol plan '{patrolName}' not found.");
+
+        fleet.LoadPatrol(patrol);
         fleet.Update(FixedSimTime.Zero);
         return Accept(result);
     }

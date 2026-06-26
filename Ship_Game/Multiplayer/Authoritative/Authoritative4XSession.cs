@@ -106,6 +106,11 @@ public sealed class AuthoritativeStateSnapshot
 
         foreach (Empire e in us.Empires.OrderBy(e => e.Id))
         {
+            foreach (FleetPatrol patrol in e.FleetPatrols.OrderBy(p => p.Name ?? "", StringComparer.Ordinal))
+                sb.Append("FP|").Append(e.Id)
+                  .Append('|').Append(FleetPatrolPlanSignature(patrol))
+                  .AppendLine();
+
             foreach (Fleet f in e.AllFleets.Where(f => f != null).OrderBy(f => f.Key).ThenBy(f => f.Id))
                 sb.Append("F|").Append(e.Id)
                   .Append('|').Append(f.Id)
@@ -238,6 +243,11 @@ public sealed class AuthoritativeStateSnapshot
             return "none";
 
         FleetPatrol patrol = fleet.Patrol;
+        return FleetPatrolPlanSignature(patrol);
+    }
+
+    static string FleetPatrolPlanSignature(FleetPatrol patrol)
+    {
         WayPoint[] waypoints = patrol.WayPoints.ToArray();
         var sb = new StringBuilder(64 + waypoints.Length * 32);
         sb.Append(patrol.Name ?? "")

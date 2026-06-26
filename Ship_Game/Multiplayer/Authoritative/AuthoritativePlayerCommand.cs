@@ -40,6 +40,7 @@ public enum AuthoritativePlayerCommandKind : byte
     RenameFleet = 28,
     AutoArrangeFleet = 29,
     ShipLifecycleOrder = 30,
+    LoadFleetPatrol = 31,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -394,6 +395,16 @@ public sealed class AuthoritativePlayerCommand
             EmpireId = empireId,
             Kind = AuthoritativePlayerCommandKind.AutoArrangeFleet,
             SubjectId = fleetKey,
+        };
+
+    public static AuthoritativePlayerCommand LoadFleetPatrol(int sequence, int empireId, int fleetKey, string patrolName)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.LoadFleetPatrol,
+            SubjectId = fleetKey,
+            Text = patrolName ?? "",
         };
 
     public static AuthoritativePlayerCommand ShipSpecialOrder(int sequence, int empireId, int shipId,

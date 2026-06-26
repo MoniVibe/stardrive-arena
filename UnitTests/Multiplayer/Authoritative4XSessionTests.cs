@@ -234,6 +234,14 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual((byte)AuthoritativePlayerCommandKind.AutoArrangeFleet, copy.Kind);
         Assert.AreEqual(7, copy.SubjectId);
 
+        var loadPatrolRequest = AuthoritativePlayerCommand.LoadFleetPatrol(33, 2, 7, "Alpha Patrol")
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(loadPatrolRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.LoadFleetPatrol, copy.Kind);
+        Assert.AreEqual(7, copy.SubjectId);
+        Assert.AreEqual("Alpha Patrol", copy.Text);
+
         var specialOrderRequest = AuthoritativePlayerCommand.ShipSpecialOrder(28, 2, 99,
                 AuthoritativeShipSpecialOrderType.Explore)
             .ToMessage(fromPeer: 2);
@@ -1325,6 +1333,75 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XFleetLoadPatrol_LoadsSavedPlanAndSyncs_Headless()
+    {
+        const ulong Seed = 0xF1EE4A13UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetFleetAssignment(145,
+                authority.Player.Id, fleetKey: 3, AuthoritativeFleetAssignmentMode.Replace,
+                new[] { authority.Ship.Id, authority.WingShip.Id }));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+
+            Fleet authorityFleet = authority.Player.GetFleetOrNull(3);
+            Fleet clientFleet = client.Player.GetFleetOrNull(3);
+            Assert.IsNotNull(authorityFleet);
+            Assert.IsNotNull(clientFleet);
+            FleetPatrol authorityPatrol = authority.Player.AddPatrolRoute(authorityFleet,
+                TestPatrolWaypoints(authorityFleet.FinalPosition));
+            FleetPatrol clientPatrol = client.Player.AddPatrolRoute(clientFleet,
+                TestPatrolWaypoints(clientFleet.FinalPosition));
+            Assert.AreEqual(authorityPatrol.Name, clientPatrol.Name);
+            Assert.IsFalse(authorityFleet.HasPatrolPlan);
+            Assert.IsFalse(clientFleet.HasPatrolPlan);
+
+            AuthoritativeStateSnapshot savedPlanSnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 0);
+            string savedPlanDigest = savedPlanSnapshot.SyncDigest;
+            Assert.AreEqual(savedPlanDigest, AuthoritativeStateSnapshot.Capture(client.Screen, 0).SyncDigest,
+                "Saved patrol plans must start synchronized before a client loads one.");
+            StringAssert.Contains(savedPlanSnapshot.Payload, $"FP|{authority.Player.Id}|{authorityPatrol.Name}");
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.LoadFleetPatrol(146,
+                authority.Player.Id, fleetKey: 3, authorityPatrol.Name));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+
+            Assert.IsTrue(authorityFleet.HasPatrolPlan);
+            Assert.IsTrue(clientFleet.HasPatrolPlan);
+            Assert.AreEqual(authorityPatrol.Name, authorityFleet.Patrol.Name);
+            Assert.AreEqual(clientPatrol.Name, clientFleet.Patrol.Name);
+            Assert.AreEqual(AIState.FormationMoveTo, authority.Ship.AI.State,
+                "Loading a saved patrol must run through the real Fleet.LoadPatrol/DoPatrol path.");
+            Assert.AreNotEqual(savedPlanDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover active fleet patrol assignment.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.LoadFleetPatrol(147,
+                authority.Player.Id, fleetKey: 3, "Missing Patrol"));
+            Assert.IsFalse(session.LastResult.Accepted, "Missing saved patrol plans must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "not found");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.LoadFleetPatrol(148,
+                authority.Enemy.Id, fleetKey: 3, authorityPatrol.Name));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not load a patrol onto another empire's fleet.");
+            StringAssert.Contains(session.LastResult.Reason, "not found or empty");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XShipSpecialOrder_ExploreSyncsAndRejectsInvalidRequests_Headless()
     {
         const ulong Seed = 0xE7010EUL;
@@ -1702,6 +1779,57 @@ public class Authoritative4XSessionTests : StarDriveTest
                 enemyFleet.AddShips(new[] { world.EnemyShip });
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitAutoArrangeFleet(enemyFleet));
+                Assert.AreEqual(1, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsFleetPatrolLoadWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xF1EE7C1BUL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            Fleet fleet = world.Player.CreateFleet(4, null);
+            fleet.AddShips(new[] { world.Ship, world.WingShip });
+            fleet.SetCommandShip(null);
+            fleet.AutoArrange();
+            fleet.Update(FixedSimTime.Zero);
+            FleetPatrol patrol = world.Player.AddPatrolRoute(fleet, TestPatrolWaypoints(fleet.FinalPosition));
+            AIState originalShipState = world.Ship.AI.State;
+
+            var submitted = new List<AuthoritativePlayerCommand>();
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2169))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitLoadFleetPatrol(fleet, patrol));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2169, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.LoadFleetPatrol, submitted[0].Kind);
+                Assert.AreEqual(4, submitted[0].SubjectId);
+                Assert.AreEqual(patrol.Name, submitted[0].Text);
+                Assert.IsFalse(fleet.HasPatrolPlan,
+                    "Passive MP clients must not locally load saved patrol plans before host acceptance.");
+                Assert.AreEqual(originalShipState, world.Ship.AI.State);
+
+                Fleet empty = world.Player.CreateFleet(5, null);
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitLoadFleetPatrol(empty, patrol));
+                Assert.AreEqual(1, submitted.Count);
+
+                Fleet enemyFleet = world.Enemy.CreateFleet(4, null);
+                enemyFleet.AddShips(new[] { world.EnemyShip });
+                FleetPatrol enemyPatrol = world.Enemy.AddPatrolRoute(enemyFleet,
+                    TestPatrolWaypoints(enemyFleet.FinalPosition));
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitLoadFleetPatrol(enemyFleet, enemyPatrol));
                 Assert.AreEqual(1, submitted.Count);
             }
         }

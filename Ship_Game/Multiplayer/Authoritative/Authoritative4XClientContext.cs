@@ -169,6 +169,24 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitLoadFleetPatrol(Fleet fleet, FleetPatrol patrol)
+    {
+        if (!TryGetFor(fleet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (fleet.Key is < Empire.FirstFleetKey or > Empire.LastFleetKey
+            || fleet.Ships.Count == 0
+            || patrol == null
+            || string.IsNullOrWhiteSpace(patrol.Name)
+            || !fleet.Owner.FleetPatrols.Any(p => string.Equals(p.Name, patrol.Name, StringComparison.Ordinal)))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.LoadFleetPatrol(context.Next(), context.EmpireId,
+            fleet.Key, patrol.Name));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitSetFleetAssignment(Empire empire, int fleetKey,
         AuthoritativeFleetAssignmentMode mode, Ship[] ships)
     {

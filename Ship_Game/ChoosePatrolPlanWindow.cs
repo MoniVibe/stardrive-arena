@@ -3,6 +3,7 @@ using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using Ship_Game.Audio;
 using Ship_Game.Fleets;
+using Ship_Game.Multiplayer.Authoritative;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
 using Ship_Game.UI;
@@ -140,6 +141,17 @@ namespace Ship_Game
 
         void OnLoadPatrolClicked(UIButton b)
         {
+            switch (Authoritative4XClientContext.TrySubmitLoadFleetPatrol(Fleet, SelectedPatrol))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.EchoAffirmative();
+                    ExitScreen();
+                    return;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return;
+            }
+
             Fleet.LoadPatrol(SelectedPatrol);
             GameAudio.EchoAffirmative();
             ExitScreen();
