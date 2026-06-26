@@ -6,6 +6,7 @@ using static Ship_Game.Fleets.Fleet;
 using System.Collections.Generic;
 using System.Diagnostics.Contracts;
 using Ship_Game.GameScreens.FleetDesign;
+using Ship_Game.Multiplayer.Authoritative;
 
 namespace Ship_Game
 {
@@ -154,17 +155,26 @@ namespace Ship_Game
                 // TODO
             }
 
-            SelectedFleet.DataNodes.Add(node);
-
             // is this an actual alive ship?
             bool isActualActiveShip = ActiveShips.ContainsRef(shipOrTemplate);
+            if (isActualActiveShip)
+                node.Ship = shipOrTemplate;
+
+            if (TrySubmitFleetLayout(ProposedFleetNodes(add: node)))
+            {
+                if (isActualActiveShip)
+                    ActiveShipDesign = null;
+                return;
+            }
+
+            SelectedFleet.DataNodes.Add(node);
+
             if (isActualActiveShip)
             {
                 if (SelectedFleet.Ships.Count == 0)
                     SelectedFleet.FinalPosition = shipOrTemplate.Position;
 
                 // if so, immediately assigned the node
-                node.Ship = shipOrTemplate;
                 node.Ship.RelativeFleetOffset = node.RelativeFleetOffset;
                 ActiveShips.RemoveRef(shipOrTemplate);
                 SelectedFleet.AddShip(node.Ship);
@@ -179,6 +189,13 @@ namespace Ship_Game
         // delete all selected ships
         void RemoveSelectedSquad()
         {
+            if (SelectedNodeList.NotEmpty && TrySubmitFleetLayout(ProposedFleetNodes(remove: SelectedNodeList)))
+            {
+                SelectedNodeList.Clear();
+                SelectedSquad = null;
+                return;
+            }
+
             if (SelectedSquad != null)
             {
                 SelectedFleet.CenterFlank.Remove(SelectedSquad);
@@ -387,6 +404,8 @@ namespace Ship_Game
                 (_, float radius) = GetNodeOffsetAndRadius(node);
                 if (WouldOverlap(candidate, radius, exclude: node))
                     return;
+                if (TrySubmitFleetLayoutWithOffset(node, candidate))
+                    return;
                 node.RelativeFleetOffset = candidate;
                 if (node.Ship != null)
                 {
@@ -425,6 +444,9 @@ namespace Ship_Game
                     if (WouldOverlap(oldPos + difference, radius, excludeAll: selectedSquad.DataNodes))
                         return;
                 }
+
+                if (TrySubmitFleetLayoutWithOffsets(selectedSquad.DataNodes, difference))
+                    return;
 
                 selectedSquad.Offset += difference;
                 foreach (FleetDataNode node in selectedSquad.DataNodes)
@@ -606,6 +628,69 @@ namespace Ship_Game
                     NodeToClick = node
                 });
             }
+        }
+
+        bool TrySubmitFleetLayout(IEnumerable<FleetDataNode> proposedNodes)
+        {
+            switch (Authoritative4XClientContext.TrySubmitSetFleetLayout(SelectedFleet, proposedNodes))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    return true;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        List<FleetDataNode> ProposedFleetNodes(FleetDataNode add = null, IReadOnlyList<FleetDataNode> remove = null)
+        {
+            var proposed = new List<FleetDataNode>();
+            foreach (FleetDataNode node in SelectedFleet.DataNodes)
+            {
+                if (remove?.Contains(node) == true)
+                    continue;
+                proposed.Add(CloneFleetNode(node));
+            }
+            if (add != null)
+                proposed.Add(CloneFleetNode(add));
+            return proposed;
+        }
+
+        bool TrySubmitFleetLayoutWithOffset(FleetDataNode node, Vector2 offset)
+        {
+            var proposed = new List<FleetDataNode>();
+            foreach (FleetDataNode existing in SelectedFleet.DataNodes)
+            {
+                FleetDataNode copy = CloneFleetNode(existing);
+                if (existing == node)
+                    copy.RelativeFleetOffset = offset;
+                proposed.Add(copy);
+            }
+            return TrySubmitFleetLayout(proposed);
+        }
+
+        bool TrySubmitFleetLayoutWithOffsets(IReadOnlyList<FleetDataNode> nodes, Vector2 difference)
+        {
+            var proposed = new List<FleetDataNode>();
+            foreach (FleetDataNode existing in SelectedFleet.DataNodes)
+            {
+                FleetDataNode copy = CloneFleetNode(existing);
+                if (nodes.Contains(existing))
+                    copy.RelativeFleetOffset += difference;
+                proposed.Add(copy);
+            }
+            return TrySubmitFleetLayout(proposed);
+        }
+
+        static FleetDataNode CloneFleetNode(FleetDataNode node)
+        {
+            return new FleetDataNode(node)
+            {
+                Ship = node.Ship,
+                Goal = node.Goal,
+            };
         }
 
         static (Vector2 offset, float radius) GetNodeOffsetAndRadius(FleetDataNode node)

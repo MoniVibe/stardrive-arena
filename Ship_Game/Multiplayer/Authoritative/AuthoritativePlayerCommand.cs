@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
+using System.Text;
 using SDLockstep;
 using Ship_Game.AI;
 using Vector2 = SDGraphics.Vector2;
@@ -42,6 +44,7 @@ public enum AuthoritativePlayerCommandKind : byte
     ShipLifecycleOrder = 30,
     LoadFleetPatrol = 31,
     SetColonizationGoal = 32,
+    SetFleetLayout = 33,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -105,6 +108,41 @@ public enum AuthoritativeShipLifecycleOrderType : byte
 {
     Scrap = 1,
     Scuttle = 2,
+}
+
+public readonly struct AuthoritativeFleetLayoutNode
+{
+    public readonly int ShipId;
+    public readonly string ShipName;
+    public readonly Vector2 Offset;
+    public readonly float VultureWeight;
+    public readonly float AttackShieldedWeight;
+    public readonly float AssistWeight;
+    public readonly float DefenderWeight;
+    public readonly float DpsWeight;
+    public readonly float SizeWeight;
+    public readonly float ArmoredWeight;
+    public readonly CombatState CombatState;
+    public readonly float OrdersRadius;
+
+    public AuthoritativeFleetLayoutNode(int shipId, string shipName, Vector2 offset,
+        float vultureWeight, float attackShieldedWeight, float assistWeight, float defenderWeight,
+        float dpsWeight, float sizeWeight, float armoredWeight, CombatState combatState,
+        float ordersRadius)
+    {
+        ShipId = shipId;
+        ShipName = shipName ?? "";
+        Offset = offset;
+        VultureWeight = vultureWeight;
+        AttackShieldedWeight = attackShieldedWeight;
+        AssistWeight = assistWeight;
+        DefenderWeight = defenderWeight;
+        DpsWeight = dpsWeight;
+        SizeWeight = sizeWeight;
+        ArmoredWeight = armoredWeight;
+        CombatState = combatState;
+        OrdersRadius = ordersRadius;
+    }
 }
 
 /// <summary>
@@ -422,6 +460,17 @@ public sealed class AuthoritativePlayerCommand
             SubjectId = fleetKey,
         };
 
+    public static AuthoritativePlayerCommand SetFleetLayout(int sequence, int empireId, int fleetKey,
+        IEnumerable<FleetDataNode> nodes)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.SetFleetLayout,
+            SubjectId = fleetKey,
+            Text = EncodeFleetLayout(nodes),
+        };
+
     public static AuthoritativePlayerCommand LoadFleetPatrol(int sequence, int empireId, int fleetKey, string patrolName)
         => new()
         {
@@ -617,8 +666,124 @@ public sealed class AuthoritativePlayerCommand
         return true;
     }
 
+    public static string EncodeFleetLayout(IEnumerable<FleetDataNode> nodes)
+    {
+        if (nodes == null)
+            return "";
+
+        return string.Join(";", nodes.Select(node =>
+        {
+            string name = node?.ShipName ?? node?.Ship?.Name ?? "";
+            Vector2 offset = node?.RelativeFleetOffset ?? Vector2.Zero;
+            return string.Join("|",
+                (node?.Ship?.Id ?? 0).ToString(CultureInfo.InvariantCulture),
+                EncodeText(name),
+                Hex(FloatBits(offset.X)),
+                Hex(FloatBits(offset.Y)),
+                Hex(FloatBits(node?.VultureWeight ?? 0.5f)),
+                Hex(FloatBits(node?.AttackShieldedWeight ?? 0.5f)),
+                Hex(FloatBits(node?.AssistWeight ?? 0.5f)),
+                Hex(FloatBits(node?.DefenderWeight ?? 0.5f)),
+                Hex(FloatBits(node?.DPSWeight ?? 0.5f)),
+                Hex(FloatBits(node?.SizeWeight ?? 0.5f)),
+                Hex(FloatBits(node?.ArmoredWeight ?? 0.5f)),
+                ((int)(node?.CombatState ?? CombatState.Artillery)).ToString(CultureInfo.InvariantCulture),
+                Hex(FloatBits(node?.OrdersRadius ?? 500000f)));
+        }));
+    }
+
+    public static bool TryParseFleetLayout(string payload, out AuthoritativeFleetLayoutNode[] nodes)
+    {
+        nodes = Array.Empty<AuthoritativeFleetLayoutNode>();
+        if (string.IsNullOrWhiteSpace(payload))
+            return true;
+
+        string[] entries = payload.Split(';');
+        if (entries.Length > 200)
+            return false;
+
+        var parsed = new AuthoritativeFleetLayoutNode[entries.Length];
+        var shipIds = new HashSet<int>();
+        for (int i = 0; i < entries.Length; ++i)
+        {
+            string[] parts = entries[i].Split('|');
+            if (parts.Length != 13
+                || !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int shipId)
+                || shipId < 0
+                || !TryDecodeText(parts[1], out string shipName)
+                || string.IsNullOrWhiteSpace(shipName)
+                || !uint.TryParse(parts[2], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint xBits)
+                || !uint.TryParse(parts[3], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint yBits)
+                || !uint.TryParse(parts[4], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint vultureBits)
+                || !uint.TryParse(parts[5], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint shieldedBits)
+                || !uint.TryParse(parts[6], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint assistBits)
+                || !uint.TryParse(parts[7], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint defenderBits)
+                || !uint.TryParse(parts[8], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint dpsBits)
+                || !uint.TryParse(parts[9], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint sizeBits)
+                || !uint.TryParse(parts[10], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint armoredBits)
+                || !int.TryParse(parts[11], NumberStyles.Integer, CultureInfo.InvariantCulture, out int combatState)
+                || !Enum.IsDefined(typeof(CombatState), (CombatState)combatState)
+                || !uint.TryParse(parts[12], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint ordersRadiusBits))
+            {
+                return false;
+            }
+
+            Vector2 offset = new(FloatFromBits(xBits), FloatFromBits(yBits));
+            if (!float.IsFinite(offset.X) || !float.IsFinite(offset.Y))
+                return false;
+            float vultureWeight = FloatFromBits(vultureBits);
+            float attackShieldedWeight = FloatFromBits(shieldedBits);
+            float assistWeight = FloatFromBits(assistBits);
+            float defenderWeight = FloatFromBits(defenderBits);
+            float dpsWeight = FloatFromBits(dpsBits);
+            float sizeWeight = FloatFromBits(sizeBits);
+            float armoredWeight = FloatFromBits(armoredBits);
+            float ordersRadius = FloatFromBits(ordersRadiusBits);
+            if (!IsFinite(vultureWeight, attackShieldedWeight, assistWeight, defenderWeight,
+                    dpsWeight, sizeWeight, armoredWeight, ordersRadius))
+            {
+                return false;
+            }
+            if (shipId != 0 && !shipIds.Add(shipId))
+                return false;
+
+            parsed[i] = new AuthoritativeFleetLayoutNode(shipId, shipName, offset,
+                vultureWeight, attackShieldedWeight, assistWeight, defenderWeight,
+                dpsWeight, sizeWeight, armoredWeight, (CombatState)combatState, ordersRadius);
+        }
+
+        nodes = parsed;
+        return true;
+    }
+
     static uint FloatBits(float value) => BitConverter.SingleToUInt32Bits(value);
     static float FloatFromBits(uint value) => BitConverter.UInt32BitsToSingle(value);
+    static string Hex(uint value) => value.ToString("X8", CultureInfo.InvariantCulture);
+
+    static bool IsFinite(params float[] values)
+    {
+        for (int i = 0; i < values.Length; ++i)
+            if (!float.IsFinite(values[i]))
+                return false;
+        return true;
+    }
+
+    static string EncodeText(string value)
+        => Convert.ToBase64String(Encoding.UTF8.GetBytes(value ?? ""));
+
+    static bool TryDecodeText(string value, out string decoded)
+    {
+        decoded = "";
+        try
+        {
+            decoded = Encoding.UTF8.GetString(Convert.FromBase64String(value ?? ""));
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }
 
 public sealed class AuthoritativeCommandResult

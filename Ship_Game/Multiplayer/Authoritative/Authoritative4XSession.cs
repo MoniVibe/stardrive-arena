@@ -247,8 +247,20 @@ public sealed class AuthoritativeStateSnapshot
             .ThenBy(n => n.ShipName ?? "", StringComparer.Ordinal)
             .ThenBy(n => n.RelativeFleetOffset.X)
             .ThenBy(n => n.RelativeFleetOffset.Y)
-            .Select(n => string.Create(CultureInfo.InvariantCulture,
-                $"{n.Ship?.Id ?? 0},{n.ShipName ?? ""},{FloatBits(n.RelativeFleetOffset.X):X8},{FloatBits(n.RelativeFleetOffset.Y):X8}")));
+            .Select(n => string.Join(",",
+                (n.Ship?.Id ?? 0).ToString(CultureInfo.InvariantCulture),
+                n.ShipName ?? "",
+                FloatBits(n.RelativeFleetOffset.X).ToString("X8", CultureInfo.InvariantCulture),
+                FloatBits(n.RelativeFleetOffset.Y).ToString("X8", CultureInfo.InvariantCulture),
+                FloatBits(n.VultureWeight).ToString("X8", CultureInfo.InvariantCulture),
+                FloatBits(n.AttackShieldedWeight).ToString("X8", CultureInfo.InvariantCulture),
+                FloatBits(n.AssistWeight).ToString("X8", CultureInfo.InvariantCulture),
+                FloatBits(n.DefenderWeight).ToString("X8", CultureInfo.InvariantCulture),
+                FloatBits(n.DPSWeight).ToString("X8", CultureInfo.InvariantCulture),
+                FloatBits(n.SizeWeight).ToString("X8", CultureInfo.InvariantCulture),
+                FloatBits(n.ArmoredWeight).ToString("X8", CultureInfo.InvariantCulture),
+                ((int)n.CombatState).ToString(CultureInfo.InvariantCulture),
+                FloatBits(n.OrdersRadius).ToString("X8", CultureInfo.InvariantCulture))));
 
     static string FleetPatrolSignature(Fleet fleet)
     {

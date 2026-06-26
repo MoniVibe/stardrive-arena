@@ -66,6 +66,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.RenameFleet => ApplyRenameFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.AutoArrangeFleet => ApplyAutoArrangeFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.LoadFleetPatrol => ApplyLoadFleetPatrol(command, empire, result),
+                AuthoritativePlayerCommandKind.SetFleetLayout => ApplyFleetLayout(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipSpecialOrder => ApplyShipSpecialOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipLifecycleOrder => ApplyShipLifecycleOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.SetShipCombatStance => ApplyShipCombatStance(command, empire, result),
@@ -858,11 +859,11 @@ public sealed class Authoritative4XCommandApplicator
         switch (mode)
         {
             case AuthoritativeFleetAssignmentMode.Clear:
-                existing?.Reset(fleeIfInCombat: false);
+                ResetAndRemoveFleet(empire, existing, clearOrders: true);
                 return Accept(result);
 
             case AuthoritativeFleetAssignmentMode.Replace:
-                existing?.Reset(fleeIfInCombat: false, clearOrders: ships.Length == 0);
+                ResetAndRemoveFleet(empire, existing, clearOrders: ships.Length == 0);
                 if (ships.Length == 0)
                     return Accept(result);
                 Fleet replacement = empire.CreateFleet(command.SubjectId, null);
@@ -920,6 +921,86 @@ public sealed class Authoritative4XCommandApplicator
         fleet.AutoArrange();
         fleet.Update(FixedSimTime.Zero);
         return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyFleetLayout(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
+            return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
+        if (!AuthoritativePlayerCommand.TryParseFleetLayout(command.Text, out AuthoritativeFleetLayoutNode[] nodes))
+            return Reject(result, "Invalid fleet layout payload.");
+
+        var shipsById = new Dictionary<int, Ship>();
+        foreach (AuthoritativeFleetLayoutNode node in nodes)
+        {
+            if (node.ShipId == 0)
+            {
+                if (!ResourceManager.Ships.GetDesign(node.ShipName, out IShipDesign design))
+                    return Reject(result, $"Fleet layout design '{node.ShipName}' was not found.");
+                if (!empire.CanBuildShip(design))
+                    return Reject(result, $"Empire {empire.Id} cannot build fleet layout design '{node.ShipName}'.");
+                continue;
+            }
+
+            Ship ship = UState.Objects.FindShip(node.ShipId);
+            if (ship == null)
+                return Reject(result, $"Fleet layout ship {node.ShipId} was not found.");
+            if (!ship.Active)
+                return Reject(result, $"Fleet layout ship {ship.Id} is inactive.");
+            if (ship.Loyalty != empire)
+                return Reject(result, $"Fleet layout ship {ship.Id} is not owned by empire {empire.Id}.");
+            if (!ship.CanBeAddedToFleets())
+                return Reject(result, $"Fleet layout ship {ship.Id} cannot be assigned to fleets.");
+            shipsById[node.ShipId] = ship;
+        }
+
+        ResetAndRemoveFleet(empire, empire.GetFleetOrNull(command.SubjectId), clearOrders: true);
+        if (nodes.Length == 0)
+            return Accept(result);
+
+        Fleet fleet = empire.CreateFleet(command.SubjectId, null);
+        fleet.DataNodes.Clear();
+        foreach (AuthoritativeFleetLayoutNode layout in nodes)
+        {
+            var node = new FleetDataNode
+            {
+                ShipName = layout.ShipName,
+                RelativeFleetOffset = layout.Offset,
+                VultureWeight = layout.VultureWeight,
+                AttackShieldedWeight = layout.AttackShieldedWeight,
+                AssistWeight = layout.AssistWeight,
+                DefenderWeight = layout.DefenderWeight,
+                DPSWeight = layout.DpsWeight,
+                SizeWeight = layout.SizeWeight,
+                ArmoredWeight = layout.ArmoredWeight,
+                CombatState = layout.CombatState,
+                OrdersRadius = layout.OrdersRadius,
+            };
+            fleet.DataNodes.Add(node);
+            if (layout.ShipId == 0)
+                continue;
+
+            Ship ship = shipsById[layout.ShipId];
+            ship.Fleet?.DataNodes.RemoveFirst(n => n.Ship == ship);
+            ship.ClearFleet(returnToManagedPools: false, clearOrders: true);
+            fleet.AddExistingShip(ship, node);
+        }
+
+        if (fleet.Name.IsEmpty() || fleet.Name.Contains("Fleet"))
+            fleet.Name = Fleet.GetDefaultFleetName(command.SubjectId);
+        fleet.SetCommandShip(null);
+        fleet.Update(FixedSimTime.Zero);
+        return Accept(result);
+    }
+
+    static void ResetAndRemoveFleet(Empire empire, Fleet fleet, bool clearOrders)
+    {
+        if (fleet == null)
+            return;
+
+        fleet.Reset(fleeIfInCombat: false, clearOrders: clearOrders);
+        empire.RemoveFleet(fleet);
     }
 
     AuthoritativeCommandResult ApplyLoadFleetPatrol(AuthoritativePlayerCommand command, Empire empire,

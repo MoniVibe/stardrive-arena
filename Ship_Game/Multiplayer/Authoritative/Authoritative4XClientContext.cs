@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using Ship_Game;
@@ -185,6 +186,48 @@ public sealed class Authoritative4XClientContext : IDisposable
         context.Submit(AuthoritativePlayerCommand.AutoArrangeFleet(context.Next(), context.EmpireId, fleet.Key));
         return Authoritative4XUiCommandResult.Submitted;
     }
+
+    public static Authoritative4XUiCommandResult TrySubmitSetFleetLayout(Fleet fleet,
+        IEnumerable<FleetDataNode> nodes)
+    {
+        if (!TryGetFor(fleet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (fleet.Key is < Empire.FirstFleetKey or > Empire.LastFleetKey)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        FleetDataNode[] layout = (nodes ?? Array.Empty<FleetDataNode>()).ToArray();
+        if (layout.Length > 200
+            || layout.Any(n => n == null || n.Goal != null || string.IsNullOrWhiteSpace(n.ShipName ?? n.Ship?.Name)))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        Ship[] ships = layout.Select(n => n.Ship).Where(s => s != null).ToArray();
+        if (ships.Any(s => s.Active != true || s.Loyalty?.Id != context.EmpireId || !s.CanBeAddedToFleets())
+            || ships.Select(s => s.Id).Distinct().Count() != ships.Length)
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        if (layout.Any(n => !IsFiniteFleetLayoutNode(n) || !Enum.IsDefined(typeof(CombatState), n.CombatState)))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.SetFleetLayout(context.Next(), context.EmpireId,
+            fleet.Key, layout));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    static bool IsFiniteFleetLayoutNode(FleetDataNode node)
+        => float.IsFinite(node.RelativeFleetOffset.X)
+           && float.IsFinite(node.RelativeFleetOffset.Y)
+           && float.IsFinite(node.VultureWeight)
+           && float.IsFinite(node.AttackShieldedWeight)
+           && float.IsFinite(node.AssistWeight)
+           && float.IsFinite(node.DefenderWeight)
+           && float.IsFinite(node.DPSWeight)
+           && float.IsFinite(node.SizeWeight)
+           && float.IsFinite(node.ArmoredWeight)
+           && float.IsFinite(node.OrdersRadius);
 
     public static Authoritative4XUiCommandResult TrySubmitLoadFleetPatrol(Fleet fleet, FleetPatrol patrol)
     {
