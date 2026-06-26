@@ -367,6 +367,23 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitSetPlanetGoodsState(Planet planet,
+        AuthoritativePlanetGoodsKind goods, Planet.GoodState state)
+    {
+        if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!Enum.IsDefined(typeof(AuthoritativePlanetGoodsKind), goods)
+            || !Enum.IsDefined(typeof(Planet.GoodState), state)
+            || goods == AuthoritativePlanetGoodsKind.Food && !planet.NonCybernetic)
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.SetPlanetGoodsState(context.Next(), context.EmpireId,
+            planet.Id, goods, state));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static bool IsActiveFor(Empire empire)
         => TryGetFor(empire, out _);
 

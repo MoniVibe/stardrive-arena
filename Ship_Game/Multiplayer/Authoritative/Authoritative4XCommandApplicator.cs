@@ -55,6 +55,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.ReorderConstructionQueueItem => ApplyReorderConstructionQueueItem(command, empire, result),
                 AuthoritativePlayerCommandKind.RushConstructionQueueItem => ApplyRushConstructionQueueItem(command, empire, result),
                 AuthoritativePlayerCommandKind.ToggleConstructionRush => ApplyToggleConstructionRush(command, empire, result),
+                AuthoritativePlayerCommandKind.SetPlanetGoodsState => ApplyPlanetGoodsState(command, empire, result),
                 AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
@@ -540,6 +541,43 @@ public sealed class Authoritative4XCommandApplicator
 
         item.Rush = !item.Rush;
         return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyPlanetGoodsState(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} not found.");
+        if (planet.Owner != empire)
+            return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
+        if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
+            || !Enum.IsDefined(typeof(AuthoritativePlanetGoodsKind),
+                (AuthoritativePlanetGoodsKind)(byte)command.TargetId))
+        {
+            return Reject(result, $"Unsupported planet goods kind {command.TargetId}.");
+        }
+
+        int stateValue = (int)command.Position.X;
+        if (!Enum.IsDefined(typeof(Planet.GoodState), stateValue))
+            return Reject(result, $"Unsupported planet goods state {stateValue}.");
+
+        var state = (Planet.GoodState)stateValue;
+        switch ((AuthoritativePlanetGoodsKind)command.TargetId)
+        {
+            case AuthoritativePlanetGoodsKind.Food:
+                if (!planet.NonCybernetic)
+                    return Reject(result, $"Planet {planet.Id} cannot set food trade policy.");
+                planet.FS = state;
+                return Accept(result);
+
+            case AuthoritativePlanetGoodsKind.Production:
+                planet.PS = state;
+                return Accept(result);
+
+            default:
+                return Reject(result, $"Unsupported planet goods kind {command.TargetId}.");
+        }
     }
 
     static IShipDesign RegisterPlayerDesign(ShipDesign design, out string rejectReason)

@@ -113,6 +113,8 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(p.Food.PercentLock ? 1 : 0)
               .Append('|').Append(p.Prod.PercentLock ? 1 : 0)
               .Append('|').Append(p.Res.PercentLock ? 1 : 0)
+              .Append('|').Append((int)p.FS)
+              .Append('|').Append((int)p.PS)
               .Append('|').Append(p.ConstructionQueue.Count)
               .AppendLine();
 

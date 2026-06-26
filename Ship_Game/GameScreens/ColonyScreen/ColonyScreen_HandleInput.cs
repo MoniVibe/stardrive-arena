@@ -3,6 +3,7 @@ using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using SDUtils;
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Rectangle = SDGraphics.Rectangle;
 
@@ -219,6 +220,13 @@ namespace Ship_Game
         {
             if (FoodDropDown.r.HitTest(input.CursorPosition) && input.LeftMouseClick)
             {
+                if (HandleAuthoritativeStorageResult(
+                        Authoritative4XClientContext.TrySubmitSetPlanetGoodsState(P,
+                            AuthoritativePlanetGoodsKind.Food, NextGoodState(P.FS))))
+                {
+                    return true;
+                }
+
                 FoodDropDown.Toggle();
                 GameAudio.AcceptClick();
                 P.FS = (Planet.GoodState) ((int) P.FS + (int) Planet.GoodState.IMPORT);
@@ -229,6 +237,13 @@ namespace Ship_Game
 
             if (ProdDropDown.r.HitTest(input.CursorPosition) && input.LeftMouseClick)
             {
+                if (HandleAuthoritativeStorageResult(
+                        Authoritative4XClientContext.TrySubmitSetPlanetGoodsState(P,
+                            AuthoritativePlanetGoodsKind.Production, NextGoodState(P.PS))))
+                {
+                    return true;
+                }
+
                 ProdDropDown.Toggle();
                 GameAudio.AcceptClick();
                 P.PS = (Planet.GoodState) ((int) P.PS + (int) Planet.GoodState.IMPORT);
@@ -237,6 +252,34 @@ namespace Ship_Game
                 return true;
             }
             return false;
+        }
+
+        static Planet.GoodState NextGoodState(Planet.GoodState state)
+        {
+            state = (Planet.GoodState)((int)state + (int)Planet.GoodState.IMPORT);
+            return state > Planet.GoodState.EXPORT ? Planet.GoodState.STORE : state;
+        }
+
+        static bool HandleAuthoritativeStorageResult(Authoritative4XUiCommandResult result)
+        {
+            switch (result)
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    GameAudio.AcceptClick();
+                    return true;
+                case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return true;
+                case Authoritative4XUiCommandResult.NotActive:
+                    if (Authoritative4XClientContext.IsActive)
+                    {
+                        GameAudio.NegativeClick();
+                        return true;
+                    }
+                    return false;
+                default:
+                    return false;
+            }
         }
     }
 }

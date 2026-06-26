@@ -162,6 +162,16 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(789, copy.SubjectId);
         Assert.AreEqual(4, copy.TargetId);
 
+        var goodsRequest = AuthoritativePlayerCommand.SetPlanetGoodsState(23, 2, 789,
+                AuthoritativePlanetGoodsKind.Production, Planet.GoodState.EXPORT)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(goodsRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetPlanetGoodsState, copy.Kind);
+        Assert.AreEqual(789, copy.SubjectId);
+        Assert.AreEqual((int)AuthoritativePlanetGoodsKind.Production, copy.TargetId);
+        Assert.AreEqual((int)Planet.GoodState.EXPORT, (int)copy.X);
+
         var attackRequest = AuthoritativePlayerCommand.AttackShip(12, 2, 99, 100, queue: true)
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(attackRequest, toPeer: 1));
@@ -649,6 +659,64 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XPlanetGoodsState_SyncsAndRejectsIllegalChanges_Headless()
+    {
+        const ulong Seed = 0x600D57A7EUL;
+        BuiltWorld authority = BuildWorld(Seed, extraPlayerPlanet: true);
+        BuiltWorld client = BuildWorld(Seed, extraPlayerPlanet: true);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetGoodsState(80,
+                authority.Player.Id, authority.Planet.Id, AuthoritativePlanetGoodsKind.Production,
+                Planet.GoodState.IMPORT));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(Planet.GoodState.IMPORT, authority.Planet.PS);
+            Assert.AreEqual(Planet.GoodState.IMPORT, client.Planet.PS);
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover planet production import/export state.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeProductionDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetGoodsState(81,
+                authority.Player.Id, authority.Planet.Id, AuthoritativePlanetGoodsKind.Production,
+                Planet.GoodState.EXPORT));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(Planet.GoodState.EXPORT, authority.Planet.PS);
+            Assert.AreEqual(Planet.GoodState.EXPORT, client.Planet.PS);
+            Assert.AreNotEqual(beforeProductionDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover planet production import/export state.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetPlanetGoodsState(82,
+                authority.Enemy.Id, authority.Planet.Id, AuthoritativePlanetGoodsKind.Production,
+                Planet.GoodState.STORE));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not change another empire's storage policy.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(Planet.GoodState.EXPORT, authority.Planet.PS);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            var invalidState = AuthoritativePlayerCommand.SetPlanetGoodsState(83,
+                authority.Player.Id, authority.Planet.Id, AuthoritativePlanetGoodsKind.Production,
+                Planet.GoodState.STORE);
+            invalidState.Position = new Vector2(99f, 0f);
+            session.SubmitFromClient(invalidState);
+            Assert.IsFalse(session.LastResult.Accepted, "Unknown goods states must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "Unsupported planet goods state");
+            Assert.AreEqual(Planet.GoodState.EXPORT, authority.Planet.PS);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientContext_SubmitsColonyLaborWithoutLocalMutation_Headless()
     {
         const ulong Seed = 0x1AB0C11UL;
@@ -693,6 +761,58 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.IsFalse(Authoritative4XClientContext.TrySubmitSetColonyLabor(world.EnemyPlanet,
                     0.25f, 0.5f, 0.25f, foodLocked: false, productionLocked: false, researchLocked: false));
                 Assert.AreEqual(1, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsPlanetGoodsStateWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0x600D57C1UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            Assert.IsTrue(world.Planet.NonCybernetic,
+                "The planet goods context proof needs a non-cybernetic colony to exercise food import/export.");
+            Planet.GoodState originalFood = world.Planet.FS;
+            Planet.GoodState originalProduction = world.Planet.PS;
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 1950))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetPlanetGoodsState(world.Planet,
+                        AuthoritativePlanetGoodsKind.Food, Planet.GoodState.IMPORT));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(1950, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetPlanetGoodsState, submitted[0].Kind);
+                Assert.AreEqual(world.Planet.Id, submitted[0].SubjectId);
+                Assert.AreEqual((int)AuthoritativePlanetGoodsKind.Food, submitted[0].TargetId);
+                Assert.AreEqual((int)Planet.GoodState.IMPORT, (int)submitted[0].Position.X);
+                Assert.AreEqual(originalFood, world.Planet.FS,
+                    "Passive MP clients must not locally change food storage policy before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetPlanetGoodsState(world.Planet,
+                        AuthoritativePlanetGoodsKind.Production, Planet.GoodState.EXPORT));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(1951, submitted[1].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetPlanetGoodsState, submitted[1].Kind);
+                Assert.AreEqual((int)AuthoritativePlanetGoodsKind.Production, submitted[1].TargetId);
+                Assert.AreEqual((int)Planet.GoodState.EXPORT, (int)submitted[1].Position.X);
+                Assert.AreEqual(originalProduction, world.Planet.PS,
+                    "Passive MP clients must not locally change production storage policy before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetPlanetGoodsState(world.EnemyPlanet,
+                        AuthoritativePlanetGoodsKind.Production, Planet.GoodState.IMPORT));
+                Assert.AreEqual(2, submitted.Count);
             }
         }
         finally
@@ -2454,10 +2574,12 @@ public class Authoritative4XSessionTests : StarDriveTest
         return clone;
     }
 
-    BuiltWorld BuildWorld(ulong seed)
+    BuiltWorld BuildWorld(ulong seed, bool extraPlayerPlanet = false)
     {
         CreateUniverseAndPlayerEmpire();
         Planet planet = AddDummyPlanetToEmpire(new Vector2(200_000, 200_000), Player, fertility: 1f, minerals: 1f, maxPop: 5f);
+        if (extraPlayerPlanet)
+            AddDummyPlanetToEmpire(new Vector2(240_000, 200_000), Player, fertility: 1f, minerals: 1f, maxPop: 5f);
         Planet enemyPlanet = AddDummyPlanetToEmpire(new Vector2(-200_000, -200_000), Enemy, fertility: 1f, minerals: 1f, maxPop: 5f);
         Ship ship = SpawnShip("Vulcan Scout", Player, new Vector2(0, 0));
         Ship wingShip = SpawnShip("Vulcan Scout", Player, new Vector2(2_000, 0));

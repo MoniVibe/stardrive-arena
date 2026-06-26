@@ -205,6 +205,13 @@ namespace Ship_Game
 
                 if (P.NonCybernetic && FoodDropDown.r.HitTest(input.CursorPosition))
                 {
+                    if (HandleAuthoritativeQueueResult(
+                            Authoritative4XClientContext.TrySubmitSetPlanetGoodsState(P,
+                                AuthoritativePlanetGoodsKind.Food, NextGoodState(P.FS))))
+                    {
+                        return true;
+                    }
+
                     GameAudio.AcceptClick();
                     FoodDropDown.Toggle();
                     Universe.RunOnSimThread(() =>
@@ -218,6 +225,13 @@ namespace Ship_Game
 
                 if (ProdDropDown.r.HitTest(input.CursorPosition))
                 {
+                    if (HandleAuthoritativeQueueResult(
+                            Authoritative4XClientContext.TrySubmitSetPlanetGoodsState(P,
+                                AuthoritativePlanetGoodsKind.Production, NextGoodState(P.PS))))
+                    {
+                        return true;
+                    }
+
                     GameAudio.AcceptClick();
                     ProdDropDown.Toggle();
                     Universe.RunOnSimThread(() =>
@@ -252,6 +266,12 @@ namespace Ship_Game
                 default:
                     return false;
             }
+        }
+
+        static Planet.GoodState NextGoodState(Planet.GoodState state)
+        {
+            state = (Planet.GoodState)((int)state + (int)Planet.GoodState.IMPORT);
+            return state > Planet.GoodState.EXPORT ? Planet.GoodState.STORE : state;
         }
 
         public override void Draw(SpriteBatch batch, DrawTimes elapsed)
