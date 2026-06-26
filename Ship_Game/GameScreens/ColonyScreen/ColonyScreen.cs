@@ -3,6 +3,7 @@ using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using Ship_Game.GameScreens.ShipDesign;
 using Ship_Game.Graphics;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Universe;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
@@ -603,16 +604,38 @@ namespace Ship_Game
         {
             if (ToScrap != null)
             {
+                PlanetGridSquare tile = P.TilesList.Find(t => t.Building == ToScrap);
+                switch (Authoritative4XClientContext.TrySubmitScrapColonyBuilding(P, tile, ToScrap.Name))
+                {
+                    case Authoritative4XUiCommandResult.Submitted:
+                    case Authoritative4XUiCommandResult.Blocked:
+                        ToScrap = null;
+                        return;
+                    case Authoritative4XUiCommandResult.NotActive when Authoritative4XClientContext.IsActive:
+                        ToScrap = null;
+                        return;
+                }
+
                 P.ScrapBuilding(ToScrap);
                 P.RefreshBuildingsWeCanBuildHere();
                 ToScrap = null;
             }
         }
-
         void ScrapBioAccepted()
         {
             if (BioToScrap != null)
             {
+                switch (Authoritative4XClientContext.TrySubmitScrapColonyBiosphere(P, BioToScrap))
+                {
+                    case Authoritative4XUiCommandResult.Submitted:
+                    case Authoritative4XUiCommandResult.Blocked:
+                        BioToScrap = null;
+                        return;
+                    case Authoritative4XUiCommandResult.NotActive when Authoritative4XClientContext.IsActive:
+                        BioToScrap = null;
+                        return;
+                }
+
                 P.DestroyBioSpheres(BioToScrap, !BioToScrap.Building?.CanBuildAnywhere == true);
                 P.RefreshBuildingsWeCanBuildHere();
                 BioToScrap = null;

@@ -211,6 +211,21 @@ public sealed class AuthoritativeStateSnapshot
                   .Append('|').Append(BlueprintSignature(p))
                   .AppendLine();
 
+            foreach (PlanetGridSquare tile in p.TilesList
+                         .Where(t => t.BuildingOnTile || t.Biosphere)
+                         .OrderBy(t => t.X)
+                         .ThenBy(t => t.Y))
+            {
+                sb.Append("T|").Append(p.Id)
+                  .Append('|').Append(tile.X)
+                  .Append('|').Append(tile.Y)
+                  .Append('|').Append(tile.Building?.Name ?? "")
+                  .Append('|').Append(tile.Biosphere ? 1 : 0)
+                  .Append('|').Append(tile.Habitable ? 1 : 0)
+                  .Append('|').Append(tile.Terraformable ? 1 : 0)
+                  .AppendLine();
+            }
+
             QueueItem[] queue = p.Construction.GetConstructionQueueSnapshot();
             for (int i = 0; i < queue.Length; ++i)
             {

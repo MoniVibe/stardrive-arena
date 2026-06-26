@@ -80,6 +80,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.QueuePlanetOrbitalBuild => ApplyPlanetOrbitalBuild(command, empire, result),
                 AuthoritativePlayerCommandKind.ApplyColonyBlueprints => ApplyColonyBlueprints(command, empire, result),
                 AuthoritativePlayerCommandKind.ClearColonyBlueprints => ApplyClearColonyBlueprints(command, empire, result),
+                AuthoritativePlayerCommandKind.ScrapColonyTile => ApplyScrapColonyTile(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipSpecialOrder => ApplyShipSpecialOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipLifecycleOrder => ApplyShipLifecycleOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.SetShipCombatStance => ApplyShipCombatStance(command, empire, result),
@@ -528,6 +529,67 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
 
         planet.RemoveBlueprints();
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyScrapColonyTile(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} was not found.");
+        if (planet.Owner != empire)
+            return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
+        if (!AuthoritativePlayerCommand.TryParseTileCoordinates(command.Position, out int tileX, out int tileY))
+            return Reject(result, "Invalid colony tile coordinate payload.");
+        if (command.TargetId is < byte.MinValue or > byte.MaxValue
+            || !Enum.IsDefined(typeof(AuthoritativeColonyTileScrapKind), (byte)command.TargetId))
+            return Reject(result, $"Unsupported colony tile scrap kind {command.TargetId}.");
+
+        PlanetGridSquare tile = planet.TilesList.FirstOrDefault(t => t.X == tileX && t.Y == tileY);
+        if (tile == null)
+            return Reject(result, $"Planet {planet.Id} has no tile at {tileX},{tileY}.");
+
+        switch ((AuthoritativeColonyTileScrapKind)command.TargetId)
+        {
+            case AuthoritativeColonyTileScrapKind.Building:
+                return ScrapBuildingTile(planet, tile, command.Text?.Trim() ?? "", result);
+            case AuthoritativeColonyTileScrapKind.Biosphere:
+                return ScrapBiosphereTile(planet, tile, result);
+            default:
+                return Reject(result, $"Unsupported colony tile scrap kind {command.TargetId}.");
+        }
+    }
+
+    AuthoritativeCommandResult ScrapBuildingTile(Planet planet, PlanetGridSquare tile, string expectedBuildingName,
+        AuthoritativeCommandResult result)
+    {
+        Building building = tile.Building;
+        if (building == null)
+            return Reject(result, $"Planet {planet.Id} tile {tile.X},{tile.Y} has no building to scrap.");
+        if (string.IsNullOrWhiteSpace(expectedBuildingName)
+            || !string.Equals(building.Name, expectedBuildingName, StringComparison.Ordinal))
+        {
+            return Reject(result,
+                $"Planet {planet.Id} tile {tile.X},{tile.Y} no longer contains building '{expectedBuildingName}'.");
+        }
+        if (!building.Scrappable)
+            return Reject(result, $"Building '{building.Name}' on planet {planet.Id} is not scrappable.");
+
+        planet.ScrapBuilding(building);
+        planet.RefreshBuildingsWeCanBuildHere();
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ScrapBiosphereTile(Planet planet, PlanetGridSquare tile,
+        AuthoritativeCommandResult result)
+    {
+        if (!tile.Biosphere)
+            return Reject(result, $"Planet {planet.Id} tile {tile.X},{tile.Y} has no biosphere to scrap.");
+
+        bool destroyBuilding = !tile.Building?.CanBuildAnywhere == true;
+        planet.DestroyBioSpheres(tile, destroyBuilding);
+        planet.RefreshBuildingsWeCanBuildHere();
         return Accept(result);
     }
 

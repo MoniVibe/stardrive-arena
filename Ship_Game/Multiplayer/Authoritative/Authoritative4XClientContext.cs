@@ -132,6 +132,36 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitScrapColonyBuilding(Planet planet,
+        PlanetGridSquare tile, string buildingName)
+    {
+        if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (tile == null || tile.P != planet || tile.Building == null || !tile.Building.Scrappable
+            || string.IsNullOrWhiteSpace(buildingName)
+            || !string.Equals(tile.Building.Name, buildingName, StringComparison.Ordinal))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.ScrapColonyTile(context.Next(), context.EmpireId,
+            planet.Id, tile.X, tile.Y, AuthoritativeColonyTileScrapKind.Building, buildingName));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitScrapColonyBiosphere(Planet planet,
+        PlanetGridSquare tile)
+    {
+        if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (tile == null || tile.P != planet || !tile.Biosphere)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.ScrapColonyTile(context.Next(), context.EmpireId,
+            planet.Id, tile.X, tile.Y, AuthoritativeColonyTileScrapKind.Biosphere));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     static bool CanQueuePlanetOrbitalBuild(Empire empire, Planet planet, IShipDesign design)
     {
         if (empire == null || planet?.Owner != empire || design == null || string.IsNullOrWhiteSpace(design.Name))

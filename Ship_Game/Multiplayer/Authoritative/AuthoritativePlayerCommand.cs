@@ -58,6 +58,7 @@ public enum AuthoritativePlayerCommandKind : byte
     QueuePlanetOrbitalBuild = 43,
     ApplyColonyBlueprints = 44,
     ClearColonyBlueprints = 45,
+    ScrapColonyTile = 46,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -103,6 +104,12 @@ public enum AuthoritativePlanetBudgetKind : byte
     Civilian = 1,
     GroundDefense = 2,
     SpaceDefense = 3,
+}
+
+public enum AuthoritativeColonyTileScrapKind : byte
+{
+    Building = 1,
+    Biosphere = 2,
 }
 
 [Flags]
@@ -280,6 +287,19 @@ public sealed class AuthoritativePlayerCommand
             EmpireId = empireId,
             Kind = AuthoritativePlayerCommandKind.ClearColonyBlueprints,
             SubjectId = planetId,
+        };
+
+    public static AuthoritativePlayerCommand ScrapColonyTile(int sequence, int empireId, int planetId,
+        int tileX, int tileY, AuthoritativeColonyTileScrapKind scrapKind, string buildingName = "")
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.ScrapColonyTile,
+            SubjectId = planetId,
+            TargetId = (int)scrapKind,
+            Position = new Vector2(tileX, tileY),
+            Text = buildingName ?? "",
         };
 
     public static AuthoritativePlayerCommand CancelDeepSpaceBuild(int sequence, int empireId, string designName,
@@ -971,6 +991,23 @@ public sealed class AuthoritativePlayerCommand
         }
 
         vector = new Vector2(FloatFromBits(xBits), FloatFromBits(yBits));
+        return true;
+    }
+
+    public static bool TryParseTileCoordinates(Vector2 position, out int x, out int y)
+    {
+        x = 0;
+        y = 0;
+        if (!float.IsFinite(position.X) || !float.IsFinite(position.Y))
+            return false;
+        if (Math.Abs(position.X - MathF.Round(position.X)) > 0.0001f
+            || Math.Abs(position.Y - MathF.Round(position.Y)) > 0.0001f)
+        {
+            return false;
+        }
+
+        x = (int)MathF.Round(position.X);
+        y = (int)MathF.Round(position.Y);
         return true;
     }
 

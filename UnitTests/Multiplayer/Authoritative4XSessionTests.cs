@@ -383,6 +383,20 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual((byte)AuthoritativePlayerCommandKind.ClearColonyBlueprints, copy.Kind);
         Assert.AreEqual(5, copy.SubjectId);
 
+        var scrapBuildingRequest = AuthoritativePlayerCommand.ScrapColonyTile(43, 2, planetId: 5,
+                tileX: 2, tileY: 3, AuthoritativeColonyTileScrapKind.Building, "Factory")
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(scrapBuildingRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.ScrapColonyTile, copy.Kind);
+        Assert.AreEqual(5, copy.SubjectId);
+        Assert.AreEqual((int)AuthoritativeColonyTileScrapKind.Building, copy.TargetId);
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParseTileCoordinates(
+            new Vector2(copy.X, copy.Y), out int tileX, out int tileY));
+        Assert.AreEqual(2, tileX);
+        Assert.AreEqual(3, tileY);
+        Assert.AreEqual("Factory", copy.Text);
+
         var cancelDeepSpaceBuildRequest = AuthoritativePlayerCommand.CancelDeepSpaceBuild(34, 2,
                 "Platform Base mk1-a", GoalType.DeepSpaceConstruction, new Vector2(10_000f, -20_000f),
                 targetPlanetId: 5, targetSystemId: 6)
@@ -1626,6 +1640,136 @@ public class Authoritative4XSessionTests : StarDriveTest
 
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitApplyColonyBlueprints(world.EnemyPlanet, template));
+                Assert.AreEqual(2, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XColonyTileScrap_ScrapsBuildingBiosphereAndSyncs_Headless()
+    {
+        const ulong Seed = 0x5C2A9A7EUL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            (PlanetGridSquare authorityBuildingTile, PlanetGridSquare authorityBioTile, string buildingName)
+                = PrepareScrapTiles(authority.Planet);
+            (PlanetGridSquare clientBuildingTile, PlanetGridSquare clientBioTile, _)
+                = PrepareScrapTiles(client.Planet, buildingName);
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.ScrapColonyTile(112,
+                authority.Player.Id, authority.Planet.Id, authorityBuildingTile.X, authorityBuildingTile.Y,
+                AuthoritativeColonyTileScrapKind.Building, buildingName));
+
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsNull(authorityBuildingTile.Building,
+                "The authoritative host should scrap the requested building through the real planet API.");
+            Assert.IsNull(clientBuildingTile.Building,
+                "The replica should apply the accepted building scrap deterministically.");
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover colony tile building removal.");
+            Assert.IsFalse(session.LastAuthoritySnapshot.Payload.Contains(
+                $"T|{authority.Planet.Id}|{authorityBuildingTile.X}|{authorityBuildingTile.Y}|{buildingName}|"));
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string buildingScrappedDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.ScrapColonyTile(113,
+                authority.Player.Id, authority.Planet.Id, authorityBioTile.X, authorityBioTile.Y,
+                AuthoritativeColonyTileScrapKind.Biosphere));
+
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsFalse(authorityBioTile.Biosphere);
+            Assert.IsFalse(clientBioTile.Biosphere);
+            Assert.IsFalse(authorityBioTile.Habitable);
+            Assert.IsFalse(clientBioTile.Habitable);
+            Assert.AreNotEqual(buildingScrappedDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover colony tile biosphere removal.");
+            Assert.IsFalse(session.LastAuthoritySnapshot.Payload.Contains(
+                $"T|{authority.Planet.Id}|{authorityBioTile.X}|{authorityBioTile.Y}||1|"));
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRejectedDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.ScrapColonyTile(114,
+                authority.Player.Id, authority.Planet.Id, authorityBuildingTile.X, authorityBuildingTile.Y,
+                AuthoritativeColonyTileScrapKind.Building, buildingName));
+            Assert.IsFalse(session.LastResult.Accepted,
+                "A stale building-scrap request must not mutate a tile that no longer contains the expected building.");
+            StringAssert.Contains(session.LastResult.Reason, "no building");
+            Assert.AreEqual(beforeRejectedDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.ScrapColonyTile(115,
+                authority.Enemy.Id, authority.Planet.Id, authorityBioTile.X, authorityBioTile.Y,
+                AuthoritativeColonyTileScrapKind.Biosphere));
+            Assert.IsFalse(session.LastResult.Accepted,
+                "An empire must not scrap another empire's colony tile.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(beforeRejectedDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsColonyTileScrapWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0x5C2A9A7FUL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            (PlanetGridSquare buildingTile, PlanetGridSquare bioTile, string buildingName)
+                = PrepareScrapTiles(world.Planet);
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2085))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitScrapColonyBuilding(world.Planet,
+                        buildingTile, buildingName));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2085, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.ScrapColonyTile, submitted[0].Kind);
+                Assert.AreEqual(world.Planet.Id, submitted[0].SubjectId);
+                Assert.AreEqual((int)AuthoritativeColonyTileScrapKind.Building, submitted[0].TargetId);
+                Assert.AreEqual(buildingName, submitted[0].Text);
+                Assert.IsTrue(AuthoritativePlayerCommand.TryParseTileCoordinates(submitted[0].Position,
+                    out int x, out int y));
+                Assert.AreEqual(buildingTile.X, x);
+                Assert.AreEqual(buildingTile.Y, y);
+                Assert.IsNotNull(buildingTile.Building,
+                    "Passive MP clients must not locally scrap buildings before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitScrapColonyBiosphere(world.Planet, bioTile));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(2086, submitted[1].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.ScrapColonyTile, submitted[1].Kind);
+                Assert.AreEqual((int)AuthoritativeColonyTileScrapKind.Biosphere, submitted[1].TargetId);
+                Assert.IsTrue(bioTile.Biosphere,
+                    "Passive MP clients must not locally destroy biospheres before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitScrapColonyBuilding(world.Planet,
+                        buildingTile, "Stale Building Name"));
+                Assert.AreEqual(2, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitScrapColonyBuilding(world.EnemyPlanet,
+                        buildingTile, buildingName));
                 Assert.AreEqual(2, submitted.Count);
             }
         }
@@ -5455,6 +5599,42 @@ public class Authoritative4XSessionTests : StarDriveTest
             .FirstOrDefault();
         Assert.IsNotNull(building, $"Planet {planet.Id} needs at least one buildable building for the authoritative queue proof.");
         return building;
+    }
+
+    static (PlanetGridSquare BuildingTile, PlanetGridSquare BioTile, string BuildingName) PrepareScrapTiles(
+        Planet planet, string buildingName = null)
+    {
+        planet.TilesList.Clear();
+        var buildingTile = new PlanetGridSquare(planet, 0, 0, b: null, hab: true, terraformable: false);
+        var bioTile = new PlanetGridSquare(planet, 1, 0, b: null, hab: false, terraformable: true);
+        planet.TilesList.Add(buildingTile);
+        planet.TilesList.Add(bioTile);
+        planet.RefreshBuildingsWeCanBuildHere();
+
+        buildingName ??= PickScrappableBuildingName(planet, buildingTile);
+        Building building = ResourceManager.CreateBuilding(planet, buildingName);
+        Assert.IsTrue(building.Scrappable, $"Building {building.Name} should be scrappable for the MP tile scrap proof.");
+        buildingTile.PlaceBuilding(building, planet);
+
+        Building biosphere = ResourceManager.CreateBuilding(planet, Building.BiospheresId);
+        bioTile.PlaceBuilding(biosphere, planet);
+        Assert.IsTrue(bioTile.Biosphere,
+            $"Planet {planet.Id} needs a placed biosphere for the authoritative tile scrap proof.");
+        planet.RefreshBuildingsWeCanBuildHere();
+        return (buildingTile, bioTile, buildingName);
+    }
+
+    static string PickScrappableBuildingName(Planet planet, PlanetGridSquare tile)
+    {
+        planet.RefreshBuildingsWeCanBuildHere();
+        Building building = planet.GetBuildingsCanBuild()
+            .Where(b => !b.IsBiospheres && b.Scrappable && tile.CanPlaceBuildingHere(b))
+            .OrderBy(b => b.ActualCost(planet.Owner))
+            .ThenBy(b => b.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(building,
+            $"Planet {planet.Id} needs at least one scrappable building for the authoritative tile scrap proof.");
+        return building.Name;
     }
 
     static Building PickBlueprintBuilding(Planet planet)
