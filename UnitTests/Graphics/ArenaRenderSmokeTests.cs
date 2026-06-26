@@ -38,6 +38,8 @@ using ArenaEngineCapabilities = Ship_Game.GameScreens.Arena.ArenaEngineCapabilit
 using ArenaCareerMenuScreen = Ship_Game.GameScreens.Arena.ArenaCareerMenuScreen;
 using ArenaCareerMenuMode = Ship_Game.GameScreens.Arena.ArenaCareerMenuMode;
 using ArenaCareerSeasonSimulator = Ship_Game.GameScreens.Arena.ArenaCareerSeasonSimulator;
+using ArenaMultiplayerLobbyScreen = Ship_Game.GameScreens.Arena.ArenaMultiplayerLobbyScreen;
+using ArenaPlugin = Ship_Game.GameScreens.Arena.ArenaPlugin;
 using PluginMainMenuAction = Ship_Game.Plugins.PluginMainMenuAction;
 using PluginManager = Ship_Game.Plugins.PluginManager;
 using ArenaBossChallengeOption = Ship_Game.GameScreens.Arena.ArenaBossChallengeOption;
@@ -2952,14 +2954,22 @@ public class ArenaRenderSmokeTests : StarDriveTest
         try
         {
             PluginManager.Clear();
-            PluginManager.RegisterMainMenuAction("arena", () => new ArenaCareerMenuScreen());
+            PluginManager.RegisterMainMenuAction("arena", "Star Gladiator", () => new ArenaCareerMenuScreen());
             PluginMainMenuAction[] actions = PluginManager.RegisteredMainMenuActions;
             Assert.AreEqual(1, actions.Length,
                 "Manual Arena registration must expose one main-menu action.");
             Assert.AreEqual("arena", actions[0].ButtonName,
                 "Arena action must bind to the existing data-driven main-menu button name.");
+            Assert.AreEqual("Star Gladiator", actions[0].ButtonTitle,
+                "Titled plugin actions must retain their contributed button label.");
             Assert.IsInstanceOfType(actions[0].CreateScreen(), typeof(ArenaCareerMenuScreen),
                 "Arena registry action must construct the Arena career menu screen.");
+
+            PluginManager.RegisterMainMenuAction("legacy_titleless", () => new ArenaCareerMenuScreen());
+            PluginMainMenuAction legacy = PluginManager.RegisteredMainMenuActions
+                .First(a => a.ButtonName == "legacy_titleless");
+            Assert.AreEqual("", legacy.ButtonTitle,
+                "Legacy titleless plugin actions must remain supported and inert for button contribution.");
         }
         finally
         {
@@ -2992,8 +3002,17 @@ public class ArenaRenderSmokeTests : StarDriveTest
                 .ToArray();
             Assert.AreEqual(1, arenaActions.Length,
                 "Drop-in StarDriveArena.dll must register exactly one Arena main-menu action.");
+            Assert.AreEqual("Star Gladiator", arenaActions[0].ButtonTitle);
             Assert.IsInstanceOfType(arenaActions[0].CreateScreen(), typeof(ArenaCareerMenuScreen),
                 "Drop-in Arena action must construct the Arena career menu screen.");
+            PluginMainMenuAction[] multiplayerActions = PluginManager.RegisteredMainMenuActions
+                .Where(a => a.ButtonName == ArenaPlugin.Authoritative4XMultiplayerButtonName)
+                .ToArray();
+            Assert.AreEqual(1, multiplayerActions.Length,
+                "Drop-in StarDriveArena.dll must register the first-class 4X multiplayer action.");
+            Assert.AreEqual("4X Multiplayer", multiplayerActions[0].ButtonTitle);
+            Assert.IsInstanceOfType(multiplayerActions[0].CreateScreen(), typeof(ArenaMultiplayerLobbyScreen),
+                "Drop-in 4X multiplayer action must construct the authoritative lobby screen.");
         }
         finally
         {

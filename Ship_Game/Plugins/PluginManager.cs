@@ -10,11 +10,18 @@ namespace Ship_Game.Plugins;
 public readonly struct PluginMainMenuAction
 {
     public readonly string ButtonName;
+    public readonly string ButtonTitle;
     public readonly Func<GameScreen> CreateScreen;
 
     public PluginMainMenuAction(string buttonName, Func<GameScreen> createScreen)
+        : this(buttonName, "", createScreen)
+    {
+    }
+
+    public PluginMainMenuAction(string buttonName, string buttonTitle, Func<GameScreen> createScreen)
     {
         ButtonName = buttonName ?? "";
+        ButtonTitle = buttonTitle ?? "";
         CreateScreen = createScreen;
     }
 }
@@ -57,12 +64,15 @@ public static class PluginManager
     }
 
     public static void RegisterMainMenuAction(string buttonName, Func<GameScreen> createScreen)
+        => RegisterMainMenuAction(buttonName, "", createScreen);
+
+    public static void RegisterMainMenuAction(string buttonName, string buttonTitle, Func<GameScreen> createScreen)
     {
         if (buttonName.IsEmpty() || createScreen == null)
             return;
 
         MainMenuActions.RemoveAll(a => string.Equals(a.ButtonName, buttonName, StringComparison.Ordinal));
-        MainMenuActions.Add(new PluginMainMenuAction(buttonName, createScreen));
+        MainMenuActions.Add(new PluginMainMenuAction(buttonName, buttonTitle, createScreen));
         Log.Info($"PluginManager: registered main-menu action '{buttonName}'.");
     }
 
@@ -124,5 +134,8 @@ public static class PluginManager
     {
         public void RegisterMainMenuAction(string buttonName, Func<GameScreen> createScreen)
             => PluginManager.RegisterMainMenuAction(buttonName, createScreen);
+
+        public void RegisterMainMenuAction(string buttonName, string buttonTitle, Func<GameScreen> createScreen)
+            => PluginManager.RegisterMainMenuAction(buttonName, buttonTitle, createScreen);
     }
 }

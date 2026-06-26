@@ -267,6 +267,11 @@ Elements:
           AbsSize: [200, 0] # aspect fill width
           ClickSfx: sd_ui_tactical_pause
       - Button:
+          Name: auth_4x_multiplayer
+          Title: "4X Multiplayer"
+          AbsSize: [200, 0] # aspect fill width
+          ClickSfx: sd_ui_tactical_pause
+      - Button:
           Name: options
           Title: "{4}" # "Options"
           AbsSize: [200, 0] # aspect fill width

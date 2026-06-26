@@ -14,6 +14,12 @@ using Rectangle = SDGraphics.Rectangle;
 
 namespace Ship_Game.GameScreens.Arena;
 
+public enum ArenaMultiplayerLobbySurface
+{
+    StarGladiator,
+    Authoritative4X,
+}
+
 public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 {
     public const int DefaultPort = 47377;
@@ -48,6 +54,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     static readonly float[] RichnessOptions = { 0f, 1f, 2f, 3f, 5f };
 
     readonly object Sync = new();
+    readonly ArenaMultiplayerLobbySurface Surface;
     UITextEntry HostEntry;
     UITextEntry PortEntry;
     UITextEntry TurnsEntry;
@@ -60,7 +67,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     LobbyPeer RemotePeer = new() { PlayerName = "Remote", RacePreference = "-", LoadoutTrait = "-", Ready = false };
     SessionStartMessage Pending4XStart;
     ArenaMultiplayerRunResult LastResult;
-    string StatusText = "Idle. Host, join, ready up, then host launches.";
+    string StatusText;
     string[] RaceOptions = Array.Empty<string>();
     string[] TraitOptions = Array.Empty<string>();
     int RaceIndex;
@@ -74,13 +81,26 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     bool Launching;
     ArenaRegularMultiplayerSettings RegularSettings = new();
 
-    public ArenaMultiplayerLobbyScreen() : base(null, toPause: null)
+    public ArenaMultiplayerLobbyScreen(
+        ArenaMultiplayerLobbySurface surface = ArenaMultiplayerLobbySurface.StarGladiator)
+        : base(null, toPause: null)
     {
+        Surface = surface;
+        StatusText = surface == ArenaMultiplayerLobbySurface.Authoritative4X
+            ? "Idle. Host or join an authoritative 4X game."
+            : "Idle. Host, join, ready up, then host launches.";
         CanEscapeFromScreen = true;
         TransitionOnTime  = 0.2f;
         TransitionOffTime = 0.2f;
     }
 
+    public ArenaMultiplayerLobbySurface SurfaceMode => Surface;
+    public string HeaderTitleForHeadless => Surface == ArenaMultiplayerLobbySurface.Authoritative4X
+        ? "STARDIVE MULTIPLAYER"
+        : "STAR GLADIATOR";
+    public string HeaderSubtitleForHeadless => Surface == ArenaMultiplayerLobbySurface.Authoritative4X
+        ? "AUTHORITATIVE 4X LOBBY"
+        : "MULTIPLAYER LOBBY";
     public string CurrentStatus
     {
         get { lock (Sync) return StatusText; }
@@ -150,8 +170,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         Vector2 c = ScreenCenter;
         var panel = new RectF(c.X - 440, c.Y - 295, 880, 590);
         Add(ArenaTheme.Panel(panel));
-        Add(ArenaTheme.ArenaTitle(new Vector2(panel.X + 24, panel.Y + 24), "STAR GLADIATOR"));
-        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 74), "MULTIPLAYER LOBBY"));
+        Add(ArenaTheme.ArenaTitle(new Vector2(panel.X + 24, panel.Y + 24), HeaderTitleForHeadless));
+        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 74), HeaderSubtitleForHeadless));
 
         AddField(panel.X + 24, panel.Y + 108, "HOST", DefaultHost, out HostEntry, allowPeriod: true, maxChars: 64, "arena_mp_host_entry");
         AddField(panel.X + 24, panel.Y + 164, "PORT", DefaultPort.ToString(), out PortEntry, allowPeriod: false, maxChars: 6, "arena_mp_port_entry");

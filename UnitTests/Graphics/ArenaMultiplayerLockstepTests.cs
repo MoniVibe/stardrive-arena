@@ -9,7 +9,9 @@ using Ship_Game.Determinism.Lockstep;
 using Ship_Game.Gameplay;
 using Ship_Game.Ships;
 using Ship_Game.GameScreens.Arena;
+using Ship_Game.GameScreens.MainMenu;
 using Ship_Game.Multiplayer.Authoritative;
+using Ship_Game.Plugins;
 using Ship_Game.Universe;
 using SynapseGaming.LightingSystem.Core;
 
@@ -50,6 +52,9 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
 
             var lobby = new ArenaMultiplayerLobbyScreen();
             sm.GoToScreen(lobby, clear3DObjects: true);
+            Assert.AreEqual(ArenaMultiplayerLobbySurface.StarGladiator, lobby.SurfaceMode);
+            Assert.AreEqual("STAR GLADIATOR", lobby.HeaderTitleForHeadless);
+            Assert.AreEqual("MULTIPLAYER LOBBY", lobby.HeaderSubtitleForHeadless);
             Assert.IsTrue(lobby.Find("arena_mp_host", out UIButton _),
                 "The multiplayer lobby must expose a Host action.");
             Assert.IsTrue(lobby.Find("arena_mp_join", out UIButton _),
@@ -86,6 +91,26 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
                 "The multiplayer lobby must expose a host-controlled match seed.");
             Assert.IsTrue(lobby.Find("arena_mp_speed_entry", out UITextEntry _),
                 "The multiplayer lobby must expose a host-controlled game speed.");
+
+            var ext = new CapturingExtensionPoints();
+            new ArenaPlugin().Register(ext);
+            Assert.IsTrue(ext.Actions.ContainsKey(ArenaPlugin.ArenaButtonName),
+                "The plugin must keep registering the Star Gladiator career menu action.");
+            Assert.IsTrue(ext.Actions.ContainsKey(ArenaPlugin.Authoritative4XMultiplayerButtonName),
+                "The plugin must register the first-class 4X multiplayer menu action.");
+            PluginMainMenuAction multiplayer4XAction = ext.Actions[ArenaPlugin.Authoritative4XMultiplayerButtonName];
+            Assert.AreEqual("4X Multiplayer", multiplayer4XAction.ButtonTitle);
+            GameScreen multiplayer4X = multiplayer4XAction.CreateScreen();
+            Assert.IsInstanceOfType(multiplayer4X, typeof(ArenaMultiplayerLobbyScreen),
+                "The plugin's 4X multiplayer menu action must launch the authoritative lobby screen.");
+            var multiplayer4XLobby = (ArenaMultiplayerLobbyScreen)multiplayer4X;
+            Assert.AreEqual(ArenaMultiplayerLobbySurface.Authoritative4X, multiplayer4XLobby.SurfaceMode);
+            Assert.AreEqual("STARDIVE MULTIPLAYER", multiplayer4XLobby.HeaderTitleForHeadless);
+            Assert.AreEqual("AUTHORITATIVE 4X LOBBY", multiplayer4XLobby.HeaderSubtitleForHeadless);
+            AssertMainMenuLayoutContains4XButton("game/Content/UI/MMenu.Jupiter.yaml");
+            AssertMainMenuLayoutContains4XButton("game/Content/UI/MMenu.Mars.yaml");
+            AssertMainMenuLayoutContains4XButton("game/Content/UI/MMenu.Venus.yaml");
+            AssertPluginActionCanContributeMissingMenuButton(multiplayer4XAction);
 
             string[] races = ResourceManager.MajorRaces
                 .Select(r => r.ArchetypeName.NotEmpty() ? r.ArchetypeName : r.Name)
@@ -559,6 +584,54 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
                 return $"{detLane}:0x{hashA:X16}!=0x{hashB:X16}";
         }
         return "no differing lane";
+    }
+
+    static void AssertMainMenuLayoutContains4XButton(string relativePath)
+    {
+        string path = Path.Combine(RepoRoot(), relativePath);
+        Assert.IsTrue(File.Exists(path), $"Missing main-menu layout file '{relativePath}'.");
+        string yaml = File.ReadAllText(path);
+        StringAssert.Contains(yaml, $"Name: {ArenaPlugin.Authoritative4XMultiplayerButtonName}");
+        StringAssert.Contains(yaml, "Title: \"4X Multiplayer\"");
+    }
+
+    static string RepoRoot()
+    {
+        DirectoryInfo dir = new(Directory.GetCurrentDirectory());
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "StarDrive.csproj")))
+            dir = dir.Parent;
+        Assert.IsNotNull(dir, "Could not locate the StarDrive repository root.");
+        return dir.FullName;
+    }
+
+    static void AssertPluginActionCanContributeMissingMenuButton(PluginMainMenuAction action)
+    {
+        var missingList = new UIList(ListLayoutStyle.ResizeList);
+        UIButton contributed = MainMenuScreen.EnsurePluginMainMenuButtonForHeadless(missingList, action);
+        Assert.IsNotNull(contributed, "A titled plugin action must create a missing main-menu button.");
+        Assert.AreEqual(action.ButtonName, contributed.Name);
+        Assert.AreEqual(action.ButtonTitle, contributed.Text.String);
+
+        var existingList = new UIList(ListLayoutStyle.ResizeList);
+        UIButton existing = existingList.Add(ButtonStyle.Default, "Existing", _ => {});
+        existing.Name = action.ButtonName;
+        UIButton ensured = MainMenuScreen.EnsurePluginMainMenuButtonForHeadless(existingList, action);
+        Assert.AreSame(existing, ensured, "A layout-defined plugin button must be reused, not duplicated.");
+
+        var titleless = new PluginMainMenuAction("missing_titleless", () => null);
+        Assert.IsNull(MainMenuScreen.EnsurePluginMainMenuButtonForHeadless(new UIList(ListLayoutStyle.ResizeList), titleless),
+            "Legacy titleless plugin actions must not create visible buttons unless the layout defines them.");
+    }
+
+    sealed class CapturingExtensionPoints : IGameExtensionPoints
+    {
+        public readonly System.Collections.Generic.Dictionary<string, PluginMainMenuAction> Actions = new();
+
+        public void RegisterMainMenuAction(string buttonName, Func<GameScreen> createScreen)
+            => RegisterMainMenuAction(buttonName, "", createScreen);
+
+        public void RegisterMainMenuAction(string buttonName, string buttonTitle, Func<GameScreen> createScreen)
+            => Actions[buttonName] = new PluginMainMenuAction(buttonName, buttonTitle, createScreen);
     }
 
     void LoadCombinedArmsForArenaMultiplayer()

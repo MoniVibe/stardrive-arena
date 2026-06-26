@@ -84,7 +84,7 @@ namespace Ship_Game.GameScreens.MainMenu
             if (list.Find("mods",      out UIButton mods))      mods.OnClick      = Mods_Clicked;
             if (list.Find("sandbox",   out UIButton sandbox))   sandbox.OnClick   = DevSandbox_Clicked;
             foreach (PluginMainMenuAction action in PluginManager.RegisteredMainMenuActions)
-                if (list.Find(action.ButtonName, out UIButton pluginButton))
+                if (EnsurePluginMainMenuButton(list, action) is UIButton pluginButton)
                     pluginButton.OnClick = _ => PluginAction_Clicked(action);
             if (list.Find("info",      out UIButton info))      info.OnClick      = Info_Clicked;
             if (list.Find("support",   out UIButton support))   support.OnClick   = Support_Clicked;
@@ -100,6 +100,24 @@ namespace Ship_Game.GameScreens.MainMenu
 
             base.LoadContent();
             Log.Info($"MainMenuScreen GameContent {TransientContent.GetLoadedAssetMegabytes():0.0}MB");
+        }
+
+        public static UIButton EnsurePluginMainMenuButtonForHeadless(UIList list, PluginMainMenuAction action)
+            => EnsurePluginMainMenuButton(list, action);
+
+        static UIButton EnsurePluginMainMenuButton(UIList list, PluginMainMenuAction action)
+        {
+            if (list == null)
+                return null;
+            if (list.Find(action.ButtonName, out UIButton button))
+                return button;
+            if (action.ButtonTitle.IsEmpty())
+                return null;
+
+            button = list.Add(ButtonStyle.Default, action.ButtonTitle, _ => {});
+            button.Name = action.ButtonName;
+            button.ClickSfx = "sd_ui_tactical_pause";
+            return button;
         }
 
         void CreateVersionArea()
