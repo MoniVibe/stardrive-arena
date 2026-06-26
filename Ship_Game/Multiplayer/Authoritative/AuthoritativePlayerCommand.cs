@@ -1,3 +1,5 @@
+using System;
+using System.Globalization;
 using SDLockstep;
 using Ship_Game.AI;
 using Vector2 = SDGraphics.Vector2;
@@ -18,6 +20,7 @@ public enum AuthoritativePlayerCommandKind : byte
     QueueTroop = 9,
     AttackShip = 10,
     ShipPlanetOrder = 11,
+    SetColonyLabor = 12,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -86,6 +89,17 @@ public sealed class AuthoritativePlayerCommand
             Kind = AuthoritativePlayerCommandKind.SetColonyType,
             SubjectId = planetId,
             TargetId = (int)type,
+        };
+
+    public static AuthoritativePlayerCommand SetColonyLabor(int sequence, int empireId, int planetId,
+        float food, float production, float research, bool foodLocked, bool productionLocked, bool researchLocked)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.SetColonyLabor,
+            SubjectId = planetId,
+            Text = EncodeColonyLaborPayload(food, production, research, foodLocked, productionLocked, researchLocked),
         };
 
     public static AuthoritativePlayerCommand SetResearchTopic(int sequence, int empireId, string techUid)
@@ -209,6 +223,44 @@ public sealed class AuthoritativePlayerCommand
             Position = new Vector2(message.X, message.Y),
             Text = message.Text ?? "",
         };
+
+    public static string EncodeColonyLaborPayload(float food, float production, float research,
+        bool foodLocked, bool productionLocked, bool researchLocked)
+    {
+        int locks = (foodLocked ? 1 : 0) | (productionLocked ? 2 : 0) | (researchLocked ? 4 : 0);
+        return string.Create(CultureInfo.InvariantCulture,
+            $"{FloatBits(food):X8}|{FloatBits(production):X8}|{FloatBits(research):X8}|{locks}");
+    }
+
+    public static bool TryParseColonyLaborPayload(string payload, out float food, out float production,
+        out float research, out bool foodLocked, out bool productionLocked, out bool researchLocked)
+    {
+        food = production = research = 0f;
+        foodLocked = productionLocked = researchLocked = false;
+
+        string[] parts = (payload ?? "").Split('|');
+        if (parts.Length != 4)
+            return false;
+        if (!uint.TryParse(parts[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint foodBits)
+            || !uint.TryParse(parts[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint prodBits)
+            || !uint.TryParse(parts[2], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint resBits)
+            || !int.TryParse(parts[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int locks)
+            || locks < 0 || locks > 7)
+        {
+            return false;
+        }
+
+        food = FloatFromBits(foodBits);
+        production = FloatFromBits(prodBits);
+        research = FloatFromBits(resBits);
+        foodLocked = (locks & 1) != 0;
+        productionLocked = (locks & 2) != 0;
+        researchLocked = (locks & 4) != 0;
+        return true;
+    }
+
+    static uint FloatBits(float value) => BitConverter.SingleToUInt32Bits(value);
+    static float FloatFromBits(uint value) => BitConverter.UInt32BitsToSingle(value);
 }
 
 public sealed class AuthoritativeCommandResult

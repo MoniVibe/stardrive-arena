@@ -39,6 +39,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.NoOp => Accept(result),
                 AuthoritativePlayerCommandKind.MoveShip => ApplyMove(command, empire, result),
                 AuthoritativePlayerCommandKind.SetColonyType => ApplyColonyType(command, empire, result),
+                AuthoritativePlayerCommandKind.SetColonyLabor => ApplyColonyLabor(command, empire, result),
                 AuthoritativePlayerCommandKind.SetResearchTopic => ApplyResearchTopic(command, empire, result),
                 AuthoritativePlayerCommandKind.DiplomacyProposal => ApplyDiplomacy(command, empire, result),
                 AuthoritativePlayerCommandKind.DiplomacyResponse => ApplyDiplomacy(command, empire, result),
@@ -198,6 +199,41 @@ public sealed class Authoritative4XCommandApplicator
             planet.RemoveBlueprints();
             planet.SetSpecializedTradeHub(false);
         }
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyColonyLabor(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} not found.");
+        if (planet.Owner != empire)
+            return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
+        if (planet.CType is not (Planet.ColonyType.Colony or Planet.ColonyType.TradeHub))
+            return Reject(result, $"Planet {command.SubjectId} is governed by {planet.CType} and cannot receive manual labor.");
+        if (!AuthoritativePlayerCommand.TryParseColonyLaborPayload(command.Text, out float food,
+                out float production, out float research, out bool foodLocked, out bool productionLocked,
+                out bool researchLocked))
+        {
+            return Reject(result, $"Invalid colony labor payload '{command.Text}'.");
+        }
+        if (!IsValidLaborPercent(food) || !IsValidLaborPercent(production) || !IsValidLaborPercent(research))
+            return Reject(result, "Colony labor percentages must be finite values between 0 and 1.");
+
+        float sum = food + production + research;
+        if (Math.Abs(sum - 1f) > 0.0001f)
+            return Reject(result, $"Colony labor percentages must sum to 1, got {sum}.");
+        if (planet.IsCybernetic && Math.Abs(food) > 0.0001f)
+            return Reject(result, "Cybernetic colonies cannot assign food labor.");
+
+        planet.Food.Percent = food;
+        planet.Prod.Percent = production;
+        planet.Res.Percent = research;
+        planet.Food.PercentLock = foodLocked || planet.IsCybernetic;
+        planet.Prod.PercentLock = productionLocked;
+        planet.Res.PercentLock = researchLocked;
+        planet.UpdateIncomes();
         return Accept(result);
     }
 
@@ -384,6 +420,9 @@ public sealed class Authoritative4XCommandApplicator
         if (design.Role == RoleName.scout) return QueueItemType.Scout;
         return QueueItemType.CombatShip;
     }
+
+    static bool IsValidLaborPercent(float value)
+        => !float.IsNaN(value) && !float.IsInfinity(value) && value >= 0f && value <= 1f;
 
     static bool TryParsePlanetOrder(string text, out AuthoritativeShipPlanetOrderType orderType,
         out bool clearOrders, out MoveOrder moveOrder)

@@ -110,6 +110,23 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual($"{(int)AuthoritativeShipPlanetOrderType.Orbit}|0|{(int)MoveOrder.Aggressive}",
             copy.Text);
 
+        var laborRequest = AuthoritativePlayerCommand.SetColonyLabor(14, 2, 456,
+            0.25f, 0.5f, 0.25f, foodLocked: true, productionLocked: false, researchLocked: true)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(laborRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetColonyLabor, copy.Kind);
+        Assert.AreEqual(456, copy.SubjectId);
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParseColonyLaborPayload(copy.Text,
+            out float foodLabor, out float prodLabor, out float resLabor,
+            out bool foodLock, out bool prodLock, out bool resLock));
+        Assert.AreEqual(0.25f, foodLabor);
+        Assert.AreEqual(0.5f, prodLabor);
+        Assert.AreEqual(0.25f, resLabor);
+        Assert.IsTrue(foodLock);
+        Assert.IsFalse(prodLock);
+        Assert.IsTrue(resLock);
+
         var snapshot = new AuthoritativeStateSnapshotMessage
         {
             FromPeer = 1,
@@ -411,6 +428,115 @@ public class Authoritative4XSessionTests : StarDriveTest
         {
             authority.Screen.Dispose();
             client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XColonyLabor_SyncsAndRejectsIllegalChanges_Headless()
+    {
+        const ulong Seed = 0x1AB0A11UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            authority.Planet.CType = Planet.ColonyType.Colony;
+            client.Planet.CType = Planet.ColonyType.Colony;
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetColonyLabor(40, authority.Player.Id,
+                authority.Planet.Id, 0.25f, 0.5f, 0.25f,
+                foodLocked: true, productionLocked: false, researchLocked: true));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(0.25f, authority.Planet.Food.Percent);
+            Assert.AreEqual(0.5f, authority.Planet.Prod.Percent);
+            Assert.AreEqual(0.25f, authority.Planet.Res.Percent);
+            Assert.IsTrue(authority.Planet.Food.PercentLock);
+            Assert.IsFalse(authority.Planet.Prod.PercentLock);
+            Assert.IsTrue(authority.Planet.Res.PercentLock);
+            Assert.AreEqual(authority.Planet.Food.Percent, client.Planet.Food.Percent);
+            Assert.AreEqual(authority.Planet.Prod.Percent, client.Planet.Prod.Percent);
+            Assert.AreEqual(authority.Planet.Res.Percent, client.Planet.Res.Percent);
+            Assert.AreEqual(authority.Planet.Food.PercentLock, client.Planet.Food.PercentLock);
+            Assert.AreEqual(authority.Planet.Res.PercentLock, client.Planet.Res.PercentLock);
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The sync digest must cover labor allocation and lock state changes.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetColonyLabor(41, authority.Enemy.Id,
+                authority.Planet.Id, 0.25f, 0.5f, 0.25f,
+                foodLocked: false, productionLocked: false, researchLocked: false));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not change another empire's colony labor.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(0.25f, authority.Planet.Food.Percent);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetColonyLabor(42, authority.Player.Id,
+                authority.Planet.Id, 0.6f, 0.6f, 0.1f,
+                foodLocked: false, productionLocked: false, researchLocked: false));
+            Assert.IsFalse(session.LastResult.Accepted, "Labor allocations that do not sum to one must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "sum to 1");
+            Assert.AreEqual(0.25f, authority.Planet.Food.Percent);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsColonyLaborWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0x1AB0C11UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            float originalFood = world.Planet.Food.Percent;
+            float originalProd = world.Planet.Prod.Percent;
+            float originalRes = world.Planet.Res.Percent;
+            bool originalFoodLock = world.Planet.Food.PercentLock;
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 1500))
+            {
+                Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetColonyLabor(world.Planet,
+                    0.25f, 0.5f, 0.25f, foodLocked: true, productionLocked: false, researchLocked: true));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(1500, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetColonyLabor, submitted[0].Kind);
+                Assert.AreEqual(world.Player.Id, submitted[0].EmpireId);
+                Assert.AreEqual(world.Planet.Id, submitted[0].SubjectId);
+                Assert.IsTrue(AuthoritativePlayerCommand.TryParseColonyLaborPayload(submitted[0].Text,
+                    out float foodLabor, out float prodLabor, out float resLabor,
+                    out bool foodLock, out bool prodLock, out bool resLock));
+                Assert.AreEqual(0.25f, foodLabor);
+                Assert.AreEqual(0.5f, prodLabor);
+                Assert.AreEqual(0.25f, resLabor);
+                Assert.IsTrue(foodLock);
+                Assert.IsFalse(prodLock);
+                Assert.IsTrue(resLock);
+                Assert.AreEqual(originalFood, world.Planet.Food.Percent,
+                    "Passive MP clients must not locally change food labor before host acceptance.");
+                Assert.AreEqual(originalProd, world.Planet.Prod.Percent,
+                    "Passive MP clients must not locally change production labor before host acceptance.");
+                Assert.AreEqual(originalRes, world.Planet.Res.Percent,
+                    "Passive MP clients must not locally change research labor before host acceptance.");
+                Assert.AreEqual(originalFoodLock, world.Planet.Food.PercentLock,
+                    "Passive MP clients must not locally change labor locks before host acceptance.");
+
+                Assert.IsFalse(Authoritative4XClientContext.TrySubmitSetColonyLabor(world.EnemyPlanet,
+                    0.25f, 0.5f, 0.25f, foodLocked: false, productionLocked: false, researchLocked: false));
+                Assert.AreEqual(1, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
         }
     }
 

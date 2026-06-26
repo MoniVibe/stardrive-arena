@@ -1,6 +1,7 @@
 ﻿using System;
 using SDGraphics;
 using SDUtils;
+using Ship_Game.Multiplayer.Authoritative;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
 
@@ -68,6 +69,9 @@ namespace Ship_Game
         // solve 3-way slider change
         void OnSliderChanged(ColonySlider a, float difference)
         {
+            if (TrySubmitAuthoritativeSliderChange(a, difference))
+                return;
+
             ColonySlider b = Sliders.Find(s => s != a && !s.LockedByUser); // always unlocked
             ColonySlider c = Sliders.Find(s => s != a && s != b);    // maybe locked
 
@@ -100,6 +104,65 @@ namespace Ship_Game
                 Log.Warning($"ColonySlider bad sum {sum} ==> F:{Food.Value} P:{Prod.Value} R:{Res.Value}");
 
             OnSlidersChanged?.Invoke();
+        }
+
+        bool TrySubmitAuthoritativeSliderChange(ColonySlider changed, float difference)
+        {
+            if (!Authoritative4XClientContext.IsActiveFor(P.Owner))
+                return false;
+
+            var values = new[] { Food.Value, Prod.Value, Res.Value };
+            var locks = new[] { Food.LockedByUser, Prod.LockedByUser, Res.LockedByUser };
+            int a = (int)changed.ResourceType;
+            int b = -1;
+            for (int i = 0; i < Sliders.Length; ++i)
+            {
+                if (i != a && !locks[i])
+                {
+                    b = i;
+                    break;
+                }
+            }
+            if (b < 0)
+                return false;
+
+            int c = -1;
+            for (int i = 0; i < Sliders.Length; ++i)
+            {
+                if (i != a && i != b)
+                {
+                    c = i;
+                    break;
+                }
+            }
+            if (c < 0)
+                return false;
+
+            if (locks[c])
+            {
+                float delta = difference.Clamped(-values[a], values[b]);
+                values[a] += delta;
+                values[b] = Math.Max(1f - (values[a] + values[c]), 0f);
+            }
+            else
+            {
+                float move = difference.Clamped(-values[a], values[b] + values[c]);
+                values[a] += move;
+
+                void ApplyDelta(int index, float delta)
+                {
+                    float value = values[index] + delta;
+                    if      (value < 0f) { values[a] += value;    value = 0f; }
+                    else if (value > 1f) { values[a] += value-1f; value = 1f; }
+                    values[index] = value;
+                }
+                ApplyDelta(b, -move/2);
+                ApplyDelta(c, -move/2);
+                values[c] = Math.Max(1f - (values[a] + values[b]), 0f);
+            }
+
+            return Authoritative4XClientContext.TrySubmitSetColonyLabor(P, values[0], values[1], values[2],
+                locks[0], locks[1], locks[2]);
         }
 
         public override bool HandleInput(InputState input)

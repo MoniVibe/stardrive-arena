@@ -60,6 +60,25 @@ public sealed class Authoritative4XClientContext : IDisposable
         return true;
     }
 
+    public static bool TrySubmitSetColonyLabor(Planet planet, float food, float production, float research,
+        bool foodLocked, bool productionLocked, bool researchLocked)
+    {
+        if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
+            return false;
+
+        context.Submit(AuthoritativePlayerCommand.SetColonyLabor(context.Next(), context.EmpireId, planet.Id,
+            food, production, research, foodLocked, productionLocked, researchLocked));
+        return true;
+    }
+
+    public static bool TrySubmitCurrentColonyLabor(Planet planet)
+    {
+        if (planet == null)
+            return false;
+        return TrySubmitSetColonyLabor(planet, planet.Food.Percent, planet.Prod.Percent, planet.Res.Percent,
+            planet.Food.PercentLock, planet.Prod.PercentLock, planet.Res.PercentLock);
+    }
+
     public static bool TrySubmitQueueBuilding(Planet planet, string buildingName)
     {
         if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))

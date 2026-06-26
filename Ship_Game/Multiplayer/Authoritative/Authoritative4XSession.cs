@@ -103,6 +103,12 @@ public sealed class AuthoritativeStateSnapshot
             sb.Append("P|").Append(p.Id)
               .Append('|').Append(p.Owner?.Id ?? 0)
               .Append('|').Append((int)p.CType)
+              .Append('|').Append(FloatBits(p.Food.Percent))
+              .Append('|').Append(FloatBits(p.Prod.Percent))
+              .Append('|').Append(FloatBits(p.Res.Percent))
+              .Append('|').Append(p.Food.PercentLock ? 1 : 0)
+              .Append('|').Append(p.Prod.PercentLock ? 1 : 0)
+              .Append('|').Append(p.Res.PercentLock ? 1 : 0)
               .Append('|').Append(p.ConstructionQueue.Count)
               .AppendLine();
 

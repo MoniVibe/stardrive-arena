@@ -4,6 +4,7 @@ using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using SDUtils;
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Universe.SolarBodies;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
@@ -87,6 +88,8 @@ namespace Ship_Game
             }
         }
 
+        public ColonyResType ResourceType => Type;
+
         public float Value
         {
             get => Resource.Percent;
@@ -141,8 +144,16 @@ namespace Ship_Game
                 {
                     if (input.LeftMouseClick)
                     {
-                        LockedByUser = !LockedByUser;
+                        bool newLock = !LockedByUser;
+                        bool submitted = Authoritative4XClientContext.TrySubmitSetColonyLabor(P,
+                            P.Food.Percent, P.Prod.Percent, P.Res.Percent,
+                            Type == ColonyResType.Food ? newLock : P.Food.PercentLock,
+                            Type == ColonyResType.Prod ? newLock : P.Prod.PercentLock,
+                            Type == ColonyResType.Res ? newLock : P.Res.PercentLock);
+                        if (!submitted)
+                            LockedByUser = newLock;
                         GameAudio.AcceptClick();
+                        return true;
                     }
                     ToolTip.CreateTooltip(GameText.LocksThisSliderPreventingThe);
                 }
