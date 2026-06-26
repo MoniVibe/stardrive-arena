@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading;
 using Ship_Game;
 using Ship_Game.AI;
+using Ship_Game.Fleets;
 using Ship_Game.Ships;
 using Vector2 = SDGraphics.Vector2;
 
@@ -125,6 +126,23 @@ public sealed class Authoritative4XClientContext : IDisposable
         foreach (Ship ship in ownedShips)
             context.Submit(AuthoritativePlayerCommand.MoveShip(context.Next(), context.EmpireId, ship.Id,
             destination, order));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitMoveFleet(Fleet fleet, Vector2 destination,
+        Vector2 direction, MoveOrder order)
+    {
+        if (!TryGetFor(fleet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (fleet.Key is < Empire.FirstFleetKey or > Empire.LastFleetKey
+            || fleet.Ships.Count == 0
+            || fleet.Ships.All(s => !CanSubmitFleetMoveShip(s)))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.MoveFleet(context.Next(), context.EmpireId,
+            fleet.Key, destination, direction, order));
         return Authoritative4XUiCommandResult.Submitted;
     }
 
@@ -461,6 +479,9 @@ public sealed class Authoritative4XClientContext : IDisposable
 
     static bool CanSubmitShipMove(Ship ship)
         => ship?.Active == true && !ship.IsPlatformOrStation;
+
+    static bool CanSubmitFleetMoveShip(Ship ship)
+        => ship?.Active == true && ship.PlayerShipCanTakeFleetOrders();
 
     static bool CanSubmitShipAttack(Ship ship, Ship target)
         => CanSubmitShipMove(ship) && ship.ShipData.Role != RoleName.troop && ship != target

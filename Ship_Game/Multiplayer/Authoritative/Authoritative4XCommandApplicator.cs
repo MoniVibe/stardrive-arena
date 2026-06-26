@@ -61,6 +61,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.SetPlanetPrioritizedPort => ApplyPlanetPrioritizedPort(command, empire, result),
                 AuthoritativePlayerCommandKind.SetPlanetManualBudget => ApplyPlanetManualBudget(command, empire, result),
                 AuthoritativePlayerCommandKind.SetFleetAssignment => ApplyFleetAssignment(command, empire, result),
+                AuthoritativePlayerCommandKind.MoveFleet => ApplyMoveFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
@@ -94,6 +95,35 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, $"Move order {order} is not supported by authoritative MP.");
 
         ship.AI.OrderMoveTo(command.Position, dir, AIState.AwaitingOrders, order);
+        return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyMoveFleet(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
+            return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
+
+        Fleet fleet = empire.GetFleetOrNull(command.SubjectId);
+        if (fleet == null || fleet.Ships.Count == 0)
+            return Reject(result, $"Fleet {command.SubjectId} not found or empty.");
+        if (!IsFinite(command.Position))
+            return Reject(result, "Fleet destination must be finite.");
+        if (!AuthoritativePlayerCommand.TryParseVectorPayload(command.Text, out Vector2 direction))
+            return Reject(result, $"Invalid fleet direction payload '{command.Text}'.");
+        if (!IsFinite(direction) || direction.Length() <= 0f)
+            return Reject(result, "Fleet direction must be a non-zero finite vector.");
+
+        MoveOrder order = command.TargetId != 0 ? (MoveOrder)command.TargetId : MoveOrder.Regular;
+        const MoveOrder Allowed = MoveOrder.Regular | MoveOrder.Aggressive | MoveOrder.StandGround
+                                | MoveOrder.AddWayPoint | MoveOrder.ForceReassembly;
+        if ((order & ~Allowed) != 0)
+            return Reject(result, $"Fleet move order {order} is not supported by authoritative MP.");
+
+        if (!AnyFleetShipCanMove(fleet))
+            return Reject(result, $"Fleet {fleet.Key} has no ships that can receive fleet movement orders.");
+
+        fleet.MoveTo(command.Position, direction.Normalized(), order);
         return Accept(result);
     }
 
@@ -785,6 +815,16 @@ public sealed class Authoritative4XCommandApplicator
 
     static bool IsFinitePositive(float value)
         => !float.IsNaN(value) && !float.IsInfinity(value) && value > 0f;
+
+    static bool IsFinite(Vector2 value) => float.IsFinite(value.X) && float.IsFinite(value.Y);
+
+    static bool AnyFleetShipCanMove(Fleet fleet)
+    {
+        foreach (Ship ship in fleet.Ships)
+            if (ship?.Loyalty == fleet.Owner && ship.PlayerShipCanTakeFleetOrders())
+                return true;
+        return false;
+    }
 
     bool TryGetOwnedQueueItem(AuthoritativePlayerCommand command, Empire empire, AuthoritativeCommandResult result,
         out Planet planet, out QueueItem item, out AuthoritativeCommandResult rejected)

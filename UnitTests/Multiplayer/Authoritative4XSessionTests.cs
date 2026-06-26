@@ -202,6 +202,20 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.IsTrue(AuthoritativePlayerCommand.TryParseIdList(copy.Text, out int[] fleetShipIds));
         CollectionAssert.AreEqual(new[] { 99, 100 }, fleetShipIds);
 
+        var moveFleetRequest = AuthoritativePlayerCommand.MoveFleet(27, 2, 7,
+                new Vector2(12_345f, -67_890f), new Vector2(0f, -1f),
+                MoveOrder.StandGround | MoveOrder.ForceReassembly)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(moveFleetRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.MoveFleet, copy.Kind);
+        Assert.AreEqual(7, copy.SubjectId);
+        Assert.AreEqual((int)(MoveOrder.StandGround | MoveOrder.ForceReassembly), copy.TargetId);
+        Assert.AreEqual(12_345f, copy.X);
+        Assert.AreEqual(-67_890f, copy.Y);
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParseVectorPayload(copy.Text, out Vector2 moveFleetDirection));
+        Assert.AreEqual(new Vector2(0f, -1f), moveFleetDirection);
+
         var attackRequest = AuthoritativePlayerCommand.AttackShip(12, 2, 99, 100, queue: true)
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(attackRequest, toPeer: 1));
@@ -1052,6 +1066,80 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XFleetMove_UsesFleetMoveToAndSyncs_Headless()
+    {
+        const ulong Seed = 0xF1EE700DUL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetFleetAssignment(120,
+                authority.Player.Id, fleetKey: 3, AuthoritativeFleetAssignmentMode.Replace,
+                new[] { authority.Ship.Id, authority.WingShip.Id }));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+
+            Fleet authorityFleet = authority.Player.GetFleetOrNull(3);
+            Fleet clientFleet = client.Player.GetFleetOrNull(3);
+            Assert.IsNotNull(authorityFleet);
+            Assert.IsNotNull(clientFleet);
+            string beforeMoveDigest = session.LastAuthoritySnapshot.SyncDigest;
+
+            Vector2 destination = new(90_000f, -24_000f);
+            Vector2 direction = new(0f, -1f);
+            MoveOrder order = MoveOrder.StandGround | MoveOrder.ForceReassembly;
+            session.SubmitFromClient(AuthoritativePlayerCommand.MoveFleet(121,
+                authority.Player.Id, fleetKey: 3, destination, direction, order));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+
+            Assert.AreEqual(destination, authorityFleet.FinalPosition);
+            Assert.AreEqual(direction, authorityFleet.FinalDirection);
+            Assert.AreEqual(destination, clientFleet.FinalPosition);
+            Assert.AreEqual(direction, clientFleet.FinalDirection);
+            Assert.AreEqual(AIState.FormationMoveTo, authority.Ship.AI.State);
+            Assert.AreEqual(AIState.FormationMoveTo, authority.WingShip.AI.State);
+            Assert.AreEqual(authorityFleet.FinalPosition + authority.Ship.FleetOffset, authority.Ship.AI.MovePosition);
+            Assert.AreEqual(authorityFleet.FinalPosition + authority.WingShip.FleetOffset, authority.WingShip.AI.MovePosition);
+            Assert.AreEqual(clientFleet.FinalPosition + client.Ship.FleetOffset, client.Ship.AI.MovePosition);
+            Assert.AreEqual(clientFleet.FinalPosition + client.WingShip.FleetOffset, client.WingShip.AI.MovePosition);
+            Assert.AreNotEqual(beforeMoveDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover fleet destination and formation movement.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.MoveFleet(122,
+                authority.Enemy.Id, fleetKey: 3, destination + new Vector2(1_000f, 0f), direction, order));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not move another empire's fleet.");
+            StringAssert.Contains(session.LastResult.Reason, "not found");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.MoveFleet(123,
+                authority.Player.Id, fleetKey: 3, destination + new Vector2(2_000f, 0f), direction,
+                MoveOrder.Pursue));
+            Assert.IsFalse(session.LastResult.Accepted, "Unsupported internal movement flags must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "not supported");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.MoveFleet(124,
+                authority.Player.Id, fleetKey: 3, destination + new Vector2(3_000f, 0f), Vector2.Zero, order));
+            Assert.IsFalse(session.LastResult.Accepted, "A zero fleet facing vector must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "direction");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+            Assert.AreEqual(destination, authorityFleet.FinalPosition,
+                "Rejected fleet movement must not mutate the authoritative fleet target.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientContext_SubmitsFleetAssignmentWithoutLocalMutation_Headless()
     {
         const ulong Seed = 0xF1EE7C17UL;
@@ -1090,6 +1178,66 @@ public class Authoritative4XSessionTests : StarDriveTest
                     Authoritative4XClientContext.TrySubmitSetFleetAssignment(world.Enemy, 4,
                         AuthoritativeFleetAssignmentMode.Replace, new[] { world.Ship }));
                 Assert.AreEqual(2, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsFleetMoveWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xF1EE7C18UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            Fleet fleet = world.Player.CreateFleet(4, null);
+            fleet.AddShips(new[] { world.Ship, world.WingShip });
+            fleet.SetCommandShip(null);
+            fleet.AutoArrange();
+            fleet.Update(FixedSimTime.Zero);
+
+            Vector2 originalFinalPosition = fleet.FinalPosition;
+            Vector2 originalShipMove = world.Ship.AI.MovePosition;
+            AIState originalShipState = world.Ship.AI.State;
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2160))
+            {
+                Vector2 destination = new(45_000f, 12_000f);
+                Vector2 direction = new(1f, 0f);
+                MoveOrder order = MoveOrder.Aggressive | MoveOrder.ForceReassembly;
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitMoveFleet(fleet, destination, direction, order));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2160, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.MoveFleet, submitted[0].Kind);
+                Assert.AreEqual(4, submitted[0].SubjectId);
+                Assert.AreEqual((int)order, submitted[0].TargetId);
+                Assert.AreEqual(destination, submitted[0].Position);
+                Assert.IsTrue(AuthoritativePlayerCommand.TryParseVectorPayload(submitted[0].Text,
+                    out Vector2 submittedDirection));
+                Assert.AreEqual(direction, submittedDirection);
+                Assert.AreEqual(originalFinalPosition, fleet.FinalPosition,
+                    "Passive MP clients must not locally move fleets before host acceptance.");
+                Assert.AreEqual(originalShipMove, world.Ship.AI.MovePosition);
+                Assert.AreEqual(originalShipState, world.Ship.AI.State);
+
+                Fleet empty = world.Player.CreateFleet(5, null);
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitMoveFleet(empty, destination, direction, order));
+                Assert.AreEqual(1, submitted.Count);
+
+                Fleet enemyFleet = world.Enemy.CreateFleet(4, null);
+                enemyFleet.AddShips(new[] { world.EnemyShip });
+                enemyFleet.AutoArrange();
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitMoveFleet(enemyFleet, destination, direction, order));
+                Assert.AreEqual(1, submitted.Count);
             }
         }
         finally

@@ -34,6 +34,7 @@ public enum AuthoritativePlayerCommandKind : byte
     SetPlanetPrioritizedPort = 22,
     SetPlanetManualBudget = 23,
     SetFleetAssignment = 24,
+    MoveFleet = 25,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -347,6 +348,19 @@ public sealed class AuthoritativePlayerCommand
             Text = EncodeIdList(shipIds),
         };
 
+    public static AuthoritativePlayerCommand MoveFleet(int sequence, int empireId, int fleetKey,
+        Vector2 destination, Vector2 direction, MoveOrder order = MoveOrder.Regular)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.MoveFleet,
+            SubjectId = fleetKey,
+            TargetId = (int)order,
+            Position = destination,
+            Text = EncodeVectorPayload(direction),
+        };
+
     public static AuthoritativePlayerCommand AttackShip(int sequence, int empireId, int shipId, int targetShipId,
         bool queue = false)
         => new()
@@ -477,6 +491,25 @@ public sealed class AuthoritativePlayerCommand
             parsed[i] = id;
         }
         ids = parsed;
+        return true;
+    }
+
+    public static string EncodeVectorPayload(Vector2 vector)
+        => string.Create(CultureInfo.InvariantCulture, $"{FloatBits(vector.X):X8}|{FloatBits(vector.Y):X8}");
+
+    public static bool TryParseVectorPayload(string payload, out Vector2 vector)
+    {
+        vector = default;
+        string[] parts = (payload ?? "").Split('|');
+        if (parts.Length != 2)
+            return false;
+        if (!uint.TryParse(parts[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint xBits)
+            || !uint.TryParse(parts[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint yBits))
+        {
+            return false;
+        }
+
+        vector = new Vector2(FloatFromBits(xBits), FloatFromBits(yBits));
         return true;
     }
 

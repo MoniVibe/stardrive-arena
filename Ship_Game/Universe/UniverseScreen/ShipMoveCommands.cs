@@ -359,8 +359,20 @@ namespace Ship_Game.Universe
                 return;
 
             Vector2 corrected = HelperFunctions.GetCorrectedMovePosWithAudio(fleet.Ships, enemyShips, movePosition);
-            Ship[] actionable = fleet.Ships.Where(s => Universe.LocalShipCanTakeFleetOrders(s, forAttack: false)).ToArray();
-            switch (Authoritative4XClientContext.TrySubmitMoveShips(actionable, corrected, GetMoveOrderType()))
+            AI.MoveOrder shipOrder = GetMoveOrderType();
+            AI.MoveOrder fleetOrder = shipOrder;
+            if (!(Input.QueueAction && fleet.Ships[0].AI.HasWayPoints))
+                fleetOrder |= AI.MoveOrder.ForceReassembly;
+
+            Authoritative4XUiCommandResult authoritative = fleet is Fleet assignedFleet
+                ? Authoritative4XClientContext.TrySubmitMoveFleet(assignedFleet, corrected, facingDir, fleetOrder)
+                : Authoritative4XUiCommandResult.NotActive;
+            if (authoritative == Authoritative4XUiCommandResult.NotActive)
+            {
+                Ship[] actionable = fleet.Ships.Where(s => Universe.LocalShipCanTakeFleetOrders(s, forAttack: false)).ToArray();
+                authoritative = Authoritative4XClientContext.TrySubmitMoveShips(actionable, corrected, shipOrder);
+            }
+            switch (authoritative)
             {
                 case Authoritative4XUiCommandResult.Submitted:
                     GameAudio.AffirmativeClick();
@@ -378,7 +390,7 @@ namespace Ship_Game.Universe
             // new facingDir even for ships already moving; without it, AssembleFleet
             // only touches AwaitingOrders ships and the fleet keeps its old formation
             // orientation after a right-drag rotate.
-            fleet.MoveTo(corrected, facingDir, GetMoveOrderType() | AI.MoveOrder.ForceReassembly);
+            fleet.MoveTo(corrected, facingDir, fleetOrder);
         }
 
         void ResetShipsTargetAndPriorityOrders(Ship ship)
