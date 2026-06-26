@@ -55,6 +55,7 @@ public enum AuthoritativePlayerCommandKind : byte
     DeleteFleetPatrol = 40,
     ClearFleetPatrol = 41,
     CreateFleetPatrol = 42,
+    QueuePlanetOrbitalBuild = 43,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -245,6 +246,17 @@ public sealed class AuthoritativePlayerCommand
             TargetId = targetSystemId,
             Position = buildPosition,
             Text = EncodeDeepSpaceBuildPayload(designName, tetherOffset),
+        };
+
+    public static AuthoritativePlayerCommand QueuePlanetOrbitalBuild(int sequence, int empireId,
+        int planetId, string designName)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.QueuePlanetOrbitalBuild,
+            SubjectId = planetId,
+            Text = designName ?? "",
         };
 
     public static AuthoritativePlayerCommand CancelDeepSpaceBuild(int sequence, int empireId, string designName,

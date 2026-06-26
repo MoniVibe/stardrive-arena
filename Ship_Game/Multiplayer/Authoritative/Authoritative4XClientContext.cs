@@ -97,6 +97,29 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitQueuePlanetOrbitalBuild(Planet planet, IShipDesign design)
+    {
+        if (!TryGetFor(planet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!CanQueuePlanetOrbitalBuild(planet.Owner, planet, design))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.QueuePlanetOrbitalBuild(context.Next(), context.EmpireId,
+            planet.Id, design.Name));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    static bool CanQueuePlanetOrbitalBuild(Empire empire, Planet planet, IShipDesign design)
+    {
+        if (empire == null || planet?.Owner != empire || design == null || string.IsNullOrWhiteSpace(design.Name))
+            return false;
+        if (planet.IsOutOfOrbitalsLimit(design))
+            return false;
+        if (design.IsShipyard)
+            return empire.CanBuildShipyards && empire.CanBuildShip(design);
+        return design.IsPlatformOrStation && empire.CanBuildStation(design);
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitCancelDeepSpaceBuild(Empire empire, Goal goal)
     {
         if (!TryGetFor(empire, out Authoritative4XClientContext context))

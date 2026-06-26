@@ -1102,6 +1102,14 @@ namespace Ship_Game
 
         bool BuildOrbital(IShipDesign orbital)
         {
+            switch (Authoritative4XClientContext.TrySubmitQueuePlanetOrbitalBuild(Planet, orbital))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                    return true;
+                case Authoritative4XUiCommandResult.Blocked:
+                    return false;
+            }
+
             if (orbital == null || Planet.IsOutOfOrbitalsLimit(orbital))
                 return false;
 

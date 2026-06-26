@@ -349,6 +349,15 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual("Platform Base mk1-a", buildDesign);
         Assert.AreEqual(new Vector2(1_250f, -2_500f), tetherOffset);
 
+        var planetOrbitalBuildRequest = AuthoritativePlayerCommand.QueuePlanetOrbitalBuild(40, 2,
+                planetId: 5, "Platform Base mk1-a")
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(planetOrbitalBuildRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.QueuePlanetOrbitalBuild, copy.Kind);
+        Assert.AreEqual(5, copy.SubjectId);
+        Assert.AreEqual("Platform Base mk1-a", copy.Text);
+
         var cancelDeepSpaceBuildRequest = AuthoritativePlayerCommand.CancelDeepSpaceBuild(34, 2,
                 "Platform Base mk1-a", GoalType.DeepSpaceConstruction, new Vector2(10_000f, -20_000f),
                 targetPlanetId: 5, targetSystemId: 6)
@@ -1890,6 +1899,54 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XPlanetOrbitalBuild_QueuesGoalAndSyncs_Headless()
+    {
+        const ulong Seed = 0x0B17A14UL;
+        BuiltWorld authority = BuildWorld(Seed, includePlatform: true);
+        BuiltWorld client = BuildWorld(Seed, includePlatform: true);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            IShipDesign design = PickBuildablePlanetOrbital(authority.Player);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueuePlanetOrbitalBuild(144,
+                authority.Player.Id, authority.Planet.Id, design.Name));
+
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(HasPlanetOrbitalGoal(authority.Player, authority.Planet, design.Name),
+                "Authority must queue the real planet orbital construction goal.");
+            Assert.IsTrue(HasPlanetOrbitalGoal(client.Player, client.Planet, design.Name),
+                "Replica must receive the same accepted planet orbital construction goal.");
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "Planet orbital build goals must be covered by the authoritative sync digest.");
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, "|DeepSpace|");
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, design.Name);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueuePlanetOrbitalBuild(145,
+                authority.Player.Id, authority.Planet.Id, "missing-orbital-design"));
+            Assert.IsFalse(session.LastResult.Accepted, "Unknown orbital designs must be rejected.");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.QueuePlanetOrbitalBuild(146,
+                authority.Enemy.Id, authority.Planet.Id, design.Name));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not build orbitals at another empire's planet.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XDeepSpaceBuild_QueuesGoalAndSyncs_Headless()
     {
         const ulong Seed = 0xD3355A4CUL;
@@ -1958,6 +2015,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             => empire.AI.Goals.Any(g => g is BuildConstructionShip
                 && string.Equals(g.ToBuild?.Name, designName, StringComparison.Ordinal)
                 && g.BuildPosition == buildPos);
+
     }
 
     [TestMethod]
@@ -2768,6 +2826,45 @@ public class Authoritative4XSessionTests : StarDriveTest
                 enemyFleet.AddShips(new[] { world.EnemyShip });
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitAutoArrangeFleet(enemyFleet));
+                Assert.AreEqual(1, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsPlanetOrbitalBuildWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0x0B17A15UL;
+        BuiltWorld world = BuildWorld(Seed, includePlatform: true);
+
+        try
+        {
+            IShipDesign design = PickBuildablePlanetOrbital(world.Player);
+            int initialGoals = world.Player.AI.Goals.Count;
+            int initialQueue = world.Planet.ConstructionQueue.Count;
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2162))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitQueuePlanetOrbitalBuild(world.Planet, design));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2162, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.QueuePlanetOrbitalBuild, submitted[0].Kind);
+                Assert.AreEqual(world.Planet.Id, submitted[0].SubjectId);
+                Assert.AreEqual(design.Name, submitted[0].Text);
+                Assert.AreEqual(initialGoals, world.Player.AI.Goals.Count,
+                    "Passive MP clients must not add planet orbital build goals before host acceptance.");
+                Assert.AreEqual(initialQueue, world.Planet.ConstructionQueue.Count,
+                    "Passive MP clients must not enqueue planet orbitals before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitQueuePlanetOrbitalBuild(world.EnemyPlanet, design));
                 Assert.AreEqual(1, submitted.Count);
             }
         }
@@ -5222,6 +5319,23 @@ public class Authoritative4XSessionTests : StarDriveTest
             $"Empire {empire.Id} needs at least one buildable non-research/mining/shipyard station for deep-space build proofs.");
         return design;
     }
+
+    static IShipDesign PickBuildablePlanetOrbital(Empire empire)
+    {
+        IShipDesign design = empire.SpaceStationsWeCanBuildSnapshot
+            .Where(s => s.IsPlatformOrStation && !s.IsResearchStation && !s.IsMiningStation && !s.IsShipyard)
+            .OrderBy(s => s.BaseCost)
+            .ThenBy(s => s.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(design,
+            $"Empire {empire.Id} needs at least one buildable planet orbital for authoritative build proofs.");
+        return design;
+    }
+
+    static bool HasPlanetOrbitalGoal(Empire empire, Planet planet, string designName)
+        => empire.AI.Goals.Any(g => g.Type == GoalType.BuildOrbital
+            && g.PlanetBuildingAt == planet
+            && string.Equals(g.ToBuild?.Name, designName, StringComparison.Ordinal));
 
     static Troop PickBuildableTroop(Empire empire)
     {

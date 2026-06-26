@@ -77,6 +77,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.SetFleetLayout => ApplyFleetLayout(command, empire, result),
                 AuthoritativePlayerCommandKind.QueueDeepSpaceBuild => ApplyDeepSpaceBuild(command, empire, result),
                 AuthoritativePlayerCommandKind.CancelDeepSpaceBuild => ApplyCancelDeepSpaceBuild(command, empire, result),
+                AuthoritativePlayerCommandKind.QueuePlanetOrbitalBuild => ApplyPlanetOrbitalBuild(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipSpecialOrder => ApplyShipSpecialOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipLifecycleOrder => ApplyShipLifecycleOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.SetShipCombatStance => ApplyShipCombatStance(command, empire, result),
@@ -475,6 +476,36 @@ public sealed class Authoritative4XCommandApplicator
 
         CancelDeepSpaceBuildGoal(empire, goal);
         return Accept(result);
+    }
+
+    AuthoritativeCommandResult ApplyPlanetOrbitalBuild(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        Planet planet = UState.GetPlanet(command.SubjectId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.SubjectId} was not found.");
+        if (planet.Owner != empire)
+            return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
+
+        string designName = command.Text?.Trim() ?? "";
+        if (!ResourceManager.Ships.GetDesign(designName, out IShipDesign design))
+            return Reject(result, $"Orbital design '{designName}' was not found.");
+        if (!CanQueuePlanetOrbitalBuild(empire, planet, design))
+            return Reject(result, $"Empire {empire.Id} cannot build orbital '{designName}' at planet {planet.Id}.");
+
+        planet.AddOrbital(design);
+        return Accept(result);
+    }
+
+    static bool CanQueuePlanetOrbitalBuild(Empire empire, Planet planet, IShipDesign design)
+    {
+        if (empire == null || planet?.Owner != empire || design == null || string.IsNullOrWhiteSpace(design.Name))
+            return false;
+        if (planet.IsOutOfOrbitalsLimit(design))
+            return false;
+        if (design.IsShipyard)
+            return empire.CanBuildShipyards && empire.CanBuildShip(design);
+        return design.IsPlatformOrStation && empire.CanBuildStation(design);
     }
 
     static void CancelDeepSpaceBuildGoal(Empire empire, Goal goal)
