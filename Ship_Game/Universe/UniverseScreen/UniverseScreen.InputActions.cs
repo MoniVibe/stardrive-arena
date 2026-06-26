@@ -11,6 +11,14 @@ namespace Ship_Game
     {
         public void OrderScrap(Ship s)
         {
+            switch (Authoritative4XClientContext.TrySubmitShipLifecycleOrder(s,
+                        AuthoritativeShipLifecycleOrderType.Scrap))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    return;
+            }
+
             s.AI.OrderScrapShip();
         }
 
@@ -30,6 +38,14 @@ namespace Ship_Game
 
         public void OrderScuttle(Ship s)
         {
+            switch (Authoritative4XClientContext.TrySubmitShipLifecycleOrder(s,
+                        AuthoritativeShipLifecycleOrderType.Scuttle))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    return;
+            }
+
             s.ScuttleTimer = 10f;
         }
 

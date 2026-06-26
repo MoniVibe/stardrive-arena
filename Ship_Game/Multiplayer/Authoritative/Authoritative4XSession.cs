@@ -174,6 +174,7 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(FloatBits(s.Position.Y))
               .Append('|').Append(FloatBits(s.AI.MovePosition.X))
               .Append('|').Append(FloatBits(s.AI.MovePosition.Y))
+              .Append('|').Append(FloatBits(s.ScuttleTimer))
               .Append('|').Append(s.AI.Target?.Id ?? 0)
               .Append('|').Append(s.AI.HasPriorityTarget ? 1 : 0)
               .Append('|').Append(TargetQueueSignature(s))

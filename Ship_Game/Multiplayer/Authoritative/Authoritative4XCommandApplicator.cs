@@ -65,6 +65,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.RenameFleet => ApplyRenameFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.AutoArrangeFleet => ApplyAutoArrangeFleet(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipSpecialOrder => ApplyShipSpecialOrder(command, empire, result),
+                AuthoritativePlayerCommandKind.ShipLifecycleOrder => ApplyShipLifecycleOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.SetShipCombatStance => ApplyShipCombatStance(command, empire, result),
                 AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
@@ -164,6 +165,45 @@ public sealed class Authoritative4XCommandApplicator
 
             default:
                 return Reject(result, $"Unsupported ship special order {command.TargetId}.");
+        }
+    }
+
+    AuthoritativeCommandResult ApplyShipLifecycleOrder(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
+            || !Enum.IsDefined(typeof(AuthoritativeShipLifecycleOrderType),
+                (AuthoritativeShipLifecycleOrderType)(byte)command.TargetId))
+        {
+            return Reject(result, $"Unsupported ship lifecycle order {command.TargetId}.");
+        }
+
+        Ship ship = UState.Objects.FindShip(command.SubjectId);
+        if (ship == null)
+            return Reject(result, $"Ship {command.SubjectId} not found.");
+        if (!ship.Active)
+            return Reject(result, $"Ship {command.SubjectId} is inactive.");
+        if (ship.Loyalty != empire)
+            return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
+        if (!ship.CanBeScrapped)
+            return Reject(result, $"Ship {command.SubjectId} cannot be scrapped or scuttled.");
+
+        switch ((AuthoritativeShipLifecycleOrderType)command.TargetId)
+        {
+            case AuthoritativeShipLifecycleOrderType.Scrap:
+                if (ship.IsPlatformOrStation)
+                    return Reject(result, $"Ship {ship.Id} must be scuttled instead of scrapped.");
+                ship.AI.OrderScrapShip();
+                return Accept(result);
+
+            case AuthoritativeShipLifecycleOrderType.Scuttle:
+                if (!ship.IsPlatformOrStation)
+                    return Reject(result, $"Ship {ship.Id} is not a platform or station.");
+                ship.ScuttleTimer = 10f;
+                return Accept(result);
+
+            default:
+                return Reject(result, $"Unsupported ship lifecycle order {command.TargetId}.");
         }
     }
 

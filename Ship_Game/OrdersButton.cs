@@ -8,6 +8,7 @@ using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
 using SDUtils;
 using Ship_Game.Fleets;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships.AI;
 
 namespace Ship_Game
@@ -160,7 +161,18 @@ namespace Ship_Game
                         case OrderType.TroopToggle:        ship.Carrier.TroopsOut        = !input.RightMouseClick; break;
                         case OrderType.Explore:            ship.AI.OrderExplore();                                 break;
                         case OrderType.OrderResupply:      ship.Supply.ResupplyFromButton();                       break;
-                        case OrderType.Scrap:              ship.AI.OrderScrapShip();                               break;
+                        case OrderType.Scrap:
+                            switch (Authoritative4XClientContext.TrySubmitShipLifecycleOrder(ship,
+                                        AuthoritativeShipLifecycleOrderType.Scrap))
+                            {
+                                case Authoritative4XUiCommandResult.Submitted:
+                                case Authoritative4XUiCommandResult.Blocked:
+                                    break;
+                                default:
+                                    ship.AI.OrderScrapShip();
+                                    break;
+                            }
+                            break;
                         case OrderType.FighterRecall:      ship.Carrier.SetRecallFightersBeforeFTL(!input.RightMouseClick); break;
                         case OrderType.SendTroops:         ship.Carrier.SetSendTroopsToShip(!input.RightMouseClick);        break;
                     }

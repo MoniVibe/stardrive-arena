@@ -30,6 +30,7 @@ public class Authoritative4XSessionTests : StarDriveTest
         public Ship Ship;
         public Ship WingShip;
         public Ship EnemyShip;
+        public Ship PlatformShip;
         public string ResearchUid;
     }
 
@@ -239,6 +240,15 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual((byte)AuthoritativePlayerCommandKind.ShipSpecialOrder, copy.Kind);
         Assert.AreEqual(99, copy.SubjectId);
         Assert.AreEqual((int)AuthoritativeShipSpecialOrderType.Explore, copy.TargetId);
+
+        var lifecycleOrderRequest = AuthoritativePlayerCommand.ShipLifecycleOrder(32, 2, 99,
+                AuthoritativeShipLifecycleOrderType.Scrap)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(lifecycleOrderRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.ShipLifecycleOrder, copy.Kind);
+        Assert.AreEqual(99, copy.SubjectId);
+        Assert.AreEqual((int)AuthoritativeShipLifecycleOrderType.Scrap, copy.TargetId);
 
         var stanceRequest = AuthoritativePlayerCommand.SetShipCombatStance(29, 2, 99,
                 CombatState.HoldPosition)
@@ -1354,6 +1364,75 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XShipLifecycleOrder_ScrapAndScuttleSyncAndRejectInvalidRequests_Headless()
+    {
+        const ulong Seed = 0x5C4A991FUL;
+        BuiltWorld authority = BuildWorld(Seed, includePlatform: true);
+        BuiltWorld client = BuildWorld(Seed, includePlatform: true);
+
+        try
+        {
+            Assert.IsNotNull(authority.PlatformShip, "Scuttle proof needs a real platform/station design.");
+            Assert.IsTrue(authority.PlatformShip.IsPlatformOrStation);
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.ShipLifecycleOrder(150,
+                authority.Player.Id, authority.Ship.Id, AuthoritativeShipLifecycleOrderType.Scrap));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(AIState.Scrap, authority.Ship.AI.State);
+            Assert.AreEqual(AIState.Scrap, client.Ship.AI.State);
+            Assert.IsTrue(authority.Ship.AI.OrderQueue.ToArray().Any(g => g.Plan == ShipAI.Plan.Scrap),
+                "The authority should apply scrap through the real ship AI scrap path.");
+            Assert.IsTrue(client.Ship.AI.OrderQueue.ToArray().Any(g => g.Plan == ShipAI.Plan.Scrap));
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover ship lifecycle order state.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.ShipLifecycleOrder(152,
+                authority.Enemy.Id, authority.WingShip.Id, AuthoritativeShipLifecycleOrderType.Scrap));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not scrap another empire's ship.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreNotEqual(AIState.Scrap, authority.WingShip.AI.State);
+            Assert.AreNotEqual(AIState.Scrap, client.WingShip.AI.State);
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.ShipLifecycleOrder(153,
+                authority.Player.Id, authority.PlatformShip.Id, AuthoritativeShipLifecycleOrderType.Scrap));
+            Assert.IsFalse(session.LastResult.Accepted, "Platforms should use scuttle, not the planet-scrap path.");
+            StringAssert.Contains(session.LastResult.Reason, "scuttled");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.ShipLifecycleOrder(154,
+                authority.Player.Id, authority.WingShip.Id, AuthoritativeShipLifecycleOrderType.Scuttle));
+            Assert.IsFalse(session.LastResult.Accepted, "Non-platform ships should use scrap, not scuttle.");
+            StringAssert.Contains(session.LastResult.Reason, "not a platform");
+            Assert.AreEqual(-1f, authority.WingShip.ScuttleTimer);
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeScuttleDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.ShipLifecycleOrder(155,
+                authority.Player.Id, authority.PlatformShip.Id, AuthoritativeShipLifecycleOrderType.Scuttle));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.PlatformShip.ScuttleTimer is > 9f and <= 10f,
+                $"Scuttle timer should be armed near 10 seconds, got {authority.PlatformShip.ScuttleTimer}.");
+            Assert.AreEqual(authority.PlatformShip.ScuttleTimer, client.PlatformShip.ScuttleTimer);
+            Assert.AreNotEqual(beforeScuttleDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover scuttle timer state.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XShipCombatStance_SyncsAndRejectsInvalidRequests_Headless()
     {
         const ulong Seed = 0x57AACEUL;
@@ -1648,6 +1727,61 @@ public class Authoritative4XSessionTests : StarDriveTest
                     Authoritative4XClientContext.TrySubmitShipSpecialOrder(world.Ship,
                         (AuthoritativeShipSpecialOrderType)255));
                 Assert.AreEqual(1, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsShipLifecycleOrderWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0x5C4A9910UL;
+        BuiltWorld world = BuildWorld(Seed, includePlatform: true);
+
+        try
+        {
+            AIState originalShipState = world.Ship.AI.State;
+            int originalOrders = world.Ship.AI.OrderQueue.Count;
+            float originalPlatformTimer = world.PlatformShip.ScuttleTimer;
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2190))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitShipLifecycleOrder(world.Ship,
+                        AuthoritativeShipLifecycleOrderType.Scrap));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2190, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.ShipLifecycleOrder, submitted[0].Kind);
+                Assert.AreEqual(world.Ship.Id, submitted[0].SubjectId);
+                Assert.AreEqual((int)AuthoritativeShipLifecycleOrderType.Scrap, submitted[0].TargetId);
+                Assert.AreEqual(originalShipState, world.Ship.AI.State,
+                    "Passive MP clients must not locally start scrap before host acceptance.");
+                Assert.AreEqual(originalOrders, world.Ship.AI.OrderQueue.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitShipLifecycleOrder(world.PlatformShip,
+                        AuthoritativeShipLifecycleOrderType.Scuttle));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(2191, submitted[1].Sequence);
+                Assert.AreEqual(world.PlatformShip.Id, submitted[1].SubjectId);
+                Assert.AreEqual((int)AuthoritativeShipLifecycleOrderType.Scuttle, submitted[1].TargetId);
+                Assert.AreEqual(originalPlatformTimer, world.PlatformShip.ScuttleTimer,
+                    "Passive MP clients must not locally set scuttle timers before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitShipLifecycleOrder(world.EnemyShip,
+                        AuthoritativeShipLifecycleOrderType.Scrap));
+                Assert.AreEqual(2, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitShipLifecycleOrder(world.Ship,
+                        (AuthoritativeShipLifecycleOrderType)255));
+                Assert.AreEqual(2, submitted.Count);
             }
         }
         finally
@@ -3515,8 +3649,11 @@ public class Authoritative4XSessionTests : StarDriveTest
         return clone;
     }
 
-    BuiltWorld BuildWorld(ulong seed, bool extraPlayerPlanet = false)
+    BuiltWorld BuildWorld(ulong seed, bool extraPlayerPlanet = false, bool includePlatform = false)
     {
+        if (includePlatform)
+            LoadStarterShips("Platform Base mk1-a");
+
         CreateUniverseAndPlayerEmpire();
         Planet planet = AddDummyPlanetToEmpire(new Vector2(200_000, 200_000), Player, fertility: 1f, minerals: 1f, maxPop: 5f);
         if (extraPlayerPlanet)
@@ -3525,6 +3662,9 @@ public class Authoritative4XSessionTests : StarDriveTest
         Ship ship = SpawnShip("Vulcan Scout", Player, new Vector2(0, 0));
         Ship wingShip = SpawnShip("Vulcan Scout", Player, new Vector2(2_000, 0));
         Ship enemyShip = SpawnShip("Vulcan Scout", Enemy, new Vector2(35_000, 0));
+        Ship platformShip = includePlatform
+            ? SpawnShip("Platform Base mk1-a", Player, new Vector2(4_000, 4_000))
+            : null;
 
         Player.InitEmpireFromSave(UState);
         Enemy.InitEmpireFromSave(UState);
@@ -3549,6 +3689,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             Ship = ship,
             WingShip = wingShip,
             EnemyShip = enemyShip,
+            PlatformShip = platformShip,
             ResearchUid = researchUid,
         };
     }

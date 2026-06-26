@@ -6,6 +6,7 @@ using SDUtils;
 using Ship_Game.AI;
 using Ship_Game.AI.CombatTactics.UI;
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
 using Ship_Game.PathFinder;
@@ -716,7 +717,7 @@ namespace Ship_Game.Ships
                 }
                 var sc = new OrdersButton(s, OrderType.Scrap, GameText.OrderShipBackToThe)
                 {
-                    ValueToModify = new(() => s.DoingScrap, x => s.DoingScrap = x),
+                    ValueToModify = new(() => s.DoingScrap, x => SubmitOrApplyScrap(s)),
                     Active = false
                 };
                 Orders.Add(sc);
@@ -736,6 +737,19 @@ namespace Ship_Game.Ships
                 ob.ClickRect.Y = SlidingElement.Housing.Y + 15 + y * 52;
                 y++;
             }
+        }
+
+        static void SubmitOrApplyScrap(Ship ship)
+        {
+            switch (Authoritative4XClientContext.TrySubmitShipLifecycleOrder(ship,
+                        AuthoritativeShipLifecycleOrderType.Scrap))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    return;
+            }
+
+            ship.DoingScrap = true;
         }
     }
 }

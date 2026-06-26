@@ -210,6 +210,40 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitShipLifecycleOrder(Ship ship,
+        AuthoritativeShipLifecycleOrderType orderType)
+    {
+        if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!Enum.IsDefined(typeof(AuthoritativeShipLifecycleOrderType), orderType)
+            || !CanSubmitShipLifecycleOrder(ship, orderType))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.ShipLifecycleOrder(context.Next(), context.EmpireId,
+            ship.Id, orderType));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitShipLifecycleOrder(Ship[] ships,
+        AuthoritativeShipLifecycleOrderType orderType)
+    {
+        if (!TryGetForBatch(ships, out Authoritative4XClientContext context, out Ship[] ownedShips))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!Enum.IsDefined(typeof(AuthoritativeShipLifecycleOrderType), orderType)
+            || ownedShips.Length == 0
+            || ownedShips.Any(s => !CanSubmitShipLifecycleOrder(s, orderType)))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        foreach (Ship ship in ownedShips)
+            context.Submit(AuthoritativePlayerCommand.ShipLifecycleOrder(context.Next(), context.EmpireId,
+                ship.Id, orderType));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitSetShipCombatStance(Ship ship, CombatState stance)
     {
         if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
@@ -561,6 +595,19 @@ public sealed class Authoritative4XClientContext : IDisposable
            && !ship.IsPlatformOrStation
            && !ship.IsSubspaceProjector
            && ship.ShipData.Role != RoleName.troop;
+
+    static bool CanSubmitShipLifecycleOrder(Ship ship, AuthoritativeShipLifecycleOrderType orderType)
+    {
+        if (ship?.Active != true || !ship.CanBeScrapped)
+            return false;
+
+        return orderType switch
+        {
+            AuthoritativeShipLifecycleOrderType.Scrap => !ship.IsPlatformOrStation,
+            AuthoritativeShipLifecycleOrderType.Scuttle => ship.IsPlatformOrStation,
+            _ => false,
+        };
+    }
 
     static bool CanSubmitShipCombatStance(Ship ship)
         => ship?.Active == true
