@@ -246,7 +246,6 @@ namespace Ship_Game
         void MoveShipGroupToMouse(bool wasProjecting)
         {
             Ship[] enemyShips = GetVisibleEnemyShipsInScreen();
-            MoveOrder moveType = ShipCommands.GetMoveOrderType() | MoveOrder.ForceReassembly;
             if (wasProjecting) // dragging right mouse
             {
                 if (CurrentGroup == null)
@@ -258,9 +257,9 @@ namespace Ship_Game
                     return;
                 }
 
-                Vector2 correctedPos = HelperFunctions.GetCorrectedMovePosWithAudio(CurrentGroup.Ships, enemyShips, CurrentGroup.ProjectedPos);
                 Log.Info("MoveShipGroupToMouse (CurrentGroup)");
-                CurrentGroup.MoveTo(correctedPos, CurrentGroup.ProjectedDirection, moveType);
+                ShipCommands.MoveFleetToLocation(enemyShips, null, null, CurrentGroup.ProjectedPos,
+                    CurrentGroup.ProjectedDirection, CurrentGroup);
                 return;
             }
 
@@ -279,9 +278,9 @@ namespace Ship_Game
                     return;
                 }
 
-                Vector2 correctedPos = HelperFunctions.GetCorrectedMovePosWithAudio(CurrentGroup.Ships, enemyShips, CurrentGroup.ProjectedPos);
                 Log.Info("MoveShipGroupToMouse (NEW)");
-                CurrentGroup.MoveTo(correctedPos, direction, moveType);
+                ShipCommands.MoveFleetToLocation(enemyShips, null, null, CurrentGroup.ProjectedPos,
+                    direction, CurrentGroup);
             }
             else // move existing group
             {
@@ -294,8 +293,7 @@ namespace Ship_Game
                 Log.Info("MoveShipGroupToMouse (existing)");
                 Ship centerMost = CurrentGroup.GetClosestShipTo(CurrentGroup.AveragePosition(force: true));
                 Vector2 finalDir = GetDirectionToFinalPos(centerMost, finalPos);
-                Vector2 correctedPos = HelperFunctions.GetCorrectedMovePosWithAudio(CurrentGroup.Ships, enemyShips, finalPos);
-                CurrentGroup.MoveTo(correctedPos, finalDir, moveType);
+                ShipCommands.MoveFleetToLocation(enemyShips, null, null, finalPos, finalDir, CurrentGroup);
             }
         }
     }

@@ -2399,6 +2399,25 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual(world.Planet.Id, submitted[5].TargetId);
                 Assert.AreEqual(firstOrders, world.Ship.AI.OrderQueue.Count);
                 Assert.AreEqual(secondOrders, world.WingShip.AI.OrderQueue.Count);
+
+                var looseGroupShips = new SDUtils.Array<Ship> { world.Ship, world.WingShip };
+                Vector2 groupDestination = world.Ship.Position + new Vector2(18_000f, -2_500f);
+                Vector2 groupFacing = new(1f, 0f);
+                var looseGroup = new ShipGroup(looseGroupShips, groupDestination, groupDestination,
+                    groupFacing, world.Player);
+                new ShipMoveCommands(world.Screen).MoveFleetToLocation(System.Array.Empty<Ship>(),
+                    null, null, groupDestination, groupFacing, looseGroup);
+                Assert.AreEqual(8, submitted.Count);
+                Assert.IsTrue(submitted.Skip(6).All(c => c.Kind == AuthoritativePlayerCommandKind.MoveShip),
+                    "Loose selected ship groups should route through per-ship authoritative movement.");
+                Assert.AreEqual(906, submitted[6].Sequence);
+                Assert.AreEqual(907, submitted[7].Sequence);
+                Assert.AreEqual(world.Ship.Id, submitted[6].SubjectId);
+                Assert.AreEqual(world.WingShip.Id, submitted[7].SubjectId);
+                Assert.AreEqual(submitted[6].Position, submitted[7].Position);
+                Assert.AreEqual(firstMove, world.Ship.AI.MovePosition,
+                    "Passive MP clients must not locally move loose ship groups before host acceptance.");
+                Assert.AreEqual(secondMove, world.WingShip.AI.MovePosition);
             }
         }
         finally
