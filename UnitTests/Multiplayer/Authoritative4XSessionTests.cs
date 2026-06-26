@@ -5348,6 +5348,131 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XLobbyNetworkFlow_ExchangesStartOverTcpAndAttachesLiveSession_Headless()
+    {
+        LoadAllGameData();
+
+        const int Protocol = 77;
+        const int HostPeer = 2;
+        const int JoinPeer = 3;
+        const string BuildHash = "0xLOBBYFLOW";
+        IEmpireData[] races = ResourceManager.MajorRaces
+            .Where(r => !r.IsFactionOrMinorRace)
+            .OrderBy(r => RacePreference(r), StringComparer.Ordinal)
+            .Take(2)
+            .ToArray();
+        Assert.IsTrue(races.Length >= 2, "The network-flow proof needs two playable major races.");
+
+        var settings = new Authoritative4XGameSettings
+        {
+            GenerationSeed = 0x4B1B4B3,
+            GalaxySize = GalSize.Tiny,
+            StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+            Mode = RaceDesignScreen.GameMode.Sandbox,
+            Difficulty = GameDifficulty.Hard,
+            NumOpponents = 1,
+            Pace = 2.25f,
+            TurnTimer = 4,
+            ExtraPlanets = 1,
+            StartingPlanetRichnessBonus = 1.25f,
+            GameSpeed = 2f,
+            StartPaused = true,
+        };
+
+        TcpLockstepTransport hostTransport = null;
+        TcpLockstepTransport joinTransport = null;
+        Authoritative4XGeneratedGameStart hostGenerated = null;
+        Authoritative4XGeneratedGameStart joinGenerated = null;
+        Authoritative4XLiveSession liveHost = null;
+        Authoritative4XLiveSession liveJoin = null;
+
+        try
+        {
+            var flow = new Authoritative4XLobbyNetworkFlow(HostPeer, JoinPeer);
+            var hostLobby = new Authoritative4XLobby(HostPeer, "Host");
+            hostLobby.Join(JoinPeer, "Join");
+            Assert.IsTrue(hostLobby.SetSettings(HostPeer, settings).Valid);
+            string[] hostTraits = OneAffordableTrait();
+            Assert.IsTrue(hostLobby.SetPlayerSelection(HostPeer, RacePreference(races[0]), hostTraits).Valid);
+            Assert.IsTrue(hostLobby.SetReady(HostPeer, true).Valid);
+
+            var joinLobby = new Authoritative4XLobby(JoinPeer, "Join");
+            Assert.IsTrue(joinLobby.SetPlayerSelection(JoinPeer, RacePreference(races[1]), Array.Empty<string>()).Valid);
+            Assert.IsTrue(joinLobby.SetReady(JoinPeer, true).Valid);
+            SessionLobbyMessage receivedJoinLobby = null;
+            SessionStartMessage receivedStart = null;
+
+            int port = FreeTcpPort();
+            hostTransport = TcpLockstepTransport.HostMulti(port);
+            joinTransport = TcpLockstepTransport.JoinAsPeer("127.0.0.1", port, JoinPeer,
+                Authoritative4XLobby.AuthorityPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnections(1, TimeSpan.FromSeconds(3)),
+                "Lobby TCP host did not accept the joiner.");
+            hostTransport.Register(Authoritative4XLobby.AuthorityPeerId, message =>
+            {
+                if (message is SessionLobbyMessage lobby)
+                    receivedJoinLobby = lobby;
+            });
+            joinTransport.Register(JoinPeer, message =>
+            {
+                if (message is SessionStartMessage start)
+                    receivedStart = start;
+            });
+
+            SessionLobbyMessage joinMessage = flow.BuildLobbyMessage(joinLobby, JoinPeer,
+                BuildHash, "loopback join");
+            joinTransport.Send(Authoritative4XLobby.AuthorityPeerId, joinMessage);
+            PumpTransportUntil(() => receivedJoinLobby != null, hostTransport, joinTransport);
+            Assert.AreEqual(JoinPeer, receivedJoinLobby.PeerId);
+            Assert.AreEqual(RacePreference(races[1]), receivedJoinLobby.RacePreference);
+
+            Authoritative4XLobbyValidation applied = flow.ApplyLobbyMessage(hostLobby, receivedJoinLobby);
+            Assert.IsTrue(applied.Valid, applied.Reason);
+            Assert.IsTrue(hostLobby.CanStart().Valid, hostLobby.CanStart().Reason);
+            SessionStartMessage start = flow.BuildStartMessage(hostLobby, Protocol,
+                BuildHash, "loopback host", maxTurns: 600);
+            hostTransport.Send(JoinPeer, start);
+            PumpTransportUntil(() => receivedStart != null, hostTransport, joinTransport);
+            Assert.AreEqual("", flow.ValidateStartMessage(receivedStart, Protocol, BuildHash));
+            Assert.AreEqual(settings.Normalized(2).SettingsHash, receivedStart.SettingsHash);
+
+            hostGenerated = flow.CreateGeneratedGame(start);
+            joinGenerated = flow.CreateGeneratedGame(receivedStart);
+            Assert.AreEqual(settings.GenerationSeed, hostGenerated.Settings.GenerationSeed);
+            Assert.AreEqual(hostGenerated.Settings.SettingsHash, joinGenerated.Settings.SettingsHash);
+            Assert.AreEqual(hostGenerated.EmpireIdForPeer(HostPeer), joinGenerated.EmpireIdForPeer(HostPeer));
+            Assert.AreEqual(hostGenerated.EmpireIdForPeer(JoinPeer), joinGenerated.EmpireIdForPeer(JoinPeer));
+
+            liveHost = flow.AttachLiveSession(hostGenerated, hostTransport, HostPeer,
+                Authoritative4XLiveRole.Host);
+            liveJoin = flow.AttachLiveSession(joinGenerated, joinTransport, JoinPeer,
+                Authoritative4XLiveRole.Client);
+            Assert.IsTrue(hostGenerated.AuthorityUniverse.IsAuthoritative4XMultiplayer);
+            Assert.IsTrue(joinGenerated.AuthorityUniverse.IsAuthoritative4XMultiplayer);
+            Assert.AreEqual(hostGenerated.EmpireIdForPeer(HostPeer), liveHost.LocalEmpireId);
+            Assert.AreEqual(joinGenerated.EmpireIdForPeer(JoinPeer), liveJoin.LocalEmpireId);
+            Assert.IsTrue(hostGenerated.AuthorityUniverse.UState.Paused);
+            Assert.AreEqual(settings.GameSpeed, hostGenerated.AuthorityUniverse.UState.GameSpeed);
+
+            liveHost.TryTogglePause();
+            PumpLiveTcpUntil(() => liveJoin.LastSnapshot != null
+                                  && !joinGenerated.AuthorityUniverse.UState.Paused,
+                liveHost, liveJoin);
+            Assert.IsFalse(hostGenerated.AuthorityUniverse.UState.Paused);
+            Assert.IsFalse(joinGenerated.AuthorityUniverse.UState.Paused);
+        }
+        finally
+        {
+            liveHost?.Dispose();
+            liveJoin?.Dispose();
+            hostGenerated?.Dispose();
+            joinGenerated?.Dispose();
+            hostTransport?.Dispose();
+            joinTransport?.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XLobby_StartsGeneratedGameWithHumanRosterAndSettings_Headless()
     {
         LoadAllGameData();
@@ -5560,6 +5685,19 @@ public class Authoritative4XSessionTests : StarDriveTest
             $"Timed out waiting for authoritative TCP multi-client loopback. host='{host.LastError}' clients='{clientErrors}'");
     }
 
+    static void PumpTransportUntil(Func<bool> done, params TcpLockstepTransport[] transports)
+    {
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!done() && DateTime.UtcNow < deadline)
+        {
+            foreach (TcpLockstepTransport transport in transports)
+                transport.Poll();
+            System.Threading.Thread.Sleep(5);
+        }
+        string errors = string.Join("; ", transports.Select(t => t.LastError));
+        Assert.IsTrue(done(), $"Timed out waiting for lobby transport messages. errors='{errors}'");
+    }
+
     static void PumpLiveTcpUntil(Func<bool> done, Authoritative4XLiveSession host,
         Authoritative4XNetworkClient client)
     {
@@ -5586,6 +5724,20 @@ public class Authoritative4XSessionTests : StarDriveTest
         }
         Assert.IsTrue(done(),
             $"Timed out waiting for live authoritative client. host='{host.LastError}' client='{client.LastError}'");
+    }
+
+    static void PumpLiveTcpUntil(Func<bool> done, Authoritative4XLiveSession host,
+        Authoritative4XLiveSession client)
+    {
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!done() && DateTime.UtcNow < deadline)
+        {
+            host.Poll();
+            client.Poll();
+            System.Threading.Thread.Sleep(5);
+        }
+        Assert.IsTrue(done(),
+            $"Timed out waiting for live authoritative sessions. host='{host.LastError}' client='{client.LastError}'");
     }
 
     static bool NetworkClientCaughtUp(Authoritative4XNetworkClient client, int sequence)

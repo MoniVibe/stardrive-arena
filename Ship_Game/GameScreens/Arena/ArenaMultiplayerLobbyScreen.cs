@@ -22,6 +22,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     const int HostPlayerPeerId4X = 2;
     const int JoinPlayerPeerId4X = 3;
     const string DefaultHost = "127.0.0.1";
+    readonly Authoritative4XLobbyNetworkFlow LobbyFlow =
+        new(HostPlayerPeerId4X, JoinPlayerPeerId4X, AuthorityPeerId);
     static readonly GalSize[] GalaxyOptions =
     {
         GalSize.Tiny,
@@ -472,12 +474,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
         Authoritative4XGeneratedGameStart generated = CreateGenerated4XGame(start);
         int localPeer = role == Authoritative4XLiveRole.Host ? HostPlayerPeerId4X : JoinPlayerPeerId4X;
-        Authoritative4XLiveSession live = role == Authoritative4XLiveRole.Host
-            ? Authoritative4XLiveSession.HostGame(generated.AuthorityUniverse, transport, localPeer,
-                generated.EmpireIdByPeer, generated.HumanEmpireIds)
-            : Authoritative4XLiveSession.ClientGame(generated.AuthorityUniverse, transport, localPeer,
-                generated.EmpireIdForPeer(localPeer), generated.HumanEmpireIds);
-        generated.AuthorityUniverse.AttachAuthoritative4XMultiplayer(live);
+        LobbyFlow.AttachLiveSession(generated, transport, localPeer, role);
         ScreenManager.GoToScreen(generated.AuthorityUniverse, clear3DObjects: true);
     }
 
@@ -554,63 +551,15 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
     string Validate4XStart(SessionStartMessage start)
     {
-        if (!start.IsAuthoritative4X)
-            return "Host sent a non-4X session start.";
-        if (start.ProtocolVersion != ArenaMultiplayerSettings.ProtocolVersion)
-            return $"Arena multiplayer protocol mismatch. Local {ArenaMultiplayerSettings.ProtocolVersion}, host {start.ProtocolVersion}.";
+        string flowError = LobbyFlow.ValidateStartMessage(start, ArenaMultiplayerSettings.ProtocolVersion);
+        if (flowError.NotEmpty())
+            return flowError;
         string error = ArenaMultiplayerPeerSignature.ValidateEnvironment(start.BuildHash, start.BuildSummary, "host");
-        if (error.NotEmpty())
-            return error;
-        if (start.AuthoritativeHostPeerId != HostPlayerPeerId4X || start.AuthoritativeJoinPeerId != JoinPlayerPeerId4X)
-            return $"Authoritative peer mismatch. Host {start.AuthoritativeHostPeerId}, join {start.AuthoritativeJoinPeerId}.";
-        Authoritative4XGameSettings settings = SettingsFrom4XStart(start).Normalized(2);
-        return string.Equals(start.SettingsHash, settings.SettingsHash, StringComparison.Ordinal)
-            ? ""
-            : $"Authoritative 4X settings mismatch. Host {start.SettingsHash}, local {settings.SettingsHash}.";
+        return error.NotEmpty() ? error : "";
     }
 
     Authoritative4XGeneratedGameStart CreateGenerated4XGame(SessionStartMessage start)
-    {
-        Authoritative4XGameSettings settings = SettingsFrom4XStart(start).Normalized(2);
-        var lobby = new Authoritative4XLobby(HostPlayerPeerId4X, "Host");
-        lobby.Join(JoinPlayerPeerId4X, "Join");
-        Authoritative4XLobbyValidation set = lobby.SetSettings(HostPlayerPeerId4X, settings);
-        if (!set.Valid)
-            throw new InvalidOperationException(set.Reason);
-        Authoritative4XLobbyValidation host = lobby.SetPlayerSelection(HostPlayerPeerId4X,
-            start.HostRacePreference, SplitTraits(start.HostTraitOptions));
-        if (!host.Valid)
-            throw new InvalidOperationException(host.Reason);
-        Authoritative4XLobbyValidation join = lobby.SetPlayerSelection(JoinPlayerPeerId4X,
-            start.JoinRacePreference, SplitTraits(start.JoinTraitOptions));
-        if (!join.Valid)
-            throw new InvalidOperationException(join.Reason);
-        lobby.SetReady(HostPlayerPeerId4X, true);
-        lobby.SetReady(JoinPlayerPeerId4X, true);
-        return lobby.StartGeneratedGame();
-    }
-
-    static Authoritative4XGameSettings SettingsFrom4XStart(SessionStartMessage start)
-        => new()
-        {
-            GenerationSeed = start.GenerationSeed,
-            Mode = (RaceDesignScreen.GameMode)start.GameMode,
-            StarsCount = (RaceDesignScreen.StarsAbundance)start.StarsCount,
-            GalaxySize = (GalSize)start.GalaxySize,
-            Difficulty = (GameDifficulty)start.Difficulty,
-            NumOpponents = start.NumOpponents,
-            Pace = start.Pace,
-            TurnTimer = start.TurnTimer,
-            ExtraPlanets = start.ExtraPlanets,
-            StartingPlanetRichnessBonus = start.StartingPlanetRichnessBonus,
-            GameSpeed = start.GameSpeed,
-            StartPaused = start.StartPaused,
-        };
-
-    static string[] SplitTraits(string traits)
-        => traits.IsEmpty()
-            ? Array.Empty<string>()
-            : traits.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        => LobbyFlow.CreateGeneratedGame(start);
 
     public override void Update(float fixedDeltaTime)
     {
