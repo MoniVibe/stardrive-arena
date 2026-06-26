@@ -6,6 +6,7 @@ using Ship_Game.AI;
 using Ship_Game.Commands.Goals;
 using Ship_Game.Data;
 using Ship_Game.GameScreens.DiplomacyScreen;
+using Ship_Game.GameScreens.ShipDesign;
 using Ship_Game.Gameplay;
 using Ship_Game.Fleets;
 using Ship_Game.Multiplayer.Authoritative;
@@ -5085,6 +5086,49 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitQueueResearch(world.Enemy, techs[2]));
                 Assert.AreEqual(3, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XShipDesignResearch_SubmitsMissingTechsWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0x4E5EACDUL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            TechEntry[] entries = ResearchCandidates(world.Player, 6)
+                .Select(world.Player.GetTechEntry)
+                .OrderBy(t => t.TechCost)
+                .ToArray();
+            world.Player.Research.AddTechToQueue(entries[0].UID);
+            TechEntry unqueued = entries.FirstOrDefault(t => !world.Player.Research.IsQueued(t.UID));
+            Assert.IsNotNull(unqueued, "The fixture needs at least one missing ship-design tech not already queued.");
+            string[] originalQueue = world.Player.data.ResearchQueue.ToArray();
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2400))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    ShipDesignLoadScreen.QueueShipDesignMissingResearch(world.Player,
+                        new[] { entries[0], unqueued }));
+                Assert.AreEqual(1, submitted.Count,
+                    "Already-queued ship-design techs must not emit duplicate queue commands.");
+                Assert.AreEqual(2400, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.QueueResearch, submitted[0].Kind);
+                Assert.AreEqual(unqueued.UID, submitted[0].Text);
+                CollectionAssert.AreEqual(originalQueue, world.Player.data.ResearchQueue.ToArray(),
+                    "Passive MP clients must not locally queue ship-design research before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    ShipDesignLoadScreen.QueueShipDesignMissingResearch(world.Enemy, new[] { unqueued }));
+                Assert.AreEqual(1, submitted.Count);
             }
         }
         finally

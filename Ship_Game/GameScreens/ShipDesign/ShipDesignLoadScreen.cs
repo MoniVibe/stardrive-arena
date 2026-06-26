@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Microsoft.Xna.Framework.Graphics;
@@ -6,6 +7,7 @@ using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using SDUtils;
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Vector2 = SDGraphics.Vector2;
 using Ship_Game.Universe;
@@ -303,10 +305,39 @@ namespace Ship_Game.GameScreens.ShipDesign
         void ResearchShipTech(string[] neededTechs)
         {
             var techEntries = neededTechs.Select(t => Screen.Player.GetTechEntry(t)).Sorted(t => t.TechCost);
-            foreach (TechEntry enrty in techEntries)
-                Screen.Player.Research.AddTechToQueue(enrty.UID);
+            if (QueueShipDesignMissingResearch(Screen.Player, techEntries) == Authoritative4XUiCommandResult.Blocked)
+            {
+                GameAudio.NegativeClick();
+                PostResearchOrDeleteDesign();
+                return;
+            }
 
             PostResearchOrDeleteDesign();
+        }
+
+        internal static Authoritative4XUiCommandResult QueueShipDesignMissingResearch(Empire player,
+            IEnumerable<TechEntry> techEntries)
+        {
+            Authoritative4XUiCommandResult result = Authoritative4XUiCommandResult.NotActive;
+            foreach (TechEntry entry in techEntries)
+            {
+                if (player.Research.IsQueued(entry.UID))
+                    continue;
+
+                switch (Authoritative4XClientContext.TrySubmitQueueResearch(player, entry.UID))
+                {
+                    case Authoritative4XUiCommandResult.Submitted:
+                        result = Authoritative4XUiCommandResult.Submitted;
+                        continue;
+                    case Authoritative4XUiCommandResult.Blocked:
+                        return Authoritative4XUiCommandResult.Blocked;
+                    default:
+                        player.Research.AddTechToQueue(entry.UID);
+                        break;
+                }
+            }
+
+            return result;
         }
 
         void DeleteAccepted(string shipToDelete)
