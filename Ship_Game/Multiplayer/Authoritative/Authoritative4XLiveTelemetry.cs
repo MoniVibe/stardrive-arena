@@ -220,6 +220,11 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
                 return $"payload=BuildCapitalHere planet={command.SubjectId}";
             case AuthoritativePlayerCommandKind.AttackShip:
                 return $"payload=AttackShip queued={string.Equals(command.Text, "queue", StringComparison.Ordinal)}";
+            case AuthoritativePlayerCommandKind.ShipTargetOrder:
+                return AuthoritativePlayerCommand.TryParseShipTargetOrderPayload(command.Text,
+                           out AuthoritativeShipTargetOrderType targetOrder, out bool targetQueue)
+                    ? $"payload=ShipTargetOrder order={targetOrder} queued={targetQueue}"
+                    : "payload=ShipTargetOrder invalid=true";
             case AuthoritativePlayerCommandKind.ShipPlanetOrder:
                 return TryParseShipPlanetOrder(command.Text, out AuthoritativeShipPlanetOrderType planetOrder,
                            out bool clearOrders, out MoveOrder moveOrder)

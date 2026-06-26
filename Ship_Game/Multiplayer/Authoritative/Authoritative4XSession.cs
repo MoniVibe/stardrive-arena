@@ -307,6 +307,7 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(s.AI.Target?.Id ?? 0)
               .Append('|').Append(s.AI.HasPriorityTarget ? 1 : 0)
               .Append('|').Append(TargetQueueSignature(s))
+              .Append('|').Append(s.AI.EscortTarget?.Id ?? 0)
               .Append('|').Append(ShipOrderQueueSignature(s))
               .Append('|').Append(s.IsFreighter ? 1 : 0)
               .Append('|').Append(s.TransportingFood ? 1 : 0)

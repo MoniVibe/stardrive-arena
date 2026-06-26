@@ -727,6 +727,46 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitShipTargetOrder(Ship ship, Ship target,
+        AuthoritativeShipTargetOrderType orderType, bool queue)
+    {
+        if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!CanSubmitShipTargetOrder(ship, target, orderType, queue))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.ShipTargetOrder(context.Next(), context.EmpireId,
+            ship.Id, target.Id, orderType, queue));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitShipTargetOrders(Ship[] ships, Ship target,
+        bool queue, Func<Ship, AuthoritativeShipTargetOrderType> orderFor)
+    {
+        if (!TryGetForBatch(ships, out Authoritative4XClientContext context, out Ship[] ownedShips))
+            return Authoritative4XUiCommandResult.NotActive;
+        if (target?.Active != true || target.Loyalty == null || ownedShips.Length == 0 || orderFor == null)
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        (Ship Ship, AuthoritativeShipTargetOrderType Order)[] orders = ownedShips
+            .Select(s => (s, orderFor(s)))
+            .ToArray();
+        if (orders.Any(o => !CanSubmitShipTargetOrder(o.Ship, target, o.Order,
+                o.Order == AuthoritativeShipTargetOrderType.Attack && queue)))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        foreach ((Ship ship, AuthoritativeShipTargetOrderType orderType) in orders)
+        {
+            context.Submit(AuthoritativePlayerCommand.ShipTargetOrder(context.Next(), context.EmpireId,
+                ship.Id, target.Id, orderType, orderType == AuthoritativeShipTargetOrderType.Attack && queue));
+        }
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitShipPlanetOrder(Ship ship, Planet planet,
         AuthoritativeShipPlanetOrderType orderType, bool clearOrders, MoveOrder moveOrder)
     {
@@ -1199,6 +1239,43 @@ public sealed class Authoritative4XClientContext : IDisposable
     static bool CanSubmitShipAttack(Ship ship, Ship target)
         => CanSubmitShipMove(ship) && ship.ShipData.Role != RoleName.troop && ship != target
            && target.Loyalty != ship.Loyalty;
+
+    static bool CanSubmitShipTargetOrder(Ship ship, Ship target, AuthoritativeShipTargetOrderType orderType,
+        bool queue)
+    {
+        if (ship?.Active != true || target?.Active != true || ship == target
+            || ship.Loyalty == null || target.Loyalty == null
+            || !Enum.IsDefined(typeof(AuthoritativeShipTargetOrderType), orderType)
+            || queue && orderType != AuthoritativeShipTargetOrderType.Attack)
+        {
+            return false;
+        }
+
+        return orderType switch
+        {
+            AuthoritativeShipTargetOrderType.Attack =>
+                !ship.IsPlatformOrStation
+                && ship.ShipData.Role != RoleName.troop
+                && target.Loyalty != ship.Loyalty
+                && ship.Loyalty.IsEmpireAttackable(target.Loyalty, target),
+            AuthoritativeShipTargetOrderType.Escort =>
+                target.Loyalty == ship.Loyalty,
+            AuthoritativeShipTargetOrderType.TransferTroops =>
+                target.Loyalty == ship.Loyalty
+                && IsSingleTroopTargetOrderShip(ship)
+                && ship.TroopCount > 0
+                && target.TroopCapacity > target.TroopCount,
+            AuthoritativeShipTargetOrderType.Board =>
+                target.Loyalty != ship.Loyalty
+                && IsSingleTroopTargetOrderShip(ship)
+                && ship.TroopCount > 0
+                && ship.Loyalty.IsEmpireAttackable(target.Loyalty, target),
+            _ => false,
+        };
+    }
+
+    static bool IsSingleTroopTargetOrderShip(Ship ship)
+        => ship?.DesignRole == RoleName.troop || ship?.ShipData.Role == RoleName.troop;
 
     static bool CanSubmitShipPlanetOrder(Ship ship)
         => ship?.Active == true && !ship.IsConstructor && !ship.IsPlatformOrStation && !ship.IsSubspaceProjector;

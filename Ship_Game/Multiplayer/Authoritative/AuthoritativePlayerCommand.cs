@@ -68,6 +68,7 @@ public enum AuthoritativePlayerCommandKind : byte
     RefitShip = 52,
     BuildCapitalHere = 53,
     QueueFleetRequisition = 54,
+    ShipTargetOrder = 55,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -76,6 +77,14 @@ public enum AuthoritativeShipPlanetOrderType : byte
     Colonize = 2,
     Bombard = 3,
     LandTroops = 4,
+}
+
+public enum AuthoritativeShipTargetOrderType : byte
+{
+    Attack = 1,
+    Escort = 2,
+    TransferTroops = 3,
+    Board = 4,
 }
 
 public enum AuthoritativeDiplomacyProposalType : byte
@@ -875,6 +884,18 @@ public sealed class AuthoritativePlayerCommand
             Text = queue ? "queue" : "",
         };
 
+    public static AuthoritativePlayerCommand ShipTargetOrder(int sequence, int empireId, int shipId,
+        int targetShipId, AuthoritativeShipTargetOrderType orderType, bool queue = false)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.ShipTargetOrder,
+            SubjectId = shipId,
+            TargetId = targetShipId,
+            Text = EncodeShipTargetOrderPayload(orderType, queue),
+        };
+
     public static AuthoritativePlayerCommand ShipPlanetOrder(int sequence, int empireId, int shipId, int planetId,
         AuthoritativeShipPlanetOrderType orderType, bool clearOrders = true, MoveOrder moveOrder = MoveOrder.Regular)
         => new()
@@ -1233,6 +1254,29 @@ public sealed class AuthoritativePlayerCommand
         }
 
         rush = parts[1] == "1";
+        return true;
+    }
+
+    public static string EncodeShipTargetOrderPayload(AuthoritativeShipTargetOrderType orderType, bool queue)
+        => $"{(int)orderType}|{(queue ? 1 : 0)}";
+
+    public static bool TryParseShipTargetOrderPayload(string payload,
+        out AuthoritativeShipTargetOrderType orderType, out bool queue)
+    {
+        orderType = default;
+        queue = false;
+        string[] parts = (payload ?? "").Split('|');
+        if (parts.Length != 2
+            || !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int orderValue)
+            || !Enum.IsDefined(typeof(AuthoritativeShipTargetOrderType),
+                (AuthoritativeShipTargetOrderType)orderValue)
+            || parts[1] is not ("0" or "1"))
+        {
+            return false;
+        }
+
+        orderType = (AuthoritativeShipTargetOrderType)orderValue;
+        queue = parts[1] == "1";
         return true;
     }
 

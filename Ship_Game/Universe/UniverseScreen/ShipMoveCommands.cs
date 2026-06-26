@@ -45,7 +45,9 @@ namespace Ship_Game.Universe
                 return false; 
             }
 
-            switch (Authoritative4XClientContext.TrySubmitAttackShip(selectedShip, targetShip, Input.QueueAction))
+            AuthoritativeShipTargetOrderType targetOrder = ShipTargetOrderFor(selectedShip, targetShip);
+            switch (Authoritative4XClientContext.TrySubmitShipTargetOrder(selectedShip, targetShip,
+                        targetOrder, targetOrder == AuthoritativeShipTargetOrderType.Attack && Input.QueueAction))
             {
                 case Authoritative4XUiCommandResult.Submitted:
                     return true;
@@ -255,7 +257,9 @@ namespace Ship_Game.Universe
                 return false;
             }
 
-            switch (Authoritative4XClientContext.TrySubmitAttackShip(ship, target, Input.QueueAction))
+            AuthoritativeShipTargetOrderType targetOrder = ShipTargetOrderFor(ship, target);
+            switch (Authoritative4XClientContext.TrySubmitShipTargetOrder(ship, target,
+                        targetOrder, targetOrder == AuthoritativeShipTargetOrderType.Attack && Input.QueueAction))
             {
                 case Authoritative4XUiCommandResult.Submitted:
                     GameAudio.AffirmativeClick();
@@ -294,7 +298,8 @@ namespace Ship_Game.Universe
         bool TryFleetAttackShip(ShipGroup fleet, Ship shipToAttack)
         {
             Ship[] actionable = fleet.Ships.Where(s => Universe.LocalShipCanTakeFleetOrders(s, forAttack: true)).ToArray();
-            switch (Authoritative4XClientContext.TrySubmitAttackShips(actionable, shipToAttack, Input.QueueAction))
+            switch (Authoritative4XClientContext.TrySubmitShipTargetOrders(actionable, shipToAttack,
+                        Input.QueueAction, ship => ShipTargetOrderFor(ship, shipToAttack)))
             {
                 case Authoritative4XUiCommandResult.Submitted:
                     GameAudio.AffirmativeClick();
@@ -421,5 +426,24 @@ namespace Ship_Game.Universe
 
             ship.AI.OrderMoveTo(corrected, direction, order);
         }
+
+        AuthoritativeShipTargetOrderType ShipTargetOrderFor(Ship ship, Ship target)
+        {
+            if (Universe.IsLocalShipForUi(target))
+            {
+                return IsSingleTroopTargetOrderShip(ship)
+                       && ship.TroopCount > 0
+                       && target.TroopCapacity > target.TroopCount
+                    ? AuthoritativeShipTargetOrderType.TransferTroops
+                    : AuthoritativeShipTargetOrderType.Escort;
+            }
+
+            return IsSingleTroopTargetOrderShip(ship)
+                ? AuthoritativeShipTargetOrderType.Board
+                : AuthoritativeShipTargetOrderType.Attack;
+        }
+
+        static bool IsSingleTroopTargetOrderShip(Ship ship)
+            => ship?.DesignRole == RoleName.troop || ship?.ShipData.Role == RoleName.troop;
     }
 }

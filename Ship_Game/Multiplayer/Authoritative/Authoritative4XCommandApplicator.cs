@@ -94,6 +94,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.SetShipAreaOfOperation => ApplyShipAreaOfOperation(command, empire, result),
                 AuthoritativePlayerCommandKind.RefitShip => ApplyShipRefit(command, empire, result),
                 AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
+                AuthoritativePlayerCommandKind.ShipTargetOrder => ApplyShipTargetOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
             };
@@ -685,6 +686,77 @@ public sealed class Authoritative4XCommandApplicator
         return Accept(result);
     }
 
+    AuthoritativeCommandResult ApplyShipTargetOrder(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (!AuthoritativePlayerCommand.TryParseShipTargetOrderPayload(command.Text,
+                out AuthoritativeShipTargetOrderType orderType, out bool queue))
+        {
+            return Reject(result, $"Invalid ship target order payload '{command.Text}'.");
+        }
+
+        Ship ship = UState.Objects.FindShip(command.SubjectId);
+        if (ship == null)
+            return Reject(result, $"Ship {command.SubjectId} not found.");
+        if (!ship.Active)
+            return Reject(result, $"Ship {command.SubjectId} is inactive.");
+        if (ship.Loyalty != empire)
+            return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
+
+        Ship target = UState.Objects.FindShip(command.TargetId);
+        if (target == null)
+            return Reject(result, $"Target ship {command.TargetId} not found.");
+        if (!target.Active)
+            return Reject(result, $"Target ship {command.TargetId} is inactive.");
+        if (target == ship)
+            return Reject(result, "A ship cannot target itself.");
+        if (target.Loyalty == null)
+            return Reject(result, $"Target ship {target.Id} has no owning empire.");
+        if (queue && orderType != AuthoritativeShipTargetOrderType.Attack)
+            return Reject(result, $"Ship target order {orderType} does not support queueing.");
+
+        switch (orderType)
+        {
+            case AuthoritativeShipTargetOrderType.Attack:
+                if (ship.IsPlatformOrStation || ship.ShipData.Role == RoleName.troop)
+                    return Reject(result, $"Ship {ship.Id} cannot receive authoritative attack target orders.");
+                if (target.Loyalty == empire || !empire.IsEmpireAttackable(target.Loyalty, target))
+                    return Reject(result, $"Empire {empire.Id} cannot attack ship {target.Id}.");
+                if (queue)
+                    ship.AI.OrderQueueSpecificTarget(target);
+                else
+                    ship.AI.OrderAttackSpecificTarget(target);
+                return Accept(result);
+
+            case AuthoritativeShipTargetOrderType.Escort:
+                if (target.Loyalty != empire)
+                    return Reject(result, $"Ship {target.Id} is not a friendly escort target.");
+                ship.AI.AddEscortGoal(target);
+                return Accept(result);
+
+            case AuthoritativeShipTargetOrderType.TransferTroops:
+                if (target.Loyalty != empire)
+                    return Reject(result, $"Ship {target.Id} is not a friendly troop transfer target.");
+                if (!IsSingleTroopTargetOrderShip(ship) || ship.TroopCount == 0)
+                    return Reject(result, $"Ship {ship.Id} has no transferable troop.");
+                if (target.TroopCapacity <= target.TroopCount)
+                    return Reject(result, $"Ship {target.Id} has no troop capacity available.");
+                ship.AI.OrderTroopToShip(target);
+                return Accept(result);
+
+            case AuthoritativeShipTargetOrderType.Board:
+                if (target.Loyalty == empire || !empire.IsEmpireAttackable(target.Loyalty, target))
+                    return Reject(result, $"Empire {empire.Id} cannot board ship {target.Id}.");
+                if (!IsSingleTroopTargetOrderShip(ship) || ship.TroopCount == 0)
+                    return Reject(result, $"Ship {ship.Id} has no boarding troop.");
+                ship.AI.OrderTroopToBoardShip(target);
+                return Accept(result);
+
+            default:
+                return Reject(result, $"Unsupported ship target order {orderType}.");
+        }
+    }
+
     AuthoritativeCommandResult ApplyShipPlanetOrder(AuthoritativePlayerCommand command, Empire empire,
         AuthoritativeCommandResult result)
     {
@@ -752,6 +824,9 @@ public sealed class Authoritative4XCommandApplicator
                 return Reject(result, $"Unsupported planet order {orderType}.");
         }
     }
+
+    static bool IsSingleTroopTargetOrderShip(Ship ship)
+        => ship?.DesignRole == RoleName.troop || ship?.ShipData.Role == RoleName.troop;
 
     AuthoritativeCommandResult ApplyColonyType(AuthoritativePlayerCommand command, Empire empire, AuthoritativeCommandResult result)
     {

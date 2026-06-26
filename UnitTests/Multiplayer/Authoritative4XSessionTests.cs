@@ -41,6 +41,8 @@ public class Authoritative4XSessionTests : StarDriveTest
         public Ship FreighterShip;
         public Ship CarrierShip;
         public Ship TroopCarrierShip;
+        public Ship TroopShip;
+        public Ship FriendlyTroopTargetShip;
         public string ResearchUid;
     }
 
@@ -616,6 +618,30 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(100, copy.TargetId);
         Assert.AreEqual("queue", copy.Text);
 
+        var shipTargetRequest = AuthoritativePlayerCommand.ShipTargetOrder(40, 2, 99, 100,
+                AuthoritativeShipTargetOrderType.TransferTroops)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(shipTargetRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.ShipTargetOrder, copy.Kind);
+        Assert.AreEqual(99, copy.SubjectId);
+        Assert.AreEqual(100, copy.TargetId);
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParseShipTargetOrderPayload(copy.Text,
+            out AuthoritativeShipTargetOrderType shipTargetOrder, out bool shipTargetQueued));
+        Assert.AreEqual(AuthoritativeShipTargetOrderType.TransferTroops, shipTargetOrder);
+        Assert.IsFalse(shipTargetQueued);
+
+        var queuedShipTargetRequest = AuthoritativePlayerCommand.ShipTargetOrder(41, 2, 99, 100,
+                AuthoritativeShipTargetOrderType.Attack, queue: true)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(queuedShipTargetRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.ShipTargetOrder, copy.Kind);
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParseShipTargetOrderPayload(copy.Text,
+            out shipTargetOrder, out shipTargetQueued));
+        Assert.AreEqual(AuthoritativeShipTargetOrderType.Attack, shipTargetOrder);
+        Assert.IsTrue(shipTargetQueued);
+
         var planetOrderRequest = AuthoritativePlayerCommand.ShipPlanetOrder(13, 2, 99, 456,
             AuthoritativeShipPlanetOrderType.Orbit, clearOrders: false, MoveOrder.Aggressive)
             .ToMessage(fromPeer: 2);
@@ -865,6 +891,114 @@ public class Authoritative4XSessionTests : StarDriveTest
             session.SubmitFromClient(illegalOrbit);
             Assert.IsFalse(session.LastResult.Accepted, "An empire must not issue planet orders for ships it does not own.");
             StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XShipTargetOrder_AppliesVariantsAndSyncs_Headless()
+    {
+        const ulong Seed = 0x5147E70UL;
+        BuiltWorld authority = BuildWorld(Seed, includeTroopShips: true);
+        BuiltWorld client = BuildWorld(Seed, includeTroopShips: true);
+
+        try
+        {
+            EnsureTroopLoaded(authority.TroopShip);
+            EnsureTroopLoaded(client.TroopShip);
+            MakeAtWar(authority.Player, authority.Enemy);
+            MakeAtWar(client.Player, client.Enemy);
+
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+
+            var escort = AuthoritativePlayerCommand.ShipTargetOrder(20, authority.Player.Id,
+                authority.Ship.Id, authority.WingShip.Id, AuthoritativeShipTargetOrderType.Escort);
+            session.SubmitFromClient(escort);
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(AIState.Escort, authority.Ship.AI.State);
+            AssertShipOrder(authority.Ship, ShipAI.Plan.Escort, authority.WingShip,
+                "The authority should apply friendly ship target orders as escort goals.");
+            AssertShipOrder(client.Ship, ShipAI.Plan.Escort, client.WingShip,
+                "The client replica should apply accepted escort goals deterministically.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeTransferDigest = session.LastAuthoritySnapshot.SyncDigest;
+            var transfer = AuthoritativePlayerCommand.ShipTargetOrder(21, authority.Player.Id,
+                authority.TroopShip.Id, authority.FriendlyTroopTargetShip.Id,
+                AuthoritativeShipTargetOrderType.TransferTroops);
+            session.SubmitFromClient(transfer);
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(authority.FriendlyTroopTargetShip, authority.TroopShip.AI.EscortTarget);
+            AssertShipPlan(authority.TroopShip, ShipAI.Plan.TroopToShip,
+                "The authority should apply troop transfer through OrderTroopToShip.");
+            Assert.AreEqual(client.FriendlyTroopTargetShip, client.TroopShip.AI.EscortTarget);
+            AssertShipPlan(client.TroopShip, ShipAI.Plan.TroopToShip,
+                "The client replica should apply accepted troop transfers deterministically.");
+            Assert.AreNotEqual(beforeTransferDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover troop transfer target orders.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeBoardDigest = session.LastAuthoritySnapshot.SyncDigest;
+            var board = AuthoritativePlayerCommand.ShipTargetOrder(22, authority.Player.Id,
+                authority.TroopShip.Id, authority.EnemyShip.Id, AuthoritativeShipTargetOrderType.Board);
+            session.SubmitFromClient(board);
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(authority.EnemyShip, authority.TroopShip.AI.EscortTarget);
+            AssertShipPlan(authority.TroopShip, ShipAI.Plan.BoardShip,
+                "The authority should apply boarding through OrderTroopToBoardShip.");
+            Assert.AreEqual(client.EnemyShip, client.TroopShip.AI.EscortTarget);
+            AssertShipPlan(client.TroopShip, ShipAI.Plan.BoardShip,
+                "The client replica should apply accepted boarding orders deterministically.");
+            Assert.AreNotEqual(beforeBoardDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover boarding target orders.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeQueuedAttackDigest = session.LastAuthoritySnapshot.SyncDigest;
+            var queuedAttack = AuthoritativePlayerCommand.ShipTargetOrder(23, authority.Player.Id,
+                authority.WingShip.Id, authority.EnemyShip.Id, AuthoritativeShipTargetOrderType.Attack,
+                queue: true);
+            session.SubmitFromClient(queuedAttack);
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(AIState.AttackTarget, authority.WingShip.AI.State);
+            Assert.AreEqual(authority.EnemyShip, authority.WingShip.AI.Target);
+            Assert.AreEqual(client.EnemyShip, client.WingShip.AI.Target);
+            Assert.IsTrue(authority.WingShip.AI.HasPriorityTarget);
+            Assert.AreNotEqual(beforeQueuedAttackDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover queued ship target attack orders.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            var illegalFriendlyAttack = AuthoritativePlayerCommand.ShipTargetOrder(24, authority.Player.Id,
+                authority.Ship.Id, authority.WingShip.Id, AuthoritativeShipTargetOrderType.Attack);
+            session.SubmitFromClient(illegalFriendlyAttack);
+            Assert.IsFalse(session.LastResult.Accepted, "Friendly ships must not be legal attack targets.");
+            StringAssert.Contains(session.LastResult.Reason, "cannot attack");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            var illegalEnemyEscort = AuthoritativePlayerCommand.ShipTargetOrder(25, authority.Player.Id,
+                authority.Ship.Id, authority.EnemyShip.Id, AuthoritativeShipTargetOrderType.Escort);
+            session.SubmitFromClient(illegalEnemyEscort);
+            Assert.IsFalse(session.LastResult.Accepted, "Enemy ships must not be legal escort targets.");
+            StringAssert.Contains(session.LastResult.Reason, "friendly escort");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            var illegalNonTroopBoard = AuthoritativePlayerCommand.ShipTargetOrder(26, authority.Player.Id,
+                authority.Ship.Id, authority.EnemyShip.Id, AuthoritativeShipTargetOrderType.Board);
+            session.SubmitFromClient(illegalNonTroopBoard);
+            Assert.IsFalse(session.LastResult.Accepted, "Non-troop ships must not receive boarding orders.");
+            StringAssert.Contains(session.LastResult.Reason, "boarding troop");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            var illegalTransferCapacity = AuthoritativePlayerCommand.ShipTargetOrder(27, authority.Player.Id,
+                authority.TroopShip.Id, authority.WingShip.Id, AuthoritativeShipTargetOrderType.TransferTroops);
+            session.SubmitFromClient(illegalTransferCapacity);
+            Assert.IsFalse(session.LastResult.Accepted,
+                "Troop transfer must require spare troop capacity on the friendly target ship.");
+            StringAssert.Contains(session.LastResult.Reason, "troop capacity");
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
         }
         finally
@@ -5565,6 +5699,100 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XClientContext_SubmitsShipTargetOrdersWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0x5147E71UL;
+        BuiltWorld world = BuildWorld(Seed, includeTroopShips: true);
+
+        try
+        {
+            EnsureTroopLoaded(world.TroopShip);
+            MakeAtWar(world.Player, world.Enemy);
+            var submitted = new List<AuthoritativePlayerCommand>();
+            AIState originalShipState = world.Ship.AI.State;
+            Ship originalShipTarget = world.Ship.AI.Target;
+            int originalShipOrders = world.Ship.AI.OrderQueue.Count;
+            Ship originalTroopEscortTarget = world.TroopShip.AI.EscortTarget;
+            int originalTroopOrders = world.TroopShip.AI.OrderQueue.Count;
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2500))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitShipTargetOrder(world.Ship, world.WingShip,
+                        AuthoritativeShipTargetOrderType.Escort, queue: false));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.ShipTargetOrder, submitted[0].Kind);
+                Assert.AreEqual(2500, submitted[0].Sequence);
+                Assert.AreEqual(world.Ship.Id, submitted[0].SubjectId);
+                Assert.AreEqual(world.WingShip.Id, submitted[0].TargetId);
+                Assert.AreEqual(AuthoritativePlayerCommand.EncodeShipTargetOrderPayload(
+                    AuthoritativeShipTargetOrderType.Escort, queue: false), submitted[0].Text);
+                Assert.AreEqual(originalShipState, world.Ship.AI.State,
+                    "Passive MP clients must not locally issue ship escort orders before host acceptance.");
+                Assert.AreEqual(originalShipOrders, world.Ship.AI.OrderQueue.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitShipTargetOrder(world.TroopShip,
+                        world.FriendlyTroopTargetShip, AuthoritativeShipTargetOrderType.TransferTroops,
+                        queue: false));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.ShipTargetOrder, submitted[1].Kind);
+                Assert.AreEqual(2501, submitted[1].Sequence);
+                Assert.AreEqual(world.TroopShip.Id, submitted[1].SubjectId);
+                Assert.AreEqual(world.FriendlyTroopTargetShip.Id, submitted[1].TargetId);
+                Assert.AreEqual(AuthoritativePlayerCommand.EncodeShipTargetOrderPayload(
+                    AuthoritativeShipTargetOrderType.TransferTroops, queue: false), submitted[1].Text);
+                Assert.AreEqual(originalTroopEscortTarget, world.TroopShip.AI.EscortTarget,
+                    "Passive MP clients must not locally issue troop transfer before host acceptance.");
+                Assert.AreEqual(originalTroopOrders, world.TroopShip.AI.OrderQueue.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitShipTargetOrder(world.TroopShip, world.EnemyShip,
+                        AuthoritativeShipTargetOrderType.Board, queue: false));
+                Assert.AreEqual(3, submitted.Count);
+                Assert.AreEqual(2502, submitted[2].Sequence);
+                Assert.AreEqual(AuthoritativeShipTargetOrderType.Board,
+                    ParseShipTargetOrder(submitted[2]).Order);
+                Assert.AreEqual(originalTroopEscortTarget, world.TroopShip.AI.EscortTarget,
+                    "Passive MP clients must not locally issue boarding orders before host acceptance.");
+                Assert.AreEqual(originalTroopOrders, world.TroopShip.AI.OrderQueue.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitShipTargetOrder(world.Ship, world.EnemyShip,
+                        AuthoritativeShipTargetOrderType.Attack, queue: true));
+                Assert.AreEqual(4, submitted.Count);
+                Assert.AreEqual(2503, submitted[3].Sequence);
+                (AuthoritativeShipTargetOrderType order, bool queued) = ParseShipTargetOrder(submitted[3]);
+                Assert.AreEqual(AuthoritativeShipTargetOrderType.Attack, order);
+                Assert.IsTrue(queued);
+                Assert.AreEqual(originalShipTarget, world.Ship.AI.Target,
+                    "Passive MP clients must not locally issue target attack orders before host acceptance.");
+                Assert.AreEqual(originalShipOrders, world.Ship.AI.OrderQueue.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitShipTargetOrder(world.Ship, world.WingShip,
+                        AuthoritativeShipTargetOrderType.Attack, queue: false));
+                Assert.AreEqual(4, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitShipTargetOrder(world.Ship, world.EnemyShip,
+                        AuthoritativeShipTargetOrderType.Escort, queue: false));
+                Assert.AreEqual(4, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitShipTargetOrder(world.TroopShip, world.WingShip,
+                        AuthoritativeShipTargetOrderType.TransferTroops, queue: false));
+                Assert.AreEqual(4, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientContext_SubmitsShipColonizeWithoutLocalMutation_Headless()
     {
         const ulong Seed = 0xC0110C9UL;
@@ -6105,6 +6333,9 @@ public class Authoritative4XSessionTests : StarDriveTest
                 AuthoritativePlayerCommand.ShipPlanetOrder(2, 1, shipId: 77, planetId: 88,
                     AuthoritativeShipPlanetOrderType.Colonize, clearOrders: false, MoveOrder.Aggressive));
             telemetry.Command("unit", 9,
+                AuthoritativePlayerCommand.ShipTargetOrder(12, 1, shipId: 77, targetShipId: 99,
+                    AuthoritativeShipTargetOrderType.Board));
+            telemetry.Command("unit", 9,
                 AuthoritativePlayerCommand.SetShipTradePolicy(7, 1, shipId: 77,
                     AuthoritativeShipTradePolicyKind.InterEmpire, enabled: true));
             telemetry.Command("unit", 9,
@@ -6138,6 +6369,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             StringAssert.Contains(text, "summary='payload=EmpireAutomation flags=AutoExplore, AutoFreighters");
             StringAssert.Contains(text, "freighter=\\'Freighter\\'");
             StringAssert.Contains(text, "summary='payload=ShipPlanetOrder order=Colonize clear=False move=Aggressive'");
+            StringAssert.Contains(text, "summary='payload=ShipTargetOrder order=Board queued=False'");
             StringAssert.Contains(text, "summary='payload=ShipTradePolicy kind=InterEmpire enabled=True'");
             StringAssert.Contains(text, "summary='payload=ShipCarrierPolicy kind=FightersOut enabled=False'");
             StringAssert.Contains(text, "summary='payload=ShipTradeRoute planet=88 enabled=True'");
@@ -7597,6 +7829,26 @@ public class Authoritative4XSessionTests : StarDriveTest
                                                && area.Width == expected.Width
                                                && area.Height == expected.Height);
 
+    static void AssertShipOrder(Ship ship, ShipAI.Plan plan, Ship target, string message)
+    {
+        Assert.IsTrue(ship.AI.OrderQueue.ToArray()
+                .Any(g => g.Plan == plan && g.TargetShip == target),
+            message);
+    }
+
+    static void AssertShipPlan(Ship ship, ShipAI.Plan plan, string message)
+    {
+        Assert.IsTrue(ship.AI.OrderQueue.ToArray().Any(g => g.Plan == plan), message);
+    }
+
+    static (AuthoritativeShipTargetOrderType Order, bool Queue) ParseShipTargetOrder(
+        AuthoritativePlayerCommand command)
+    {
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParseShipTargetOrderPayload(command.Text,
+            out AuthoritativeShipTargetOrderType order, out bool queue));
+        return (order, queue);
+    }
+
     static void EnableRefitYard(BuiltWorld world)
     {
         world.Planet.HasSpacePort = true;
@@ -7631,6 +7883,20 @@ public class Authoritative4XSessionTests : StarDriveTest
             .FirstOrDefault();
         Assert.IsNotNull(troop, $"Empire {empire.Id} needs at least one buildable troop for the authoritative queue proof.");
         return troop;
+    }
+
+    static void EnsureTroopLoaded(Ship ship)
+    {
+        Assert.IsNotNull(ship, "Expected a troop ship fixture.");
+        Assert.AreEqual(RoleName.troop, ship.DesignRole, $"Ship '{ship.Name}' should be a single troop ship fixture.");
+        if (ship.TroopCount > 0)
+            return;
+
+        Troop template = PickBuildableTroop(ship.Loyalty);
+        Assert.IsTrue(ResourceManager.TryCreateTroop(template.Name, ship.Loyalty, out Troop troop),
+            $"Could not create troop '{template.Name}' for ship '{ship.Name}'.");
+        ship.AddTroop(troop);
+        Assert.IsTrue(ship.TroopCount > 0, $"Ship '{ship.Name}' should have a loaded troop.");
     }
 
     static void EnsureSingleBuildTile(Planet planet)
@@ -7725,11 +7991,11 @@ public class Authoritative4XSessionTests : StarDriveTest
 
     BuiltWorld BuildWorld(ulong seed, bool extraPlayerPlanet = false, bool includePlatform = false,
         bool includeNeutralPlanet = false, bool includeColonyShip = false, bool includeFreighter = false,
-        bool includeCarrierPolicyShips = false)
+        bool includeCarrierPolicyShips = false, bool includeTroopShips = false)
     {
         if (includePlatform)
             LoadStarterShips("Platform Base mk1-a");
-        if (includeCarrierPolicyShips)
+        if (includeCarrierPolicyShips || includeTroopShips)
         {
             LoadStarterShips("Heavy Carrier mk5-b",
                              "Alliance-Class Mk Ia Hvy Assault",
@@ -7773,12 +8039,27 @@ public class Authoritative4XSessionTests : StarDriveTest
                     "troop-carrier").Name,
                 Player, new Vector2(18_000, 4_000))
             : null;
+        Ship troopShip = includeTroopShips
+            ? SpawnShip("Assault Shuttle", Player, new Vector2(20_000, 4_000))
+            : null;
+        Ship friendlyTroopTargetShip = includeTroopShips
+            ? SpawnShip("Assault Shuttle", Player, new Vector2(22_000, 4_000))
+            : null;
         if (includeCarrierPolicyShips)
         {
             Assert.IsTrue(carrierShip.Carrier.HasFighterBays,
                 $"Spawned carrier fixture '{carrierShip.Name}' must have fighter hangars.");
             Assert.IsTrue(troopCarrierShip.Carrier.HasTroopBays,
                 $"Spawned troop-carrier fixture '{troopCarrierShip.Name}' must have troop/assault bays.");
+        }
+        if (includeTroopShips)
+        {
+            Assert.AreEqual(RoleName.troop, troopShip.DesignRole,
+                $"Spawned troop fixture '{troopShip.Name}' must be a single troop ship.");
+            Assert.AreEqual(RoleName.troop, friendlyTroopTargetShip.DesignRole,
+                $"Spawned troop target fixture '{friendlyTroopTargetShip.Name}' must have troop capacity.");
+            Assert.IsTrue(friendlyTroopTargetShip.TroopCapacity > friendlyTroopTargetShip.TroopCount,
+                $"Spawned troop target fixture '{friendlyTroopTargetShip.Name}' must have spare troop capacity.");
         }
         UState.Paused = false;
         UState.NoEliminationVictory = true;
@@ -7807,6 +8088,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             FreighterShip = freighterShip,
             CarrierShip = carrierShip,
             TroopCarrierShip = troopCarrierShip,
+            TroopShip = troopShip,
+            FriendlyTroopTargetShip = friendlyTroopTargetShip,
             ResearchUid = researchUid,
         };
     }
