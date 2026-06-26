@@ -101,6 +101,27 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
             + $"payloadChars={snapshot.Payload.Length} rows='{PayloadRowCounts(snapshot.Payload)}'");
     }
 
+    public void SyncMismatch(Authoritative4XSyncMismatchException mismatch)
+    {
+        if (mismatch == null)
+            return;
+
+        string authorityPayloadPath = WritePayloadArtifact("authority", mismatch.AuthoritySnapshot?.Payload);
+        string clientPayloadPath = WritePayloadArtifact("client", mismatch.ClientSnapshot?.Payload);
+        AuthoritativePlayerCommand command = mismatch.Command;
+        AuthoritativeCommandResult result = mismatch.Result;
+        Write("SYNC_MISMATCH",
+            $"origin={result?.OriginPeer ?? 0} seq={result?.Sequence ?? 0} kind={command?.Kind.ToString() ?? ""} "
+            + $"tick={mismatch.ClientSnapshot?.Tick ?? 0} accepted={result?.Accepted ?? false} "
+            + $"authorityHash={SnapshotHash(mismatch.AuthoritySnapshot)} clientHash={SnapshotHash(mismatch.ClientSnapshot)} "
+            + $"authorityDigest='{mismatch.AuthoritySnapshot?.SyncDigest ?? ""}' "
+            + $"clientDigest='{mismatch.ClientSnapshot?.SyncDigest ?? ""}' "
+            + $"authorityRows='{PayloadRowCounts(mismatch.AuthoritySnapshot?.Payload)}' "
+            + $"clientRows='{PayloadRowCounts(mismatch.ClientSnapshot?.Payload)}' "
+            + $"firstDiff='{OneLine(FirstPayloadDifference(mismatch.AuthoritySnapshot?.Payload, mismatch.ClientSnapshot?.Payload))}' "
+            + $"authorityPayload='{authorityPayloadPath}' clientPayload='{clientPayloadPath}'");
+    }
+
     public void Control(string source, bool paused, float gameSpeed)
         => Write("CONTROL", $"source={source} paused={paused} speed={gameSpeed:0.###}");
 
@@ -169,4 +190,47 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
 
         return string.Join(",", counts.Select(kv => $"{kv.Key}:{kv.Value}"));
     }
+
+    string WritePayloadArtifact(string side, string payload)
+    {
+        if (payload == null || string.IsNullOrWhiteSpace(SessionPath))
+            return "";
+
+        string dir = Path.GetDirectoryName(SessionPath);
+        string baseName = Path.GetFileNameWithoutExtension(SessionPath);
+        string path = Path.Combine(dir ?? "", $"{baseName}-sync-mismatch-{side}.payload");
+        try
+        {
+            File.WriteAllText(path, payload);
+            return path;
+        }
+        catch (Exception e)
+        {
+            return $"write-failed:{e.GetType().Name}";
+        }
+    }
+
+    static string SnapshotHash(AuthoritativeStateSnapshot snapshot)
+        => snapshot == null ? "" : $"0x{snapshot.HashHi:X16}:0x{snapshot.HashLo:X16}";
+
+    static string FirstPayloadDifference(string authorityPayload, string clientPayload)
+    {
+        string[] authority = (authorityPayload ?? "").Split('\n');
+        string[] client = (clientPayload ?? "").Split('\n');
+        int count = Math.Max(authority.Length, client.Length);
+        for (int i = 0; i < count; ++i)
+        {
+            string a = i < authority.Length ? authority[i].TrimEnd('\r') : "<missing>";
+            string c = i < client.Length ? client[i].TrimEnd('\r') : "<missing>";
+            if (!string.Equals(a, c, StringComparison.Ordinal))
+                return $"line={i + 1} authority=\"{a}\" client=\"{c}\"";
+        }
+        return "payloads differ only outside line comparison";
+    }
+
+    static string OneLine(string text)
+        => (text ?? "").Replace("\\", "\\\\")
+                       .Replace("'", "\\'")
+                       .Replace("\r", "\\r")
+                       .Replace("\n", "\\n");
 }

@@ -3117,6 +3117,96 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XLiveTelemetry_RecordsSyncMismatchEvidence_Headless()
+    {
+        const ulong Seed = 0x41E4005AUL;
+        const int Peer = 2;
+        string dir = Path.Combine(Path.GetTempPath(), $"auth4x_live_mismatch_{Guid.NewGuid():N}");
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+        string oldOutput = Authoritative4XLiveTelemetry.OutputDirectoryOverride;
+        bool? oldEnabled = Authoritative4XLiveTelemetry.EnabledOverride;
+
+        try
+        {
+            Authoritative4XLiveTelemetry.OutputDirectoryOverride = dir;
+            Authoritative4XLiveTelemetry.EnabledOverride = true;
+            int port = FreeTcpPort();
+            TcpLockstepTransport hostTransport = TcpLockstepTransport.Host(port, Peer);
+            TcpLockstepTransport clientTransport = TcpLockstepTransport.Join("127.0.0.1", port,
+                Authoritative4XNetworkHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(3)),
+                "Authoritative live mismatch proof did not connect to the loopback host.");
+
+            using var host = new Authoritative4XNetworkHost(authority.Screen, hostTransport,
+                new Dictionary<int, int> { [Peer] = authority.Player.Id },
+                new[] { authority.Player.Id });
+            Authoritative4XLiveSession liveClient = Authoritative4XLiveSession.ClientGame(client.Screen,
+                clientTransport, Peer, client.Player.Id, new[] { client.Player.Id });
+            client.Screen.AttachAuthoritative4XMultiplayer(liveClient);
+            string path = liveClient.TelemetrySessionPath;
+
+            Planet.ColonyType nextType = client.Planet.CType == Planet.ColonyType.Research
+                ? Planet.ColonyType.Military
+                : Planet.ColonyType.Research;
+            Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetColonyType(client.Planet, nextType),
+                "The live client should submit a real command before the forced mismatch is detected.");
+
+            DateTime hostDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (host.LastResult?.Sequence != 1 && DateTime.UtcNow < hostDeadline)
+            {
+                host.Poll();
+                System.Threading.Thread.Sleep(5);
+            }
+            Assert.IsNotNull(host.LastResult, "The host should process the submitted command before the client polls.");
+            Assert.AreEqual(1, host.LastResult.Sequence);
+
+            client.Planet.SetPrioritizedPort(!authority.Planet.PrioritizedPort);
+            Authoritative4XSyncMismatchException mismatch = null;
+            DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (mismatch == null && DateTime.UtcNow < deadline)
+            {
+                try
+                {
+                    liveClient.Poll();
+                }
+                catch (Authoritative4XSyncMismatchException e)
+                {
+                    mismatch = e;
+                }
+                System.Threading.Thread.Sleep(5);
+            }
+
+            Assert.IsNotNull(mismatch, "The deliberately perturbed client replica should report a sync mismatch.");
+            Assert.AreEqual(1, mismatch.Result.Sequence);
+            Assert.AreEqual(AuthoritativePlayerCommandKind.SetColonyType, mismatch.Command.Kind);
+
+            liveClient.Dispose();
+            string text = File.ReadAllText(path);
+            StringAssert.Contains(text, "SYNC_MISMATCH");
+            StringAssert.Contains(text, "seq=1");
+            StringAssert.Contains(text, "kind=SetColonyType");
+            StringAssert.Contains(text, "firstDiff='");
+            StringAssert.Contains(text, "authorityPayload='");
+            StringAssert.Contains(text, "clientPayload='");
+            string[] authorityPayloads = Directory.GetFiles(dir, "*sync-mismatch-authority.payload");
+            string[] clientPayloads = Directory.GetFiles(dir, "*sync-mismatch-client.payload");
+            Assert.AreEqual(1, authorityPayloads.Length, "Mismatch telemetry should persist the authority payload.");
+            Assert.AreEqual(1, clientPayloads.Length, "Mismatch telemetry should persist the client payload.");
+            StringAssert.Contains(File.ReadAllText(authorityPayloads[0]), "P|");
+            StringAssert.Contains(File.ReadAllText(clientPayloads[0]), "P|");
+        }
+        finally
+        {
+            Authoritative4XLiveTelemetry.OutputDirectoryOverride = oldOutput;
+            Authoritative4XLiveTelemetry.EnabledOverride = oldEnabled;
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    [TestMethod]
     public void AuthoritativeDiplomacyPopupScreen_DoesNotPauseUniverseAndExposesResponses_Headless()
     {
         BuiltWorld world = BuildWorld(0xD1A1060UL);

@@ -112,6 +112,12 @@ public sealed class Authoritative4XLiveSession : IDisposable
                 EnqueuePopups(Client.DrainPopupsForClient());
             }
         }
+        catch (Authoritative4XSyncMismatchException e)
+        {
+            Telemetry?.SyncMismatch(e);
+            Telemetry?.Event("POLL_EXCEPTION", $"{e.GetType().Name}: {e.Message}");
+            throw;
+        }
         catch (Exception e)
         {
             Telemetry?.Event("POLL_EXCEPTION", $"{e.GetType().Name}: {e.Message}");

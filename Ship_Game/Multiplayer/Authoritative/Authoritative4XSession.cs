@@ -374,10 +374,7 @@ public sealed class Authoritative4XClientReplica
         if (LastSnapshot.HashLo != authoritySnapshot.HashLo || LastSnapshot.HashHi != authoritySnapshot.HashHi
             || LastSnapshot.SyncDigest != authoritySnapshot.SyncDigest)
         {
-            throw new System.InvalidOperationException(
-                $"Authoritative sync mismatch at tick {Tick}: authority " +
-                $"0x{authoritySnapshot.HashLo:X16}:0x{authoritySnapshot.HashHi:X16}/{authoritySnapshot.SyncDigest}, " +
-                $"client 0x{LastSnapshot.HashLo:X16}:0x{LastSnapshot.HashHi:X16}/{LastSnapshot.SyncDigest}");
+            throw new Authoritative4XSyncMismatchException(command, result, authoritySnapshot, LastSnapshot);
         }
     }
 
@@ -386,6 +383,34 @@ public sealed class Authoritative4XClientReplica
         Universe.UState.Paused = paused;
         Universe.UState.GameSpeed = float.IsFinite(gameSpeed) ? Math.Clamp(gameSpeed, 0.25f, 8f) : 1f;
     }
+}
+
+public sealed class Authoritative4XSyncMismatchException : InvalidOperationException
+{
+    public readonly AuthoritativePlayerCommand Command;
+    public readonly AuthoritativeCommandResult Result;
+    public readonly AuthoritativeStateSnapshot AuthoritySnapshot;
+    public readonly AuthoritativeStateSnapshot ClientSnapshot;
+
+    public Authoritative4XSyncMismatchException(AuthoritativePlayerCommand command,
+        AuthoritativeCommandResult result, AuthoritativeStateSnapshot authoritySnapshot,
+        AuthoritativeStateSnapshot clientSnapshot)
+        : base(BuildMessage(result, authoritySnapshot, clientSnapshot))
+    {
+        Command = command;
+        Result = result;
+        AuthoritySnapshot = authoritySnapshot;
+        ClientSnapshot = clientSnapshot;
+    }
+
+    static string BuildMessage(AuthoritativeCommandResult result,
+        AuthoritativeStateSnapshot authoritySnapshot, AuthoritativeStateSnapshot clientSnapshot)
+        => $"Authoritative sync mismatch at tick {clientSnapshot?.Tick ?? 0}: " +
+           $"origin={result?.OriginPeer ?? 0} seq={result?.Sequence ?? 0} " +
+           $"authority 0x{authoritySnapshot?.HashLo ?? 0UL:X16}:0x{authoritySnapshot?.HashHi ?? 0UL:X16}/" +
+           $"{authoritySnapshot?.SyncDigest ?? ""}, client " +
+           $"0x{clientSnapshot?.HashLo ?? 0UL:X16}:0x{clientSnapshot?.HashHi ?? 0UL:X16}/" +
+           $"{clientSnapshot?.SyncDigest ?? ""}";
 }
 
 public readonly struct Authoritative4XClientSpec
