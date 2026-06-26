@@ -580,6 +580,22 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitSetShipCarrierPolicy(Ship ship,
+        AuthoritativeShipCarrierPolicyKind policy, bool enabled)
+    {
+        if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!Enum.IsDefined(typeof(AuthoritativeShipCarrierPolicyKind), policy)
+            || !CanSubmitShipCarrierPolicy(ship, policy))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.SetShipCarrierPolicy(context.Next(), context.EmpireId,
+            ship.Id, policy, enabled));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitAttackShip(Ship ship, Ship target, bool queue)
     {
         if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
@@ -1013,6 +1029,24 @@ public sealed class Authoritative4XClientContext : IDisposable
 
     static bool CanSubmitShipTradePolicy(Ship ship)
         => ship?.Active == true && ship.IsFreighter;
+
+    static bool CanSubmitShipCarrierPolicy(Ship ship, AuthoritativeShipCarrierPolicyKind policy)
+    {
+        if (ship?.Active != true || ship.Carrier == null)
+            return false;
+
+        return policy switch
+        {
+            AuthoritativeShipCarrierPolicyKind.FightersOut => ship.Carrier.HasFighterBays,
+            AuthoritativeShipCarrierPolicyKind.TroopsOut => ship.Carrier.HasTroopBays,
+            AuthoritativeShipCarrierPolicyKind.SendTroopsToShip => ship.Carrier.HasTroopBays,
+            AuthoritativeShipCarrierPolicyKind.AllowBoardShip => ship.Carrier.HasTroopBays,
+            AuthoritativeShipCarrierPolicyKind.RecallFightersBeforeFTL =>
+                ship.ShipData.Role != RoleName.station
+                && (ship.Carrier.HasFighterBays || ship.Carrier.HasTroopBays),
+            _ => false,
+        };
+    }
 
     static bool IsLegalCombatStance(CombatState stance)
         => Enum.IsDefined(typeof(CombatState), stance);

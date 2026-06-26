@@ -259,6 +259,8 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
                 return $"payload=ShipCombatStance state={command.TargetId}";
             case AuthoritativePlayerCommandKind.SetShipTradePolicy:
                 return $"payload=ShipTradePolicy kind={(AuthoritativeShipTradePolicyKind)command.TargetId} enabled={command.Text == "1"}";
+            case AuthoritativePlayerCommandKind.SetShipCarrierPolicy:
+                return $"payload=ShipCarrierPolicy kind={(AuthoritativeShipCarrierPolicyKind)command.TargetId} enabled={command.Text == "1"}";
             case AuthoritativePlayerCommandKind.RenameFleet:
                 return $"payload=RenameFleet name='{OneLine(command.Text)}'";
             case AuthoritativePlayerCommandKind.AutoArrangeFleet:

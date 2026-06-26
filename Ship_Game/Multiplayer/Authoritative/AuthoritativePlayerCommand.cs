@@ -61,6 +61,7 @@ public enum AuthoritativePlayerCommandKind : byte
     ScrapColonyTile = 46,
     SetEmpireAutomation = 47,
     SetShipTradePolicy = 48,
+    SetShipCarrierPolicy = 49,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -175,6 +176,15 @@ public enum AuthoritativeShipTradePolicyKind : byte
     Production = 2,
     Colonists = 3,
     InterEmpire = 4,
+}
+
+public enum AuthoritativeShipCarrierPolicyKind : byte
+{
+    FightersOut = 1,
+    TroopsOut = 2,
+    RecallFightersBeforeFTL = 3,
+    SendTroopsToShip = 4,
+    AllowBoardShip = 5,
 }
 
 public enum AuthoritativeShipLifecycleOrderType : byte
@@ -760,6 +770,18 @@ public sealed class AuthoritativePlayerCommand
             Sequence = sequence,
             EmpireId = empireId,
             Kind = AuthoritativePlayerCommandKind.SetShipTradePolicy,
+            SubjectId = shipId,
+            TargetId = (int)policy,
+            Text = enabled ? "1" : "0",
+        };
+
+    public static AuthoritativePlayerCommand SetShipCarrierPolicy(int sequence, int empireId, int shipId,
+        AuthoritativeShipCarrierPolicyKind policy, bool enabled)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.SetShipCarrierPolicy,
             SubjectId = shipId,
             TargetId = (int)policy,
             Text = enabled ? "1" : "0",

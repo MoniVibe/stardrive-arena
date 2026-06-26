@@ -37,6 +37,8 @@ public class Authoritative4XSessionTests : StarDriveTest
         public Ship PlatformShip;
         public Ship ColonyShip;
         public Ship FreighterShip;
+        public Ship CarrierShip;
+        public Ship TroopCarrierShip;
         public string ResearchUid;
     }
 
@@ -536,6 +538,16 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(99, copy.SubjectId);
         Assert.AreEqual((int)AuthoritativeShipTradePolicyKind.Food, copy.TargetId);
         Assert.AreEqual("0", copy.Text);
+
+        var carrierPolicyRequest = AuthoritativePlayerCommand.SetShipCarrierPolicy(36, 2, 99,
+                AuthoritativeShipCarrierPolicyKind.FightersOut, enabled: true)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(carrierPolicyRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetShipCarrierPolicy, copy.Kind);
+        Assert.AreEqual(99, copy.SubjectId);
+        Assert.AreEqual((int)AuthoritativeShipCarrierPolicyKind.FightersOut, copy.TargetId);
+        Assert.AreEqual("1", copy.Text);
 
         var attackRequest = AuthoritativePlayerCommand.AttackShip(12, 2, 99, 100, queue: true)
             .ToMessage(fromPeer: 2);
@@ -3642,6 +3654,110 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XShipCarrierPolicy_SyncsAndRejectsInvalidRequests_Headless()
+    {
+        const ulong Seed = 0xCA441001UL;
+        BuiltWorld authority = BuildWorld(Seed, includeCarrierPolicyShips: true);
+        BuiltWorld client = BuildWorld(Seed, includeCarrierPolicyShips: true);
+
+        try
+        {
+            Assert.IsTrue(authority.CarrierShip.Carrier.HasFighterBays,
+                "The carrier-policy proof must operate on a real fighter carrier.");
+            Assert.IsTrue(authority.TroopCarrierShip.Carrier.HasTroopBays,
+                "The carrier-policy proof must operate on a real troop/assault carrier.");
+
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            bool originalCarrierFightersOut = authority.CarrierShip.Carrier.FightersOut;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipCarrierPolicy(169,
+                authority.Player.Id, authority.Ship.Id,
+                AuthoritativeShipCarrierPolicyKind.FightersOut, enabled: true));
+            Assert.IsFalse(session.LastResult.Accepted, "Non-carriers must reject fighter launch policy changes.");
+            StringAssert.Contains(session.LastResult.Reason, "cannot receive carrier policy");
+            Assert.AreEqual(originalCarrierFightersOut, authority.CarrierShip.Carrier.FightersOut);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipCarrierPolicy(170,
+                authority.Enemy.Id, authority.CarrierShip.Id,
+                AuthoritativeShipCarrierPolicyKind.FightersOut, enabled: false));
+            Assert.IsFalse(session.LastResult.Accepted, "An empire must not change another empire's carrier policy.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(originalCarrierFightersOut, authority.CarrierShip.Carrier.FightersOut);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(new AuthoritativePlayerCommand
+            {
+                Sequence = 171,
+                EmpireId = authority.Player.Id,
+                Kind = AuthoritativePlayerCommandKind.SetShipCarrierPolicy,
+                SubjectId = authority.CarrierShip.Id,
+                TargetId = 255,
+                Text = "1",
+            });
+            Assert.IsFalse(session.LastResult.Accepted, "Unknown carrier-policy kinds must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "Unsupported");
+            Assert.AreEqual(originalCarrierFightersOut, authority.CarrierShip.Carrier.FightersOut);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeFighterDigest = session.LastAuthoritySnapshot.SyncDigest;
+            bool nextFightersOut = !authority.CarrierShip.Carrier.FightersOut;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipCarrierPolicy(165,
+                authority.Player.Id, authority.CarrierShip.Id,
+                AuthoritativeShipCarrierPolicyKind.FightersOut, enabled: nextFightersOut));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(nextFightersOut, authority.CarrierShip.Carrier.FightersOut);
+            Assert.AreEqual(nextFightersOut, client.CarrierShip.Carrier.FightersOut);
+            Assert.AreNotEqual(beforeFighterDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover fighter-carrier launch flags.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeTroopsDigest = session.LastAuthoritySnapshot.SyncDigest;
+            bool nextTroopsOut = !authority.TroopCarrierShip.Carrier.TroopsOut;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipCarrierPolicy(166,
+                authority.Player.Id, authority.TroopCarrierShip.Id,
+                AuthoritativeShipCarrierPolicyKind.TroopsOut, enabled: nextTroopsOut));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(nextTroopsOut, authority.TroopCarrierShip.Carrier.TroopsOut);
+            Assert.AreEqual(nextTroopsOut, client.TroopCarrierShip.Carrier.TroopsOut);
+            Assert.AreNotEqual(beforeTroopsDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover troop-carrier launch flags.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRecallDigest = session.LastAuthoritySnapshot.SyncDigest;
+            bool nextRecall = !authority.CarrierShip.Carrier.RecallFightersBeforeFTL;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipCarrierPolicy(167,
+                authority.Player.Id, authority.CarrierShip.Id,
+                AuthoritativeShipCarrierPolicyKind.RecallFightersBeforeFTL, enabled: nextRecall));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(nextRecall, authority.CarrierShip.Carrier.RecallFightersBeforeFTL);
+            Assert.AreEqual(!nextRecall, authority.CarrierShip.ManualHangarOverride);
+            Assert.AreEqual(nextRecall, client.CarrierShip.Carrier.RecallFightersBeforeFTL);
+            Assert.AreEqual(!nextRecall, client.CarrierShip.ManualHangarOverride);
+            Assert.AreNotEqual(beforeRecallDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover recall/manual-hangar flags.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeBoardDigest = session.LastAuthoritySnapshot.SyncDigest;
+            bool nextBoard = !authority.TroopCarrierShip.Carrier.AllowBoardShip;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipCarrierPolicy(168,
+                authority.Player.Id, authority.TroopCarrierShip.Id,
+                AuthoritativeShipCarrierPolicyKind.AllowBoardShip, enabled: nextBoard));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(nextBoard, authority.TroopCarrierShip.Carrier.AllowBoardShip);
+            Assert.AreEqual(nextBoard, client.TroopCarrierShip.Carrier.AllowBoardShip);
+            Assert.AreNotEqual(beforeBoardDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover ship-board policy flags.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientContext_SubmitsShipSpecialOrderWithoutLocalMutation_Headless()
     {
         const ulong Seed = 0xE7010CUL;
@@ -3817,6 +3933,154 @@ public class Authoritative4XSessionTests : StarDriveTest
                     Authoritative4XClientContext.TrySubmitSetShipTradePolicy(world.FreighterShip,
                         (AuthoritativeShipTradePolicyKind)255, enabled: true));
                 Assert.AreEqual(2, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsShipCarrierPolicyWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xCA441002UL;
+        BuiltWorld world = BuildWorld(Seed, includeCarrierPolicyShips: true);
+
+        try
+        {
+            Assert.IsTrue(world.CarrierShip.Carrier.HasFighterBays,
+                "The passive carrier-policy proof must operate on a real fighter carrier.");
+            Assert.IsTrue(world.TroopCarrierShip.Carrier.HasTroopBays,
+                "The passive carrier-policy proof must operate on a real troop/assault carrier.");
+            bool originalFightersOut = world.CarrierShip.Carrier.FightersOut;
+            bool originalRecall = world.CarrierShip.Carrier.RecallFightersBeforeFTL;
+            bool originalManualOverride = world.CarrierShip.ManualHangarOverride;
+            bool originalTroopsOut = world.TroopCarrierShip.Carrier.TroopsOut;
+            bool originalSendTroops = world.TroopCarrierShip.Carrier.SendTroopsToShip;
+            bool originalAllowBoard = world.TroopCarrierShip.Carrier.AllowBoardShip;
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2280))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetShipCarrierPolicy(world.CarrierShip,
+                        AuthoritativeShipCarrierPolicyKind.FightersOut, enabled: !originalFightersOut));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2280, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetShipCarrierPolicy, submitted[0].Kind);
+                Assert.AreEqual(world.CarrierShip.Id, submitted[0].SubjectId);
+                Assert.AreEqual((int)AuthoritativeShipCarrierPolicyKind.FightersOut, submitted[0].TargetId);
+                Assert.AreEqual(!originalFightersOut ? "1" : "0", submitted[0].Text);
+                Assert.AreEqual(originalFightersOut, world.CarrierShip.Carrier.FightersOut,
+                    "Passive MP clients must not locally launch/recover fighters before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetShipCarrierPolicy(world.CarrierShip,
+                        AuthoritativeShipCarrierPolicyKind.RecallFightersBeforeFTL, enabled: !originalRecall));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(2281, submitted[1].Sequence);
+                Assert.AreEqual((int)AuthoritativeShipCarrierPolicyKind.RecallFightersBeforeFTL, submitted[1].TargetId);
+                Assert.AreEqual(originalRecall, world.CarrierShip.Carrier.RecallFightersBeforeFTL,
+                    "Passive MP clients must not locally change recall policy before host acceptance.");
+                Assert.AreEqual(originalManualOverride, world.CarrierShip.ManualHangarOverride);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetShipCarrierPolicy(world.TroopCarrierShip,
+                        AuthoritativeShipCarrierPolicyKind.TroopsOut, enabled: !originalTroopsOut));
+                Assert.AreEqual(3, submitted.Count);
+                Assert.AreEqual(2282, submitted[2].Sequence);
+                Assert.AreEqual((int)AuthoritativeShipCarrierPolicyKind.TroopsOut, submitted[2].TargetId);
+                Assert.AreEqual(originalTroopsOut, world.TroopCarrierShip.Carrier.TroopsOut,
+                    "Passive MP clients must not locally launch/recover assault shuttles before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetShipCarrierPolicy(world.TroopCarrierShip,
+                        AuthoritativeShipCarrierPolicyKind.SendTroopsToShip, enabled: !originalSendTroops));
+                Assert.AreEqual(4, submitted.Count);
+                Assert.AreEqual(2283, submitted[3].Sequence);
+                Assert.AreEqual((int)AuthoritativeShipCarrierPolicyKind.SendTroopsToShip, submitted[3].TargetId);
+                Assert.AreEqual(originalSendTroops, world.TroopCarrierShip.Carrier.SendTroopsToShip);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetShipCarrierPolicy(world.TroopCarrierShip,
+                        AuthoritativeShipCarrierPolicyKind.AllowBoardShip, enabled: !originalAllowBoard));
+                Assert.AreEqual(5, submitted.Count);
+                Assert.AreEqual(2284, submitted[4].Sequence);
+                Assert.AreEqual((int)AuthoritativeShipCarrierPolicyKind.AllowBoardShip, submitted[4].TargetId);
+                Assert.AreEqual(originalAllowBoard, world.TroopCarrierShip.Carrier.AllowBoardShip);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetShipCarrierPolicy(world.Ship,
+                        AuthoritativeShipCarrierPolicyKind.FightersOut, enabled: true));
+                Assert.AreEqual(5, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetShipCarrierPolicy(world.CarrierShip,
+                        (AuthoritativeShipCarrierPolicyKind)255, enabled: true));
+                Assert.AreEqual(5, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void ShipCarrierPolicyUiHelpers_SubmitAuthoritativeCommandWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xCA441003UL;
+        BuiltWorld world = BuildWorld(Seed, includeCarrierPolicyShips: true);
+
+        try
+        {
+            var ordersMethod = typeof(OrdersButton).GetMethod("SetCarrierPolicy",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            var shipInfoMethod = typeof(ShipInfoUIElement).GetMethod("SetCarrierPolicy",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            Assert.IsNotNull(ordersMethod,
+                "The multi-select OrdersButton carrier buttons should route through a small authoritative helper.");
+            Assert.IsNotNull(shipInfoMethod,
+                "The single-ship info carrier buttons should route through a small authoritative helper.");
+
+            bool originalFightersOut = world.CarrierShip.Carrier.FightersOut;
+            bool originalAllowBoard = world.TroopCarrierShip.Carrier.AllowBoardShip;
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2290))
+            {
+                ordersMethod.Invoke(null, new object[]
+                {
+                    world.CarrierShip,
+                    AuthoritativeShipCarrierPolicyKind.FightersOut,
+                    !originalFightersOut,
+                    new Action<bool>(v => world.CarrierShip.Carrier.FightersOut = v)
+                });
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2290, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetShipCarrierPolicy, submitted[0].Kind);
+                Assert.AreEqual(world.CarrierShip.Id, submitted[0].SubjectId);
+                Assert.AreEqual((int)AuthoritativeShipCarrierPolicyKind.FightersOut, submitted[0].TargetId);
+                Assert.AreEqual(originalFightersOut, world.CarrierShip.Carrier.FightersOut,
+                    "The multi-select carrier button must not locally launch/recover fighters before host acceptance.");
+
+                shipInfoMethod.Invoke(null, new object[]
+                {
+                    world.TroopCarrierShip,
+                    AuthoritativeShipCarrierPolicyKind.AllowBoardShip,
+                    !originalAllowBoard,
+                    new Action<bool>(v => world.TroopCarrierShip.Carrier.AllowBoardShip = v)
+                });
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(2291, submitted[1].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetShipCarrierPolicy, submitted[1].Kind);
+                Assert.AreEqual(world.TroopCarrierShip.Id, submitted[1].SubjectId);
+                Assert.AreEqual((int)AuthoritativeShipCarrierPolicyKind.AllowBoardShip, submitted[1].TargetId);
+                Assert.AreEqual(originalAllowBoard, world.TroopCarrierShip.Carrier.AllowBoardShip,
+                    "The single-ship carrier button must not locally change boarding policy before host acceptance.");
             }
         }
         finally
@@ -5121,6 +5385,9 @@ public class Authoritative4XSessionTests : StarDriveTest
                 AuthoritativePlayerCommand.SetShipTradePolicy(7, 1, shipId: 77,
                     AuthoritativeShipTradePolicyKind.InterEmpire, enabled: true));
             telemetry.Command("unit", 9,
+                AuthoritativePlayerCommand.SetShipCarrierPolicy(8, 1, shipId: 77,
+                    AuthoritativeShipCarrierPolicyKind.FightersOut, enabled: false));
+            telemetry.Command("unit", 9,
                 AuthoritativePlayerCommand.SetPlanetManualTradeSlots(3, 1, planetId: 88,
                     foodImport: 1, prodImport: 2, coloImport: 3, foodExport: 4, prodExport: 5, coloExport: 6));
             telemetry.Command("unit", 9,
@@ -5139,6 +5406,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             StringAssert.Contains(text, "freighter=\\'Freighter\\'");
             StringAssert.Contains(text, "summary='payload=ShipPlanetOrder order=Colonize clear=False move=Aggressive'");
             StringAssert.Contains(text, "summary='payload=ShipTradePolicy kind=InterEmpire enabled=True'");
+            StringAssert.Contains(text, "summary='payload=ShipCarrierPolicy kind=FightersOut enabled=False'");
             StringAssert.Contains(text, "summary='payload=ManualTradeSlots import=1,2,3 export=4,5,6'");
             StringAssert.Contains(text, "summary='payload=Blueprints name=\\'MP Core\\' type=Core buildings=1'");
             StringAssert.Contains(text, "summary='payload=DesignShip encodedChars=320'");
@@ -6397,6 +6665,17 @@ public class Authoritative4XSessionTests : StarDriveTest
         return ship;
     }
 
+    static IShipDesign PickLoadedDesign(Func<IShipDesign, bool> predicate, string label)
+    {
+        IShipDesign ship = ResourceManager.Ships.Designs
+            .Where(d => d.IsValidDesign && predicate(d))
+            .OrderBy(d => d.BaseCost)
+            .ThenBy(d => d.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(ship, $"Loaded content needs at least one {label} design for the authoritative MP proof.");
+        return ship;
+    }
+
     static string PickOptionalAutomationDesign(Empire empire, Func<IShipDesign, bool> predicate)
     {
         return empire.ShipsWeCanBuildSnapshot
@@ -6605,10 +6884,18 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     BuiltWorld BuildWorld(ulong seed, bool extraPlayerPlanet = false, bool includePlatform = false,
-        bool includeNeutralPlanet = false, bool includeColonyShip = false, bool includeFreighter = false)
+        bool includeNeutralPlanet = false, bool includeColonyShip = false, bool includeFreighter = false,
+        bool includeCarrierPolicyShips = false)
     {
         if (includePlatform)
             LoadStarterShips("Platform Base mk1-a");
+        if (includeCarrierPolicyShips)
+        {
+            LoadStarterShips("Heavy Carrier mk5-b",
+                             "Alliance-Class Mk Ia Hvy Assault",
+                             "Assault Shuttle",
+                             "Terran Assault Shuttle");
+        }
 
         CreateUniverseAndPlayerEmpire();
         Planet planet = AddDummyPlanetToEmpire(new Vector2(200_000, 200_000), Player, fertility: 1f, minerals: 1f, maxPop: 5f);
@@ -6635,6 +6922,23 @@ public class Authoritative4XSessionTests : StarDriveTest
             ? SpawnShip(PickBuildableAutomationDesign(Player, s => s.IsFreighter, "freighter").Name,
                 Player, new Vector2(14_000, 4_000))
             : null;
+        Ship carrierShip = includeCarrierPolicyShips
+            ? SpawnShip(PickLoadedDesign(d => d.AllFighterHangars != null && d.AllFighterHangars.Length > 0,
+                    "fighter-carrier").Name,
+                Player, new Vector2(16_000, 4_000))
+            : null;
+        Ship troopCarrierShip = includeCarrierPolicyShips
+            ? SpawnShip(PickLoadedDesign(d => d.Hangars != null && d.Hangars.Any(h => h.IsTroopBay),
+                    "troop-carrier").Name,
+                Player, new Vector2(18_000, 4_000))
+            : null;
+        if (includeCarrierPolicyShips)
+        {
+            Assert.IsTrue(carrierShip.Carrier.HasFighterBays,
+                $"Spawned carrier fixture '{carrierShip.Name}' must have fighter hangars.");
+            Assert.IsTrue(troopCarrierShip.Carrier.HasTroopBays,
+                $"Spawned troop-carrier fixture '{troopCarrierShip.Name}' must have troop/assault bays.");
+        }
         UState.Paused = false;
         UState.NoEliminationVictory = true;
         UState.Objects.EnableParallelUpdate = false;
@@ -6660,6 +6964,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             PlatformShip = platformShip,
             ColonyShip = colonyShip,
             FreighterShip = freighterShip,
+            CarrierShip = carrierShip,
+            TroopCarrierShip = troopCarrierShip,
             ResearchUid = researchUid,
         };
     }

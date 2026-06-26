@@ -86,6 +86,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.ShipLifecycleOrder => ApplyShipLifecycleOrder(command, empire, result),
                 AuthoritativePlayerCommandKind.SetShipCombatStance => ApplyShipCombatStance(command, empire, result),
                 AuthoritativePlayerCommandKind.SetShipTradePolicy => ApplyShipTradePolicy(command, empire, result),
+                AuthoritativePlayerCommandKind.SetShipCarrierPolicy => ApplyShipCarrierPolicy(command, empire, result),
                 AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
@@ -357,6 +358,72 @@ public sealed class Authoritative4XCommandApplicator
             default:
                 return Reject(result, $"Unsupported ship trade policy {command.TargetId}.");
         }
+    }
+
+    AuthoritativeCommandResult ApplyShipCarrierPolicy(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
+            || !Enum.IsDefined(typeof(AuthoritativeShipCarrierPolicyKind),
+                (AuthoritativeShipCarrierPolicyKind)(byte)command.TargetId))
+        {
+            return Reject(result, $"Unsupported ship carrier policy {command.TargetId}.");
+        }
+        if (command.Text is not ("0" or "1"))
+            return Reject(result, "Ship carrier policy enabled flag must be 0 or 1.");
+
+        Ship ship = UState.Objects.FindShip(command.SubjectId);
+        if (ship == null)
+            return Reject(result, $"Ship {command.SubjectId} not found.");
+        if (!ship.Active)
+            return Reject(result, $"Ship {command.SubjectId} is inactive.");
+        if (ship.Loyalty != empire)
+            return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
+
+        var policy = (AuthoritativeShipCarrierPolicyKind)command.TargetId;
+        if (!CanApplyShipCarrierPolicy(ship, policy))
+            return Reject(result, $"Ship {ship.Id} cannot receive carrier policy {policy}.");
+
+        bool enabled = command.Text == "1";
+        switch (policy)
+        {
+            case AuthoritativeShipCarrierPolicyKind.FightersOut:
+                ship.Carrier.FightersOut = enabled;
+                return Accept(result);
+            case AuthoritativeShipCarrierPolicyKind.TroopsOut:
+                ship.Carrier.TroopsOut = enabled;
+                return Accept(result);
+            case AuthoritativeShipCarrierPolicyKind.RecallFightersBeforeFTL:
+                ship.Carrier.SetRecallFightersBeforeFTL(enabled);
+                ship.ManualHangarOverride = !enabled;
+                return Accept(result);
+            case AuthoritativeShipCarrierPolicyKind.SendTroopsToShip:
+                ship.Carrier.SetSendTroopsToShip(enabled);
+                return Accept(result);
+            case AuthoritativeShipCarrierPolicyKind.AllowBoardShip:
+                ship.Carrier.AllowBoardShip = enabled;
+                return Accept(result);
+            default:
+                return Reject(result, $"Unsupported ship carrier policy {command.TargetId}.");
+        }
+    }
+
+    static bool CanApplyShipCarrierPolicy(Ship ship, AuthoritativeShipCarrierPolicyKind policy)
+    {
+        if (ship?.Active != true || ship.Carrier == null)
+            return false;
+
+        return policy switch
+        {
+            AuthoritativeShipCarrierPolicyKind.FightersOut => ship.Carrier.HasFighterBays,
+            AuthoritativeShipCarrierPolicyKind.TroopsOut => ship.Carrier.HasTroopBays,
+            AuthoritativeShipCarrierPolicyKind.SendTroopsToShip => ship.Carrier.HasTroopBays,
+            AuthoritativeShipCarrierPolicyKind.AllowBoardShip => ship.Carrier.HasTroopBays,
+            AuthoritativeShipCarrierPolicyKind.RecallFightersBeforeFTL =>
+                ship.ShipData.Role != RoleName.station
+                && (ship.Carrier.HasFighterBays || ship.Carrier.HasTroopBays),
+            _ => false,
+        };
     }
 
     AuthoritativeCommandResult ApplyAttackShip(AuthoritativePlayerCommand command, Empire empire,

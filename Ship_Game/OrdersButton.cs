@@ -169,8 +169,14 @@ namespace Ship_Game
                             SetTradePolicy(ship, AuthoritativeShipTradePolicyKind.InterEmpire,
                                 !input.RightMouseClick, x => ship.AllowInterEmpireTrade = x);
                             break;
-                        case OrderType.FighterToggle:      ship.Carrier.FightersOut      = !input.RightMouseClick; break;
-                        case OrderType.TroopToggle:        ship.Carrier.TroopsOut        = !input.RightMouseClick; break;
+                        case OrderType.FighterToggle:
+                            SetCarrierPolicy(ship, AuthoritativeShipCarrierPolicyKind.FightersOut,
+                                !input.RightMouseClick, x => ship.Carrier.FightersOut = x);
+                            break;
+                        case OrderType.TroopToggle:
+                            SetCarrierPolicy(ship, AuthoritativeShipCarrierPolicyKind.TroopsOut,
+                                !input.RightMouseClick, x => ship.Carrier.TroopsOut = x);
+                            break;
                         case OrderType.Explore:
                             switch (Authoritative4XClientContext.TrySubmitShipSpecialOrder(ship,
                                         AuthoritativeShipSpecialOrderType.Explore))
@@ -207,8 +213,14 @@ namespace Ship_Game
                                     break;
                             }
                             break;
-                        case OrderType.FighterRecall:      ship.Carrier.SetRecallFightersBeforeFTL(!input.RightMouseClick); break;
-                        case OrderType.SendTroops:         ship.Carrier.SetSendTroopsToShip(!input.RightMouseClick);        break;
+                        case OrderType.FighterRecall:
+                            SetCarrierPolicy(ship, AuthoritativeShipCarrierPolicyKind.RecallFightersBeforeFTL,
+                                !input.RightMouseClick, x => ship.Carrier.SetRecallFightersBeforeFTL(x));
+                            break;
+                        case OrderType.SendTroops:
+                            SetCarrierPolicy(ship, AuthoritativeShipCarrierPolicyKind.SendTroopsToShip,
+                                !input.RightMouseClick, x => ship.Carrier.SetSendTroopsToShip(x));
+                            break;
                     }
                 }
                 return true;
@@ -238,6 +250,20 @@ namespace Ship_Game
             Action<bool> applyLocal)
         {
             switch (Authoritative4XClientContext.TrySubmitSetShipTradePolicy(ship, policy, enabled))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    break;
+                default:
+                    applyLocal(enabled);
+                    break;
+            }
+        }
+
+        static void SetCarrierPolicy(Ship ship, AuthoritativeShipCarrierPolicyKind policy, bool enabled,
+            Action<bool> applyLocal)
+        {
+            switch (Authoritative4XClientContext.TrySubmitSetShipCarrierPolicy(ship, policy, enabled))
             {
                 case Authoritative4XUiCommandResult.Submitted:
                 case Authoritative4XUiCommandResult.Blocked:

@@ -277,6 +277,14 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(s.TransportingProduction ? 1 : 0)
               .Append('|').Append(s.TransportingColonists ? 1 : 0)
               .Append('|').Append(s.AllowInterEmpireTrade ? 1 : 0)
+              .Append('|').Append(s.Carrier?.HasFighterBays == true ? 1 : 0)
+              .Append('|').Append(s.Carrier?.FightersOut == true ? 1 : 0)
+              .Append('|').Append(s.Carrier?.HasTroopBays == true ? 1 : 0)
+              .Append('|').Append(s.Carrier?.TroopsOut == true ? 1 : 0)
+              .Append('|').Append(s.Carrier?.RecallFightersBeforeFTL == true ? 1 : 0)
+              .Append('|').Append(s.Carrier?.SendTroopsToShip == true ? 1 : 0)
+              .Append('|').Append(s.Carrier?.AllowBoardShip == true ? 1 : 0)
+              .Append('|').Append(s.ManualHangarOverride ? 1 : 0)
               .AppendLine();
 
         return sb.ToString();

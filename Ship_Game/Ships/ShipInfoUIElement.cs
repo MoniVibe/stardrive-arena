@@ -674,18 +674,20 @@ namespace Ship_Game.Ships
             {
                 var ob = new OrdersButton(s, OrderType.SendTroops, GameText.SendTroopsToThisShip)
                 {
-                    ValueToModify = new(() => s.Carrier.SendTroopsToShip)
+                    ValueToModify = new(() => s.Carrier.SendTroopsToShip,
+                        x => SetCarrierPolicy(s, AuthoritativeShipCarrierPolicyKind.SendTroopsToShip,
+                            x, v => s.Carrier.SetSendTroopsToShip(v)))
                 };
                 Orders.Add(ob);
 
                 var ob2 = new OrdersButton(s, OrderType.TroopToggle, GameText.TogglesWhetherThisShipsAssault)
                 {
-                    ValueToModify = new(() => s.Carrier.TroopsOut, x => {
-                        s.Carrier.TroopsOut = !s.Carrier.TroopsOut;
-                    }),
-                    RightClickValueToModify = new(() => s.Carrier.AllowBoardShip, x => {
-                        s.Carrier.AllowBoardShip = !s.Carrier.AllowBoardShip;
-                    }),
+                    ValueToModify = new(() => s.Carrier.TroopsOut,
+                        x => SetCarrierPolicy(s, AuthoritativeShipCarrierPolicyKind.TroopsOut,
+                            x, v => s.Carrier.TroopsOut = v)),
+                    RightClickValueToModify = new(() => s.Carrier.AllowBoardShip,
+                        x => SetCarrierPolicy(s, AuthoritativeShipCarrierPolicyKind.AllowBoardShip,
+                            x, v => s.Carrier.AllowBoardShip = v)),
                 };
                 Orders.Add(ob2);
             }
@@ -694,10 +696,9 @@ namespace Ship_Game.Ships
             {
                 var ob = new OrdersButton(s, OrderType.FighterToggle, GameText.WhenActiveAllAvailableFighters)
                 {
-                    ValueToModify = new(() => s.Carrier.FightersOut, x =>
-                    {
-                        s.Carrier.FightersOut = !s.Carrier.FightersOut;
-                    })
+                    ValueToModify = new(() => s.Carrier.FightersOut,
+                        x => SetCarrierPolicy(s, AuthoritativeShipCarrierPolicyKind.FightersOut,
+                            x, v => s.Carrier.FightersOut = v))
                 };
                 Orders.Add(ob);
             }
@@ -707,10 +708,11 @@ namespace Ship_Game.Ships
                 var ob2 = new OrdersButton(s, OrderType.FighterRecall, GameText.ClickToToggleWhetherThis)
                 {
                     ValueToModify = new(() => s.Carrier.RecallFightersBeforeFTL, x =>
+                        SetCarrierPolicy(s, AuthoritativeShipCarrierPolicyKind.RecallFightersBeforeFTL, x, v =>
                         {
-                            s.Carrier.SetRecallFightersBeforeFTL(x);
-                            s.ManualHangarOverride = !x;
-                        }
+                            s.Carrier.SetRecallFightersBeforeFTL(v);
+                            s.ManualHangarOverride = !v;
+                        })
                     )
                 };
                 Orders.Add(ob2);
@@ -763,6 +765,20 @@ namespace Ship_Game.Ships
             Action<bool> applyLocal)
         {
             switch (Authoritative4XClientContext.TrySubmitSetShipTradePolicy(ship, policy, enabled))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    break;
+                default:
+                    applyLocal(enabled);
+                    break;
+            }
+        }
+
+        static void SetCarrierPolicy(Ship ship, AuthoritativeShipCarrierPolicyKind policy, bool enabled,
+            Action<bool> applyLocal)
+        {
+            switch (Authoritative4XClientContext.TrySubmitSetShipCarrierPolicy(ship, policy, enabled))
             {
                 case Authoritative4XUiCommandResult.Submitted:
                 case Authoritative4XUiCommandResult.Blocked:
