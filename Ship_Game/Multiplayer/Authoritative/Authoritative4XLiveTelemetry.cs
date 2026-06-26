@@ -150,6 +150,21 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
             + $"recentEventCapacity={RecentEventCapacity}");
     }
 
+    public void RawHashDrift(Authoritative4XRawHashDrift drift)
+    {
+        if (drift == null)
+            return;
+        AuthoritativeCommandResult result = drift.Result;
+        AuthoritativePlayerCommand command = drift.Command;
+        Write("RAW_HASH_DRIFT",
+            $"sessionId={SessionId} startFingerprint={StartFingerprint} "
+            + $"origin={result?.OriginPeer ?? 0} seq={result?.Sequence ?? 0} kind={command?.Kind.ToString() ?? ""} "
+            + $"tick={drift.ClientSnapshot?.Tick ?? 0} accepted={result?.Accepted ?? false} "
+            + $"authorityHash={SnapshotHash(drift.AuthoritySnapshot)} clientHash={SnapshotHash(drift.ClientSnapshot)} "
+            + $"digest='{drift.AuthoritySnapshot?.SyncDigest ?? ""}' "
+            + "note='canonical digest matched; continuing'");
+    }
+
     public void Control(string source, bool paused, float gameSpeed)
         => Write("CONTROL", $"source={source} paused={paused} speed={gameSpeed:0.###}");
 

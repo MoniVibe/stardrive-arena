@@ -32,6 +32,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
     int HeartbeatSequence = FirstHeartbeatSequence;
     string LastTelemetryResultKey = "";
     string LastTelemetryError = "";
+    string LastTelemetryRawDriftKey = "";
     bool Disposed;
 
     public readonly Authoritative4XLiveRole Role;
@@ -122,6 +123,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
                 Client.Poll();
                 RecordNetworkError();
                 RecordLastResult();
+                RecordRawHashDrift();
                 EnqueuePopups(Client.DrainPopupsForClient());
             }
         }
@@ -270,6 +272,25 @@ public sealed class Authoritative4XLiveSession : IDisposable
 
         LastTelemetryResultKey = key;
         Telemetry?.Result(result, LastSnapshot);
+    }
+
+    void RecordRawHashDrift()
+    {
+        if (Role != Authoritative4XLiveRole.Client)
+            return;
+        Authoritative4XRawHashDrift drift = Client?.LastRawHashDrift;
+        if (drift == null)
+            return;
+
+        string key = $"{drift.Result?.OriginPeer}:{drift.Result?.Sequence}:"
+                     + $"{drift.ClientSnapshot?.Tick}:{drift.AuthoritySnapshot?.HashLo}:"
+                     + $"{drift.AuthoritySnapshot?.HashHi}:{drift.ClientSnapshot?.HashLo}:"
+                     + $"{drift.ClientSnapshot?.HashHi}:{drift.ClientSnapshot?.SyncDigest}";
+        if (string.Equals(key, LastTelemetryRawDriftKey, StringComparison.Ordinal))
+            return;
+
+        LastTelemetryRawDriftKey = key;
+        Telemetry?.RawHashDrift(drift);
     }
 
     void RecordProcessedCommands(bool force = false)

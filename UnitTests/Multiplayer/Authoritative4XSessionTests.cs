@@ -6739,6 +6739,69 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XNetworkClient_AllowsRawHashOnlyDriftWhenCanonicalDigestMatches_Headless()
+    {
+        const ulong Seed = 0x4E7C0DFUL;
+        const int Peer = 2;
+        const int Sequence = 240;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            int port = FreeTcpPort();
+            TcpLockstepTransport hostTransport = TcpLockstepTransport.Host(port, Peer);
+            TcpLockstepTransport clientTransport = TcpLockstepTransport.Join("127.0.0.1", port,
+                Authoritative4XNetworkHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(3)),
+                "Authoritative raw-hash drift proof did not connect to the loopback client.");
+
+            using var networkClient = new Authoritative4XNetworkClient(client.Screen, clientTransport, Peer,
+                new[] { client.Player.Id });
+
+            var command = AuthoritativePlayerCommand.NoOp(Sequence, authority.Player.Id);
+            var result = new AuthoritativeCommandResult
+            {
+                Sequence = Sequence,
+                OriginPeer = Peer,
+                Accepted = false,
+                Tick = 1,
+                Reason = "",
+            };
+            authority.Screen.SingleSimulationStep(new FixedSimTime(1f / 60f));
+            AuthoritativeStateSnapshot snapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 1);
+            snapshot.HashLo ^= 0xABCDEF1234567890UL;
+            snapshot.HashHi ^= 0x1020304050607080UL;
+
+            hostTransport.Send(Peer, command.ToMessage(Peer));
+            hostTransport.Send(Peer, result.ToMessage(Authoritative4XNetworkHost.HostPeerId));
+            hostTransport.Send(Peer, snapshot.ToMessage(Authoritative4XNetworkHost.HostPeerId));
+
+            DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (!NetworkClientCaughtUp(networkClient, Peer, Sequence) && DateTime.UtcNow < deadline)
+            {
+                hostTransport.Poll();
+                networkClient.Poll();
+                System.Threading.Thread.Sleep(5);
+            }
+
+            Assert.IsTrue(NetworkClientCaughtUp(networkClient, Peer, Sequence),
+                $"Timed out waiting for raw-hash drift proof. host='{hostTransport.LastError}' client='{networkClient.LastError}'");
+            Assert.IsNotNull(networkClient.LastRawHashDrift,
+                "A raw hash mismatch with a matching canonical digest should be recorded, not treated as fatal.");
+            Assert.AreEqual(networkClient.LastAuthoritySnapshot.SyncDigest, networkClient.LastClientSnapshot.SyncDigest,
+                "The canonical authoritative digest should remain the sync contract for live 4X replicas.");
+            Assert.AreNotEqual(networkClient.LastAuthoritySnapshot.HashLo, networkClient.LastClientSnapshot.HashLo,
+                "The proof should exercise a genuine raw hash mismatch.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XLiveHost_AttachesPollsAndBroadcastsHeartbeat_Headless()
     {
         const ulong Seed = 0x41E40057UL;

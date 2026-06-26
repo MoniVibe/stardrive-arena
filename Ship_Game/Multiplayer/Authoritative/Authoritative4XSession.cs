@@ -660,6 +660,7 @@ public sealed class Authoritative4XClientReplica
 
     public uint Tick { get; private set; }
     public AuthoritativeStateSnapshot LastSnapshot { get; private set; }
+    public Authoritative4XRawHashDrift LastRawHashDrift { get; private set; }
 
     public Authoritative4XClientReplica(UniverseScreen universe, float dt = 1f / 60f, int[] humanEmpireIds = null)
     {
@@ -684,17 +685,39 @@ public sealed class Authoritative4XClientReplica
         Universe.SingleSimulationStep(Step);
         Tick++;
         LastSnapshot = AuthoritativeStateSnapshot.Capture(Universe, Tick);
-        if (LastSnapshot.HashLo != authoritySnapshot.HashLo || LastSnapshot.HashHi != authoritySnapshot.HashHi
-            || LastSnapshot.SyncDigest != authoritySnapshot.SyncDigest)
+        bool rawHashMismatch = LastSnapshot.HashLo != authoritySnapshot.HashLo
+                               || LastSnapshot.HashHi != authoritySnapshot.HashHi;
+        if (!string.Equals(LastSnapshot.SyncDigest, authoritySnapshot.SyncDigest, StringComparison.Ordinal))
         {
             throw new Authoritative4XSyncMismatchException(command, result, authoritySnapshot, LastSnapshot);
         }
+        LastRawHashDrift = rawHashMismatch
+            ? new Authoritative4XRawHashDrift(command, result, authoritySnapshot, LastSnapshot)
+            : null;
     }
 
     public void ApplySessionControl(bool paused, float gameSpeed)
     {
         Universe.UState.Paused = paused;
         Universe.UState.GameSpeed = float.IsFinite(gameSpeed) ? Math.Clamp(gameSpeed, 0.25f, 8f) : 1f;
+    }
+}
+
+public sealed class Authoritative4XRawHashDrift
+{
+    public readonly AuthoritativePlayerCommand Command;
+    public readonly AuthoritativeCommandResult Result;
+    public readonly AuthoritativeStateSnapshot AuthoritySnapshot;
+    public readonly AuthoritativeStateSnapshot ClientSnapshot;
+
+    public Authoritative4XRawHashDrift(AuthoritativePlayerCommand command,
+        AuthoritativeCommandResult result, AuthoritativeStateSnapshot authoritySnapshot,
+        AuthoritativeStateSnapshot clientSnapshot)
+    {
+        Command = command;
+        Result = result;
+        AuthoritySnapshot = authoritySnapshot;
+        ClientSnapshot = clientSnapshot;
     }
 }
 
@@ -1101,6 +1124,7 @@ public sealed class Authoritative4XNetworkClient : IDisposable
     public AuthoritativeCommandResult LastResult { get; private set; }
     public AuthoritativeStateSnapshot LastAuthoritySnapshot { get; private set; }
     public AuthoritativeStateSnapshot LastClientSnapshot => Replica.LastSnapshot;
+    public Authoritative4XRawHashDrift LastRawHashDrift => Replica.LastRawHashDrift;
     public string LastError => Transport.LastError;
 
     public Authoritative4XNetworkClient(UniverseScreen clientUniverse, TcpLockstepTransport transport,
