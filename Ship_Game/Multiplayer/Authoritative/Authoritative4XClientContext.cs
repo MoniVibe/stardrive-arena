@@ -326,7 +326,7 @@ public sealed class Authoritative4XClientContext : IDisposable
     {
         if (!TryGetFor(fleet?.Owner, out Authoritative4XClientContext context))
             return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
-        if (fleet.Key is < Empire.FirstFleetKey or > Empire.LastFleetKey || !IsLegalFleetName(name))
+        if (!CanSubmitFleetKey(fleet) || !IsLegalFleetName(name))
             return Authoritative4XUiCommandResult.Blocked;
 
         context.Submit(AuthoritativePlayerCommand.RenameFleet(context.Next(), context.EmpireId,
@@ -334,11 +334,23 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitSetFleetIcon(Fleet fleet, int iconIndex)
+    {
+        if (!TryGetFor(fleet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!CanSubmitFleetKey(fleet) || !IsLegalFleetIconIndex(iconIndex))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.SetFleetIcon(context.Next(), context.EmpireId,
+            fleet.Key, iconIndex));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitAutoArrangeFleet(Fleet fleet)
     {
         if (!TryGetFor(fleet?.Owner, out Authoritative4XClientContext context))
             return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
-        if (fleet.Key is < Empire.FirstFleetKey or > Empire.LastFleetKey || fleet.Ships.Count == 0)
+        if (!CanSubmitFleetKey(fleet) || fleet.Ships.Count == 0)
             return Authoritative4XUiCommandResult.Blocked;
 
         context.Submit(AuthoritativePlayerCommand.AutoArrangeFleet(context.Next(), context.EmpireId, fleet.Key));
@@ -350,29 +362,76 @@ public sealed class Authoritative4XClientContext : IDisposable
     {
         if (!TryGetFor(fleet?.Owner, out Authoritative4XClientContext context))
             return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
-        if (fleet.Key is < Empire.FirstFleetKey or > Empire.LastFleetKey)
+        if (!CanSubmitFleetKey(fleet))
             return Authoritative4XUiCommandResult.Blocked;
 
         FleetDataNode[] layout = (nodes ?? Array.Empty<FleetDataNode>()).ToArray();
+        if (!CanSubmitFleetLayout(context, layout))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.SetFleetLayout(context.Next(), context.EmpireId,
+            fleet.Key, layout));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitLoadFleetDesign(Fleet fleet, FleetDesign design)
+    {
+        if (!TryGetFor(fleet?.Owner, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!CanSubmitFleetKey(fleet) || design == null || !IsLegalFleetName(design.Name)
+            || !IsLegalFleetIconIndex(design.FleetIconIndex))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        FleetDataNode[] layout = design.Nodes?.Select(n => n != null ? new FleetDataNode(n) : null).ToArray()
+                                 ?? Array.Empty<FleetDataNode>();
+        if (layout.Length == 0 || !CanSubmitFleetLayout(context, layout)
+            || !CanSubmitSavedFleetDesignLayout(fleet.Owner, layout))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.SetFleetLayout(context.Next(), context.EmpireId,
+            fleet.Key, layout));
+        context.Submit(AuthoritativePlayerCommand.RenameFleet(context.Next(), context.EmpireId,
+            fleet.Key, design.Name.Trim()));
+        context.Submit(AuthoritativePlayerCommand.SetFleetIcon(context.Next(), context.EmpireId,
+            fleet.Key, design.FleetIconIndex));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    static bool CanSubmitFleetLayout(Authoritative4XClientContext context, FleetDataNode[] layout)
+    {
         if (layout.Length > 200
             || layout.Any(n => n == null || n.Goal != null || string.IsNullOrWhiteSpace(n.ShipName ?? n.Ship?.Name)))
         {
-            return Authoritative4XUiCommandResult.Blocked;
+            return false;
         }
 
         Ship[] ships = layout.Select(n => n.Ship).Where(s => s != null).ToArray();
         if (ships.Any(s => s.Active != true || s.Loyalty?.Id != context.EmpireId || !s.CanBeAddedToFleets())
             || ships.Select(s => s.Id).Distinct().Count() != ships.Length)
         {
-            return Authoritative4XUiCommandResult.Blocked;
+            return false;
         }
 
-        if (layout.Any(n => !IsFiniteFleetLayoutNode(n) || !Enum.IsDefined(typeof(CombatState), n.CombatState)))
-            return Authoritative4XUiCommandResult.Blocked;
+        return layout.All(n => IsFiniteFleetLayoutNode(n) && Enum.IsDefined(typeof(CombatState), n.CombatState));
+    }
 
-        context.Submit(AuthoritativePlayerCommand.SetFleetLayout(context.Next(), context.EmpireId,
-            fleet.Key, layout));
-        return Authoritative4XUiCommandResult.Submitted;
+    static bool CanSubmitSavedFleetDesignLayout(Empire empire, FleetDataNode[] layout)
+    {
+        foreach (FleetDataNode node in layout)
+        {
+            if (node.Ship != null)
+                continue;
+            if (!ResourceManager.Ships.GetDesign(node.ShipName, out IShipDesign design)
+                || !empire.CanBuildShip(design))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static Authoritative4XUiCommandResult TrySubmitQueueFleetRequisition(Fleet fleet, bool rush,
@@ -1127,6 +1186,12 @@ public sealed class Authoritative4XClientContext : IDisposable
         return trimmed.Length is > 0 and <= 40
             && trimmed.All(c => !char.IsControl(c));
     }
+
+    static bool IsLegalFleetIconIndex(int iconIndex)
+        => iconIndex is >= 1 and <= 30;
+
+    static bool CanSubmitFleetKey(Fleet fleet)
+        => fleet != null && fleet.Key is >= Empire.FirstFleetKey and <= Empire.LastFleetKey;
 
     static bool CanSubmitShipSpecialOrder(Ship ship, AuthoritativeShipSpecialOrderType orderType)
     {

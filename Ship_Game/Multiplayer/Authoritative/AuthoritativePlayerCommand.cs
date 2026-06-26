@@ -69,6 +69,7 @@ public enum AuthoritativePlayerCommandKind : byte
     BuildCapitalHere = 53,
     QueueFleetRequisition = 54,
     ShipTargetOrder = 55,
+    SetFleetIcon = 56,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -696,6 +697,16 @@ public sealed class AuthoritativePlayerCommand
             Kind = AuthoritativePlayerCommandKind.RenameFleet,
             SubjectId = fleetKey,
             Text = name ?? "",
+        };
+
+    public static AuthoritativePlayerCommand SetFleetIcon(int sequence, int empireId, int fleetKey, int iconIndex)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.SetFleetIcon,
+            SubjectId = fleetKey,
+            TargetId = iconIndex,
         };
 
     public static AuthoritativePlayerCommand AutoArrangeFleet(int sequence, int empireId, int fleetKey)

@@ -395,6 +395,20 @@ namespace Ship_Game
         public void LoadFleetDesign(FileInfo file)
         {
             FleetDesign data = YamlParser.Deserialize<FleetDesign>(file);
+            switch (Authoritative4XClientContext.TrySubmitLoadFleetDesign(SelectedFleet, data))
+            {
+                case Authoritative4XUiCommandResult.Submitted:
+                case Authoritative4XUiCommandResult.Blocked:
+                    return;
+                case Authoritative4XUiCommandResult.NotActive:
+                    break;
+            }
+
+            ApplyLoadedFleetDesign(data);
+        }
+
+        void ApplyLoadedFleetDesign(FleetDesign data)
+        {
             RemoveSceneObjects(SelectedFleet);
             int currentFleetKey = SelectedFleet.Key;
             SelectedFleet.Reset(fleeIfInCombat: false, clearOrders: true);

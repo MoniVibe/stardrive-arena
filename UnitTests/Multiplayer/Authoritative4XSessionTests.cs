@@ -317,6 +317,14 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(7, copy.SubjectId);
         Assert.AreEqual("Alpha Wing", copy.Text);
 
+        var setFleetIconRequest = AuthoritativePlayerCommand.SetFleetIcon(31, 2, 7, 17)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(setFleetIconRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetFleetIcon, copy.Kind);
+        Assert.AreEqual(7, copy.SubjectId);
+        Assert.AreEqual(17, copy.TargetId);
+
         var autoArrangeFleetRequest = AuthoritativePlayerCommand.AutoArrangeFleet(31, 2, 7)
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(autoArrangeFleetRequest, toPeer: 1));
@@ -2539,6 +2547,87 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XFleetDesignLoadCommands_ReplaceRenameIconAndSync_Headless()
+    {
+        const ulong Seed = 0xF1EE4A13UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+            IShipDesign designOnly = PickMobileBuildableShip(authority.Player);
+            var savedLayout = new[]
+            {
+                new FleetDataNode
+                {
+                    ShipName = designOnly.Name,
+                    RelativeFleetOffset = new Vector2(18_000f, -9_000f),
+                    DPSWeight = 0.77f,
+                    CombatState = CombatState.OrbitLeft,
+                    OrdersRadius = 444_444f,
+                },
+            };
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetFleetLayout(135,
+                authority.Player.Id, fleetKey: 3, savedLayout));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.RenameFleet(136,
+                authority.Player.Id, fleetKey: 3, "Saved Wing"));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetFleetIcon(137,
+                authority.Player.Id, fleetKey: 3, iconIndex: 22));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+
+            Fleet authorityFleet = authority.Player.GetFleetOrNull(3);
+            Fleet clientFleet = client.Player.GetFleetOrNull(3);
+            Assert.IsNotNull(authorityFleet);
+            Assert.IsNotNull(clientFleet);
+            Assert.AreEqual("Saved Wing", authorityFleet.Name);
+            Assert.AreEqual("Saved Wing", clientFleet.Name);
+            Assert.AreEqual(22, authorityFleet.FleetIconIndex);
+            Assert.AreEqual(22, clientFleet.FleetIconIndex);
+            Assert.AreEqual(1, authorityFleet.DataNodes.Count);
+            Assert.AreEqual(1, clientFleet.DataNodes.Count);
+            Assert.AreEqual(designOnly.Name, authorityFleet.DataNodes[0].ShipName);
+            Assert.AreEqual(new Vector2(18_000f, -9_000f), authorityFleet.DataNodes[0].RelativeFleetOffset);
+            Assert.AreEqual(0.77f, authorityFleet.DataNodes[0].DPSWeight);
+            Assert.AreEqual(CombatState.OrbitLeft, authorityFleet.DataNodes[0].CombatState);
+            Assert.AreEqual(444_444f, authorityFleet.DataNodes[0].OrdersRadius);
+            Assert.AreEqual(authorityFleet.DataNodes[0].ShipName, clientFleet.DataNodes[0].ShipName);
+            Assert.AreEqual(authorityFleet.DataNodes[0].RelativeFleetOffset,
+                clientFleet.DataNodes[0].RelativeFleetOffset);
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "Saved fleet load commands must move the canonical digest.");
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, "|Saved Wing|22|");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetFleetIcon(138,
+                authority.Player.Id, fleetKey: 3, iconIndex: 0));
+            Assert.IsFalse(session.LastResult.Accepted, "Fleet icon zero must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "outside");
+            Assert.AreEqual(22, authorityFleet.FleetIconIndex);
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetFleetIcon(139,
+                authority.Player.Id, fleetKey: 4, iconIndex: 22));
+            Assert.IsFalse(session.LastResult.Accepted, "Missing fleets must not accept icon changes.");
+            StringAssert.Contains(session.LastResult.Reason, "not found");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XFleetAutoArrange_UsesFleetLayoutAndSyncs_Headless()
     {
         const ulong Seed = 0xF1EE4A12UL;
@@ -3873,6 +3962,118 @@ public class Authoritative4XSessionTests : StarDriveTest
                     Authoritative4XClientContext.TrySubmitQueueFleetRequisition(fleet, rush: false,
                         new[] { 8 }));
                 Assert.AreEqual(2, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsFleetDesignLoadWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xF1EE7C1EUL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            Fleet fleet = world.Player.CreateFleet(4, null);
+            fleet.AddShips(new[] { world.Ship, world.WingShip });
+            fleet.SetCommandShip(null);
+            fleet.AutoArrange();
+            fleet.Name = "Original Fleet";
+            fleet.FleetIconIndex = 3;
+            int originalNodeCount = fleet.DataNodes.Count;
+            Vector2 originalOffset = fleet.DataNodes[0].RelativeFleetOffset;
+            IShipDesign buildable = PickMobileBuildableShip(world.Player);
+            var design = new FleetDesign
+            {
+                Name = "Saved Wing",
+                FleetIconIndex = 21,
+            };
+            design.Nodes.Add(new FleetDataDesignNode
+            {
+                ShipName = buildable.Name,
+                RelativeFleetOffset = originalOffset + new Vector2(3_000f, -4_000f),
+                DPSWeight = 0.73f,
+                CombatState = CombatState.BroadsideRight,
+                OrdersRadius = 111_111f,
+            });
+
+            var submitted = new List<AuthoritativePlayerCommand>();
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2180))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitLoadFleetDesign(fleet, design));
+                Assert.AreEqual(3, submitted.Count);
+
+                Assert.AreEqual(2180, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetFleetLayout, submitted[0].Kind);
+                Assert.AreEqual(4, submitted[0].SubjectId);
+                Assert.IsTrue(AuthoritativePlayerCommand.TryParseFleetLayout(submitted[0].Text,
+                    out AuthoritativeFleetLayoutNode[] layout));
+                Assert.AreEqual(1, layout.Length);
+                Assert.AreEqual(buildable.Name, layout[0].ShipName);
+                Assert.AreEqual(originalOffset + new Vector2(3_000f, -4_000f), layout[0].Offset);
+                Assert.AreEqual(0.73f, layout[0].DpsWeight);
+                Assert.AreEqual(CombatState.BroadsideRight, layout[0].CombatState);
+                Assert.AreEqual(111_111f, layout[0].OrdersRadius);
+
+                Assert.AreEqual(2181, submitted[1].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.RenameFleet, submitted[1].Kind);
+                Assert.AreEqual(4, submitted[1].SubjectId);
+                Assert.AreEqual("Saved Wing", submitted[1].Text);
+
+                Assert.AreEqual(2182, submitted[2].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetFleetIcon, submitted[2].Kind);
+                Assert.AreEqual(4, submitted[2].SubjectId);
+                Assert.AreEqual(21, submitted[2].TargetId);
+
+                Assert.AreEqual("Original Fleet", fleet.Name,
+                    "Passive MP clients must not locally rename fleets when loading designs before host acceptance.");
+                Assert.AreEqual(3, fleet.FleetIconIndex,
+                    "Passive MP clients must not locally change fleet icons when loading designs before host acceptance.");
+                Assert.AreEqual(originalNodeCount, fleet.DataNodes.Count,
+                    "Passive MP clients must not locally replace fleet layout when loading designs before host acceptance.");
+                Assert.AreEqual(originalOffset, fleet.DataNodes[0].RelativeFleetOffset);
+                Assert.AreSame(fleet, world.WingShip.Fleet,
+                    "Passive MP clients must not locally remove current fleet ships before host acceptance.");
+
+                var invalidIconDesign = new FleetDesign
+                {
+                    Name = "Invalid Icon",
+                    FleetIconIndex = 0,
+                };
+                invalidIconDesign.Nodes.Add(new FleetDataDesignNode
+                {
+                    ShipName = buildable.Name,
+                    RelativeFleetOffset = Vector2.Zero,
+                });
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitLoadFleetDesign(fleet, invalidIconDesign));
+                Assert.AreEqual(3, submitted.Count);
+
+                var missingShipDesign = new FleetDesign
+                {
+                    Name = "Missing Ship",
+                    FleetIconIndex = 7,
+                };
+                missingShipDesign.Nodes.Add(new FleetDataDesignNode
+                {
+                    ShipName = "missing-saved-fleet-ship",
+                    RelativeFleetOffset = Vector2.Zero,
+                });
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitLoadFleetDesign(fleet, missingShipDesign));
+                Assert.AreEqual(3, submitted.Count);
+
+                Fleet enemyFleet = world.Enemy.CreateFleet(4, null);
+                enemyFleet.AddShips(new[] { world.EnemyShip });
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitLoadFleetDesign(enemyFleet, design));
+                Assert.AreEqual(3, submitted.Count);
             }
         }
         finally
