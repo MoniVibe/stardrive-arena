@@ -128,6 +128,8 @@ public sealed class Authoritative4XCommandApplicator
         if (!AnyFleetShipCanMove(fleet))
             return Reject(result, $"Fleet {fleet.Key} has no ships that can receive fleet movement orders.");
 
+        if (fleet.HasPatrolPlan)
+            fleet.ClearPatrol(clearOrders: false);
         fleet.MoveTo(command.Position, direction.Normalized(), order);
         return Accept(result);
     }

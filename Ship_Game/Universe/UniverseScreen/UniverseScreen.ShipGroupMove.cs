@@ -1,6 +1,7 @@
 using Ship_Game.AI;
 using Ship_Game.Audio;
 using Ship_Game.Fleets;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Vector2 = SDGraphics.Vector2;
 
@@ -213,7 +214,8 @@ namespace Ship_Game
                 return;
             }
 
-            fleet.ClearPatrol(clearOrders: false);
+            if (!Authoritative4XClientContext.IsActiveFor(fleet.Owner))
+                fleet.ClearPatrol(clearOrders: false);
             if (wasProjecting)
             {
                 ShipCommands.MoveFleetToLocation(enemyShips, targetShip, targetPlanet, Project.FleetCenter, Project.Direction, fleet);

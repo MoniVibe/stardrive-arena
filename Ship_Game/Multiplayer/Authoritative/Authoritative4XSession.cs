@@ -11,6 +11,7 @@ using Ship_Game.Determinism;
 using Ship_Game.Fleets;
 using Ship_Game.Gameplay;
 using Ship_Game.Ships;
+using Ship_Game.Ships.AI;
 using Ship_Game.Universe;
 
 namespace Ship_Game.Multiplayer.Authoritative;
@@ -118,6 +119,7 @@ public sealed class AuthoritativeStateSnapshot
                   .Append('|').Append(FloatBits(f.FinalDirection.Y))
                   .Append('|').Append(FleetShipSignature(f))
                   .Append('|').Append(FleetNodeSignature(f))
+                  .Append('|').Append(FleetPatrolSignature(f))
                   .AppendLine();
         }
 
@@ -229,6 +231,30 @@ public sealed class AuthoritativeStateSnapshot
             .ThenBy(n => n.RelativeFleetOffset.Y)
             .Select(n => string.Create(CultureInfo.InvariantCulture,
                 $"{n.Ship?.Id ?? 0},{n.ShipName ?? ""},{FloatBits(n.RelativeFleetOffset.X):X8},{FloatBits(n.RelativeFleetOffset.Y):X8}")));
+
+    static string FleetPatrolSignature(Fleet fleet)
+    {
+        if (fleet?.HasPatrolPlan != true)
+            return "none";
+
+        FleetPatrol patrol = fleet.Patrol;
+        WayPoint[] waypoints = patrol.WayPoints.ToArray();
+        var sb = new StringBuilder(64 + waypoints.Length * 32);
+        sb.Append(patrol.Name ?? "")
+          .Append(',').Append(patrol.CurrentWaypointIndexForSync)
+          .Append(',').Append(waypoints.Length);
+        for (int i = 0; i < waypoints.Length; ++i)
+        {
+            WayPoint wp = waypoints[i];
+            sb.Append(';')
+              .Append(FloatBits(wp.Position.X).ToString("X8", CultureInfo.InvariantCulture)).Append(',')
+              .Append(FloatBits(wp.Position.Y).ToString("X8", CultureInfo.InvariantCulture)).Append(',')
+              .Append(FloatBits(wp.Direction.X).ToString("X8", CultureInfo.InvariantCulture)).Append(',')
+              .Append(FloatBits(wp.Direction.Y).ToString("X8", CultureInfo.InvariantCulture)).Append(',')
+              .Append(wp.IsDetour ? 1 : 0);
+        }
+        return sb.ToString();
+    }
 
     static string ShipOrderQueueSignature(Ship ship)
     {

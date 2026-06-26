@@ -9,6 +9,7 @@ using Ship_Game.Gameplay;
 using Ship_Game.Fleets;
 using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
+using Ship_Game.Ships.AI;
 using Ship_Game.Universe;
 using System;
 using System.Collections.Generic;
@@ -1128,7 +1129,14 @@ public class Authoritative4XSessionTests : StarDriveTest
             Fleet clientFleet = client.Player.GetFleetOrNull(3);
             Assert.IsNotNull(authorityFleet);
             Assert.IsNotNull(clientFleet);
+            authorityFleet.CreatePatrol(TestPatrolWaypoints(authorityFleet.FinalPosition));
+            clientFleet.CreatePatrol(TestPatrolWaypoints(clientFleet.FinalPosition));
+            Assert.IsTrue(authorityFleet.HasPatrolPlan);
+            Assert.IsTrue(clientFleet.HasPatrolPlan);
             string beforeMoveDigest = session.LastAuthoritySnapshot.SyncDigest;
+            string patrolDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+            Assert.AreEqual(patrolDigest, AuthoritativeStateSnapshot.Capture(client.Screen, 0).SyncDigest,
+                "The patrol setup must start synchronized before the authoritative move clears it.");
 
             Vector2 destination = new(90_000f, -24_000f);
             Vector2 direction = new(0f, -1f);
@@ -1147,8 +1155,14 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(authorityFleet.FinalPosition + authority.WingShip.FleetOffset, authority.WingShip.AI.MovePosition);
             Assert.AreEqual(clientFleet.FinalPosition + client.Ship.FleetOffset, client.Ship.AI.MovePosition);
             Assert.AreEqual(clientFleet.FinalPosition + client.WingShip.FleetOffset, client.WingShip.AI.MovePosition);
+            Assert.IsFalse(authorityFleet.HasPatrolPlan,
+                "Accepted fleet movement should clear an active patrol on the authority.");
+            Assert.IsFalse(clientFleet.HasPatrolPlan,
+                "Accepted fleet movement should clear the replicated patrol state.");
             Assert.AreNotEqual(beforeMoveDigest, session.LastAuthoritySnapshot.SyncDigest,
                 "The authoritative sync digest must cover fleet destination and formation movement.");
+            Assert.AreNotEqual(patrolDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover fleet patrol clearing.");
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
             string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
@@ -1548,10 +1562,12 @@ public class Authoritative4XSessionTests : StarDriveTest
             fleet.SetCommandShip(null);
             fleet.AutoArrange();
             fleet.Update(FixedSimTime.Zero);
+            fleet.CreatePatrol(TestPatrolWaypoints(fleet.FinalPosition));
 
             Vector2 originalFinalPosition = fleet.FinalPosition;
             Vector2 originalShipMove = world.Ship.AI.MovePosition;
             AIState originalShipState = world.Ship.AI.State;
+            FleetPatrol originalPatrol = fleet.Patrol;
             var submitted = new List<AuthoritativePlayerCommand>();
 
             using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
@@ -1575,6 +1591,9 @@ public class Authoritative4XSessionTests : StarDriveTest
                     "Passive MP clients must not locally move fleets before host acceptance.");
                 Assert.AreEqual(originalShipMove, world.Ship.AI.MovePosition);
                 Assert.AreEqual(originalShipState, world.Ship.AI.State);
+                Assert.IsTrue(fleet.HasPatrolPlan,
+                    "Passive MP clients must not locally clear fleet patrols before host acceptance.");
+                Assert.AreSame(originalPatrol, fleet.Patrol);
 
                 Fleet empty = world.Player.CreateFleet(5, null);
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
@@ -3490,6 +3509,17 @@ public class Authoritative4XSessionTests : StarDriveTest
         session.SubmitFromClient(targetPeer, AuthoritativePlayerCommand.DiplomacyResponse(sequence + 1,
             targetEmpire, offer.ProposalId, AuthoritativeDiplomacyResponseKind.Accept));
         AssertAccepted(session, targetPeer);
+    }
+
+    static WayPoints TestPatrolWaypoints(Vector2 origin)
+    {
+        var waypoints = new WayPoints();
+        waypoints.Set(new[]
+        {
+            new WayPoint(origin + new Vector2(4_000f, 0f), new Vector2(1f, 0f)),
+            new WayPoint(origin + new Vector2(4_000f, 4_000f), new Vector2(0f, 1f)),
+        });
+        return waypoints;
     }
 
     static void AssertAccepted(Authoritative4XInProcessMultiClientSession session, int peer)
