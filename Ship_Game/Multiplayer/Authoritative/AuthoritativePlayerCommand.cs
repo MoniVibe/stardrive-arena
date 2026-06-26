@@ -7,6 +7,7 @@ using SDLockstep;
 using Ship_Game.AI;
 using Ship_Game.Ships.AI;
 using Vector2 = SDGraphics.Vector2;
+using Rectangle = SDGraphics.Rectangle;
 
 namespace Ship_Game.Multiplayer.Authoritative;
 
@@ -62,6 +63,8 @@ public enum AuthoritativePlayerCommandKind : byte
     SetEmpireAutomation = 47,
     SetShipTradePolicy = 48,
     SetShipCarrierPolicy = 49,
+    SetShipTradeRoute = 50,
+    SetShipAreaOfOperation = 51,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -185,6 +188,12 @@ public enum AuthoritativeShipCarrierPolicyKind : byte
     RecallFightersBeforeFTL = 3,
     SendTroopsToShip = 4,
     AllowBoardShip = 5,
+}
+
+public enum AuthoritativeShipAreaOfOperationAction : byte
+{
+    AddRectangle = 1,
+    RemoveAtPoint = 2,
 }
 
 public enum AuthoritativeShipLifecycleOrderType : byte
@@ -787,6 +796,30 @@ public sealed class AuthoritativePlayerCommand
             Text = enabled ? "1" : "0",
         };
 
+    public static AuthoritativePlayerCommand SetShipTradeRoute(int sequence, int empireId, int shipId,
+        int planetId, bool enabled)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.SetShipTradeRoute,
+            SubjectId = shipId,
+            TargetId = planetId,
+            Text = enabled ? "1" : "0",
+        };
+
+    public static AuthoritativePlayerCommand SetShipAreaOfOperation(int sequence, int empireId, int shipId,
+        AuthoritativeShipAreaOfOperationAction action, Rectangle areaOrPoint)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.SetShipAreaOfOperation,
+            SubjectId = shipId,
+            TargetId = (int)action,
+            Text = EncodeRectanglePayload(areaOrPoint),
+        };
+
     public static AuthoritativePlayerCommand AttackShip(int sequence, int empireId, int shipId, int targetShipId,
         bool queue = false)
         => new()
@@ -1116,6 +1149,27 @@ public sealed class AuthoritativePlayerCommand
         }
 
         vector = new Vector2(FloatFromBits(xBits), FloatFromBits(yBits));
+        return true;
+    }
+
+    public static string EncodeRectanglePayload(Rectangle rectangle)
+        => string.Create(CultureInfo.InvariantCulture,
+            $"{rectangle.X}|{rectangle.Y}|{rectangle.Width}|{rectangle.Height}");
+
+    public static bool TryParseRectanglePayload(string payload, out Rectangle rectangle)
+    {
+        rectangle = default;
+        string[] parts = (payload ?? "").Split('|');
+        if (parts.Length != 4
+            || !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int x)
+            || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int y)
+            || !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int width)
+            || !int.TryParse(parts[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int height))
+        {
+            return false;
+        }
+
+        rectangle = new Rectangle(x, y, width, height);
         return true;
     }
 

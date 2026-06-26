@@ -285,6 +285,8 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(s.Carrier?.SendTroopsToShip == true ? 1 : 0)
               .Append('|').Append(s.Carrier?.AllowBoardShip == true ? 1 : 0)
               .Append('|').Append(s.ManualHangarOverride ? 1 : 0)
+              .Append('|').Append(TradeRouteSignature(s))
+              .Append('|').Append(AreaOfOperationSignature(s))
               .AppendLine();
 
         return sb.ToString();
@@ -316,6 +318,28 @@ public sealed class AuthoritativeStateSnapshot
             string.Join(",", blueprints.PlannedBuildingsWeCanBuild
                 .Select(building => building.Name)
                 .OrderBy(name => name, StringComparer.Ordinal)));
+    }
+
+    static string TradeRouteSignature(Ship ship)
+    {
+        if (ship?.TradeRoutes == null || ship.TradeRoutes.Count == 0)
+            return "";
+
+        return string.Join(",", ship.TradeRoutes.OrderBy(id => id));
+    }
+
+    static string AreaOfOperationSignature(Ship ship)
+    {
+        if (ship?.AreaOfOperation == null || ship.AreaOfOperation.Count == 0)
+            return "";
+
+        return string.Join(";", ship.AreaOfOperation
+            .OrderBy(r => r.X)
+            .ThenBy(r => r.Y)
+            .ThenBy(r => r.Width)
+            .ThenBy(r => r.Height)
+            .Select(r => string.Create(CultureInfo.InvariantCulture,
+                $"{r.X},{r.Y},{r.Width},{r.Height}")));
     }
 
     static string DesignSlotSignature(IShipDesign design)

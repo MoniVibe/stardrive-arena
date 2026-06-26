@@ -549,6 +549,31 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual((int)AuthoritativeShipCarrierPolicyKind.FightersOut, copy.TargetId);
         Assert.AreEqual("1", copy.Text);
 
+        var tradeRouteRequest = AuthoritativePlayerCommand.SetShipTradeRoute(37, 2, 99,
+                planetId: 456, enabled: true)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(tradeRouteRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetShipTradeRoute, copy.Kind);
+        Assert.AreEqual(99, copy.SubjectId);
+        Assert.AreEqual(456, copy.TargetId);
+        Assert.AreEqual("1", copy.Text);
+
+        var area = new Rectangle(-1000, 2000, 6000, 7000);
+        var areaRequest = AuthoritativePlayerCommand.SetShipAreaOfOperation(38, 2, 99,
+                AuthoritativeShipAreaOfOperationAction.AddRectangle, area)
+            .ToMessage(fromPeer: 2);
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(areaRequest, toPeer: 1));
+        copy = (AuthoritativeCommandRequestMessage)decoded.Message;
+        Assert.AreEqual((byte)AuthoritativePlayerCommandKind.SetShipAreaOfOperation, copy.Kind);
+        Assert.AreEqual(99, copy.SubjectId);
+        Assert.AreEqual((int)AuthoritativeShipAreaOfOperationAction.AddRectangle, copy.TargetId);
+        Assert.IsTrue(AuthoritativePlayerCommand.TryParseRectanglePayload(copy.Text, out Rectangle parsedArea));
+        Assert.AreEqual(area.X, parsedArea.X);
+        Assert.AreEqual(area.Y, parsedArea.Y);
+        Assert.AreEqual(area.Width, parsedArea.Width);
+        Assert.AreEqual(area.Height, parsedArea.Height);
+
         var attackRequest = AuthoritativePlayerCommand.AttackShip(12, 2, 99, 100, queue: true)
             .ToMessage(fromPeer: 2);
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(attackRequest, toPeer: 1));
@@ -3654,6 +3679,114 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XShipTradeRouteAndAreaOfOperation_SyncsAndRejectsInvalidRequests_Headless()
+    {
+        const ulong Seed = 0x71ADE101UL;
+        BuiltWorld authority = BuildWorld(Seed, includeFreighter: true);
+        BuiltWorld client = BuildWorld(Seed, includeFreighter: true);
+
+        try
+        {
+            Assert.IsTrue(authority.FreighterShip.IsFreighter,
+                "The route/AO proof must operate on a real freighter.");
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipTradeRoute(172,
+                authority.Player.Id, authority.FreighterShip.Id, authority.Planet.Id, enabled: true));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.FreighterShip.TradeRoutes.Contains(authority.Planet.Id));
+            Assert.IsTrue(client.FreighterShip.TradeRoutes.Contains(client.Planet.Id));
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover freighter route lists.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRemoveRouteDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipTradeRoute(173,
+                authority.Player.Id, authority.FreighterShip.Id, authority.Planet.Id, enabled: false));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsFalse(authority.FreighterShip.TradeRoutes.Contains(authority.Planet.Id));
+            Assert.IsFalse(client.FreighterShip.TradeRoutes.Contains(client.Planet.Id));
+            Assert.AreNotEqual(beforeRemoveRouteDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeAreaDigest = session.LastAuthoritySnapshot.SyncDigest;
+            var area = new Rectangle(-12_000, -8_000, 6_000, 7_000);
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipAreaOfOperation(174,
+                authority.Player.Id, authority.FreighterShip.Id,
+                AuthoritativeShipAreaOfOperationAction.AddRectangle, area));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(HasArea(authority.FreighterShip, area));
+            Assert.IsTrue(HasArea(client.FreighterShip, area));
+            Assert.AreNotEqual(beforeAreaDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "The authoritative sync digest must cover freighter AO rectangles.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRemoveAreaDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipAreaOfOperation(175,
+                authority.Player.Id, authority.FreighterShip.Id,
+                AuthoritativeShipAreaOfOperationAction.RemoveAtPoint,
+                new Rectangle(-11_000, -7_000, 0, 0)));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsFalse(HasArea(authority.FreighterShip, area));
+            Assert.IsFalse(HasArea(client.FreighterShip, area));
+            Assert.AreNotEqual(beforeRemoveAreaDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipTradeRoute(176,
+                authority.Player.Id, authority.Ship.Id, authority.Planet.Id, enabled: true));
+            Assert.IsFalse(session.LastResult.Accepted, "Non-freighters must reject trade-route changes.");
+            StringAssert.Contains(session.LastResult.Reason, "not a freighter");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipTradeRoute(177,
+                authority.Player.Id, authority.FreighterShip.Id, planetId: 999_999, enabled: true));
+            Assert.IsFalse(session.LastResult.Accepted, "Missing planets must reject trade-route changes.");
+            StringAssert.Contains(session.LastResult.Reason, "not found");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipTradeRoute(178,
+                authority.Enemy.Id, authority.FreighterShip.Id, authority.Planet.Id, enabled: true));
+            Assert.IsFalse(session.LastResult.Accepted,
+                "An empire must not change another empire's freighter route list.");
+            StringAssert.Contains(session.LastResult.Reason, "not owned");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetShipAreaOfOperation(179,
+                authority.Player.Id, authority.FreighterShip.Id,
+                AuthoritativeShipAreaOfOperationAction.AddRectangle,
+                new Rectangle(0, 0, 4_999, 6_000)));
+            Assert.IsFalse(session.LastResult.Accepted, "Small AO rectangles must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "5000x5000");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            session.SubmitFromClient(new AuthoritativePlayerCommand
+            {
+                Sequence = 180,
+                EmpireId = authority.Player.Id,
+                Kind = AuthoritativePlayerCommandKind.SetShipAreaOfOperation,
+                SubjectId = authority.FreighterShip.Id,
+                TargetId = 255,
+                Text = AuthoritativePlayerCommand.EncodeRectanglePayload(new Rectangle(0, 0, 6_000, 6_000)),
+            });
+            Assert.IsFalse(session.LastResult.Accepted, "Unknown AO actions must be rejected.");
+            StringAssert.Contains(session.LastResult.Reason, "Unsupported");
+            Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XShipCarrierPolicy_SyncsAndRejectsInvalidRequests_Headless()
     {
         const ulong Seed = 0xCA441001UL;
@@ -3933,6 +4066,88 @@ public class Authoritative4XSessionTests : StarDriveTest
                     Authoritative4XClientContext.TrySubmitSetShipTradePolicy(world.FreighterShip,
                         (AuthoritativeShipTradePolicyKind)255, enabled: true));
                 Assert.AreEqual(2, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsShipTradeRouteAndAreaOfOperationWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0x71ADE102UL;
+        BuiltWorld world = BuildWorld(Seed, includeFreighter: true);
+
+        try
+        {
+            Assert.IsTrue(world.FreighterShip.IsFreighter,
+                "The passive route/AO proof must operate on a real freighter.");
+            Assert.IsFalse(world.FreighterShip.TradeRoutes.Contains(world.Planet.Id));
+            int originalRouteCount = world.FreighterShip.TradeRoutes.Count;
+            int originalAreaCount = world.FreighterShip.AreaOfOperation.Count;
+            var area = new Rectangle(10_000, 20_000, 6_000, 7_000);
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 2290))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetShipTradeRoute(world.FreighterShip,
+                        world.Planet, enabled: true));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(2290, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetShipTradeRoute, submitted[0].Kind);
+                Assert.AreEqual(world.FreighterShip.Id, submitted[0].SubjectId);
+                Assert.AreEqual(world.Planet.Id, submitted[0].TargetId);
+                Assert.AreEqual("1", submitted[0].Text);
+                Assert.AreEqual(originalRouteCount, world.FreighterShip.TradeRoutes.Count,
+                    "Passive MP clients must not locally add freighter routes before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetShipTradeRoute(world.FreighterShip,
+                        world.Planet, enabled: false));
+                Assert.AreEqual(2, submitted.Count);
+                Assert.AreEqual(2291, submitted[1].Sequence);
+                Assert.AreEqual("0", submitted[1].Text);
+                Assert.AreEqual(originalRouteCount, world.FreighterShip.TradeRoutes.Count,
+                    "Passive MP clients must not locally remove freighter routes before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetShipAreaOfOperation(world.FreighterShip,
+                        AuthoritativeShipAreaOfOperationAction.AddRectangle, area));
+                Assert.AreEqual(3, submitted.Count);
+                Assert.AreEqual(2292, submitted[2].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetShipAreaOfOperation, submitted[2].Kind);
+                Assert.AreEqual(world.FreighterShip.Id, submitted[2].SubjectId);
+                Assert.AreEqual((int)AuthoritativeShipAreaOfOperationAction.AddRectangle, submitted[2].TargetId);
+                Assert.IsTrue(AuthoritativePlayerCommand.TryParseRectanglePayload(submitted[2].Text,
+                    out Rectangle submittedArea));
+                Assert.AreEqual(area.Width, submittedArea.Width);
+                Assert.AreEqual(originalAreaCount, world.FreighterShip.AreaOfOperation.Count,
+                    "Passive MP clients must not locally add AO rectangles before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitSetShipAreaOfOperation(world.FreighterShip,
+                        AuthoritativeShipAreaOfOperationAction.RemoveAtPoint,
+                        new Rectangle(11_000, 21_000, 0, 0)));
+                Assert.AreEqual(4, submitted.Count);
+                Assert.AreEqual(2293, submitted[3].Sequence);
+                Assert.AreEqual((int)AuthoritativeShipAreaOfOperationAction.RemoveAtPoint, submitted[3].TargetId);
+                Assert.AreEqual(originalAreaCount, world.FreighterShip.AreaOfOperation.Count,
+                    "Passive MP clients must not locally remove AO rectangles before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetShipTradeRoute(world.Ship, world.Planet,
+                        enabled: true));
+                Assert.AreEqual(4, submitted.Count);
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitSetShipAreaOfOperation(world.FreighterShip,
+                        AuthoritativeShipAreaOfOperationAction.AddRectangle,
+                        new Rectangle(0, 0, 4_000, 6_000)));
+                Assert.AreEqual(4, submitted.Count);
             }
         }
         finally
@@ -5388,6 +5603,13 @@ public class Authoritative4XSessionTests : StarDriveTest
                 AuthoritativePlayerCommand.SetShipCarrierPolicy(8, 1, shipId: 77,
                     AuthoritativeShipCarrierPolicyKind.FightersOut, enabled: false));
             telemetry.Command("unit", 9,
+                AuthoritativePlayerCommand.SetShipTradeRoute(9, 1, shipId: 77,
+                    planetId: 88, enabled: true));
+            telemetry.Command("unit", 9,
+                AuthoritativePlayerCommand.SetShipAreaOfOperation(10, 1, shipId: 77,
+                    AuthoritativeShipAreaOfOperationAction.AddRectangle,
+                    new Rectangle(1000, 2000, 6000, 7000)));
+            telemetry.Command("unit", 9,
                 AuthoritativePlayerCommand.SetPlanetManualTradeSlots(3, 1, planetId: 88,
                     foodImport: 1, prodImport: 2, coloImport: 3, foodExport: 4, prodExport: 5, coloExport: 6));
             telemetry.Command("unit", 9,
@@ -5407,6 +5629,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             StringAssert.Contains(text, "summary='payload=ShipPlanetOrder order=Colonize clear=False move=Aggressive'");
             StringAssert.Contains(text, "summary='payload=ShipTradePolicy kind=InterEmpire enabled=True'");
             StringAssert.Contains(text, "summary='payload=ShipCarrierPolicy kind=FightersOut enabled=False'");
+            StringAssert.Contains(text, "summary='payload=ShipTradeRoute planet=88 enabled=True'");
+            StringAssert.Contains(text, "summary='payload=ShipAreaOfOperation action=AddRectangle rect=1000,2000,6000,7000'");
             StringAssert.Contains(text, "summary='payload=ManualTradeSlots import=1,2,3 export=4,5,6'");
             StringAssert.Contains(text, "summary='payload=Blueprints name=\\'MP Core\\' type=Core buildings=1'");
             StringAssert.Contains(text, "summary='payload=DesignShip encodedChars=320'");
@@ -6783,6 +7007,13 @@ public class Authoritative4XSessionTests : StarDriveTest
             && g.PlanetBuildingAt == planet
             && string.Equals(g.ToBuild?.Name, designName, StringComparison.Ordinal));
 
+    static bool HasArea(Ship ship, Rectangle expected)
+        => ship?.AreaOfOperation != null
+           && ship.AreaOfOperation.Any(area => area.X == expected.X
+                                               && area.Y == expected.Y
+                                               && area.Width == expected.Width
+                                               && area.Height == expected.Height);
+
     static Troop PickBuildableTroop(Empire empire)
     {
         Troop troop = ResourceManager.GetTroopTemplatesFor(empire)
@@ -6898,6 +7129,7 @@ public class Authoritative4XSessionTests : StarDriveTest
         }
 
         CreateUniverseAndPlayerEmpire();
+        UState.Events.Disabled = true;
         Planet planet = AddDummyPlanetToEmpire(new Vector2(200_000, 200_000), Player, fertility: 1f, minerals: 1f, maxPop: 5f);
         if (extraPlayerPlanet)
             AddDummyPlanetToEmpire(new Vector2(240_000, 200_000), Player, fertility: 1f, minerals: 1f, maxPop: 5f);

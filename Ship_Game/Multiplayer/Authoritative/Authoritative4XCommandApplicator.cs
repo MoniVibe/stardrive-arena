@@ -10,6 +10,7 @@ using Ship_Game.Ships.AI;
 using Ship_Game.Universe;
 using SDUtils;
 using Vector2 = SDGraphics.Vector2;
+using Rectangle = SDGraphics.Rectangle;
 
 namespace Ship_Game.Multiplayer.Authoritative;
 
@@ -87,6 +88,8 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.SetShipCombatStance => ApplyShipCombatStance(command, empire, result),
                 AuthoritativePlayerCommandKind.SetShipTradePolicy => ApplyShipTradePolicy(command, empire, result),
                 AuthoritativePlayerCommandKind.SetShipCarrierPolicy => ApplyShipCarrierPolicy(command, empire, result),
+                AuthoritativePlayerCommandKind.SetShipTradeRoute => ApplyShipTradeRoute(command, empire, result),
+                AuthoritativePlayerCommandKind.SetShipAreaOfOperation => ApplyShipAreaOfOperation(command, empire, result),
                 AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
                 AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
                 _ => Reject(result, $"Unsupported command kind {command.Kind}."),
@@ -357,6 +360,93 @@ public sealed class Authoritative4XCommandApplicator
                 return Accept(result);
             default:
                 return Reject(result, $"Unsupported ship trade policy {command.TargetId}.");
+        }
+    }
+
+    AuthoritativeCommandResult ApplyShipTradeRoute(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (command.Text is not ("0" or "1"))
+            return Reject(result, "Ship trade-route enabled flag must be 0 or 1.");
+
+        Ship ship = UState.Objects.FindShip(command.SubjectId);
+        if (ship == null)
+            return Reject(result, $"Ship {command.SubjectId} not found.");
+        if (!ship.Active)
+            return Reject(result, $"Ship {command.SubjectId} is inactive.");
+        if (ship.Loyalty != empire)
+            return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
+        if (!ship.IsFreighter)
+            return Reject(result, $"Ship {ship.Id} is not a freighter.");
+
+        Planet planet = UState.GetPlanet(command.TargetId);
+        if (planet == null)
+            return Reject(result, $"Planet {command.TargetId} not found.");
+
+        bool enabled = command.Text == "1";
+        if (enabled)
+        {
+            if (!CanApplyTradeRoute(ship, planet))
+                return Reject(result, $"Planet {planet.Id} is not a valid trade route for ship {ship.Id}.");
+
+            ship.AddTradeRoute(planet);
+        }
+        else
+        {
+            ship.RemoveTradeRoute(planet);
+        }
+
+        return Accept(result);
+    }
+
+    static bool CanApplyTradeRoute(Ship ship, Planet planet)
+        => ship?.Active == true
+           && ship.IsFreighter
+           && planet != null
+           && (planet.Owner == ship.Loyalty
+               || ship.Loyalty.IsTradeTreaty(planet.Owner)
+               || planet.IsMineable
+               || planet.IsResearchable);
+
+    AuthoritativeCommandResult ApplyShipAreaOfOperation(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
+            || !Enum.IsDefined(typeof(AuthoritativeShipAreaOfOperationAction),
+                (AuthoritativeShipAreaOfOperationAction)(byte)command.TargetId))
+        {
+            return Reject(result, $"Unsupported ship area-of-operation action {command.TargetId}.");
+        }
+
+        if (!AuthoritativePlayerCommand.TryParseRectanglePayload(command.Text, out Rectangle areaOrPoint))
+            return Reject(result, $"Invalid area-of-operation payload '{command.Text}'.");
+
+        Ship ship = UState.Objects.FindShip(command.SubjectId);
+        if (ship == null)
+            return Reject(result, $"Ship {command.SubjectId} not found.");
+        if (!ship.Active)
+            return Reject(result, $"Ship {command.SubjectId} is inactive.");
+        if (ship.Loyalty != empire)
+            return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
+        if (!ship.IsFreighter)
+            return Reject(result, $"Ship {ship.Id} is not a freighter.");
+
+        ship.AreaOfOperation ??= new Array<Rectangle>();
+        switch ((AuthoritativeShipAreaOfOperationAction)command.TargetId)
+        {
+            case AuthoritativeShipAreaOfOperationAction.AddRectangle:
+                if (areaOrPoint.Width < 5000 || areaOrPoint.Height < 5000)
+                    return Reject(result, "Area-of-operation rectangles must be at least 5000x5000.");
+
+                ship.AreaOfOperation.Add(areaOrPoint);
+                return Accept(result);
+
+            case AuthoritativeShipAreaOfOperationAction.RemoveAtPoint:
+                ship.AreaOfOperation.RemoveFirst(ao => ao.HitTest(new Vector2(areaOrPoint.X, areaOrPoint.Y)));
+                return Accept(result);
+
+            default:
+                return Reject(result, $"Unsupported ship area-of-operation action {command.TargetId}.");
         }
     }
 

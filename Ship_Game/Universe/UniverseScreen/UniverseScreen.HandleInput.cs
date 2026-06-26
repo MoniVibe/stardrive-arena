@@ -953,12 +953,24 @@ namespace Ship_Game
         {
             if (viewState > UnivScreenState.SystemView)
                 return;
+            if (SelectedShip == null)
+                return;
 
             Planet planet = FindPlanetUnderCursor();
             if (planet != null)
             {
                 if (input.LeftMouseClick)
                 {
+                    switch (Authoritative4XClientContext.TrySubmitSetShipTradeRoute(SelectedShip, planet, enabled: true))
+                    {
+                        case Authoritative4XUiCommandResult.Submitted:
+                            GameAudio.AcceptClick();
+                            return;
+                        case Authoritative4XUiCommandResult.Blocked:
+                            GameAudio.NegativeClick();
+                            return;
+                    }
+
                     if (SelectedShip.AddTradeRoute(planet))
                         GameAudio.AcceptClick();
                     else
@@ -966,6 +978,16 @@ namespace Ship_Game
                 }
                 else
                 {
+                    switch (Authoritative4XClientContext.TrySubmitSetShipTradeRoute(SelectedShip, planet, enabled: false))
+                    {
+                        case Authoritative4XUiCommandResult.Submitted:
+                            GameAudio.AffirmativeClick();
+                            return;
+                        case Authoritative4XUiCommandResult.Blocked:
+                            GameAudio.NegativeClick();
+                            return;
+                    }
+
                     SelectedShip.RemoveTradeRoute(planet);
                     GameAudio.AffirmativeClick();
                 }
@@ -982,18 +1004,29 @@ namespace Ship_Game
             if (!LookingAtPlanet && HandleGUIClicks(input))
                 return true;
 
-            if (input.RightMouseClick) // erase existing AOs
-            {
-                Vector2 cursorWorld = UnprojectToWorldPosition(input.CursorPosition);
-                SelectedShip.AreaOfOperation.RemoveFirst(ao => ao.HitTest(cursorWorld));
-                return true;
-            }
-
             // no ship selection? abort
             // Easier out from defining an AO. Used to have to left and Right click at the same time.    -Gretman
             if (SelectedShip == null || input.Escaped)
             {
                 DefiningAO = false;
+                return true;
+            }
+
+            if (input.RightMouseClick) // erase existing AOs
+            {
+                Vector2 cursorWorld = UnprojectToWorldPosition(input.CursorPosition);
+                var point = new Rectangle((int)cursorWorld.X, (int)cursorWorld.Y, 0, 0);
+                switch (Authoritative4XClientContext.TrySubmitSetShipAreaOfOperation(SelectedShip,
+                            AuthoritativeShipAreaOfOperationAction.RemoveAtPoint, point))
+                {
+                    case Authoritative4XUiCommandResult.Submitted:
+                        return true;
+                    case Authoritative4XUiCommandResult.Blocked:
+                        GameAudio.NegativeClick();
+                        return true;
+                }
+
+                SelectedShip.AreaOfOperation.RemoveFirst(ao => ao.HitTest(cursorWorld));
                 return true;
             }
 
@@ -1008,6 +1041,19 @@ namespace Ship_Game
             {
                 if (AORect.Width >= 5000 && AORect.Height >= 5000)
                 {
+                    switch (Authoritative4XClientContext.TrySubmitSetShipAreaOfOperation(SelectedShip,
+                                AuthoritativeShipAreaOfOperationAction.AddRectangle, AORect))
+                    {
+                        case Authoritative4XUiCommandResult.Submitted:
+                            GameAudio.EchoAffirmative();
+                            AORect = Rectangle.Empty;
+                            return true;
+                        case Authoritative4XUiCommandResult.Blocked:
+                            GameAudio.NegativeClick();
+                            AORect = Rectangle.Empty;
+                            return true;
+                    }
+
                     GameAudio.EchoAffirmative();
                     SelectedShip.AreaOfOperation.Add(AORect);
                 }

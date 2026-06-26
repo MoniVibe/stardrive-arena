@@ -261,6 +261,12 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
                 return $"payload=ShipTradePolicy kind={(AuthoritativeShipTradePolicyKind)command.TargetId} enabled={command.Text == "1"}";
             case AuthoritativePlayerCommandKind.SetShipCarrierPolicy:
                 return $"payload=ShipCarrierPolicy kind={(AuthoritativeShipCarrierPolicyKind)command.TargetId} enabled={command.Text == "1"}";
+            case AuthoritativePlayerCommandKind.SetShipTradeRoute:
+                return $"payload=ShipTradeRoute planet={command.TargetId} enabled={command.Text == "1"}";
+            case AuthoritativePlayerCommandKind.SetShipAreaOfOperation:
+                return AuthoritativePlayerCommand.TryParseRectanglePayload(command.Text, out SDGraphics.Rectangle area)
+                    ? $"payload=ShipAreaOfOperation action={(AuthoritativeShipAreaOfOperationAction)command.TargetId} rect={area.X},{area.Y},{area.Width},{area.Height}"
+                    : "payload=ShipAreaOfOperation invalid=true";
             case AuthoritativePlayerCommandKind.RenameFleet:
                 return $"payload=RenameFleet name='{OneLine(command.Text)}'";
             case AuthoritativePlayerCommandKind.AutoArrangeFleet:

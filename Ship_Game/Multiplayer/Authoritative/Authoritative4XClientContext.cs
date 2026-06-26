@@ -9,6 +9,7 @@ using Ship_Game.Fleets;
 using Ship_Game.Ships;
 using Ship_Game.Ships.AI;
 using Vector2 = SDGraphics.Vector2;
+using Rectangle = SDGraphics.Rectangle;
 
 namespace Ship_Game.Multiplayer.Authoritative;
 
@@ -596,6 +597,35 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitSetShipTradeRoute(Ship ship, Planet planet,
+        bool enabled)
+    {
+        if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!CanSubmitShipTradeRoute(ship, planet, enabled))
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.SetShipTradeRoute(context.Next(), context.EmpireId,
+            ship.Id, planet.Id, enabled));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
+    public static Authoritative4XUiCommandResult TrySubmitSetShipAreaOfOperation(Ship ship,
+        AuthoritativeShipAreaOfOperationAction action, Rectangle areaOrPoint)
+    {
+        if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if (!Enum.IsDefined(typeof(AuthoritativeShipAreaOfOperationAction), action)
+            || !CanSubmitShipAreaOfOperation(ship, action, areaOrPoint))
+        {
+            return Authoritative4XUiCommandResult.Blocked;
+        }
+
+        context.Submit(AuthoritativePlayerCommand.SetShipAreaOfOperation(context.Next(), context.EmpireId,
+            ship.Id, action, areaOrPoint));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitAttackShip(Ship ship, Ship target, bool queue)
     {
         if (!TryGetFor(ship?.Loyalty, out Authoritative4XClientContext context))
@@ -1029,6 +1059,34 @@ public sealed class Authoritative4XClientContext : IDisposable
 
     static bool CanSubmitShipTradePolicy(Ship ship)
         => ship?.Active == true && ship.IsFreighter;
+
+    static bool CanSubmitShipTradeRoute(Ship ship, Planet planet, bool enabled)
+    {
+        if (ship?.Active != true || !ship.IsFreighter || planet == null || ship.Loyalty == null)
+            return false;
+        if (!enabled)
+            return true;
+
+        return planet.Owner == ship.Loyalty
+               || ship.Loyalty.IsTradeTreaty(planet.Owner)
+               || planet.IsMineable
+               || planet.IsResearchable;
+    }
+
+    static bool CanSubmitShipAreaOfOperation(Ship ship, AuthoritativeShipAreaOfOperationAction action,
+        Rectangle areaOrPoint)
+    {
+        if (ship?.Active != true || !ship.IsFreighter)
+            return false;
+
+        return action switch
+        {
+            AuthoritativeShipAreaOfOperationAction.AddRectangle =>
+                areaOrPoint.Width >= 5000 && areaOrPoint.Height >= 5000,
+            AuthoritativeShipAreaOfOperationAction.RemoveAtPoint => true,
+            _ => false,
+        };
+    }
 
     static bool CanSubmitShipCarrierPolicy(Ship ship, AuthoritativeShipCarrierPolicyKind policy)
     {
