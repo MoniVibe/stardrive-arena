@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using Ship_Game.AI;
 using SDUtils.Deterministic;
 
 namespace Ship_Game.Multiplayer.Authoritative;
@@ -74,7 +75,9 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
         Write("COMMAND",
             $"source={source} peer={peerId} seq={command.Sequence} empire={command.EmpireId} "
             + $"kind={command.Kind} subject={command.SubjectId} target={command.TargetId} "
-            + $"pos=({command.Position.X:0.###},{command.Position.Y:0.###}) name='{command.Text ?? ""}'");
+            + $"pos=({command.Position.X:0.###},{command.Position.Y:0.###}) "
+            + $"textHash=0x{TextHash(command.Text):X16} textChars={(command.Text ?? "").Length} "
+            + $"summary='{OneLine(CommandSummary(command))}' name='{OneLine(TextPreview(command.Text))}'");
     }
 
     public void Result(AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot)
@@ -164,6 +167,177 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
         return !AppDomain.CurrentDomain.GetAssemblies()
             .Any(a => string.Equals(a.GetName().Name, "UnitTests", StringComparison.OrdinalIgnoreCase));
     }
+
+    static ulong TextHash(string text)
+    {
+        var hash = DetHash.New();
+        hash.AddString(text ?? "");
+        return hash.Value;
+    }
+
+    static string TextPreview(string text)
+    {
+        text ??= "";
+        const int MaxPreview = 256;
+        return text.Length <= MaxPreview ? text : text[..MaxPreview] + "...";
+    }
+
+    static string CommandSummary(AuthoritativePlayerCommand command)
+    {
+        if (command == null)
+            return "";
+
+        switch (command.Kind)
+        {
+            case AuthoritativePlayerCommandKind.NoOp:
+                return "payload=NoOp";
+            case AuthoritativePlayerCommandKind.MoveShip:
+                return $"payload=MoveShip order={(MoveOrder)command.TargetId} dest={Vec(command.Position)}";
+            case AuthoritativePlayerCommandKind.SetColonyType:
+                return Enum.IsDefined(typeof(Planet.ColonyType), (Planet.ColonyType)command.TargetId)
+                    ? $"payload=ColonyType type={(Planet.ColonyType)command.TargetId}"
+                    : $"payload=ColonyType invalid={command.TargetId}";
+            case AuthoritativePlayerCommandKind.SetColonizationGoal:
+                return $"payload=ColonizationGoal enabled={command.TargetId == 1}";
+            case AuthoritativePlayerCommandKind.SetResearchTopic:
+            case AuthoritativePlayerCommandKind.QueueResearch:
+            case AuthoritativePlayerCommandKind.RemoveResearchQueueItem:
+                return $"payload=Research tech='{OneLine(command.Text)}'";
+            case AuthoritativePlayerCommandKind.MoveResearchQueueItem:
+                return $"payload=ResearchMove tech='{OneLine(command.Text)}' move={(AuthoritativeResearchQueueMove)command.TargetId}";
+            case AuthoritativePlayerCommandKind.DiplomacyProposal:
+                return $"payload=DiplomacyProposal type={(AuthoritativeDiplomacyProposalType)command.TargetId} termsChars={(command.Text ?? "").Length}";
+            case AuthoritativePlayerCommandKind.DiplomacyResponse:
+                return $"payload=DiplomacyResponse kind={(AuthoritativeDiplomacyResponseKind)command.TargetId} proposal={command.SubjectId} termsChars={(command.Text ?? "").Length}";
+            case AuthoritativePlayerCommandKind.DesignShip:
+                return $"payload=DesignShip encodedChars={(command.Text ?? "").Length}";
+            case AuthoritativePlayerCommandKind.QueueBuild:
+            case AuthoritativePlayerCommandKind.QueueBuilding:
+            case AuthoritativePlayerCommandKind.QueueTroop:
+            case AuthoritativePlayerCommandKind.QueuePlanetOrbitalBuild:
+                return $"payload={command.Kind} item='{OneLine(command.Text)}'";
+            case AuthoritativePlayerCommandKind.AttackShip:
+                return $"payload=AttackShip queued={string.Equals(command.Text, "queue", StringComparison.Ordinal)}";
+            case AuthoritativePlayerCommandKind.ShipPlanetOrder:
+                return TryParseShipPlanetOrder(command.Text, out AuthoritativeShipPlanetOrderType planetOrder,
+                           out bool clearOrders, out MoveOrder moveOrder)
+                    ? $"payload=ShipPlanetOrder order={planetOrder} clear={clearOrders} move={moveOrder}"
+                    : "payload=ShipPlanetOrder invalid=true";
+            case AuthoritativePlayerCommandKind.SetColonyLabor:
+                return AuthoritativePlayerCommand.TryParseColonyLaborPayload(command.Text,
+                           out float food, out float prod, out float res, out bool foodLocked,
+                           out bool prodLocked, out bool resLocked)
+                    ? $"payload=ColonyLabor food={food:0.###} prod={prod:0.###} res={res:0.###} locks={foodLocked},{prodLocked},{resLocked}"
+                    : "payload=ColonyLabor invalid=true";
+            case AuthoritativePlayerCommandKind.SetEmpireBudget:
+                return AuthoritativePlayerCommand.TryParseEmpireBudgetPayload(command.Text,
+                           out float taxRate, out float treasuryGoal, out bool autoTaxes)
+                    ? $"payload=EmpireBudget tax={taxRate:0.###} treasury={treasuryGoal:0.###} auto={autoTaxes}"
+                    : "payload=EmpireBudget invalid=true";
+            case AuthoritativePlayerCommandKind.SetPlanetGoodsState:
+                return $"payload=PlanetGoods kind={(AuthoritativePlanetGoodsKind)command.TargetId} state={command.Text}";
+            case AuthoritativePlayerCommandKind.SetPlanetPrioritizedPort:
+                return $"payload=PrioritizedPort enabled={command.TargetId == 1}";
+            case AuthoritativePlayerCommandKind.SetPlanetManualBudget:
+                return $"payload=ManualBudget kind={(AuthoritativePlanetBudgetKind)command.TargetId} percent={command.Text}";
+            case AuthoritativePlayerCommandKind.SetFleetAssignment:
+                return $"payload=FleetAssignment fleet={command.SubjectId} mode={(AuthoritativeFleetAssignmentMode)command.TargetId} ships='{OneLine(command.Text)}'";
+            case AuthoritativePlayerCommandKind.MoveFleet:
+                return $"payload=MoveFleet order={(MoveOrder)command.TargetId} dest={Vec(command.Position)}";
+            case AuthoritativePlayerCommandKind.ShipSpecialOrder:
+                return $"payload=ShipSpecialOrder type={(AuthoritativeShipSpecialOrderType)command.TargetId}";
+            case AuthoritativePlayerCommandKind.SetShipCombatStance:
+                return $"payload=ShipCombatStance state={command.TargetId}";
+            case AuthoritativePlayerCommandKind.RenameFleet:
+                return $"payload=RenameFleet name='{OneLine(command.Text)}'";
+            case AuthoritativePlayerCommandKind.AutoArrangeFleet:
+                return $"payload=AutoArrangeFleet fleet={command.SubjectId}";
+            case AuthoritativePlayerCommandKind.ShipLifecycleOrder:
+                return $"payload=ShipLifecycle type={(AuthoritativeShipLifecycleOrderType)command.TargetId}";
+            case AuthoritativePlayerCommandKind.LoadFleetPatrol:
+                return $"payload=LoadFleetPatrol name='{OneLine(command.Text)}'";
+            case AuthoritativePlayerCommandKind.SetFleetLayout:
+                return AuthoritativePlayerCommand.TryParseFleetLayout(command.Text,
+                           out AuthoritativeFleetLayoutNode[] nodes)
+                    ? $"payload=FleetLayout nodes={nodes.Length}"
+                    : "payload=FleetLayout invalid=true";
+            case AuthoritativePlayerCommandKind.QueueDeepSpaceBuild:
+                return AuthoritativePlayerCommand.TryParseDeepSpaceBuildPayload(command.Text,
+                           out string buildDesign, out SDGraphics.Vector2 tetherOffset)
+                    ? $"payload=DeepSpaceBuild design='{OneLine(buildDesign)}' tether={Vec(tetherOffset)}"
+                    : "payload=DeepSpaceBuild invalid=true";
+            case AuthoritativePlayerCommandKind.CancelDeepSpaceBuild:
+                return AuthoritativePlayerCommand.TryParseDeepSpaceCancelPayload(command.Text,
+                           out string cancelDesign, out GoalType goalType)
+                    ? $"payload=DeepSpaceCancel design='{OneLine(cancelDesign)}' goal={goalType}"
+                    : "payload=DeepSpaceCancel invalid=true";
+            case AuthoritativePlayerCommandKind.SetPlanetGovernorOptions:
+                return $"payload=GovernorOptions flags={(AuthoritativePlanetGovernorOptions)command.TargetId}";
+            case AuthoritativePlayerCommandKind.SetPlanetManualTradeSlots:
+                return AuthoritativePlayerCommand.TryParseManualTradeSlotsPayload(command.Text,
+                           out int foodImport, out int prodImport, out int coloImport,
+                           out int foodExport, out int prodExport, out int coloExport)
+                    ? $"payload=ManualTradeSlots import={foodImport},{prodImport},{coloImport} export={foodExport},{prodExport},{coloExport}"
+                    : "payload=ManualTradeSlots invalid=true";
+            case AuthoritativePlayerCommandKind.SetPlanetDefenseTargets:
+                return AuthoritativePlayerCommand.TryParsePlanetDefenseTargetsPayload(command.Text,
+                           out int garrison, out int platforms, out int shipyards, out int stations)
+                    ? $"payload=DefenseTargets garrison={garrison} platforms={platforms} shipyards={shipyards} stations={stations}"
+                    : "payload=DefenseTargets invalid=true";
+            case AuthoritativePlayerCommandKind.RenameFleetPatrol:
+                return AuthoritativePlayerCommand.TryParsePatrolRenamePayload(command.Text,
+                           out string oldName, out string newName)
+                    ? $"payload=RenameFleetPatrol old='{OneLine(oldName)}' new='{OneLine(newName)}'"
+                    : "payload=RenameFleetPatrol invalid=true";
+            case AuthoritativePlayerCommandKind.DeleteFleetPatrol:
+                return $"payload=DeleteFleetPatrol name='{OneLine(command.Text)}'";
+            case AuthoritativePlayerCommandKind.ClearFleetPatrol:
+                return $"payload=ClearFleetPatrol fleet={command.SubjectId}";
+            case AuthoritativePlayerCommandKind.CreateFleetPatrol:
+                return AuthoritativePlayerCommand.TryParsePatrolWaypoints(command.Text, out var waypoints)
+                    ? $"payload=CreateFleetPatrol waypoints={waypoints.Length}"
+                    : "payload=CreateFleetPatrol invalid=true";
+            case AuthoritativePlayerCommandKind.ApplyColonyBlueprints:
+                return AuthoritativePlayerCommand.TryParseBlueprintsTemplate(command.Text,
+                           out BlueprintsTemplate template)
+                    ? $"payload=Blueprints name='{OneLine(template.Name)}' type={template.ColonyType} buildings={template.PlannedBuildings?.Count ?? 0}"
+                    : "payload=Blueprints invalid=true";
+            case AuthoritativePlayerCommandKind.ClearColonyBlueprints:
+                return $"payload=ClearBlueprints planet={command.SubjectId}";
+            case AuthoritativePlayerCommandKind.ScrapColonyTile:
+                return $"payload=ScrapColonyTile kind={(AuthoritativeColonyTileScrapKind)command.TargetId} tile={Vec(command.Position)} expected='{OneLine(command.Text)}'";
+            default:
+                return $"payload={command.Kind}";
+        }
+    }
+
+    static bool TryParseShipPlanetOrder(string text, out AuthoritativeShipPlanetOrderType orderType,
+        out bool clearOrders, out MoveOrder moveOrder)
+    {
+        orderType = default;
+        clearOrders = false;
+        moveOrder = MoveOrder.Regular;
+
+        string[] parts = (text ?? "").Split('|');
+        if (parts.Length != 3
+            || !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int orderValue)
+            || !Enum.IsDefined(typeof(AuthoritativeShipPlanetOrderType),
+                (AuthoritativeShipPlanetOrderType)orderValue)
+            || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int clearValue)
+            || clearValue is not (0 or 1)
+            || !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int moveValue))
+        {
+            return false;
+        }
+
+        orderType = (AuthoritativeShipPlanetOrderType)orderValue;
+        clearOrders = clearValue == 1;
+        moveOrder = (MoveOrder)moveValue;
+        return true;
+    }
+
+    static string Vec(SDGraphics.Vector2 vector)
+        => string.Create(CultureInfo.InvariantCulture, $"({vector.X:0.###},{vector.Y:0.###})");
 
     static string PeerMap(IReadOnlyDictionary<int, int> empireByPeer)
     {

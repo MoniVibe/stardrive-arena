@@ -4758,6 +4758,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             StringAssert.Contains(text, "COMMAND source=ui");
             StringAssert.Contains(text, $"peer={HostPeer}");
             StringAssert.Contains(text, "kind=SetColonyType");
+            StringAssert.Contains(text, "textHash=0x");
+            StringAssert.Contains(text, "summary='payload=ColonyType type=Military'");
             StringAssert.Contains(text, $"COMMAND source=network peer={RemotePeer}");
             StringAssert.Contains(text, "seq=600");
             StringAssert.Contains(text, "RESULT origin=");
@@ -4776,6 +4778,57 @@ public class Authoritative4XSessionTests : StarDriveTest
             Authoritative4XLiveTelemetry.EnabledOverride = oldEnabled;
             authority.Screen.Dispose();
             client.Screen.Dispose();
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XLiveTelemetry_DecodesCommandPayloadEvidence_Headless()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"auth4x_live_decode_{Guid.NewGuid():N}");
+        string oldOutput = Authoritative4XLiveTelemetry.OutputDirectoryOverride;
+        bool? oldEnabled = Authoritative4XLiveTelemetry.EnabledOverride;
+
+        try
+        {
+            Authoritative4XLiveTelemetry.OutputDirectoryOverride = dir;
+            Authoritative4XLiveTelemetry.EnabledOverride = true;
+            var telemetry = Authoritative4XLiveTelemetry.Start(Authoritative4XLiveRole.Host,
+                localPeerId: 9, localEmpireId: 1, new Dictionary<int, int> { [9] = 1 }, new[] { 1 });
+            string path = telemetry.SessionPath;
+
+            telemetry.Command("unit", 9,
+                AuthoritativePlayerCommand.SetEmpireBudget(1, 1, taxRate: 0.25f,
+                    treasuryGoal: 0.5f, autoTaxes: true));
+            telemetry.Command("unit", 9,
+                AuthoritativePlayerCommand.ShipPlanetOrder(2, 1, shipId: 77, planetId: 88,
+                    AuthoritativeShipPlanetOrderType.Colonize, clearOrders: false, MoveOrder.Aggressive));
+            telemetry.Command("unit", 9,
+                AuthoritativePlayerCommand.SetPlanetManualTradeSlots(3, 1, planetId: 88,
+                    foodImport: 1, prodImport: 2, coloImport: 3, foodExport: 4, prodExport: 5, coloExport: 6));
+            telemetry.Command("unit", 9,
+                AuthoritativePlayerCommand.ApplyColonyBlueprints(4, 1, planetId: 88,
+                    new BlueprintsTemplate("MP Core", exclusive: true, linkTo: "",
+                        plannedBuildings: new HashSet<string>(StringComparer.Ordinal) { "Outpost" },
+                        Planet.ColonyType.Core)));
+            telemetry.Command("unit", 9,
+                AuthoritativePlayerCommand.DesignShip(5, 1, new string('A', 320)));
+            telemetry.Dispose();
+
+            string text = File.ReadAllText(path);
+            StringAssert.Contains(text, "textHash=0x");
+            StringAssert.Contains(text, "summary='payload=EmpireBudget tax=0.25 treasury=0.5 auto=True'");
+            StringAssert.Contains(text, "summary='payload=ShipPlanetOrder order=Colonize clear=False move=Aggressive'");
+            StringAssert.Contains(text, "summary='payload=ManualTradeSlots import=1,2,3 export=4,5,6'");
+            StringAssert.Contains(text, "summary='payload=Blueprints name=\\'MP Core\\' type=Core buildings=1'");
+            StringAssert.Contains(text, "summary='payload=DesignShip encodedChars=320'");
+            StringAssert.Contains(text, "textChars=320");
+            StringAssert.Contains(text, "name='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        }
+        finally
+        {
+            Authoritative4XLiveTelemetry.OutputDirectoryOverride = oldOutput;
+            Authoritative4XLiveTelemetry.EnabledOverride = oldEnabled;
             try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
         }
     }
