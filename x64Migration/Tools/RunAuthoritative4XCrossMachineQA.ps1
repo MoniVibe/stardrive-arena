@@ -14,7 +14,8 @@ param(
     [string]$Configuration = "Debug",
     [switch]$SkipBuild,
     [switch]$SkipDeploy,
-    [switch]$SkipRemoteDeploy
+    [switch]$SkipRemoteDeploy,
+    [switch]$UseInteractiveClientTask
 )
 
 $ErrorActionPreference = 'Stop'
@@ -98,6 +99,15 @@ function Invoke-RemotePowerShell {
     $encoded = ConvertTo-EncodedPowerShell $Script
     $args = @($Target, 'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded)
     Write-Host ">> ssh $Target powershell <encoded>"
+    $p = Start-Process -FilePath 'ssh' -ArgumentList $args -NoNewWindow -Wait -PassThru `
+        -RedirectStandardOutput $StdOut -RedirectStandardError $StdErr
+    return $p.ExitCode
+}
+
+function Invoke-RemoteCommand {
+    param([string]$Target, [string[]]$Arguments, [string]$StdOut, [string]$StdErr)
+    Write-Host ">> ssh $Target $($Arguments -join ' ')"
+    $args = @($Target) + $Arguments
     $p = Start-Process -FilePath 'ssh' -ArgumentList $args -NoNewWindow -Wait -PassThru `
         -RedirectStandardOutput $StdOut -RedirectStandardError $StdErr
     return $p.ExitCode
@@ -281,7 +291,7 @@ New-Item -ItemType Directory -Path (Join-Path '$RemoteRoot' 'incoming') -Force |
 
     $deployOut = Join-Path $runRoot 'remote-deploy.out.txt'
     $deployErr = Join-Path $runRoot 'remote-deploy.err.txt'
-    $remoteShouldDeploy = (-not $SkipDeploy).ToString().ToLowerInvariant()
+    $remoteShouldDeploy = if ($SkipDeploy) { '$false' } else { '$true' }
     $remoteDeploy = @"
 `$ErrorActionPreference = 'Stop'
 `$root = '$RemoteRoot'
@@ -342,29 +352,112 @@ for ($i = 0; $i -lt $Iterations; ++$i) {
         $clientOut = Join-Path $runDir 'client.ssh.stdout.txt'
         $clientErr = Join-Path $runDir 'client.ssh.stderr.txt'
         $remoteClientDir = Join-Path $RemoteRoot "runs\$runId\client"
-        $remoteJoin = @"
+        if ($UseInteractiveClientTask) {
+            $remotePrepOut = Join-Path $runDir 'remote-client-task-prep.out.txt'
+            $remotePrepErr = Join-Path $runDir 'remote-client-task-prep.err.txt'
+            $remotePrep = @"
 `$ErrorActionPreference = 'Stop'
 New-Item -ItemType Directory -Path '$remoteClientDir' -Force | Out-Null
-& (Join-Path '$RemoteRoot' 'probe\Authoritative4XProbe.exe') --role join --host '$HostAddress' --port $Port --turns $Turns --timeout $TimeoutSeconds --seed $($Seed + $i) --game-root '$ClientGameRoot' --output '$remoteClientDir'
-exit `$LASTEXITCODE
 "@
-        $clientExit = Invoke-RemotePowerShell $ClientSsh $remoteJoin $clientOut $clientErr
-        $remoteCollectOut = Join-Path $runDir 'remote-collect.out.txt'
-        $remoteCollectErr = Join-Path $runDir 'remote-collect.err.txt'
-        $remoteZipName = "auth4x-qa-$runId-client.zip"
-        $remoteCollect = @"
+            $prepExit = Invoke-RemotePowerShell $ClientSsh $remotePrep $remotePrepOut $remotePrepErr
+            if ($prepExit -ne 0) { throw "Remote interactive task prep failed. See $remotePrepOut / $remotePrepErr" }
+
+            $taskName = "Auth4XCodexProbe$((Get-Date).ToString('HHmmss'))"
+            $taskStartTime = (Get-Date).AddMinutes(1).ToString('HH:mm')
+            $remoteProbe = Join-Path $RemoteRoot 'probe\Authoritative4XProbe.exe'
+            $remoteCmd = Join-Path $runDir 'run-client.cmd'
+            $remoteScheduleCmd = Join-Path $runDir 'schedule-client.cmd'
+            $remoteCmdLines = @(
+                '@echo off',
+                "cd /d `"$([IO.Path]::Combine($RemoteRoot, 'probe'))`"",
+                "`"$remoteProbe`" --role join --host $HostAddress --port $Port --turns $Turns --timeout $TimeoutSeconds --seed $($Seed + $i) --game-root `"$ClientGameRoot`" --output `"$remoteClientDir`" > `"$remoteClientDir\stdout.txt`" 2> `"$remoteClientDir\stderr.txt`"",
+                "echo %ERRORLEVEL% > `"$remoteClientDir\exitcode.txt`""
+            )
+            $remoteScheduleLines = @(
+                '@echo off',
+                "schtasks /Create /TN $taskName /SC ONCE /ST $taskStartTime /TR `"cmd.exe /c $remoteClientDir\run-client.cmd`" /F /RL HIGHEST /IT",
+                "schtasks /Run /TN $taskName"
+            )
+            Set-Content -Path $remoteCmd -Value $remoteCmdLines -Encoding ASCII
+            Set-Content -Path $remoteScheduleCmd -Value $remoteScheduleLines -Encoding ASCII
+            Invoke-Checked 'scp' @($remoteCmd, "$ClientSsh`:$remoteClientDir/run-client.cmd") $repo
+            Invoke-Checked 'scp' @($remoteScheduleCmd, "$ClientSsh`:$remoteClientDir/schedule-client.cmd") $repo
+
+            $taskStartOut = Join-Path $runDir 'remote-client-task-start.out.txt'
+            $taskStartErr = Join-Path $runDir 'remote-client-task-start.err.txt'
+            $startExit = Invoke-RemoteCommand $ClientSsh @('cmd', '/c', "$remoteClientDir\schedule-client.cmd") $taskStartOut $taskStartErr
+            if ($startExit -ne 0) { throw "Remote interactive task start failed. See $taskStartOut / $taskStartErr" }
+
+            $exitSeen = $false
+            $deadline = (Get-Date).AddSeconds($TimeoutSeconds + 90)
+            while ((Get-Date) -lt $deadline) {
+                $pollOut = Join-Path $runDir 'remote-client-task-poll.out.txt'
+                $pollErr = Join-Path $runDir 'remote-client-task-poll.err.txt'
+                $pollScript = "if (Test-Path '$remoteClientDir\exitcode.txt') { Write-Host 'True'; exit 0 } Write-Host 'False'; exit 2"
+                $pollExit = Invoke-RemotePowerShell $ClientSsh $pollScript $pollOut $pollErr
+                if ($pollExit -eq 0 -and (Get-Content $pollOut -ErrorAction SilentlyContinue) -match 'True') {
+                    $exitSeen = $true
+                    break
+                }
+                Start-Sleep -Seconds 5
+            }
+
+            $remoteCollectOut = Join-Path $runDir 'remote-collect.out.txt'
+            $remoteCollectErr = Join-Path $runDir 'remote-collect.err.txt'
+            $remoteZipName = "auth4x-qa-$runId-client.zip"
+            $remoteCollect = @"
 `$ErrorActionPreference = 'Stop'
 `$zip = Join-Path `$env:USERPROFILE '$remoteZipName'
 Remove-Item `$zip -Force -ErrorAction SilentlyContinue
 Compress-Archive -Force -Path (Join-Path '$remoteClientDir' '*') -DestinationPath `$zip
 "@
-        $collectExit = Invoke-RemotePowerShell $ClientSsh $remoteCollect $remoteCollectOut $remoteCollectErr
-        if ($collectExit -eq 0) {
-            Invoke-Checked 'scp' @("$ClientSsh`:$remoteZipName", (Join-Path $runDir 'client-artifacts.zip')) $repo
-            Expand-Archive -Force -Path (Join-Path $runDir 'client-artifacts.zip') -DestinationPath $clientArtifacts
-        }
-        if ($clientExit -ne 0) {
-            Write-Warning "Remote client exited $clientExit for $runId; collected artifacts where possible."
+            $collectExit = Invoke-RemotePowerShell $ClientSsh $remoteCollect $remoteCollectOut $remoteCollectErr
+            if ($collectExit -eq 0) {
+                Invoke-Checked 'scp' @("$ClientSsh`:$remoteZipName", (Join-Path $runDir 'client-artifacts.zip')) $repo
+                Expand-Archive -Force -Path (Join-Path $runDir 'client-artifacts.zip') -DestinationPath $clientArtifacts
+            }
+
+            $taskDeleteOut = Join-Path $runDir 'remote-client-task-delete.out.txt'
+            $taskDeleteErr = Join-Path $runDir 'remote-client-task-delete.err.txt'
+            Invoke-RemoteCommand $ClientSsh @('cmd', '/c', 'schtasks', '/Delete', '/TN', $taskName, '/F') $taskDeleteOut $taskDeleteErr | Out-Null
+
+            $exitFile = Join-Path $clientArtifacts 'exitcode.txt'
+            if (Test-Path $exitFile) {
+                $clientExitText = (Get-Content $exitFile -Raw).Trim()
+                $clientExit = [int]$clientExitText
+            } elseif ($exitSeen) {
+                $clientExit = 0
+            } else {
+                $clientExit = -1
+            }
+            if ($clientExit -ne 0) {
+                Write-Warning "Remote interactive client exited $clientExit for $runId; collected artifacts where possible."
+            }
+        } else {
+            $remoteJoin = @"
+`$ErrorActionPreference = 'Stop'
+New-Item -ItemType Directory -Path '$remoteClientDir' -Force | Out-Null
+& (Join-Path '$RemoteRoot' 'probe\Authoritative4XProbe.exe') --role join --host '$HostAddress' --port $Port --turns $Turns --timeout $TimeoutSeconds --seed $($Seed + $i) --game-root '$ClientGameRoot' --output '$remoteClientDir'
+exit `$LASTEXITCODE
+"@
+            $clientExit = Invoke-RemotePowerShell $ClientSsh $remoteJoin $clientOut $clientErr
+            $remoteCollectOut = Join-Path $runDir 'remote-collect.out.txt'
+            $remoteCollectErr = Join-Path $runDir 'remote-collect.err.txt'
+            $remoteZipName = "auth4x-qa-$runId-client.zip"
+            $remoteCollect = @"
+`$ErrorActionPreference = 'Stop'
+`$zip = Join-Path `$env:USERPROFILE '$remoteZipName'
+Remove-Item `$zip -Force -ErrorAction SilentlyContinue
+Compress-Archive -Force -Path (Join-Path '$remoteClientDir' '*') -DestinationPath `$zip
+"@
+            $collectExit = Invoke-RemotePowerShell $ClientSsh $remoteCollect $remoteCollectOut $remoteCollectErr
+            if ($collectExit -eq 0) {
+                Invoke-Checked 'scp' @("$ClientSsh`:$remoteZipName", (Join-Path $runDir 'client-artifacts.zip')) $repo
+                Expand-Archive -Force -Path (Join-Path $runDir 'client-artifacts.zip') -DestinationPath $clientArtifacts
+            }
+            if ($clientExit -ne 0) {
+                Write-Warning "Remote client exited $clientExit for $runId; collected artifacts where possible."
+            }
         }
     }
 
