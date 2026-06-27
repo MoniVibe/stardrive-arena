@@ -196,7 +196,50 @@ public static class ArenaFightOptions
             if (options[i].BossDesignName.NotEmpty())
                 usedEnemyDesigns.Add(options[i].BossDesignName);
         }
+        InjectReckoningOption(career, seed, maxTier, options);
         return options;
+    }
+
+    static void InjectReckoningOption(ArenaCareer career, ulong seed, int maxTier, FightOption[] options)
+    {
+        if (career == null || options == null || options.Length == 0)
+            return;
+
+        ContenderRecord nemesis = career.PinnedNemeses()
+            .FirstOrDefault(c => c?.DesignName.NotEmpty() == true
+                              && ResourceManager.Ships.GetDesign(c.DesignName, out IShipDesign d)
+                              && ArenaFightScreen.IsLegalCombatCraft(d)
+                              && ArenaFightScreen.IsDesignAllowedForCareerLevel(d, Math.Max(0, career.CareerLevel)));
+        if (nemesis == null || !ResourceManager.Ships.GetDesign(nemesis.DesignName, out IShipDesign design))
+            return;
+
+        int index = Array.FindIndex(options, o => o != null && o.DifficultyTier != FightDifficultyTier.Trivial);
+        if (index < 0)
+            index = 0;
+        options[index] = BuildReckoningOption(career, seed, maxTier, nemesis, design);
+    }
+
+    static FightOption BuildReckoningOption(ArenaCareer career, ulong seed, int maxTier,
+        ContenderRecord nemesis, IShipDesign design)
+    {
+        int level = Math.Max(0, career?.CareerLevel ?? 0);
+        float playerStrength = PlayerStrengthForCareer(career, level);
+        var modifier = new ArenaFightModifier(ArenaFightModifierKind.EliteVanguard,
+            "Reckoning Grudge", 0, 0, 1.08f, 1.08f);
+        float enemyStrength = Math.Max(1f, design.BaseStrength) * modifier.EnemyStrengthMultiplier;
+        float strengthRatio = enemyStrength / Math.Max(1f, playerStrength);
+        float winRate = playerStrength / Math.Max(1f, playerStrength + enemyStrength);
+        int cash = RewardCashForEnemyStrength(career, enemyStrength, specialContract: true);
+        int fame = RewardFameForDifficulty(FightDifficultyTier.Hard, strengthRatio, specialContract: true);
+        LootReward[] loot = PreviewLootForOption(FightDifficultyTier.Hard, FightRiskTier.Risky,
+            design, null, cash, seed ^ ArenaRivalDossiers.StableHash(nemesis.ContenderId), specialContract: true);
+        int expected = cash + loot.Sum(r => r.ExpectedValue);
+        string contractName = $"Reckoning: {nemesis.Name}";
+        string id = $"reckoning-{nemesis.ContenderId}-{seed:x16}";
+        return new FightOption(id, FightOptionType.ContenderChallenge, FightRiskTier.Risky,
+            FightDifficultyTier.Hard, design.Name, "", 1, 0, maxTier, modifier,
+            ArenaBossEncounter.None, cash, fame, loot, enemyStrength, strengthRatio,
+            winRate, expected, isSpecialContract: true, contractName);
     }
 
     public static FightDifficultyTier[] SlateForFame(int fame, int maxTier = ArenaFightScreen.MaxCombatTier)

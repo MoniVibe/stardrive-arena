@@ -93,6 +93,9 @@ public static class ArenaRivalDossiers
         return result.Count > 0 ? result.ToArray() : Empty<ContenderRecord>.Array;
     }
 
+    public static ContenderRecord[] PinnedNemesisDossiers(ArenaCareer career)
+        => career?.PinnedNemeses() ?? Empty<ContenderRecord>.Array;
+
     static string CleanOrPick(string existing, string[] table, ulong hash, int shift, int max)
     {
         string clean = Clean(existing, max);

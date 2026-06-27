@@ -55,6 +55,10 @@ public sealed class ArenaCareer
     // Re-spawned + re-veteraned on reload. Never null (an empty career has an empty array).
     [StarData] public OwnedVessel[] OwnedVessels = Empty<OwnedVessel>.Array;
 
+    // CAPTAINS — persistent pilot identities assigned to owned vessels. Old saves may not
+    // have them; normalization synthesizes stable captains for owned vessels that lack one.
+    [StarData] public ArenaCaptain[] Captains = Empty<ArenaCaptain>.Array;
+
     // The foreign chassis faction STYLES the career has unlocked (e.g. "Kulrathi").
     // Re-granted (UnlockEmpireHull) to the player empire on reload so the veteran keeps
     // access to the hulls it earned. Never null.
@@ -193,6 +197,7 @@ public sealed class ArenaCareer
     public void NormalizeForPersistence()
     {
         UnlockedChassisStyles ??= Empty<string>.Array;
+        Captains ??= Empty<ArenaCaptain>.Array;
         Contenders ??= Empty<ContenderRecord>.Array;
         Teams ??= Empty<ArenaTeam>.Array;
         if (Fame < 0) Fame = 0;
@@ -228,6 +233,7 @@ public sealed class ArenaCareer
             v.VesselId = UniqueLoadedVesselId(preferredId, seenIds);
             seenIds.Add(v.VesselId);
             v.Name ??= "";
+            v.CaptainId ??= "";
             if (v.Experience < 0f) v.Experience = 0f;
             if (v.Level < 0) v.Level = 0;
             if (v.Kills < 0) v.Kills = 0;
@@ -245,8 +251,12 @@ public sealed class ArenaCareer
         {
             ActiveVesselId = "";
             FleetVesselIds = Empty<string>.Array;
+            Captains = NormalizeCaptains(Captains);
             return;
         }
+
+        Captains = NormalizeCaptains(Captains);
+        EnsureCaptainsForOwnedVessels();
 
         if (ActiveVesselId.IsEmpty() || FindOwnedVessel(ActiveVesselId) == null)
             ActiveVesselId = OwnedVessels[0].VesselId;
@@ -289,11 +299,115 @@ public sealed class ArenaCareer
         int order = Memorials.Length == 0 ? 1 : Memorials.Max(m => m?.Order ?? 0) + 1;
         var list = Memorials.ToList();
         list.Add(new ArenaMemorialRecord(id, order, vessel.VesselId, vessel.Name, vessel.DesignName,
-            vessel.Kills, vessel.Level, killer, cause, fightSeed));
+            vessel.Kills, vessel.Level, killer, cause, fightSeed, "Ship", vessel.CaptainId));
         Memorials = NormalizeMemorials(list.ToArray());
         AddChronicleEvent("ship_destroyed", vessel.VesselId,
             $"{DisplayVesselName(vessel)} was lost: {CleanLedgerText(cause, 80)}", fightSeed);
+        PromoteNemesisFromMemorial(vessel, killer, fightSeed);
         return true;
+    }
+
+    public bool MarkCaptainSurvivedHullLoss(OwnedVessel vessel, string killer, string cause, ulong fightSeed = 0)
+    {
+        ArenaCaptain captain = CaptainForVessel(vessel);
+        if (captain == null || !captain.Alive)
+            return false;
+
+        captain.SurvivedHullLosses += 1;
+        AddChronicleEvent("captain_ejected", captain.CaptainId,
+            $"{captain.Name} ejected from {DisplayVesselName(vessel)} after {CleanLedgerText(cause, 80)}.",
+            fightSeed);
+        PromoteNemesisFromMemorial(vessel, killer, fightSeed);
+        return true;
+    }
+
+    public bool AddCaptainDeathMemorial(OwnedVessel vessel, string killer, string cause, ulong fightSeed = 0)
+    {
+        ArenaCaptain captain = CaptainForVessel(vessel);
+        if (captain == null || !captain.Alive)
+            return false;
+
+        captain.Alive = false;
+        captain.DeathCause = CleanLedgerText(cause, 120);
+        captain.Killer = CleanLedgerText(killer, 80);
+        string id = LedgerId("cap", captain.CaptainId, captain.DeathCause, LedgerSeed(fightSeed));
+        Memorials = NormalizeMemorials(Memorials);
+        if (Memorials.Any(m => m != null && string.Equals(m.MemorialId, id, StringComparison.Ordinal)))
+            return false;
+
+        int order = Memorials.Length == 0 ? 1 : Memorials.Max(m => m?.Order ?? 0) + 1;
+        var list = Memorials.ToList();
+        list.Add(new ArenaMemorialRecord(id, order, vessel?.VesselId ?? "", captain.Name, vessel?.DesignName ?? "",
+            captain.Kills, captain.Level, killer, cause, fightSeed, "Captain", captain.CaptainId));
+        Memorials = NormalizeMemorials(list.ToArray());
+        AddChronicleEvent("captain_killed", captain.CaptainId,
+            $"{captain.Name} was killed: {captain.DeathCause}.", fightSeed);
+        PromoteNemesisFromMemorial(vessel, killer, fightSeed);
+        return true;
+    }
+
+    public ArenaCaptain CaptainForVessel(OwnedVessel vessel)
+    {
+        if (vessel == null || vessel.CaptainId.IsEmpty())
+            return null;
+        foreach (ArenaCaptain captain in Captains ?? Empty<ArenaCaptain>.Array)
+            if (captain != null && string.Equals(captain.CaptainId, vessel.CaptainId, StringComparison.Ordinal))
+                return captain;
+        return null;
+    }
+
+    public ContenderRecord[] PinnedNemeses()
+        => (Contenders ?? Empty<ContenderRecord>.Array)
+            .Where(c => c != null && c.NemesisOfVesselId.NotEmpty())
+            .OrderByDescending(c => c.Grudge)
+            .ThenBy(c => c.Name, StringComparer.Ordinal)
+            .ToArray();
+
+    public bool ClearNemesis(string contenderNameOrId, string vesselId, ulong fightSeed = 0)
+    {
+        ContenderRecord contender = FindContender(contenderNameOrId);
+        if (contender == null || contender.NemesisOfVesselId.IsEmpty())
+            return false;
+        if (vesselId.NotEmpty() && !string.Equals(contender.NemesisOfVesselId, vesselId, StringComparison.Ordinal))
+            return false;
+
+        string oldVessel = contender.NemesisOfVesselId;
+        contender.NemesisOfVesselId = "";
+        contender.Grudge = 0;
+        AddChronicleEvent("nemesis_cleared", contender.Name,
+            $"{contender.Name}'s grudge against {oldVessel} was settled.", fightSeed);
+        return true;
+    }
+
+    void PromoteNemesisFromMemorial(OwnedVessel vessel, string killer, ulong fightSeed)
+    {
+        if (vessel == null || killer.IsEmpty())
+            return;
+        ContenderRecord contender = FindContender(killer);
+        if (contender == null)
+            return;
+
+        contender.NemesisOfVesselId = vessel.VesselId ?? "";
+        contender.Grudge = Math.Max(1, contender.Grudge + 1);
+        AddChronicleEvent("nemesis", contender.Name,
+            $"{contender.Name} became a nemesis after destroying {DisplayVesselName(vessel)}.",
+            fightSeed);
+    }
+
+    ContenderRecord FindContender(string nameOrId)
+    {
+        if (nameOrId.IsEmpty())
+            return null;
+        foreach (ContenderRecord c in Contenders ?? Empty<ContenderRecord>.Array)
+        {
+            if (c == null)
+                continue;
+            if (string.Equals(c.Name, nameOrId, StringComparison.Ordinal)
+                || string.Equals(c.ContenderId, nameOrId, StringComparison.Ordinal)
+                || string.Equals(c.DesignName, nameOrId, StringComparison.Ordinal))
+                return c;
+        }
+        return null;
     }
 
     static string DisplayVesselName(OwnedVessel vessel)
@@ -347,6 +461,10 @@ public sealed class ArenaCareer
             m.DesignName = CleanLedgerText(m.DesignName, 80);
             m.Killer = CleanLedgerText(m.Killer, 80);
             m.Cause = CleanLedgerText(m.Cause, 120);
+            m.Kind = CleanLedgerText(m.Kind, 20);
+            if (m.Kind.IsEmpty())
+                m.Kind = "Ship";
+            m.CaptainId = CleanLedgerText(m.CaptainId, 64);
             if (m.Kills < 0) m.Kills = 0;
             if (m.Level < 0) m.Level = 0;
             m.FightSeed = CleanLedgerText(m.FightSeed, 32);
@@ -497,6 +615,92 @@ public sealed class ArenaCareer
         return result.ToArray();
     }
 
+    public static ArenaCaptain[] NormalizeCaptains(ArenaCaptain[] captains)
+    {
+        if (captains == null || captains.Length == 0)
+            return Empty<ArenaCaptain>.Array;
+
+        var result = new List<ArenaCaptain>(captains.Length);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (ArenaCaptain captain in captains)
+        {
+            if (captain == null)
+                continue;
+            captain.CaptainId = CleanLedgerText(captain.CaptainId, 64);
+            if (captain.CaptainId.IsEmpty())
+                captain.CaptainId = UniqueCaptainId("captain", seen);
+            else if (seen.Contains(captain.CaptainId))
+                captain.CaptainId = UniqueCaptainId(captain.CaptainId, seen);
+            else
+                seen.Add(captain.CaptainId);
+
+            captain.Name = CleanLedgerText(captain.Name, 80);
+            if (captain.Name.IsEmpty())
+                captain.Name = "Arena Captain";
+            captain.Epithet = CleanLedgerText(captain.Epithet, 48);
+            if (captain.Epithet.IsEmpty())
+                captain.Epithet = "Unproven";
+            if (captain.Level < 0) captain.Level = 0;
+            if (captain.Kills < 0) captain.Kills = 0;
+            if (captain.SurvivedHullLosses < 0) captain.SurvivedHullLosses = 0;
+            captain.Killer = CleanLedgerText(captain.Killer, 80);
+            captain.DeathCause = CleanLedgerText(captain.DeathCause, 120);
+            result.Add(captain);
+        }
+        return result.Count > 0 ? result.ToArray() : Empty<ArenaCaptain>.Array;
+    }
+
+    void EnsureCaptainsForOwnedVessels()
+    {
+        var captains = new List<ArenaCaptain>(Captains ?? Empty<ArenaCaptain>.Array);
+        var byId = new Dictionary<string, ArenaCaptain>(StringComparer.Ordinal);
+        foreach (ArenaCaptain captain in captains)
+            if (captain?.CaptainId.NotEmpty() == true && !byId.ContainsKey(captain.CaptainId))
+                byId[captain.CaptainId] = captain;
+
+        var seen = new HashSet<string>(byId.Keys, StringComparer.Ordinal);
+        foreach (OwnedVessel vessel in OwnedVessels ?? Empty<OwnedVessel>.Array)
+        {
+            if (vessel == null)
+                continue;
+            if (vessel.CaptainId.NotEmpty() && byId.ContainsKey(vessel.CaptainId))
+                continue;
+
+            ArenaCaptain captain = CreateCaptainForVessel(vessel, seen);
+            captains.Add(captain);
+            byId[captain.CaptainId] = captain;
+            vessel.CaptainId = captain.CaptainId;
+        }
+        Captains = NormalizeCaptains(captains.ToArray());
+    }
+
+    static ArenaCaptain CreateCaptainForVessel(OwnedVessel vessel, HashSet<string> seen)
+    {
+        string basis = $"{vessel?.VesselId}|{vessel?.DesignName}|{vessel?.Name}";
+        ulong hash = StableLedgerHash(basis);
+        string[] first = { "Vale", "Mira", "Kade", "Nyx", "Orion", "Lyra", "Juno", "Vega" };
+        string[] last = { "Ash", "Rook", "Sable", "Knox", "Iris", "Talon", "Nova", "Hex" };
+        string[] epithets = { "Steady Hand", "Cold Vector", "Last Burn", "Iron Nerve", "Amber Wake", "Black Orbit" };
+        string idRoot = $"cap-{hash:X12}".ToLowerInvariant();
+        return new ArenaCaptain
+        {
+            CaptainId = UniqueCaptainId(idRoot, seen),
+            Name = $"{first[(int)(hash % (ulong)first.Length)]} {last[(int)((hash >> 8) % (ulong)last.Length)]}",
+            Epithet = epithets[(int)((hash >> 16) % (ulong)epithets.Length)],
+            Alive = true,
+        };
+    }
+
+    static string UniqueCaptainId(string root, HashSet<string> seen)
+    {
+        root = CleanLedgerText(root, 48);
+        string id = root.NotEmpty() ? root : "captain";
+        for (int n = 2; seen != null && seen.Contains(id); ++n)
+            id = CleanLedgerText($"{root}-{n}", 64);
+        seen?.Add(id);
+        return id;
+    }
+
     void NormalizeContenders()
     {
         if (Contenders == null || Contenders.Length == 0)
@@ -527,6 +731,10 @@ public sealed class ArenaCareer
             c.RivalName ??= "";
             if (c.RivalWins < 0) c.RivalWins = 0;
             if (c.RivalLosses < 0) c.RivalLosses = 0;
+            c.NemesisOfVesselId = CleanLedgerText(c.NemesisOfVesselId, 80);
+            if (c.Grudge < 0) c.Grudge = 0;
+            if (c.NemesisOfVesselId.IsEmpty())
+                c.Grudge = 0;
             ArenaRivalDossiers.NormalizeDossier(c, RivalIdentitySeed, seenIds);
             contenders.Add(c);
         }
@@ -768,6 +976,14 @@ public sealed class ArenaCareer
         {
             VesselId = NewVesselId(designName),
         };
+        var captainList = new List<ArenaCaptain>(NormalizeCaptains(Captains));
+        var captainSeen = new HashSet<string>(
+            captainList.Where(c => c?.CaptainId.NotEmpty() == true).Select(c => c.CaptainId),
+            StringComparer.Ordinal);
+        ArenaCaptain captain = CreateCaptainForVessel(vessel, captainSeen);
+        vessel.CaptainId = captain.CaptainId;
+        captainList.Add(captain);
+        Captains = NormalizeCaptains(captainList.ToArray());
 
         var list = new System.Collections.Generic.List<OwnedVessel>(OwnedVessels ?? Empty<OwnedVessel>.Array)
         {
@@ -1119,6 +1335,9 @@ public sealed class OwnedVessel
     // Optional vanity/display name; falls back to DesignName when empty.
     [StarData] public string Name;
 
+    // Persistent pilot identity assigned to this owned vessel.
+    [StarData] public string CaptainId = "";
+
     // ---- VETERANCY (the carried progress) — re-applied after the ship is re-spawned. ----
     [StarData] public float Experience;
     [StarData] public int Level;
@@ -1178,6 +1397,8 @@ public sealed class ContenderRecord
     [StarData] public string RivalName;
     [StarData] public int RivalWins;
     [StarData] public int RivalLosses;
+    [StarData] public string NemesisOfVesselId;
+    [StarData] public int Grudge;
 
     [StarDataConstructor] public ContenderRecord() { }
 
@@ -1188,6 +1409,22 @@ public sealed class ContenderRecord
         RoleClass  = roleClass;
         Rating     = rating;
     }
+}
+
+[StarDataType]
+public sealed class ArenaCaptain
+{
+    [StarData] public string CaptainId = "";
+    [StarData] public string Name = "";
+    [StarData] public string Epithet = "";
+    [StarData] public int Level;
+    [StarData] public int Kills;
+    [StarData] public bool Alive = true;
+    [StarData] public int SurvivedHullLosses;
+    [StarData] public string Killer = "";
+    [StarData] public string DeathCause = "";
+
+    [StarDataConstructor] public ArenaCaptain() { }
 }
 
 [StarDataType]
@@ -1244,11 +1481,14 @@ public sealed class ArenaMemorialRecord
     [StarData] public string Killer = "";
     [StarData] public string Cause = "";
     [StarData] public string FightSeed = "";
+    [StarData] public string Kind = "Ship";
+    [StarData] public string CaptainId = "";
 
     [StarDataConstructor] public ArenaMemorialRecord() { }
 
     public ArenaMemorialRecord(string memorialId, int order, string vesselId, string name,
-        string designName, int kills, int level, string killer, string cause, ulong fightSeed)
+        string designName, int kills, int level, string killer, string cause, ulong fightSeed,
+        string kind = "Ship", string captainId = "")
     {
         MemorialId = memorialId ?? "";
         Order = Math.Max(1, order);
@@ -1260,6 +1500,8 @@ public sealed class ArenaMemorialRecord
         Killer = killer ?? "";
         Cause = cause ?? "";
         FightSeed = ArenaCareer.LedgerSeed(fightSeed);
+        Kind = kind ?? "Ship";
+        CaptainId = captainId ?? "";
     }
 }
 

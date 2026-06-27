@@ -72,6 +72,7 @@ using ArenaTeam = Ship_Game.GameScreens.Arena.ArenaTeam;
 using ArenaHub = Ship_Game.GameScreens.Arena.ArenaHubScreen;
 using ArenaFleet = Ship_Game.GameScreens.Arena.ArenaFleetScreen;
 using ArenaCareer = Ship_Game.GameScreens.Arena.ArenaCareer;
+using ArenaCaptain = Ship_Game.GameScreens.Arena.ArenaCaptain;
 using ArenaChronicleEvent = Ship_Game.GameScreens.Arena.ArenaChronicleEvent;
 using ArenaMemorialRecord = Ship_Game.GameScreens.Arena.ArenaMemorialRecord;
 using ArenaStartArchetype = Ship_Game.GameScreens.Arena.ArenaStartArchetype;
@@ -9480,6 +9481,8 @@ public class ArenaRenderSmokeTests : StarDriveTest
             "Golden hash must include the career chronicle.");
         Assert.IsTrue(first.CanonicalState.Contains("memorial|", StringComparison.Ordinal),
             "Golden hash must include the ship memorial ledger.");
+        Assert.IsTrue(first.CanonicalState.Contains("captain|", StringComparison.Ordinal),
+            "Golden hash must include persistent captain identities.");
         Assert.IsTrue(first.CanonicalState.Contains("scout|1|", StringComparison.Ordinal),
             "Golden hash must include a tiered scout intel report, not only generic scout-off text.");
         Assert.IsFalse(first.CanonicalState.Contains("telemetry|", StringComparison.Ordinal),
@@ -9546,6 +9549,142 @@ public class ArenaRenderSmokeTests : StarDriveTest
             Assert.AreEqual(vessel.Level, memorial.Level);
             Assert.AreEqual("Ledger Rival", memorial.Killer);
             Assert.AreEqual("Destroyed in ledger proof", memorial.Cause);
+        }
+        finally
+        {
+            CareerManager.SlotDirectoryOverride = savedSlotDir;
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [TestMethod]
+    public void ArenaCaptainNemesisArc_Headless()
+    {
+        LoadAllGameData();
+
+        string dir = Path.Combine(Path.GetTempPath(), $"arena_captain_nemesis_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        string savedSlotDir = CareerManager.SlotDirectoryOverride;
+
+        try
+        {
+            CareerManager.SlotDirectoryOverride = dir;
+            IShipDesign[] legal = ResourceManager.Ships.Designs
+                .Where(Arena.IsLegalCombatCraft)
+                .OrderBy(d => d.BaseStrength)
+                .ThenBy(d => d.Name, StringComparer.Ordinal)
+                .Take(8)
+                .ToArray();
+            Assert.IsTrue(legal.Length >= 4, "Captain/nemesis proof needs several legal arena designs.");
+
+            var legacy = new ArenaCareer
+            {
+                Cash = 500,
+                CareerLevel = 7,
+                Fame = ArenaFightOptions.FullSlateFame,
+                OwnedVessels = new[]
+                {
+                    new OwnedVessel(legal[0].Name, 0f, 0, 0, "Legacy Flagship")
+                    {
+                        VesselId = "legacy-vessel",
+                    }
+                },
+                Contenders = new[]
+                {
+                    new ContenderRecord("Nemesis Prime", legal[2].Name, legal[2].Role.ToString().ToUpperInvariant(), 5)
+                    {
+                        Seasons = 5,
+                    },
+                    new ContenderRecord("Retire Me", legal[3].Name, legal[3].Role.ToString().ToUpperInvariant(), 6)
+                    {
+                        Seasons = 5,
+                    },
+                    new ContenderRecord("Rival Spare", legal[4].Name, legal[4].Role.ToString().ToUpperInvariant(), 1200)
+                    {
+                        Seasons = 1,
+                    },
+                },
+            };
+
+            legacy.NormalizeForPersistence();
+            OwnedVessel vessel = legacy.OwnedVessels[0];
+            Assert.IsTrue(vessel.CaptainId.NotEmpty(),
+                "Old captain-less saves should synthesize a captain id for owned vessels.");
+            ArenaCaptain captain = legacy.CaptainForVessel(vessel);
+            Assert.IsNotNull(captain, "Synthesized captain must resolve from the owned vessel.");
+            Assert.IsTrue(captain.Alive, "Synthesized captains start alive.");
+            captain.Level = 2;
+            captain.Kills = 3;
+
+            Assert.IsTrue(CareerManager.SaveSlot(legacy, 1), "Captain migration career must save.");
+            ArenaCareer loaded = CareerManager.LoadSlot(1);
+            OwnedVessel loadedVessel = loaded.FindOwnedVessel(vessel.VesselId);
+            ArenaCaptain loadedCaptain = loaded.CaptainForVessel(loadedVessel);
+            Assert.IsNotNull(loadedCaptain, "Captain identity must survive save/load.");
+            Assert.AreEqual(captain.CaptainId, loadedCaptain.CaptainId);
+            Assert.AreEqual(2, loadedCaptain.Level);
+            Assert.AreEqual(3, loadedCaptain.Kills);
+
+            const ulong Seed = 0xCA971A11Eul;
+            Assert.IsTrue(loaded.MarkCaptainSurvivedHullLoss(loadedVessel, "Nemesis Prime",
+                    "Ejected under fire", Seed),
+                "A captain should be able to survive a destroyed hull as an ejection event.");
+            Assert.AreEqual(1, loadedCaptain.SurvivedHullLosses);
+            Assert.IsTrue(loadedCaptain.Alive);
+
+            Assert.IsTrue(loaded.AddCaptainDeathMemorial(loadedVessel, "Nemesis Prime",
+                    "Killed in cockpit breach", Seed + 1),
+                "A captain should also be able to die with the ship and write a captain memorial.");
+            Assert.IsFalse(loadedCaptain.Alive);
+            Assert.IsTrue(loaded.Memorials.Any(m => m.Kind == "Captain"
+                                                 && m.CaptainId == loadedCaptain.CaptainId),
+                "Captain deaths must be represented as a distinct memorial kind.");
+
+            Assert.IsTrue(loaded.AddMemorial(loadedVessel, "Nemesis Prime",
+                    "Destroyed by named rival", Seed + 2),
+                "Ship memorial should promote the matching killer contender to nemesis.");
+            ContenderRecord nemesis = loaded.Contenders.First(c => c.Name == "Nemesis Prime");
+            Assert.AreEqual(loadedVessel.VesselId, nemesis.NemesisOfVesselId);
+            Assert.IsTrue(nemesis.Grudge >= 1, "Nemesis promotion must carry a grudge count.");
+            CollectionAssert.Contains(ArenaRivalDossiers.PinnedNemesisDossiers(loaded).Select(c => c.Name).ToArray(),
+                "Nemesis Prime", "Pinned dossiers must surface active nemeses.");
+
+            FightOption reckoning = ArenaFightOptions.GenerateFightOptions(loaded, Seed + 3)
+                .FirstOrDefault(o => o.ContractName.StartsWith("Reckoning:", StringComparison.Ordinal));
+            Assert.IsNotNull(reckoning, "A nemesis must inject a guaranteed Reckoning fight option.");
+            Assert.AreEqual(FightOptionType.ContenderChallenge, reckoning.FightType);
+            Assert.AreEqual(nemesis.DesignName, reckoning.EscortDesignName);
+
+            IShipDesign[] retirementPool = ResourceManager.Ships.Designs
+                .Where(Arena.IsLegalCombatCraft)
+                .OrderBy(d => d.BaseStrength)
+                .ThenBy(d => d.Name, StringComparer.Ordinal)
+                .Take(16)
+                .ToArray();
+            int rookieSerial = 10;
+            int retired = ArenaLivingEcosystemSimulator.RetireAndReplaceForHeadless(loaded,
+                retirementPool, season: 9, seed: Seed + 4, ref rookieSerial);
+            Assert.IsTrue(retired > 0, "Retirement proof should retire at least one non-nemesis contender.");
+            Assert.IsTrue(loaded.Contenders.Any(c => c.Name == "Nemesis Prime"
+                                                  && c.NemesisOfVesselId == loadedVessel.VesselId),
+                "Flagged nemeses must be excluded from retirement replacement.");
+
+            Assert.IsTrue(loaded.ClearNemesis("Nemesis Prime", loadedVessel.VesselId, Seed + 5),
+                "Killing/settling a nemesis should clear the grudge.");
+            nemesis = loaded.Contenders.First(c => c.Name == "Nemesis Prime");
+            Assert.AreEqual("", nemesis.NemesisOfVesselId);
+            Assert.AreEqual(0, nemesis.Grudge);
+
+            Assert.IsTrue(CareerManager.SaveSlot(loaded, 2), "Captain/nemesis career must resave.");
+            ArenaCareer reloaded = CareerManager.LoadSlot(2);
+            Assert.IsNotNull(reloaded.Captains.FirstOrDefault(c => c.CaptainId == loadedCaptain.CaptainId),
+                "Captain records must round-trip after nemesis events.");
+            Assert.IsTrue(reloaded.Memorials.Any(m => m.Kind == "Captain"),
+                "Captain memorials must round-trip.");
+            Assert.IsTrue(reloaded.Contenders.Any(c => c.Name == "Nemesis Prime"
+                                                    && c.NemesisOfVesselId.IsEmpty()
+                                                    && c.Grudge == 0),
+                "Cleared nemesis state must persist.");
         }
         finally
         {
@@ -9936,6 +10075,7 @@ public class ArenaRenderSmokeTests : StarDriveTest
             if (v == null) continue;
             b.Append("owned|").Append(v.VesselId).Append('|').Append(v.DesignName)
                 .Append("|name=").Append(v.Name)
+                .Append("|captain=").Append(v.CaptainId)
                 .Append("|xp=").Append(F32(v.Experience))
                 .Append("|lvl=").Append(v.Level)
                 .Append("|kills=").Append(v.Kills)
@@ -9944,6 +10084,21 @@ public class ArenaRenderSmokeTests : StarDriveTest
                     .Select(s => $"{s.SlotIndex}:{s.ModuleUid}")))
                 .Append("|overrides=").Append(string.Join(",", (v.ModuleOverrides ?? Array.Empty<ModuleSlotOverride>())
                     .Select(o => $"{o.SlotIndex}:{o.ModuleUid}")))
+                .Append('\n');
+        }
+        foreach (ArenaCaptain captain in (career.Captains ?? Array.Empty<ArenaCaptain>())
+                     .OrderBy(c => c?.CaptainId, StringComparer.Ordinal))
+        {
+            if (captain == null) continue;
+            b.Append("captain|").Append(captain.CaptainId)
+                .Append("|name=").Append(captain.Name)
+                .Append("|epithet=").Append(captain.Epithet)
+                .Append("|alive=").Append(captain.Alive)
+                .Append("|lvl=").Append(captain.Level)
+                .Append("|kills=").Append(captain.Kills)
+                .Append("|ejections=").Append(captain.SurvivedHullLosses)
+                .Append("|killer=").Append(captain.Killer)
+                .Append("|death=").Append(captain.DeathCause)
                 .Append('\n');
         }
         foreach (string uid in (career.ResearchedModules ?? Array.Empty<string>())
@@ -9973,6 +10128,8 @@ public class ArenaRenderSmokeTests : StarDriveTest
                 .Append("|evo=").Append(c.Evolutions)
                 .Append("|rival=").Append(c.RivalName)
                 .Append('|').Append(c.RivalWins).Append('/').Append(c.RivalLosses)
+                .Append("|nemesis=").Append(c.NemesisOfVesselId)
+                .Append("|grudge=").Append(c.Grudge)
                 .Append('\n');
         }
         foreach (ArenaChronicleEvent e in (career.Chronicle ?? Array.Empty<ArenaChronicleEvent>())
@@ -10003,6 +10160,8 @@ public class ArenaRenderSmokeTests : StarDriveTest
                 .Append("|killer=").Append(m.Killer)
                 .Append("|cause=").Append(m.Cause)
                 .Append("|seed=").Append(m.FightSeed)
+                .Append("|kind=").Append(m.Kind)
+                .Append("|captain=").Append(m.CaptainId)
                 .Append('\n');
         }
         return b.ToString();
