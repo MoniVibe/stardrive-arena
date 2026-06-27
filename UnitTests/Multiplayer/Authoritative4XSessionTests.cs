@@ -6017,9 +6017,14 @@ public class Authoritative4XSessionTests : StarDriveTest
             string[] originalQueue = world.Player.data.ResearchQueue.ToArray();
             var submitted = new List<AuthoritativePlayerCommand>();
 
+            Assert.AreSame(world.Screen, ResearchScreenNew.PauseTargetFor(world.Screen),
+                "Research should keep the existing single-player pause target when authoritative MP is inactive.");
             using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
                        submitted.Add, firstSequence: 1900))
             {
+                Assert.IsNull(ResearchScreenNew.PauseTargetFor(world.Screen),
+                    "Research must not locally pause an authoritative multiplayer session.");
+
                 Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
                     Authoritative4XClientContext.TrySubmitQueueResearch(world.Player, techs[1]));
                 Assert.AreEqual(1, submitted.Count);

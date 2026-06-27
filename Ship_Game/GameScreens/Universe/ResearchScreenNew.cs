@@ -44,7 +44,7 @@ namespace Ship_Game
         }
 
         public ResearchScreenNew(GameScreen parent, UniverseScreen u, EmpireUIOverlay empireUi)
-            : base(parent, toPause: u)
+            : base(parent, toPause: PauseTargetFor(u))
         {
             Universe = u;
             Player = u.Player;
@@ -54,6 +54,9 @@ namespace Ship_Game
             TransitionOnTime = 0.25f;
             TransitionOffTime = 0.25f;
         }
+
+        internal static UniverseScreen PauseTargetFor(UniverseScreen u)
+            => Authoritative4XClientContext.IsActive ? null : u;
 
         public override void LoadContent()
         {
