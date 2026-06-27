@@ -92,6 +92,11 @@ namespace Ship_Game
                         break;
 
                     case Authoritative4XUiCommandResult.NotActive:
+                        if (Authoritative4XClientContext.ShouldBlockLocalMutation(P))
+                        {
+                            ResetManualTradeSlotSliders();
+                            break;
+                        }
                         P.ManualFoodImportSlots = foodImportSlots;
                         P.ManualProdImportSlots = prodImportSlots;
                         P.ManualColoImportSlots = coloImportSlots;

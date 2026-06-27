@@ -159,6 +159,8 @@ namespace Ship_Game
             }
             if (mpResult == Authoritative4XUiCommandResult.Blocked)
                 return;
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Screen.Universe))
+                return;
 
             if (Player.Research.AddToQueue(tech.UID))
             {

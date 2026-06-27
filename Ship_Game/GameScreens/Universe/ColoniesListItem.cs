@@ -257,7 +257,7 @@ namespace Ship_Game
                     GameAudio.NegativeClick();
                     return true;
                 case Authoritative4XUiCommandResult.NotActive:
-                    if (Authoritative4XClientContext.IsActive)
+                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(P))
                     {
                         GameAudio.NegativeClick();
                         return true;

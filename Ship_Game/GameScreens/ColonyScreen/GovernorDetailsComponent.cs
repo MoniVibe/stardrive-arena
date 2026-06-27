@@ -416,6 +416,12 @@ namespace Ship_Game
                     return;
                 }
 
+                if (Authoritative4XClientContext.ShouldBlockLocalMutation(Planet))
+                {
+                    Planet.SetPrioritizedPort(!cb.Checked);
+                    return;
+                }
+
                 Universe.RunOnSimThread(() =>
                 {
                     Planet.SetPrioritizedPort(cb.Checked);
@@ -450,6 +456,13 @@ namespace Ship_Game
                 return;
             }
 
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Planet))
+            {
+                ColonyTypeList.ActiveValue = Planet.CType;
+                GameAudio.NegativeClick();
+                return;
+            }
+
             Planet.CType = type;
             WorldType.Text = Planet.WorldType;
             WorldDescription.Text = GetParsedDescription();
@@ -466,6 +479,13 @@ namespace Ship_Game
                     Authoritative4XClientContext.TrySubmitApplyColonyBlueprints(Planet, template)))
             {
                 ColonyTypeList.ActiveValue = Planet.CType;
+                return;
+            }
+
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Planet))
+            {
+                ColonyTypeList.ActiveValue = Planet.CType;
+                GameAudio.NegativeClick();
                 return;
             }
 
@@ -644,6 +664,11 @@ namespace Ship_Game
                     break;
 
                 case Authoritative4XUiCommandResult.NotActive:
+                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(Planet))
+                    {
+                        ResetDefenseTargetSliders();
+                        break;
+                    }
                     Planet.GarrisonSize = garrisonSize;
                     Planet.SetWantedPlatforms((byte)wantedPlatforms);
                     Planet.SetWantedShipyards((byte)wantedShipyards);
@@ -728,6 +753,12 @@ namespace Ship_Game
 
         void OnSendTroopsClicked(UIButton b)
         {
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Planet))
+            {
+                GameAudio.NegativeClick();
+                return;
+            }
+
             if (Planet.Universe.Player.GetTroopShipForRebase(out Ship troopShip, Planet.Position, Planet.Name))
             {
                 GameAudio.EchoAffirmative();
@@ -748,6 +779,12 @@ namespace Ship_Game
                 return;
             }
 
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Planet))
+            {
+                GameAudio.NegativeClick();
+                return;
+            }
+
             Planet.BuildCapitalHere();
         }
 
@@ -761,6 +798,12 @@ namespace Ship_Game
             if (HandleAuthoritativeGovernorResult(
                     Authoritative4XClientContext.TrySubmitClearColonyBlueprints(Planet)))
             {
+                return;
+            }
+
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Planet))
+            {
+                GameAudio.NegativeClick();
                 return;
             }
 
@@ -796,8 +839,14 @@ namespace Ship_Game
                     UpdateButtons();
                     return;
                 case Authoritative4XUiCommandResult.Blocked:
-                    GameAudio.NegativeClick();
-                    return;
+                GameAudio.NegativeClick();
+                return;
+            }
+
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Planet))
+            {
+                GameAudio.NegativeClick();
+                return;
             }
 
             bool play = false;
@@ -831,8 +880,14 @@ namespace Ship_Game
                         UpdateButtons();
                         return;
                     case Authoritative4XUiCommandResult.Blocked:
-                        GameAudio.NegativeClick();
-                        return;
+                    GameAudio.NegativeClick();
+                    return;
+                }
+
+                if (Authoritative4XClientContext.ShouldBlockLocalMutation(Planet))
+                {
+                    GameAudio.NegativeClick();
+                    return;
                 }
 
                 if (troop.Launch() != null)
@@ -988,7 +1043,7 @@ namespace Ship_Game
         bool TrySubmitAuthoritativeManualBudget(AuthoritativePlanetBudgetKind budget, float value,
             ref float? pending)
         {
-            if (!Authoritative4XClientContext.IsActive)
+            if (!Authoritative4XClientContext.ShouldBlockLocalMutation(Planet))
                 return false;
 
             float current = CurrentManualBudget(budget);
@@ -1007,7 +1062,7 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Blocked:
                     return true;
                 case Authoritative4XUiCommandResult.NotActive:
-                    return Authoritative4XClientContext.IsActive;
+                    return Authoritative4XClientContext.ShouldBlockLocalMutation(Planet);
                 default:
                     return false;
             }
@@ -1024,13 +1079,13 @@ namespace Ship_Game
             };
         }
 
-        static bool HandleAuthoritativeGovernorResult(Authoritative4XUiCommandResult result)
+        bool HandleAuthoritativeGovernorResult(Authoritative4XUiCommandResult result)
         {
             return result switch
             {
                 Authoritative4XUiCommandResult.Submitted => true,
                 Authoritative4XUiCommandResult.Blocked => true,
-                Authoritative4XUiCommandResult.NotActive => Authoritative4XClientContext.IsActive,
+                Authoritative4XUiCommandResult.NotActive => Authoritative4XClientContext.ShouldBlockLocalMutation(Planet),
                 _ => false,
             };
         }
@@ -1154,6 +1209,9 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Blocked:
                     return false;
             }
+
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Planet))
+                return false;
 
             if (orbital == null || Planet.IsOutOfOrbitalsLimit(orbital))
                 return false;

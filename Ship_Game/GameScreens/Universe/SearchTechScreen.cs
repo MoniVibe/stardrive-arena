@@ -67,7 +67,7 @@ namespace Ship_Game
             TechList.Reset();
             var items = new Array<SearchTechItem>();
 
-            foreach (TechEntry entry in Screen.Universe.Player.TechEntries)
+            foreach (TechEntry entry in Screen.Player.TechEntries)
             {
                 TreeNode node = new(Vector2.Zero, entry, Screen);
                 if (entry.Discovered && !entry.IsRoot &&
@@ -103,6 +103,11 @@ namespace Ship_Game
                 return;
             }
             if (mpResult == Authoritative4XUiCommandResult.Blocked)
+            {
+                GameAudio.NegativeClick();
+                return;
+            }
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Screen.Universe))
             {
                 GameAudio.NegativeClick();
                 return;

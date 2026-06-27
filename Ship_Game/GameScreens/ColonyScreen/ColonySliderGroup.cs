@@ -1,6 +1,7 @@
 ﻿using System;
 using SDGraphics;
 using SDUtils;
+using Ship_Game.Audio;
 using Ship_Game.Multiplayer.Authoritative;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
@@ -71,6 +72,11 @@ namespace Ship_Game
         {
             if (TrySubmitAuthoritativeSliderChange(a, difference))
                 return;
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(P))
+            {
+                GameAudio.NegativeClick();
+                return;
+            }
 
             ColonySlider b = Sliders.Find(s => s != a && !s.LockedByUser); // always unlocked
             ColonySlider c = Sliders.Find(s => s != a && s != b);    // maybe locked

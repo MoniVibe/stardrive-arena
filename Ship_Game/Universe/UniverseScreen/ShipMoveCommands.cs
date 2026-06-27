@@ -56,6 +56,12 @@ namespace Ship_Game.Universe
                     return false;
             }
 
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(selectedShip))
+            {
+                GameAudio.NegativeClick();
+                return false;
+            }
+
             if (Universe.IsLocalShipForUi(targetShip))
             {
                 if (!HelperFunctions.CanExitWarpForChangingDirectionByCommand([selectedShip], selectedShip.AI.PotentialTargets))
@@ -114,6 +120,13 @@ namespace Ship_Game.Universe
                     if (audio)
                         GameAudio.NegativeClick();
                     return;
+            }
+
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(ship))
+            {
+                if (audio)
+                    GameAudio.NegativeClick();
+                return;
             }
 
             // if ALT key is down, always Orbit the planet
@@ -238,6 +251,12 @@ namespace Ship_Game.Universe
                     return false;
             }
 
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(fleet))
+            {
+                GameAudio.NegativeClick();
+                return false;
+            }
+
             fleet.FinalPosition = planetClicked.Position; //fbedard: center fleet on planet
             foreach (Ship ship in fleet.Ships)
             {
@@ -267,6 +286,12 @@ namespace Ship_Game.Universe
                 case Authoritative4XUiCommandResult.Blocked:
                     GameAudio.NegativeClick();
                     return false;
+            }
+
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(ship))
+            {
+                GameAudio.NegativeClick();
+                return false;
             }
 
             GameAudio.AffirmativeClick();
@@ -307,6 +332,12 @@ namespace Ship_Game.Universe
                 case Authoritative4XUiCommandResult.Blocked:
                     GameAudio.NegativeClick();
                     return false;
+            }
+
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(fleet))
+            {
+                GameAudio.NegativeClick();
+                return false;
             }
 
             fleet.FinalPosition = shipToAttack.Position;
@@ -387,6 +418,12 @@ namespace Ship_Game.Universe
                     return;
             }
 
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(fleet))
+            {
+                GameAudio.NegativeClick();
+                return;
+            }
+
             GameAudio.AffirmativeClick();
             if (QueueFleetMovement(movePosition, facingDir, fleet))
                 return;
@@ -422,6 +459,12 @@ namespace Ship_Game.Universe
                 case Authoritative4XUiCommandResult.Blocked:
                     GameAudio.NegativeClick();
                     return;
+            }
+
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(ship))
+            {
+                GameAudio.NegativeClick();
+                return;
             }
 
             ship.AI.OrderMoveTo(corrected, direction, order);

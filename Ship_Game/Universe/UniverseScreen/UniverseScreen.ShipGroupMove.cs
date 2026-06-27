@@ -215,7 +215,14 @@ namespace Ship_Game
             }
 
             if (!Authoritative4XClientContext.IsActiveFor(fleet.Owner))
+            {
+                if (Authoritative4XClientContext.ShouldBlockLocalMutation(fleet))
+                {
+                    GameAudio.NegativeClick();
+                    return;
+                }
                 fleet.ClearPatrol(clearOrders: false);
+            }
             if (wasProjecting)
             {
                 ShipCommands.MoveFleetToLocation(enemyShips, targetShip, targetPlanet, Project.FleetCenter, Project.Direction, fleet);

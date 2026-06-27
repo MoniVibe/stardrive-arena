@@ -56,7 +56,7 @@ namespace Ship_Game
         }
 
         internal static UniverseScreen PauseTargetFor(UniverseScreen u)
-            => Authoritative4XClientContext.IsActive ? null : u;
+            => Authoritative4XClientContext.ShouldBlockLocalMutation(u) ? null : u;
 
         public override void LoadContent()
         {
@@ -360,7 +360,7 @@ namespace Ship_Game
                 return;
             }
 
-            if (Authoritative4XClientContext.IsActive)
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Universe))
             {
                 if (!Authoritative4XClientContext.IsActiveFor(Player))
                 {

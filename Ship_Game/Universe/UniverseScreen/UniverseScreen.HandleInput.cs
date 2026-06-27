@@ -453,7 +453,7 @@ namespace Ship_Game
                     GameAudio.NegativeClick();
                     return true;
                 case Authoritative4XUiCommandResult.NotActive:
-                    return Authoritative4XClientContext.IsActive;
+                    return Authoritative4XClientContext.ShouldBlockLocalMutation(Player);
                 default:
                     return false;
             }
@@ -982,6 +982,12 @@ namespace Ship_Game
                             return;
                     }
 
+                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(SelectedShip))
+                    {
+                        GameAudio.NegativeClick();
+                        return;
+                    }
+
                     if (SelectedShip.AddTradeRoute(planet))
                         GameAudio.AcceptClick();
                     else
@@ -997,6 +1003,12 @@ namespace Ship_Game
                         case Authoritative4XUiCommandResult.Blocked:
                             GameAudio.NegativeClick();
                             return;
+                    }
+
+                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(SelectedShip))
+                    {
+                        GameAudio.NegativeClick();
+                        return;
                     }
 
                     SelectedShip.RemoveTradeRoute(planet);
@@ -1037,6 +1049,12 @@ namespace Ship_Game
                         return true;
                 }
 
+                if (Authoritative4XClientContext.ShouldBlockLocalMutation(SelectedShip))
+                {
+                    GameAudio.NegativeClick();
+                    return true;
+                }
+
                 SelectedShip.AreaOfOperation.RemoveFirst(ao => ao.HitTest(cursorWorld));
                 return true;
             }
@@ -1063,6 +1081,13 @@ namespace Ship_Game
                             GameAudio.NegativeClick();
                             AORect = Rectangle.Empty;
                             return true;
+                    }
+
+                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(SelectedShip))
+                    {
+                        GameAudio.NegativeClick();
+                        AORect = Rectangle.Empty;
+                        return true;
                     }
 
                     GameAudio.EchoAffirmative();
@@ -1208,6 +1233,12 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Blocked:
                     GameAudio.NegativeClick();
                     return;
+            }
+
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Player))
+            {
+                GameAudio.NegativeClick();
+                return;
             }
 
             Player.AI.RemoveGoal(SelectedItem.AssociatedGoal);

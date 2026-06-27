@@ -6219,6 +6219,89 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XResearchScreen_BlocksLocalMutationWhenContextMissing_Headless()
+    {
+        const ulong Seed = 0x4E5EACCEUL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            string techUid = ResearchCandidates(world.Player, 1)[0];
+            TechEntry tech = world.Player.GetTechEntry(techUid);
+            string originalTopic = world.Player.Research.Topic;
+            string[] originalQueue = world.Player.data.ResearchQueue.ToArray();
+
+            int port = FreeTcpPort();
+            TcpLockstepTransport transport = TcpLockstepTransport.Host(port, Authoritative4XNetworkHost.HostPeerId);
+            Authoritative4XLiveSession live = Authoritative4XLiveSession.HostGame(world.Screen, transport,
+                Authoritative4XNetworkHost.HostPeerId,
+                new Dictionary<int, int> { [Authoritative4XNetworkHost.HostPeerId] = world.Player.Id },
+                new[] { world.Player.Id });
+            world.Screen.AttachAuthoritative4XMultiplayer(live);
+            live.Dispose();
+
+            var screen = new ResearchScreenNew(world.Screen, world.Screen, world.Screen.EmpireUI);
+            var click = typeof(ResearchScreenNew)
+                .GetMethod("OnTechNodeClicked", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            Assert.IsNotNull(click, "The regression must drive the real research click handler.");
+            click.Invoke(screen, new object[] { tech });
+
+            Assert.IsTrue(world.Screen.IsAuthoritative4XMultiplayer,
+                "The regression needs an authoritative MP universe whose command context has gone missing.");
+            Assert.IsFalse(Authoritative4XClientContext.IsActive,
+                "Disposing the live session should remove the static UI context before the research click.");
+            Assert.AreEqual(originalTopic, world.Player.Research.Topic,
+                "Research UI must not locally set a topic when an authoritative MP context is missing.");
+            CollectionAssert.AreEqual(originalQueue, world.Player.data.ResearchQueue.ToArray(),
+                "Research UI must not locally mutate the research queue when an authoritative MP context is missing.");
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_BlocksStaleAttachedReplicaMutation_Headless()
+    {
+        const ulong Seed = 0x4E5EACCFUL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            string techUid = ResearchCandidates(world.Player, 1)[0];
+            TechEntry tech = world.Player.GetTechEntry(techUid);
+            string[] originalQueue = world.Player.data.ResearchQueue.ToArray();
+
+            int port = FreeTcpPort();
+            TcpLockstepTransport transport = TcpLockstepTransport.Host(port, Authoritative4XNetworkHost.HostPeerId);
+            Authoritative4XLiveSession live = Authoritative4XLiveSession.HostGame(world.Screen, transport,
+                Authoritative4XNetworkHost.HostPeerId,
+                new Dictionary<int, int> { [Authoritative4XNetworkHost.HostPeerId] = world.Player.Id },
+                new[] { world.Player.Id });
+            world.Screen.AttachAuthoritative4XMultiplayer(live);
+            live.Dispose();
+
+            Assert.IsTrue(world.Screen.IsAuthoritative4XMultiplayer);
+            Assert.IsFalse(Authoritative4XClientContext.IsActive);
+            Assert.IsTrue(Authoritative4XClientContext.ShouldBlockLocalMutation(world.Screen));
+            Assert.IsTrue(Authoritative4XClientContext.ShouldBlockLocalMutation(world.UState));
+            Assert.IsTrue(Authoritative4XClientContext.ShouldBlockLocalMutation(world.Player));
+            Assert.IsTrue(Authoritative4XClientContext.ShouldBlockLocalMutation(world.Planet));
+            Assert.IsTrue(Authoritative4XClientContext.ShouldBlockLocalMutation(world.Ship));
+            Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                ShipDesignLoadScreen.QueueShipDesignMissingResearch(world.Player, new[] { tech }),
+                "Ship design's missing-research helper must not queue research locally on a stale MP client.");
+            CollectionAssert.AreEqual(originalQueue, world.Player.data.ResearchQueue.ToArray(),
+                "The stale-client guard must prevent local research queue mutation.");
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XManagementScreens_DoNotPauseLocalSimulation_Headless()
     {
         const ulong Seed = 0x4E5EACD0UL;

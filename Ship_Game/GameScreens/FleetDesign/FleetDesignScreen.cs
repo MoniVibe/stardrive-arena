@@ -134,6 +134,8 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Blocked:
                     return;
                 case Authoritative4XUiCommandResult.NotActive:
+                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(SelectedFleet))
+                        return;
                     SelectedFleet.Name = text;
                     return;
             }
@@ -392,6 +394,8 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Blocked:
                     return;
                 case Authoritative4XUiCommandResult.NotActive:
+                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(SelectedFleet))
+                        return;
                     SelectedFleet?.AutoArrange();
                     return;
             }
@@ -406,6 +410,8 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Blocked:
                     return;
                 case Authoritative4XUiCommandResult.NotActive:
+                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(SelectedFleet))
+                        return;
                     break;
             }
 

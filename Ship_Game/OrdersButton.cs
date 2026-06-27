@@ -185,6 +185,8 @@ namespace Ship_Game
                                 case Authoritative4XUiCommandResult.Blocked:
                                     break;
                                 default:
+                                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(ship))
+                                        break;
                                     ship.AI.OrderExplore();
                                     break;
                             }
@@ -197,6 +199,8 @@ namespace Ship_Game
                                 case Authoritative4XUiCommandResult.Blocked:
                                     break;
                                 default:
+                                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(ship))
+                                        break;
                                     ship.Supply.ResupplyFromButton();
                                     break;
                             }
@@ -209,6 +213,8 @@ namespace Ship_Game
                                 case Authoritative4XUiCommandResult.Blocked:
                                     break;
                                 default:
+                                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(ship))
+                                        break;
                                     ship.AI.OrderScrapShip();
                                     break;
                             }
@@ -255,6 +261,8 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Blocked:
                     break;
                 default:
+                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(ship))
+                        break;
                     applyLocal(enabled);
                     break;
             }
@@ -269,6 +277,8 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Blocked:
                     break;
                 default:
+                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(ship))
+                        break;
                     applyLocal(enabled);
                     break;
             }
@@ -292,11 +302,17 @@ namespace Ship_Game
                             GameAudio.EchoAffirmative();
                             return;
                         case Authoritative4XUiCommandResult.Blocked:
-                            GameAudio.NegativeClick();
-                            return;
-                    }
+                        GameAudio.NegativeClick();
+                        return;
+                }
 
-                    Fleet.ClearPatrol();
+                if (Authoritative4XClientContext.ShouldBlockLocalMutation(Fleet))
+                {
+                    GameAudio.NegativeClick();
+                    return;
+                }
+
+                Fleet.ClearPatrol();
                 }
 
                 return;
@@ -319,6 +335,12 @@ namespace Ship_Game
                     case Authoritative4XUiCommandResult.Blocked:
                         GameAudio.NegativeClick();
                         return;
+                }
+
+                if (Authoritative4XClientContext.ShouldBlockLocalMutation(Fleet))
+                {
+                    GameAudio.NegativeClick();
+                    return;
                 }
 
                 waypoints.Set(copiedWaypoints);

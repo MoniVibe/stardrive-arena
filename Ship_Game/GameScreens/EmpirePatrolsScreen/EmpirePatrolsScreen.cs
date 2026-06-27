@@ -204,6 +204,12 @@ namespace Ship_Game
                     return;
             }
 
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Player))
+            {
+                GameAudio.NegativeClick();
+                return;
+            }
+
             lock (Player.FleetPatrols)
             {
                 foreach (Fleet fleet in Player.AllFleets)
@@ -228,6 +234,12 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Blocked:
                     GameAudio.NegativeClick();
                     return false;
+            }
+
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Player))
+            {
+                GameAudio.NegativeClick();
+                return false;
             }
 
             lock (Player.FleetPatrols)

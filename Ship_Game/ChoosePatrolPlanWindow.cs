@@ -152,6 +152,12 @@ namespace Ship_Game
                     return;
             }
 
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Fleet))
+            {
+                GameAudio.NegativeClick();
+                return;
+            }
+
             Fleet.LoadPatrol(SelectedPatrol);
             GameAudio.EchoAffirmative();
             ExitScreen();

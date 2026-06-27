@@ -380,6 +380,12 @@ namespace Ship_Game
                         return;
                 }
 
+                if (Authoritative4XClientContext.ShouldBlockLocalMutation(troopShip))
+                {
+                    GameAudio.NegativeClick();
+                    return;
+                }
+
                 GameAudio.EchoAffirmative();
                 troopShip.AI.OrderLandAllTroops(Planet, clearOrders: true);
                 Screen.RefreshSendTroopButtonsVisibility();
@@ -398,6 +404,11 @@ namespace Ship_Game
                 return;
 
             Ship ship = incomingTroopShips.Last();
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(ship))
+            {
+                GameAudio.NegativeClick();
+                return;
+            }
             ship.AI.OrderRebaseToNearest();
             UpdateButtonSendTroops();
         }
@@ -411,8 +422,14 @@ namespace Ship_Game
                     PerformLayout();
                     return;
                 case Authoritative4XUiCommandResult.Blocked:
-                    GameAudio.NegativeClick();
-                    return;
+                GameAudio.NegativeClick();
+                return;
+            }
+
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Planet))
+            {
+                GameAudio.NegativeClick();
+                return;
             }
 
             bool troopLaunched = false;
@@ -451,6 +468,12 @@ namespace Ship_Game
                         return;
                 }
 
+                if (Authoritative4XClientContext.ShouldBlockLocalMutation(Player))
+                {
+                    GameAudio.NegativeClick();
+                    return;
+                }
+
                 GameAudio.EchoAffirmative();
                 Player.AI.AddGoalAndEvaluate(new MarkForColonization(Planet, Planet.Universe.Player, isManual:true));
                 Colonize.Text = "Cancel Colonize";
@@ -467,6 +490,12 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Blocked:
                     GameAudio.NegativeClick();
                     return;
+            }
+
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Player))
+            {
+                GameAudio.NegativeClick();
+                return;
             }
 
             GameAudio.EchoAffirmative();

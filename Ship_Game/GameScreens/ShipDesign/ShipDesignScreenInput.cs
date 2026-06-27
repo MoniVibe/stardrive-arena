@@ -684,6 +684,12 @@ namespace Ship_Game
                     return false;
             }
 
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Player))
+            {
+                Log.Warning($"Authoritative MP blocked local ship-design save for '{name}' without an active command context.");
+                return false;
+            }
+
             SaveDesign(toSave, overwriteProtected ?? new FileInfo($"{Dir.StarDriveAppData}/Saved Designs/{name}.design"));
 
             bool playerDesign = overwriteProtected == null;

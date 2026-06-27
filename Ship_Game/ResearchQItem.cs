@@ -72,11 +72,15 @@ namespace Ship_Game
             {
                 if (TrySubmitAuthoritativeMove(AuthoritativeResearchQueueMove.ToTopOrPrereq))
                     return;
+                if (Authoritative4XClientContext.ShouldBlockLocalMutation(Screen.Universe))
+                    return;
                 Research.MoveToTopOrPreReq(index);
             }
             else
             {
                 if (TrySubmitAuthoritativeMove(AuthoritativeResearchQueueMove.Up))
+                    return;
+                if (Authoritative4XClientContext.ShouldBlockLocalMutation(Screen.Universe))
                     return;
                 Research.MoveUp(index);
             }
@@ -94,6 +98,8 @@ namespace Ship_Game
 
             if (TrySubmitAuthoritativeMove(AuthoritativeResearchQueueMove.Down))
                 return;
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Screen.Universe))
+                return;
             Research.MoveDown(index);
             Screen.Queue.ReloadResearchQueue();
         }
@@ -108,6 +114,11 @@ namespace Ship_Game
                 return;
             }
             if (mpResult == Authoritative4XUiCommandResult.Blocked)
+            {
+                GameAudio.NegativeClick();
+                return;
+            }
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Screen.Universe))
             {
                 GameAudio.NegativeClick();
                 return;
@@ -128,6 +139,8 @@ namespace Ship_Game
             }
 
             if (TrySubmitAuthoritativeMove(AuthoritativeResearchQueueMove.ToTopWithPrereqs))
+                return;
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Screen.Universe))
                 return;
 
             int moved = Research.MoveToTopWithPreReqs(index);

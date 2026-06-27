@@ -499,7 +499,7 @@ namespace Ship_Game.Ships
 
         void OnShipNameChanged(string text)
         {
-            if (UpdatingShipNameArea || Ship == null || Authoritative4XClientContext.IsActive)
+            if (UpdatingShipNameArea || Ship == null || Authoritative4XClientContext.ShouldBlockLocalMutation(Ship))
                 return;
             if (CanRename)
                 Ship.VanityName = text;
@@ -516,6 +516,12 @@ namespace Ship_Game.Ships
                 case Authoritative4XUiCommandResult.Blocked:
                     ResetShipNameArea();
                     return;
+            }
+
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Ship))
+            {
+                ResetShipNameArea();
+                return;
             }
 
             if (CanRename)
@@ -801,6 +807,8 @@ namespace Ship_Game.Ships
                 case Authoritative4XUiCommandResult.Blocked:
                     break;
                 default:
+                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(ship))
+                        break;
                     applyLocal(enabled);
                     break;
             }
@@ -815,6 +823,8 @@ namespace Ship_Game.Ships
                 case Authoritative4XUiCommandResult.Blocked:
                     break;
                 default:
+                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(ship))
+                        break;
                     applyLocal(enabled);
                     break;
             }
@@ -830,6 +840,9 @@ namespace Ship_Game.Ships
                     return;
             }
 
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(ship))
+                return;
+
             ship.DoingScrap = true;
         }
 
@@ -844,6 +857,9 @@ namespace Ship_Game.Ships
                 case Authoritative4XUiCommandResult.Blocked:
                     return;
             }
+
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(ship))
+                return;
 
             if (shouldExplore)
                 ship.DoingExplore = true;

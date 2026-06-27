@@ -499,6 +499,12 @@ namespace Ship_Game
                         return true;
                 }
 
+                if (Authoritative4XClientContext.ShouldBlockLocalMutation(Player))
+                {
+                    GameAudio.NegativeClick();
+                    return true;
+                }
+
                 if (marked)
                 {
                     Player.AI.CancelColonization(P);
@@ -521,8 +527,14 @@ namespace Ship_Game
                             GameAudio.EchoAffirmative();
                             return true;
                         case Authoritative4XUiCommandResult.Blocked:
-                            GameAudio.NegativeClick();
-                            return true;
+                        GameAudio.NegativeClick();
+                        return true;
+                }
+
+                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(troopShip))
+                    {
+                        GameAudio.NegativeClick();
+                        return true;
                     }
 
                     if (!troopShip.AI.OrderLandAllTroops(P, clearOrders: true, input.CursorPosition))
@@ -544,6 +556,12 @@ namespace Ship_Game
 
             if (P.IsResearchable && ExoticRect.HitTest(input.CursorPosition) && input.InGameSelect)
             {
+                if (Authoritative4XClientContext.ShouldBlockLocalMutation(Player))
+                {
+                    GameAudio.NegativeClick();
+                    return true;
+                }
+
                 if      (Player.AI.HasGoal(g => g.IsResearchStationGoal(P))) Player.AI.CancelResearchStation(P);
                 else if (Player.CanBuildResearchStations)                    Player.AI.AddGoalAndEvaluate(new ProcessResearchStation(Player, P));
                 else                                                         GameAudio.NegativeClick();

@@ -8,6 +8,7 @@ using Ship_Game.Commands.Goals;
 using Ship_Game.Fleets;
 using Ship_Game.Ships;
 using Ship_Game.Ships.AI;
+using Ship_Game.Universe;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
 
@@ -49,6 +50,27 @@ public sealed class Authoritative4XClientContext : IDisposable
     }
 
     public static bool IsActive => Active != null;
+
+    public static bool ShouldBlockLocalMutation(UniverseScreen universe)
+        => IsActive || universe?.IsAuthoritative4XMultiplayer == true;
+
+    public static bool ShouldBlockLocalMutation(UniverseState universe)
+        => IsActive || universe?.Screen?.IsAuthoritative4XMultiplayer == true;
+
+    public static bool ShouldBlockLocalMutation(Empire empire)
+        => IsActive || empire?.Universe?.Screen?.IsAuthoritative4XMultiplayer == true;
+
+    public static bool ShouldBlockLocalMutation(Planet planet)
+        => IsActive || planet?.Universe?.Screen?.IsAuthoritative4XMultiplayer == true;
+
+    public static bool ShouldBlockLocalMutation(Ship ship)
+        => IsActive || ship?.Universe?.Screen?.IsAuthoritative4XMultiplayer == true;
+
+    public static bool ShouldBlockLocalMutation(Fleet fleet)
+        => IsActive || fleet?.Owner?.Universe?.Screen?.IsAuthoritative4XMultiplayer == true;
+
+    public static bool ShouldBlockLocalMutation(ShipGroup group)
+        => IsActive || group?.Owner?.Universe?.Screen?.IsAuthoritative4XMultiplayer == true;
 
     public static Authoritative4XClientContext Begin(int peerId, int empireId,
         Action<AuthoritativePlayerCommand> submitCommand, int firstSequence = 1)

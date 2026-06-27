@@ -332,6 +332,8 @@ namespace Ship_Game.GameScreens.ShipDesign
                     case Authoritative4XUiCommandResult.Blocked:
                         return Authoritative4XUiCommandResult.Blocked;
                     default:
+                        if (Authoritative4XClientContext.ShouldBlockLocalMutation(player))
+                            return Authoritative4XUiCommandResult.Blocked;
                         player.Research.AddTechToQueue(entry.UID);
                         break;
                 }

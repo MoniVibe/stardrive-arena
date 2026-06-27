@@ -450,6 +450,12 @@ namespace Ship_Game
                     return;
             }
 
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(P))
+            {
+                GameAudio.NegativeClick();
+                return;
+            }
+
             bool play = false;
             foreach (PlanetGridSquare pgs in P.TilesList)
             {
@@ -507,6 +513,12 @@ namespace Ship_Game
                         return;
                 }
 
+                if (Authoritative4XClientContext.ShouldBlockLocalMutation(P))
+                {
+                    GameAudio.NegativeClick();
+                    return;
+                }
+
                 Bombard.Style = ButtonStyle.DanButtonBlue;
                 foreach (Ship bomber in bombingNowList)
                     bomber.OrderToOrbit(P, clearOrders:!Input.IsShiftKeyDown, AI.MoveOrder.Aggressive);
@@ -523,6 +535,12 @@ namespace Ship_Game
                     case Authoritative4XUiCommandResult.Blocked:
                         GameAudio.NegativeClick();
                         return;
+                }
+
+                if (Authoritative4XClientContext.ShouldBlockLocalMutation(P))
+                {
+                    GameAudio.NegativeClick();
+                    return;
                 }
 
                 // Cancel bombardment 
@@ -580,6 +598,12 @@ namespace Ship_Game
 
         void TryLandTroopViaShip(CombatScreenOrbitListItem item)
         {
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(P))
+            {
+                GameAudio.NegativeClick();
+                return;
+            }
+
             Ship ship = item.Troop.HostShip;
             if (ship != null && ship.Carrier.TryScrambleSingleAssaultShuttle(item.Troop, out Ship shuttle))
                 shuttle.AI.OrderLandAllTroops(P, clearOrders: true, Input.CursorPosition);
@@ -588,6 +612,12 @@ namespace Ship_Game
         void TryLandTroop(CombatScreenOrbitListItem item,
                           PlanetGridSquare where = null)
         {
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(P))
+            {
+                GameAudio.NegativeClick();
+                return;
+            }
+
             if (!Player.InvasionBlockedNotEnoughWarmup(P.Owner) && item.Troop.TryLandTroop(P, where))
             {
                 GameAudio.TroopLand();
@@ -716,6 +746,13 @@ namespace Ship_Game
                                 continue;
                         }
 
+                        if (Authoritative4XClientContext.ShouldBlockLocalMutation(P))
+                        {
+                            GameAudio.NegativeClick();
+                            capturedInput = true;
+                            continue;
+                        }
+
                         ActiveTile.Building.UpdateAttackActions(-1);
                         ActiveTile.Building.ResetAttackTimer();
                         StartCombat(ActiveTile.Building, enemy, pgs, P);
@@ -738,6 +775,13 @@ namespace Ship_Game
                                         continue;
                                 }
 
+                                if (Authoritative4XClientContext.ShouldBlockLocalMutation(P))
+                                {
+                                    GameAudio.NegativeClick();
+                                    capturedInput = true;
+                                    continue;
+                                }
+
                                 StartCombat(ourTroop, pgs.Building, pgs, P);
                                 capturedInput = true;
                             }
@@ -753,6 +797,13 @@ namespace Ship_Game
                                         GameAudio.NegativeClick();
                                         capturedInput = true;
                                         continue;
+                                }
+
+                                if (Authoritative4XClientContext.ShouldBlockLocalMutation(P))
+                                {
+                                    GameAudio.NegativeClick();
+                                    capturedInput = true;
+                                    continue;
                                 }
 
                                 ourTroop.UpdateAttackActions(-1);
@@ -779,6 +830,13 @@ namespace Ship_Game
                                     GameAudio.NegativeClick();
                                     capturedInput = true;
                                     continue;
+                            }
+
+                            if (Authoritative4XClientContext.ShouldBlockLocalMutation(P))
+                            {
+                                GameAudio.NegativeClick();
+                                capturedInput = true;
+                                continue;
                             }
 
                             ourTroop.facingRight = pgs.X > ActiveTile.X;
@@ -981,6 +1039,9 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Blocked:
                     return false;
             }
+
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(P))
+                return false;
 
             Ship launched = troop.Launch(tile);
             if (launched == null)

@@ -179,6 +179,10 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Blocked:
                     GameAudio.NegativeClick();
                     return true;
+                case Authoritative4XUiCommandResult.NotActive
+                    when Authoritative4XClientContext.ShouldBlockLocalMutation(F):
+                    GameAudio.NegativeClick();
+                    return true;
                 default:
                     return false;
             }
@@ -222,6 +226,10 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Submitted:
                     return;
                 case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return;
+                case Authoritative4XUiCommandResult.NotActive
+                    when Authoritative4XClientContext.ShouldBlockLocalMutation(F):
                     GameAudio.NegativeClick();
                     return;
             }

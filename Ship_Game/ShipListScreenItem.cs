@@ -73,7 +73,7 @@ namespace Ship_Game
             ShipNameEntry.MaxCharacters = AuthoritativePlayerCommand.MaxShipRenameLength;
             ShipNameEntry.OnTextChanged = (text) =>
             {
-                if (!Authoritative4XClientContext.IsActive)
+                if (!Authoritative4XClientContext.ShouldBlockLocalMutation(Ship))
                     Ship.VanityName = text;
             };
             ShipNameEntry.OnTextSubmit = (text) =>
@@ -84,6 +84,8 @@ namespace Ship_Game
                     case Authoritative4XUiCommandResult.Blocked:
                         return;
                 }
+                if (Authoritative4XClientContext.ShouldBlockLocalMutation(Ship))
+                    return;
                 Ship.VanityName = text;
             };
 

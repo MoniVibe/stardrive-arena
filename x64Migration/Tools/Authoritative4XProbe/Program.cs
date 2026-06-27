@@ -1087,8 +1087,8 @@ sealed class ProbeCommandPlan
                    ExpectedPlanetName(hostSide: true, turns))
                && HasDurableColony(join, joinPlanet, Planet.ColonyType.Colony, JoinResearchUid,
                    ExpectedPlanetName(hostSide: false, turns))
-               && (string.IsNullOrEmpty(HostBuildingName) || ContainsQueuedBuilding(hostPlanet, HostBuildingName))
-               && (string.IsNullOrEmpty(JoinBuildingName) || ContainsQueuedBuilding(joinPlanet, JoinBuildingName))
+               && (string.IsNullOrEmpty(HostBuildingName) || ContainsQueuedOrCompletedBuilding(hostPlanet, HostBuildingName))
+               && (string.IsNullOrEmpty(JoinBuildingName) || ContainsQueuedOrCompletedBuilding(joinPlanet, JoinBuildingName))
                && host!.CanBuildShip(HostDesignName)
                && join!.CanBuildShip(JoinDesignName)
                && ContainsQueuedShip(hostPlanet, HostDesignName)
@@ -1258,6 +1258,8 @@ sealed class ProbeCommandPlan
             planet.RefreshBuildingsWeCanBuildHere();
             building = FirstBuildableBuildingWithTile(planet);
         }
+        if (building == null)
+            building = UnlockDeterministicQaBuilding(planet);
         return building;
     }
 
@@ -1267,6 +1269,39 @@ sealed class ProbeCommandPlan
             .OrderBy(b => b.ActualCost(planet.Owner))
             .ThenBy(b => b.Name, StringComparer.Ordinal)
             .FirstOrDefault();
+
+    static Building? UnlockDeterministicQaBuilding(Planet planet)
+    {
+        if (planet.Owner == null)
+            return null;
+
+        foreach (Building candidate in ResourceManager.BuildingsDict
+                     .Select(kv => kv.Value)
+                     .Where(IsProbeSafeBuilding)
+                     .OrderBy(b => b.ActualCost(planet.Owner))
+                     .ThenBy(b => b.Name, StringComparer.Ordinal))
+        {
+            planet.Owner.UnlockEmpireBuilding(candidate.Name);
+            planet.RefreshBuildingsWeCanBuildHere();
+            Building? buildable = FirstBuildableBuildingWithTile(planet);
+            if (buildable != null)
+                return buildable;
+        }
+        return null;
+    }
+
+    static bool IsProbeSafeBuilding(Building building)
+    {
+        return building != null
+               && !string.IsNullOrEmpty(building.Name)
+               && building.NameTranslationIndex > 0
+               && building.Cost > 0f
+               && !building.EventHere
+               && !building.NoRandomSpawn
+               && !building.IsCommodity
+               && !building.WinsGame
+               && !building.CanBeCreatedFromLava;
+    }
 
     static void AddDeterministicEmptyHabitableTile(Planet planet)
     {
@@ -1365,13 +1400,17 @@ sealed class ProbeCommandPlan
 
     static void RequireQueuedBuilding(string label, string side, Planet planet, string buildingName)
     {
-        if (!ContainsQueuedBuilding(planet, buildingName))
-            throw new InvalidOperationException($"{label}: {side} planet {planet.Id} did not queue building '{buildingName}'.");
+        if (!ContainsQueuedOrCompletedBuilding(planet, buildingName))
+            throw new InvalidOperationException($"{label}: {side} planet {planet.Id} did not queue or complete building '{buildingName}'.");
     }
 
     static bool ContainsQueuedBuilding(Planet planet, string buildingName)
         => planet.Construction.GetConstructionQueueSnapshot()
             .Any(q => q.isBuilding && string.Equals(q.Building?.Name, buildingName, StringComparison.Ordinal));
+
+    static bool ContainsQueuedOrCompletedBuilding(Planet planet, string buildingName)
+        => ContainsQueuedBuilding(planet, buildingName)
+           || planet.TilesList.Any(tile => string.Equals(tile.Building?.Name, buildingName, StringComparison.Ordinal));
 
     static void RequireDesignBuildable(string label, string side, Empire empire, string designName)
     {

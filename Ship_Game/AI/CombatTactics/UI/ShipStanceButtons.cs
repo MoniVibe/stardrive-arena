@@ -38,6 +38,9 @@ namespace Ship_Game.AI.CombatTactics.UI
                     return;
             }
 
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(ships[0]))
+                return;
+
             ships[0].Universe.Screen?.RunOnSimThread(() =>
             {
                 for (int i = 0; i < ships.Length; i++)

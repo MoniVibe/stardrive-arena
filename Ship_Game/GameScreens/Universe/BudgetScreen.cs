@@ -126,12 +126,17 @@ namespace Ship_Game.GameScreens
                                        if (Authoritative4XClientContext.TrySubmitSetEmpireBudget(Player,
                                                Player.data.TaxRate, Player.data.treasuryGoal, value))
                                            return;
+                                       if (Authoritative4XClientContext.ShouldBlockLocalMutation(Player))
+                                       {
+                                           GameAudio.NegativeClick();
+                                           return;
+                                       }
                                        Player.AutoTaxes = value;
                                    },
                                    GameText.AutoTaxes, GameText.YourEmpireWillAutomaticallyManage3);
             autoTax.OnChange = cb =>
             {
-                if (Authoritative4XClientContext.IsActiveFor(Player))
+                if (Authoritative4XClientContext.ShouldBlockLocalMutation(Player))
                 {
                     TaxSlider.Enabled = !Player.AutoTaxes;
                     TaxSlider.Text = Player.AutoTaxes ? GameText.AutoTaxes : GameText.TaxRate;
@@ -205,6 +210,11 @@ namespace Ship_Game.GameScreens
             if (Authoritative4XClientContext.TrySubmitSetEmpireBudget(Player, s.RelativeValue,
                     Player.data.treasuryGoal, autoTaxes: false))
                 return;
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Player))
+            {
+                GameAudio.NegativeClick();
+                return;
+            }
 
             Player.data.TaxRate = s.RelativeValue;
             Player.UpdateNetPlanetIncomes();
@@ -218,6 +228,11 @@ namespace Ship_Game.GameScreens
                     s.AbsoluteValue, Player.AutoTaxes))
             {
                 UpdateTreasuryGoalText(s);
+                return;
+            }
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Player))
+            {
+                GameAudio.NegativeClick();
                 return;
             }
 

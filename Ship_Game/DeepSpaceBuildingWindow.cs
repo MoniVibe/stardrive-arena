@@ -166,6 +166,12 @@ namespace Ship_Game
                         return;
                 }
 
+                if (Authoritative4XClientContext.ShouldBlockLocalMutation(Player))
+                {
+                    GameAudio.NegativeClick();
+                    return;
+                }
+
                 if (ShipToBuild.IsResearchStation)
                 {
                     if (TargetPlanet != null)      Player.AI.AddGoalAndEvaluate(new ProcessResearchStation(Player, TargetPlanet, ShipToBuild, TetherOffset));

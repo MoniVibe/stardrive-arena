@@ -592,6 +592,9 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Submitted:
                 case Authoritative4XUiCommandResult.Blocked:
                     return;
+                case Authoritative4XUiCommandResult.NotActive
+                    when Authoritative4XClientContext.ShouldBlockLocalMutation(P):
+                    return;
             }
 
             P.Name = name;
@@ -599,7 +602,7 @@ namespace Ship_Game
 
         void OnPlanetNameChanged(string name)
         {
-            if (Authoritative4XClientContext.IsActive)
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(P))
                 return;
 
             P.Name = name;
@@ -622,7 +625,8 @@ namespace Ship_Game
                     case Authoritative4XUiCommandResult.Blocked:
                         ToScrap = null;
                         return;
-                    case Authoritative4XUiCommandResult.NotActive when Authoritative4XClientContext.IsActive:
+                    case Authoritative4XUiCommandResult.NotActive
+                        when Authoritative4XClientContext.ShouldBlockLocalMutation(P):
                         ToScrap = null;
                         return;
                 }
@@ -642,7 +646,8 @@ namespace Ship_Game
                     case Authoritative4XUiCommandResult.Blocked:
                         BioToScrap = null;
                         return;
-                    case Authoritative4XUiCommandResult.NotActive when Authoritative4XClientContext.IsActive:
+                    case Authoritative4XUiCommandResult.NotActive
+                        when Authoritative4XClientContext.ShouldBlockLocalMutation(P):
                         BioToScrap = null;
                         return;
                 }

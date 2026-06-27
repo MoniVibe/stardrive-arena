@@ -139,6 +139,13 @@ namespace Ship_Game
                                         return true;
                                 }
 
+                                if (Authoritative4XClientContext.ShouldBlockLocalMutation(P))
+                                {
+                                    GameAudio.NegativeClick();
+                                    ClickedTroop = true;
+                                    return true;
+                                }
+
                                 Ship troopShip = troop.Launch(pgs);
                                 if (troopShip != null)
                                 {
@@ -272,7 +279,7 @@ namespace Ship_Game
             return state > Planet.GoodState.EXPORT ? Planet.GoodState.STORE : state;
         }
 
-        static bool HandleAuthoritativeStorageResult(Authoritative4XUiCommandResult result)
+        bool HandleAuthoritativeStorageResult(Authoritative4XUiCommandResult result)
         {
             switch (result)
             {
@@ -283,7 +290,7 @@ namespace Ship_Game
                     GameAudio.NegativeClick();
                     return true;
                 case Authoritative4XUiCommandResult.NotActive:
-                    if (Authoritative4XClientContext.IsActive)
+                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(P))
                     {
                         GameAudio.NegativeClick();
                         return true;

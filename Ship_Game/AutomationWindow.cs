@@ -189,7 +189,7 @@ namespace Ship_Game
             if (!IsOpen)
                 return false;
 
-            bool authoritative = Authoritative4XClientContext.IsActive;
+            bool authoritative = Authoritative4XClientContext.ShouldBlockLocalMutation(Screen.Player);
             AutomationSnapshot before = authoritative ? CaptureAutomationSnapshot() : default;
 
             if (base.HandleInput(input))

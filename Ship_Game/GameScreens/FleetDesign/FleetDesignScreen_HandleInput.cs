@@ -639,6 +639,13 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Blocked:
                     GameAudio.NegativeClick();
                     return true;
+                case Authoritative4XUiCommandResult.NotActive:
+                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(SelectedFleet))
+                    {
+                        GameAudio.NegativeClick();
+                        return true;
+                    }
+                    return false;
                 default:
                     return false;
             }

@@ -242,7 +242,8 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Blocked:
                     GameAudio.NegativeClick();
                     return;
-                case Authoritative4XUiCommandResult.NotActive when Authoritative4XClientContext.IsActive:
+                case Authoritative4XUiCommandResult.NotActive
+                    when Authoritative4XClientContext.ShouldBlockLocalMutation(P):
                     GameAudio.NegativeClick();
                     return;
             }
@@ -270,7 +271,7 @@ namespace Ship_Game
                 ClearItemsFilter();
                 return true;
             }
-            if (Authoritative4XClientContext.IsActive)
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(P))
             {
                 GameAudio.NegativeClick();
                 return false;
@@ -294,6 +295,10 @@ namespace Ship_Game
                     GameAudio.AcceptClick();
                     return;
                 case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return;
+                case Authoritative4XUiCommandResult.NotActive
+                    when Authoritative4XClientContext.ShouldBlockLocalMutation(P):
                     GameAudio.NegativeClick();
                     return;
             }
@@ -331,6 +336,10 @@ namespace Ship_Game
                     GameAudio.AcceptClick();
                     return;
                 case Authoritative4XUiCommandResult.Blocked:
+                    GameAudio.NegativeClick();
+                    return;
+                case Authoritative4XUiCommandResult.NotActive
+                    when Authoritative4XClientContext.ShouldBlockLocalMutation(P):
                     GameAudio.NegativeClick();
                     return;
             }

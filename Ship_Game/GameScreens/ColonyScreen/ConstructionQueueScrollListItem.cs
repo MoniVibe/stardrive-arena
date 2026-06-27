@@ -173,7 +173,8 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Blocked:
                     GameAudio.NegativeClick();
                     return;
-                case Authoritative4XUiCommandResult.NotActive when Authoritative4XClientContext.IsActive:
+                case Authoritative4XUiCommandResult.NotActive
+                    when Authoritative4XClientContext.ShouldBlockLocalMutation(Planet):
                     GameAudio.NegativeClick();
                     return;
             }
@@ -219,7 +220,7 @@ namespace Ship_Game
                 Authoritative4XClientContext.TrySubmitReorderConstructionQueueItem(Planet, Item, moveToIndex));
         }
 
-        static bool HandleAuthoritativeQueueResult(Authoritative4XUiCommandResult result)
+        bool HandleAuthoritativeQueueResult(Authoritative4XUiCommandResult result)
         {
             switch (result)
             {
@@ -230,7 +231,7 @@ namespace Ship_Game
                     GameAudio.NegativeClick();
                     return true;
                 case Authoritative4XUiCommandResult.NotActive:
-                    if (Authoritative4XClientContext.IsActive)
+                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(Planet))
                     {
                         GameAudio.NegativeClick();
                         return true;

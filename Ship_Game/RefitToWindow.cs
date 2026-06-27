@@ -215,6 +215,11 @@ namespace Ship_Game
                     GameAudio.NegativeClick();
                     return true;
                 default:
+                    if (Authoritative4XClientContext.ShouldBlockLocalMutation(ShipToRefit))
+                    {
+                        GameAudio.NegativeClick();
+                        return true;
+                    }
                     return false;
             }
         }

@@ -150,6 +150,11 @@ namespace Ship_Game
                             Type == ColonyResType.Food ? newLock : P.Food.PercentLock,
                             Type == ColonyResType.Prod ? newLock : P.Prod.PercentLock,
                             Type == ColonyResType.Res ? newLock : P.Res.PercentLock);
+                        if (!submitted && Authoritative4XClientContext.ShouldBlockLocalMutation(P))
+                        {
+                            GameAudio.NegativeClick();
+                            return true;
+                        }
                         if (!submitted)
                             LockedByUser = newLock;
                         GameAudio.AcceptClick();

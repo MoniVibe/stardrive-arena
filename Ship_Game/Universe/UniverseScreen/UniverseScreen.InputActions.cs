@@ -19,6 +19,9 @@ namespace Ship_Game
                     return;
             }
 
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(s))
+                return;
+
             s.AI.OrderScrapShip();
         }
 
@@ -46,6 +49,9 @@ namespace Ship_Game
                     return;
             }
 
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(s))
+                return;
+
             s.ScuttleTimer = 10f;
         }
 
@@ -59,6 +65,9 @@ namespace Ship_Game
                     return;
             }
 
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(s))
+                return;
+
             s.AI.OrderExplore();
         }
 
@@ -70,6 +79,9 @@ namespace Ship_Game
                 case Authoritative4XUiCommandResult.Blocked:
                     return;
             }
+
+            if (Authoritative4XClientContext.ShouldBlockLocalMutation(Player))
+                return;
 
             Player.AI.AddGoalAndEvaluate(new MarkForColonization(p, Player, isManual:true));
         }

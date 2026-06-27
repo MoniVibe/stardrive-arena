@@ -23,6 +23,7 @@ public partial class UniverseScreen
     {
         DetachAuthoritative4XMultiplayer();
         Authoritative4XLive = session;
+        Authoritative4XLive?.ActivateUiCommandContext();
         EnsureAuthoritative4XLocalBinding(forceVisibilityRefresh: true);
     }
 
@@ -31,6 +32,7 @@ public partial class UniverseScreen
         if (Authoritative4XLive == null)
             return;
 
+        Authoritative4XLive.ActivateUiCommandContext();
         Empire local = UState.GetEmpire(Authoritative4XLive.LocalEmpireId);
         if (local == null)
             throw new System.InvalidOperationException(
