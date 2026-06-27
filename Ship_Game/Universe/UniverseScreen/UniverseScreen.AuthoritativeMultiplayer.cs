@@ -1,5 +1,7 @@
 using System;
+using System.Globalization;
 using System.IO;
+using System.Linq;
 using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 
@@ -10,6 +12,7 @@ public partial class UniverseScreen
     Authoritative4XLiveSession Authoritative4XLive;
     Empire Authoritative4XLocalPlayer;
     bool AuthoritativeDiplomacyPopupOpen;
+    DateTime NextAuthoritative4XViewPerfUtc;
 
     public Authoritative4XLiveSession Authoritative4XMultiplayer => Authoritative4XLive;
     public bool IsAuthoritative4XMultiplayer => Authoritative4XLive != null;
@@ -79,6 +82,38 @@ public partial class UniverseScreen
             error = e.Message;
             return false;
         }
+    }
+
+    void RecordAuthoritative4XViewPerfIfNeeded()
+    {
+        if (Authoritative4XLive == null || viewState < UnivScreenState.SectorView)
+            return;
+
+        DateTime now = DateTime.UtcNow;
+        if (now < NextAuthoritative4XViewPerfUtc)
+            return;
+        NextAuthoritative4XViewPerfUtc = now.AddSeconds(2);
+
+        int visibleShips = UState.Objects?.VisibleShips?.Length ?? 0;
+        int visibleProjectiles = UState.Objects?.VisibleProjectiles?.Length ?? 0;
+        int visibleBeams = UState.Objects?.VisibleBeams?.Length ?? 0;
+        int activeFleets = 0;
+        foreach (Empire empire in UState.Empires)
+        {
+            foreach (var _ in empire.ActiveFleets)
+                ++activeFleets;
+        }
+        int systemsInFrustum = UState.Systems.Count(s => s.InFrustum);
+
+        string Ms(AggregatePerfTimer timer) => (timer.AvgTime * 1000f).ToString("0.###", CultureInfo.InvariantCulture);
+        Authoritative4XLive.RecordViewPerf(
+            $"view={viewState} camZ={CamPos.Z.ToString("0", CultureInfo.InvariantCulture)} "
+            + $"drawFps={DrawGroupTotalPerf.MeasuredSamples} drawMs={Ms(DrawGroupTotalPerf)} "
+            + $"renderMs={Ms(RenderGroupTotalPerf)} overlaysMs={Ms(OverlaysGroupTotalPerf)} "
+            + $"iconsMs={Ms(IconsGroupTotalPerf)} shipsMs={Ms(DrawShips)} iconMs={Ms(DrawIcons)} "
+            + $"fogMs={Ms(DrawFogOfWar)} bordersMs={Ms(DrawBorders)} overFogMs={Ms(DrawOverFog)} "
+            + $"visibleShips={visibleShips} projectiles={visibleProjectiles} beams={visibleBeams} "
+            + $"fleets={activeFleets} systemsInFrustum={systemsInFrustum}");
     }
 
     public bool LocalShipCanTakeFleetOrders(Ship ship, bool forAttack = false)

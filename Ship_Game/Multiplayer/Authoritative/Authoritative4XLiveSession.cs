@@ -59,6 +59,9 @@ public sealed class Authoritative4XLiveSession : IDisposable
     public string TelemetrySessionId => LiveSessionId;
     public string TelemetryStartFingerprint => LiveStartFingerprint;
 
+    public void RecordViewPerf(string details)
+        => Telemetry?.Event("VIEW_PERF", details ?? "");
+
     Authoritative4XLiveSession(UniverseScreen universe, Authoritative4XLiveRole role,
         int localPeerId, int localEmpireId, Authoritative4XNetworkHost host,
         Authoritative4XNetworkClient client, IReadOnlyDictionary<int, int> empireByPeer,

@@ -47,6 +47,13 @@ public class Authoritative4XSessionTests : StarDriveTest
         public string ResearchUid;
     }
 
+    sealed class TestPlanetScreen : PlanetScreen
+    {
+        public TestPlanetScreen(GameScreen parent, Planet planet) : base(parent, planet)
+        {
+        }
+    }
+
     [TestMethod]
     public void Authoritative4XMessages_RoundTripThroughTransportCodec_Headless()
     {
@@ -6916,7 +6923,7 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
-    public void Authoritative4XSnapshot_IgnoresVolatileShipPositionButTracksMoveTarget_Headless()
+    public void Authoritative4XSnapshot_IgnoresVolatileShipMovementScratchButTracksDurableOrders_Headless()
     {
         LoadAllGameData();
 
@@ -6991,11 +6998,19 @@ public class Authoritative4XSessionTests : StarDriveTest
 
             clientShip.AI.MovePosition = new Vector2(authorityShip.AI.MovePosition.X + 128f,
                 authorityShip.AI.MovePosition.Y);
-            AuthoritativeStateSnapshot moveTargetDrift = AuthoritativeStateSnapshot.Capture(client.AuthorityUniverse, 0);
-            Assert.AreNotEqual(authoritySnapshot.SyncDigest, moveTargetDrift.SyncDigest,
-                "The sync digest must still catch command-state movement target divergence. authority='"
+            AuthoritativeStateSnapshot moveScratchDrift = AuthoritativeStateSnapshot.Capture(client.AuthorityUniverse, 0);
+            Assert.AreEqual(authoritySnapshot.SyncDigest, moveScratchDrift.SyncDigest,
+                "Current ship movement-solver scratch targets are raw-hash telemetry, not canonical command state. authority='"
                 + ShipPayloadRowForTest(authoritySnapshot.Payload, authorityShip.Id) + "' client='"
-                + ShipPayloadRowForTest(moveTargetDrift.Payload, clientShip.Id) + "'");
+                + ShipPayloadRowForTest(moveScratchDrift.Payload, clientShip.Id) + "'");
+
+            clientShip.AI.OrderMoveTo(authorityShip.Position + new Vector2(128f, 0f),
+                Vectors.Right, MoveOrder.Aggressive | MoveOrder.AddWayPoint);
+            AuthoritativeStateSnapshot durableOrderDrift = AuthoritativeStateSnapshot.Capture(client.AuthorityUniverse, 0);
+            Assert.AreNotEqual(authoritySnapshot.SyncDigest, durableOrderDrift.SyncDigest,
+                "The sync digest must still catch durable queued movement-order divergence. authority='"
+                + ShipPayloadRowForTest(authoritySnapshot.Payload, authorityShip.Id) + "' client='"
+                + ShipPayloadRowForTest(durableOrderDrift.Payload, clientShip.Id) + "'");
         }
         finally
         {
@@ -7707,6 +7722,13 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreNotEqual(client.EnemyShip.InPlayerSensorRange,
                 client.Screen.IsKnownToLocalPlayerForUi(client.EnemyShip),
                 "The local-view visibility proof must not be just a wrapper around UState.Player visibility.");
+            using (var planetScreen = new TestPlanetScreen(client.Screen, clientRemotePlanet))
+            {
+                Assert.AreSame(client.Enemy, planetScreen.Player,
+                    "Planet screens must bind to the screen-local authoritative MP empire, not UState.Player.");
+                Assert.AreNotSame(client.UState.Player, planetScreen.Player,
+                    "The proof must catch the live client case where UState.Player remains the host empire.");
+            }
 
             EnsureSingleBuildTile(authorityRemotePlanet);
             EnsureSingleBuildTile(clientRemotePlanet);

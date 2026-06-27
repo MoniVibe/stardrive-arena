@@ -456,6 +456,7 @@ namespace Ship_Game
             DrawCompletedEvt.Set();
 
             DrawGroupTotalPerf.Stop();
+            RecordAuthoritative4XViewPerfIfNeeded();
         }
 
         private void DrawGeneralUI(SpriteBatch batch, DrawTimes elapsed)
