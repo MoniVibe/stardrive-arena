@@ -14,6 +14,7 @@ using Ship_Game.Data;
 using Ship_Game.Determinism;
 using Ship_Game.Gameplay;
 using Ship_Game.Multiplayer.Authoritative;
+using Ship_Game.Ships;
 using SynapseGaming.LightingSystem.Core;
 
 namespace StarDrive.Tools.Authoritative4XProbe;
@@ -755,7 +756,7 @@ static class AuthoritativeProbeRunner
 
 sealed class ProbeCommandPlan
 {
-    public const int RequiredTurns = 2;
+    public const int RequiredTurns = 10;
 
     readonly int HostEmpireId;
     readonly int JoinEmpireId;
@@ -767,10 +768,29 @@ sealed class ProbeCommandPlan
     readonly float HostTreasuryGoal;
     readonly float JoinTaxRate;
     readonly float JoinTreasuryGoal;
+    readonly AuthoritativePlanetGovernorOptions HostGovernorOptions;
+    readonly AuthoritativePlanetGovernorOptions JoinGovernorOptions;
+    readonly TradeSlots HostTrade;
+    readonly TradeSlots JoinTrade;
+    readonly DefenseTargets HostDefense;
+    readonly DefenseTargets JoinDefense;
+    readonly string HostBuildingName;
+    readonly string JoinBuildingName;
+    readonly string HostDesignName;
+    readonly string JoinDesignName;
+    readonly string HostDesign64;
+    readonly string JoinDesign64;
 
     ProbeCommandPlan(int hostEmpireId, int joinEmpireId, int hostPlanetId, int joinPlanetId,
         float hostManualCivilianBudget, float joinManualCivilianBudget,
-        float hostTaxRate, float hostTreasuryGoal, float joinTaxRate, float joinTreasuryGoal)
+        float hostTaxRate, float hostTreasuryGoal, float joinTaxRate, float joinTreasuryGoal,
+        AuthoritativePlanetGovernorOptions hostGovernorOptions,
+        AuthoritativePlanetGovernorOptions joinGovernorOptions,
+        TradeSlots hostTrade, TradeSlots joinTrade,
+        DefenseTargets hostDefense, DefenseTargets joinDefense,
+        string hostBuildingName, string joinBuildingName,
+        string hostDesignName, string joinDesignName,
+        string hostDesign64, string joinDesign64)
     {
         HostEmpireId = hostEmpireId;
         JoinEmpireId = joinEmpireId;
@@ -782,6 +802,18 @@ sealed class ProbeCommandPlan
         HostTreasuryGoal = hostTreasuryGoal;
         JoinTaxRate = joinTaxRate;
         JoinTreasuryGoal = joinTreasuryGoal;
+        HostGovernorOptions = hostGovernorOptions;
+        JoinGovernorOptions = joinGovernorOptions;
+        HostTrade = hostTrade;
+        JoinTrade = joinTrade;
+        HostDefense = hostDefense;
+        JoinDefense = joinDefense;
+        HostBuildingName = hostBuildingName;
+        JoinBuildingName = joinBuildingName;
+        HostDesignName = hostDesignName;
+        JoinDesignName = joinDesignName;
+        HostDesign64 = hostDesign64;
+        JoinDesign64 = joinDesign64;
     }
 
     public static ProbeCommandPlan Create(Authoritative4XGeneratedGameStart generated, int hostPeerId, int joinPeerId)
@@ -790,41 +822,100 @@ sealed class ProbeCommandPlan
         int joinEmpireId = generated.EmpireIdForPeer(joinPeerId);
         Planet hostPlanet = FirstPlanet(generated, hostEmpireId);
         Planet joinPlanet = FirstPlanet(generated, joinEmpireId);
+        Empire hostEmpire = generated.AuthorityUniverse.UState.GetEmpireById(hostEmpireId)
+                            ?? throw new InvalidOperationException($"Host empire {hostEmpireId} missing.");
+        Empire joinEmpire = generated.AuthorityUniverse.UState.GetEmpireById(joinEmpireId)
+                            ?? throw new InvalidOperationException($"Join empire {joinEmpireId} missing.");
+
+        string hostDesignName = $"MP QA Host Scout {hostEmpireId}-{hostPlanet.Id}";
+        string joinDesignName = $"MP QA Join Scout {joinEmpireId}-{joinPlanet.Id}";
+        ResourceManager.Ships.Delete(hostDesignName);
+        ResourceManager.Ships.Delete(joinDesignName);
+        ShipDesign hostDesign = BuildLegalPlayerDesign(hostEmpire, hostDesignName);
+        ShipDesign joinDesign = BuildLegalPlayerDesign(joinEmpire, joinDesignName);
+
         return new ProbeCommandPlan(hostEmpireId, joinEmpireId, hostPlanet.Id, joinPlanet.Id,
             hostManualCivilianBudget: 12.5f,
             joinManualCivilianBudget: 17.25f,
             hostTaxRate: 0.17f,
             hostTreasuryGoal: 0.41f,
             joinTaxRate: 0.23f,
-            joinTreasuryGoal: 0.37f);
+            joinTreasuryGoal: 0.37f,
+            hostGovernorOptions: AuthoritativePlanetGovernorOptions.GovOrbitals
+                                 | AuthoritativePlanetGovernorOptions.ManualOrbitals
+                                 | AuthoritativePlanetGovernorOptions.GovGroundDefense,
+            joinGovernorOptions: AuthoritativePlanetGovernorOptions.DontScrapBuildings
+                                 | AuthoritativePlanetGovernorOptions.Quarantine
+                                 | AuthoritativePlanetGovernorOptions.SpecializedTradeHub,
+            hostTrade: new TradeSlots(1, 2, 0, 3, 4, 0),
+            joinTrade: new TradeSlots(2, 1, 0, 4, 3, 0),
+            hostDefense: new DefenseTargets(5, 2, 1, 1),
+            joinDefense: new DefenseTargets(6, 3, 1, 2),
+            hostBuildingName: TryPickBuildableBuilding(hostPlanet)?.Name ?? "",
+            joinBuildingName: TryPickBuildableBuilding(joinPlanet)?.Name ?? "",
+            hostDesignName: hostDesignName,
+            joinDesignName: joinDesignName,
+            hostDesign64: hostDesign.GetBase64DesignString(),
+            joinDesign64: joinDesign.GetBase64DesignString());
     }
 
     public AuthoritativePlayerCommand HostCommand(int sequence)
         => sequence switch
         {
-            1 => AuthoritativePlayerCommand.SetPlanetManualBudget(sequence, HostEmpireId, HostPlanetId,
+            1 => AuthoritativePlayerCommand.SetEmpireAutomation(sequence, HostEmpireId,
+                AuthoritativeEmpireAutomationFlags.None, "", "", "", "", "", ""),
+            2 => AuthoritativePlayerCommand.SetPlanetManualBudget(sequence, HostEmpireId, HostPlanetId,
                 AuthoritativePlanetBudgetKind.Civilian, HostManualCivilianBudget),
-            2 => AuthoritativePlayerCommand.SetEmpireBudget(sequence, HostEmpireId, HostTaxRate,
+            3 => AuthoritativePlayerCommand.SetEmpireBudget(sequence, HostEmpireId, HostTaxRate,
                 HostTreasuryGoal, autoTaxes: false),
+            4 => AuthoritativePlayerCommand.SetPlanetGovernorOptions(sequence, HostEmpireId, HostPlanetId,
+                HostGovernorOptions),
+            5 => AuthoritativePlayerCommand.SetPlanetManualTradeSlots(sequence, HostEmpireId, HostPlanetId,
+                HostTrade.FoodImport, HostTrade.ProdImport, HostTrade.ColoImport,
+                HostTrade.FoodExport, HostTrade.ProdExport, HostTrade.ColoExport),
+            6 => AuthoritativePlayerCommand.SetPlanetDefenseTargets(sequence, HostEmpireId, HostPlanetId,
+                HostDefense.GarrisonSize, HostDefense.WantedPlatforms, HostDefense.WantedShipyards,
+                HostDefense.WantedStations),
+            7 => !string.IsNullOrEmpty(HostBuildingName)
+                ? AuthoritativePlayerCommand.QueueBuilding(sequence, HostEmpireId, HostPlanetId, HostBuildingName)
+                : AuthoritativePlayerCommand.NoOp(sequence, HostEmpireId),
+            8 => AuthoritativePlayerCommand.DesignShip(sequence, HostEmpireId, HostDesign64),
+            9 => AuthoritativePlayerCommand.QueueBuild(sequence, HostEmpireId, HostPlanetId, HostDesignName),
             _ => AuthoritativePlayerCommand.NoOp(sequence, HostEmpireId),
         };
 
     public AuthoritativePlayerCommand JoinCommand(int sequence)
         => sequence switch
         {
-            1 => AuthoritativePlayerCommand.SetPlanetManualBudget(sequence, JoinEmpireId, JoinPlanetId,
+            1 => AuthoritativePlayerCommand.SetEmpireAutomation(sequence, JoinEmpireId,
+                AuthoritativeEmpireAutomationFlags.None, "", "", "", "", "", ""),
+            2 => AuthoritativePlayerCommand.SetPlanetManualBudget(sequence, JoinEmpireId, JoinPlanetId,
                 AuthoritativePlanetBudgetKind.Civilian, JoinManualCivilianBudget),
-            2 => AuthoritativePlayerCommand.SetEmpireBudget(sequence, JoinEmpireId, JoinTaxRate,
+            3 => AuthoritativePlayerCommand.SetEmpireBudget(sequence, JoinEmpireId, JoinTaxRate,
                 JoinTreasuryGoal, autoTaxes: false),
+            4 => AuthoritativePlayerCommand.SetPlanetGovernorOptions(sequence, JoinEmpireId, JoinPlanetId,
+                JoinGovernorOptions),
+            5 => AuthoritativePlayerCommand.SetPlanetManualTradeSlots(sequence, JoinEmpireId, JoinPlanetId,
+                JoinTrade.FoodImport, JoinTrade.ProdImport, JoinTrade.ColoImport,
+                JoinTrade.FoodExport, JoinTrade.ProdExport, JoinTrade.ColoExport),
+            6 => AuthoritativePlayerCommand.SetPlanetDefenseTargets(sequence, JoinEmpireId, JoinPlanetId,
+                JoinDefense.GarrisonSize, JoinDefense.WantedPlatforms, JoinDefense.WantedShipyards,
+                JoinDefense.WantedStations),
+            7 => !string.IsNullOrEmpty(JoinBuildingName)
+                ? AuthoritativePlayerCommand.QueueBuilding(sequence, JoinEmpireId, JoinPlanetId, JoinBuildingName)
+                : AuthoritativePlayerCommand.NoOp(sequence, JoinEmpireId),
+            8 => AuthoritativePlayerCommand.DesignShip(sequence, JoinEmpireId, JoinDesign64),
+            9 => AuthoritativePlayerCommand.QueueBuild(sequence, JoinEmpireId, JoinPlanetId, JoinDesignName),
+            10 => AuthoritativePlayerCommand.DiplomacyProposal(sequence, JoinEmpireId, HostEmpireId,
+                AuthoritativeDiplomacyProposalType.DeclareWar, "probe declare war"),
             _ => AuthoritativePlayerCommand.NoOp(sequence, JoinEmpireId),
         };
 
     public string Describe()
         => "script "
-           + $"host: seq1=SetPlanetManualBudget empire={HostEmpireId} planet={HostPlanetId} civilian={HostManualCivilianBudget:0.###}; "
-           + $"seq2=SetEmpireBudget tax={HostTaxRate:0.###} treasury={HostTreasuryGoal:0.###}; "
-           + $"join: seq1=SetPlanetManualBudget empire={JoinEmpireId} planet={JoinPlanetId} civilian={JoinManualCivilianBudget:0.###}; "
-           + $"seq2=SetEmpireBudget tax={JoinTaxRate:0.###} treasury={JoinTreasuryGoal:0.###}";
+           + $"host empire={HostEmpireId} planet={HostPlanetId} building='{HostBuildingName}' design='{HostDesignName}'; "
+           + $"join empire={JoinEmpireId} planet={JoinPlanetId} building='{JoinBuildingName}' design='{JoinDesignName}'; "
+           + $"seqs=automation,budget,tax,governor,trade,defense,building,design,ship-build,diplomacy";
 
     public void AssertApplied(Authoritative4XGeneratedGameStart generated, ProbeLog log, string label)
     {
@@ -843,13 +934,37 @@ sealed class ProbeCommandPlan
         RequireClose(label, "host treasury", HostTreasuryGoal, host.data.treasuryGoal);
         RequireClose(label, "join tax", JoinTaxRate, join.data.TaxRate);
         RequireClose(label, "join treasury", JoinTreasuryGoal, join.data.treasuryGoal);
-        if (host.AutoTaxes || join.AutoTaxes)
-            throw new InvalidOperationException($"{label}: command script expected AutoTaxes off for both human empires.");
+        RequireAutomationOff(label, "host", host);
+        RequireAutomationOff(label, "join", join);
+        RequireGovernor(label, "host", hostPlanet, HostGovernorOptions);
+        RequireGovernor(label, "join", joinPlanet, JoinGovernorOptions);
+        RequireTrade(label, "host", hostPlanet, HostTrade);
+        RequireTrade(label, "join", joinPlanet, JoinTrade);
+        RequireDefense(label, "host", hostPlanet, HostDefense);
+        RequireDefense(label, "join", joinPlanet, JoinDefense);
+        if (!string.IsNullOrEmpty(HostBuildingName))
+            RequireQueuedBuilding(label, "host", hostPlanet, HostBuildingName);
+        if (!string.IsNullOrEmpty(JoinBuildingName))
+            RequireQueuedBuilding(label, "join", joinPlanet, JoinBuildingName);
+        RequireDesignBuildable(label, "host", host, HostDesignName);
+        RequireDesignBuildable(label, "join", join, JoinDesignName);
+        RequireQueuedShip(label, "host", hostPlanet, HostDesignName);
+        RequireQueuedShip(label, "join", joinPlanet, JoinDesignName);
+        if (!join.IsAtWarWith(host) || !host.IsAtWarWith(join))
+            throw new InvalidOperationException($"{label}: join declare-war command did not create bilateral war state.");
 
-        log.Line($"assert {label}: host planet {HostPlanetId} civilian={hostPlanet.ManualCivilianBudget:0.###}, "
-                 + $"host budget={host.data.TaxRate:0.###}/{host.data.treasuryGoal:0.###}; "
-                 + $"join planet {JoinPlanetId} civilian={joinPlanet.ManualCivilianBudget:0.###}, "
-                 + $"join budget={join.data.TaxRate:0.###}/{join.data.treasuryGoal:0.###}");
+        log.Line($"assert {label} category=budget host={HostManualCivilianBudget:0.###}/{HostTaxRate:0.###}/{HostTreasuryGoal:0.###} "
+                 + $"join={JoinManualCivilianBudget:0.###}/{JoinTaxRate:0.###}/{JoinTreasuryGoal:0.###}");
+        log.Line($"assert {label} category=automation hostOff=True joinOff=True");
+        log.Line($"assert {label} category=governor host={HostGovernorOptions} join={JoinGovernorOptions}");
+        log.Line($"assert {label} category=trade host='{HostTrade}' join='{JoinTrade}'");
+        log.Line($"assert {label} category=defense host='{HostDefense}' join='{JoinDefense}'");
+        if (!string.IsNullOrEmpty(HostBuildingName) || !string.IsNullOrEmpty(JoinBuildingName))
+            log.Line($"assert {label} category=building-queue host='{HostBuildingName}' join='{JoinBuildingName}'");
+        else
+            log.Line($"assert {label} category=optional-building-unavailable reason='no legal building in generated tiny start'");
+        log.Line($"assert {label} category=shipyard host='{HostDesignName}' join='{JoinDesignName}'");
+        log.Line($"assert {label} category=diplomacy joinDeclaredWar=True");
     }
 
     public bool IsApplied(Authoritative4XGeneratedGameStart generated)
@@ -864,8 +979,24 @@ sealed class ProbeCommandPlan
                && Close(host?.data.treasuryGoal ?? float.NaN, HostTreasuryGoal)
                && Close(join?.data.TaxRate ?? float.NaN, JoinTaxRate)
                && Close(join?.data.treasuryGoal ?? float.NaN, JoinTreasuryGoal)
-               && host?.AutoTaxes == false
-               && join?.AutoTaxes == false;
+               && hostPlanet != null
+               && joinPlanet != null
+               && AutomationOff(host)
+               && AutomationOff(join)
+               && HasGovernor(hostPlanet, HostGovernorOptions)
+               && HasGovernor(joinPlanet, JoinGovernorOptions)
+               && HasTrade(hostPlanet, joinSide: false)
+               && HasTrade(joinPlanet, joinSide: true)
+               && HasDefense(hostPlanet, HostDefense)
+               && HasDefense(joinPlanet, JoinDefense)
+               && (string.IsNullOrEmpty(HostBuildingName) || ContainsQueuedBuilding(hostPlanet, HostBuildingName))
+               && (string.IsNullOrEmpty(JoinBuildingName) || ContainsQueuedBuilding(joinPlanet, JoinBuildingName))
+               && host!.CanBuildShip(HostDesignName)
+               && join!.CanBuildShip(JoinDesignName)
+               && ContainsQueuedShip(hostPlanet, HostDesignName)
+               && ContainsQueuedShip(joinPlanet, JoinDesignName)
+               && join.IsAtWarWith(host)
+               && host.IsAtWarWith(join);
     }
 
     static Planet FirstPlanet(Authoritative4XGeneratedGameStart generated, int empireId)
@@ -875,6 +1006,146 @@ sealed class ProbeCommandPlan
                ?? throw new InvalidOperationException($"Empire {empireId} has no planets.");
     }
 
+    static Building? TryPickBuildableBuilding(Planet planet)
+    {
+        planet.RefreshBuildingsWeCanBuildHere();
+        Building? building = FirstBuildableBuildingWithTile(planet);
+        if (building == null)
+        {
+            AddDeterministicEmptyHabitableTile(planet);
+            planet.RefreshBuildingsWeCanBuildHere();
+            building = FirstBuildableBuildingWithTile(planet);
+        }
+        return building;
+    }
+
+    static Building? FirstBuildableBuildingWithTile(Planet planet)
+        => planet.GetBuildingsCanBuild()
+            .Where(b => planet.TilesList.Any(tile => tile.CanEnqueueBuildingHere(b)))
+            .OrderBy(b => b.ActualCost(planet.Owner))
+            .ThenBy(b => b.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+
+    static void AddDeterministicEmptyHabitableTile(Planet planet)
+    {
+        for (int y = 0; y < 16; ++y)
+        {
+            for (int x = 0; x < 16; ++x)
+            {
+                if (planet.TilesList.Any(tile => tile.X == x && tile.Y == y))
+                    continue;
+                planet.TilesList.Add(new PlanetGridSquare(planet, x, y, b: null, hab: true, terraformable: false));
+                return;
+            }
+        }
+    }
+
+    static ShipDesign BuildLegalPlayerDesign(Empire empire, string name)
+    {
+        ShipDesign? source = empire.ShipsWeCanBuildSnapshot
+            .OfType<ShipDesign>()
+            .Where(d => !d.IsPlatformOrStation
+                        && d.IsValidDesign
+                        && d.NumDesignSlots > 0
+                        && d.UniqueModuleUIDs.All(empire.IsModuleUnlocked))
+            .OrderBy(d => d.BaseCost)
+            .ThenBy(d => d.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        if (source == null)
+            throw new InvalidOperationException($"Empire {empire.Id} needs at least one legal mobile design to clone.");
+        source.GetOrLoadDesignSlots();
+
+        ShipDesign clone = source.GetClone(name);
+        clone.IsPlayerDesign = true;
+        clone.IsReadonlyDesign = false;
+        return clone;
+    }
+
+    static void RequireAutomationOff(string label, string side, Empire empire)
+    {
+        if (!AutomationOff(empire))
+            throw new InvalidOperationException($"{label}: {side} human empire still has automation/sidekick flags enabled.");
+    }
+
+    static bool AutomationOff(Empire? empire)
+        => empire != null
+           && !empire.AISidekickEnabled
+           && !empire.OracleSidekickEnabled
+           && !empire.AutoTaxes
+           && !empire.AutoResearch
+           && !empire.AutoColonize
+           && !empire.AutoFreighters
+           && !empire.AutoMilitary
+           && !empire.AutoSpy;
+
+    static void RequireGovernor(string label, string side, Planet planet, AuthoritativePlanetGovernorOptions expected)
+    {
+        if (!HasGovernor(planet, expected))
+            throw new InvalidOperationException($"{label}: {side} governor options did not apply.");
+    }
+
+    static bool HasGovernor(Planet planet, AuthoritativePlanetGovernorOptions expected)
+        => planet.GovOrbitals == expected.HasFlag(AuthoritativePlanetGovernorOptions.GovOrbitals)
+           && planet.AutoBuildTroops == expected.HasFlag(AuthoritativePlanetGovernorOptions.AutoBuildTroops)
+           && planet.DontScrapBuildings == expected.HasFlag(AuthoritativePlanetGovernorOptions.DontScrapBuildings)
+           && planet.Quarantine == expected.HasFlag(AuthoritativePlanetGovernorOptions.Quarantine)
+           && planet.ManualOrbitals == expected.HasFlag(AuthoritativePlanetGovernorOptions.ManualOrbitals)
+           && planet.GovGroundDefense == expected.HasFlag(AuthoritativePlanetGovernorOptions.GovGroundDefense)
+           && planet.SpecializedTradeHub == expected.HasFlag(AuthoritativePlanetGovernorOptions.SpecializedTradeHub);
+
+    static void RequireTrade(string label, string side, Planet planet, TradeSlots expected)
+    {
+        if (!HasTrade(planet, expected))
+            throw new InvalidOperationException($"{label}: {side} manual trade slots did not apply.");
+    }
+
+    bool HasTrade(Planet planet, bool joinSide) => HasTrade(planet, joinSide ? JoinTrade : HostTrade);
+
+    static bool HasTrade(Planet planet, TradeSlots expected)
+        => planet.ManualFoodImportSlots == expected.FoodImport
+           && planet.ManualProdImportSlots == expected.ProdImport
+           && planet.ManualColoImportSlots == expected.ColoImport
+           && planet.ManualFoodExportSlots == expected.FoodExport
+           && planet.ManualProdExportSlots == expected.ProdExport
+           && planet.ManualColoExportSlots == expected.ColoExport;
+
+    static void RequireDefense(string label, string side, Planet planet, DefenseTargets expected)
+    {
+        if (!HasDefense(planet, expected))
+            throw new InvalidOperationException($"{label}: {side} defense targets did not apply.");
+    }
+
+    static bool HasDefense(Planet planet, DefenseTargets expected)
+        => planet.GarrisonSize == expected.GarrisonSize
+           && planet.WantedPlatforms == expected.WantedPlatforms
+           && planet.WantedShipyards == expected.WantedShipyards
+           && planet.WantedStations == expected.WantedStations;
+
+    static void RequireQueuedBuilding(string label, string side, Planet planet, string buildingName)
+    {
+        if (!ContainsQueuedBuilding(planet, buildingName))
+            throw new InvalidOperationException($"{label}: {side} planet {planet.Id} did not queue building '{buildingName}'.");
+    }
+
+    static bool ContainsQueuedBuilding(Planet planet, string buildingName)
+        => planet.Construction.GetConstructionQueueSnapshot()
+            .Any(q => q.isBuilding && string.Equals(q.Building?.Name, buildingName, StringComparison.Ordinal));
+
+    static void RequireDesignBuildable(string label, string side, Empire empire, string designName)
+    {
+        if (!empire.CanBuildShip(designName))
+            throw new InvalidOperationException($"{label}: {side} empire {empire.Id} cannot build submitted design '{designName}'.");
+    }
+
+    static void RequireQueuedShip(string label, string side, Planet planet, string designName)
+    {
+        if (!ContainsQueuedShip(planet, designName))
+            throw new InvalidOperationException($"{label}: {side} planet {planet.Id} did not queue ship design '{designName}'.");
+    }
+
+    static bool ContainsQueuedShip(Planet planet, string designName)
+        => planet.Construction.ContainsShipDesignName(designName);
+
     static void RequireClose(string label, string field, float expected, float actual)
     {
         if (!Close(actual, expected))
@@ -882,6 +1153,49 @@ sealed class ProbeCommandPlan
     }
 
     static bool Close(float actual, float expected) => Math.Abs(expected - actual) <= 0.00001f;
+
+    readonly struct TradeSlots
+    {
+        public readonly int FoodImport;
+        public readonly int ProdImport;
+        public readonly int ColoImport;
+        public readonly int FoodExport;
+        public readonly int ProdExport;
+        public readonly int ColoExport;
+
+        public TradeSlots(int foodImport, int prodImport, int coloImport,
+            int foodExport, int prodExport, int coloExport)
+        {
+            FoodImport = foodImport;
+            ProdImport = prodImport;
+            ColoImport = coloImport;
+            FoodExport = foodExport;
+            ProdExport = prodExport;
+            ColoExport = coloExport;
+        }
+
+        public override string ToString()
+            => $"{FoodImport},{ProdImport},{ColoImport}->{FoodExport},{ProdExport},{ColoExport}";
+    }
+
+    readonly struct DefenseTargets
+    {
+        public readonly int GarrisonSize;
+        public readonly int WantedPlatforms;
+        public readonly int WantedShipyards;
+        public readonly int WantedStations;
+
+        public DefenseTargets(int garrisonSize, int wantedPlatforms, int wantedShipyards, int wantedStations)
+        {
+            GarrisonSize = garrisonSize;
+            WantedPlatforms = wantedPlatforms;
+            WantedShipyards = wantedShipyards;
+            WantedStations = wantedStations;
+        }
+
+        public override string ToString()
+            => $"{GarrisonSize},{WantedPlatforms},{WantedShipyards},{WantedStations}";
+    }
 }
 
 static class ProbeEnvironment

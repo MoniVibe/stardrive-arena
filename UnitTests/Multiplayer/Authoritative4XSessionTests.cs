@@ -7408,6 +7408,14 @@ public class Authoritative4XSessionTests : StarDriveTest
         string passing = """
         applied peer=host seq=1 kind=SetEmpireBudget tick=10 hash=0x1/0x2
         applied peer=join seq=1 kind=SetPlanetManualBudget tick=11 hash=0x1/0x2
+        assert host-authority category=budget host=12.5/0.17/0.41 join=17.25/0.23/0.37
+        assert host-authority category=automation hostOff=True joinOff=True
+        assert host-authority category=governor host=GovOrbitals join=Quarantine
+        assert host-authority category=trade host='1,2,0->3,4,0' join='2,1,0->4,3,0'
+        assert host-authority category=defense host='5,2,1,1' join='6,3,1,2'
+        assert host-authority category=building-queue host='Factory' join='Factory'
+        assert host-authority category=shipyard host='MP QA Host Scout' join='MP QA Join Scout'
+        assert host-authority category=diplomacy joinDeclaredWar=True
         2026-06-27T01:00:02Z RAW_HASH_DRIFT sessionId=s origin=3 seq=12 tick=60 digest='0x1/0x2'
         [auth4x-probe] OK role=join turns=600 seq=600 tick=600 final=0xABC:0xDEF/0x123 artifact=C:\qa\join.txt
         """;
@@ -7415,10 +7423,17 @@ public class Authoritative4XSessionTests : StarDriveTest
         Authoritative4XQaSummary pass = Authoritative4XQaSummarizer.SummarizeText(passing);
         Assert.IsTrue(pass.Passed, pass.OneLine());
         Assert.AreEqual(Authoritative4XQaFailureKind.None, pass.FailureKind);
+        Assert.IsTrue(pass.HasFunctionalCoverage, pass.OneLine());
+        Assert.AreEqual(8, pass.FunctionalAssertLines);
         Assert.AreEqual(1, pass.HostAppliedCommands);
         Assert.AreEqual(1, pass.JoinAppliedCommands);
         Assert.AreEqual(1, pass.RawHashDriftLines);
         Assert.AreEqual("0xABC:0xDEF/0x123", pass.LastFinalHash);
+
+        Authoritative4XQaSummary decorativeOk = Authoritative4XQaSummarizer.SummarizeText(
+            "[auth4x-probe] OK role=join turns=600 seq=600 tick=600 final=0xABC/0x123 artifact=C:\\qa\\join.txt");
+        Assert.IsFalse(decorativeOk.Passed, decorativeOk.OneLine());
+        Assert.AreEqual(Authoritative4XQaFailureKind.Coverage, decorativeOk.EffectiveFailureKind);
 
         string failed = """
         [auth4x-probe] FAILED role=join turns=600 seq=0 tick=0 failure=A connection attempt failed because the connected party did not properly respond.

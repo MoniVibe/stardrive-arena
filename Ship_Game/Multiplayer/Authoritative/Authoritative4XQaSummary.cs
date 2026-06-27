@@ -7,6 +7,7 @@ namespace Ship_Game.Multiplayer.Authoritative;
 public enum Authoritative4XQaFailureKind
 {
     None,
+    Coverage,
     Connection,
     EnvironmentMismatch,
     SyncMismatch,
@@ -27,6 +28,15 @@ public sealed class Authoritative4XQaSummary
     public int RawHashDriftLines;
     public int NetworkErrorLines;
     public int ViewPerfLines;
+    public int FunctionalAssertLines;
+    public int BudgetAssertLines;
+    public int AutomationAssertLines;
+    public int GovernorAssertLines;
+    public int TradeAssertLines;
+    public int DefenseAssertLines;
+    public int BuildingQueueAssertLines;
+    public int ShipyardAssertLines;
+    public int DiplomacyAssertLines;
     public int HostAppliedCommands;
     public int JoinAppliedCommands;
     public float MaxDrawMs;
@@ -39,14 +49,38 @@ public sealed class Authoritative4XQaSummary
     public string EvidenceLine = "";
     public string MaxViewPerfLine = "";
     public Authoritative4XQaFailureKind FailureKind;
-    public bool Passed => FailureKind == Authoritative4XQaFailureKind.None && OkLines > 0;
+    public bool HasFunctionalCoverage
+        => BudgetAssertLines > 0
+           && AutomationAssertLines > 0
+           && GovernorAssertLines > 0
+           && TradeAssertLines > 0
+           && DefenseAssertLines > 0
+           && ShipyardAssertLines > 0
+           && DiplomacyAssertLines > 0;
+
+    public Authoritative4XQaFailureKind EffectiveFailureKind
+    {
+        get
+        {
+            if (FailureKind != Authoritative4XQaFailureKind.None)
+                return FailureKind;
+            if (OkLines == 0)
+                return Authoritative4XQaFailureKind.Unknown;
+            return HasFunctionalCoverage ? Authoritative4XQaFailureKind.None : Authoritative4XQaFailureKind.Coverage;
+        }
+    }
+
+    public bool Passed => EffectiveFailureKind == Authoritative4XQaFailureKind.None;
 
     public string OneLine()
     {
-        string status = Passed ? "PASS" : $"FAIL {FailureKind}";
+        string status = Passed ? "PASS" : $"FAIL {EffectiveFailureKind}";
         return $"{status}: ok={OkLines} failed={FailedLines} commands={CommandLines} results={ResultLines} "
                + $"hostApplied={HostAppliedCommands} joinApplied={JoinAppliedCommands} syncMismatch={SyncMismatchLines} "
                + $"rawDrift={RawHashDriftLines} networkError={NetworkErrorLines} viewPerf={ViewPerfLines} "
+               + $"asserts={FunctionalAssertLines} budget={BudgetAssertLines} automation={AutomationAssertLines} "
+               + $"governor={GovernorAssertLines} trade={TradeAssertLines} defense={DefenseAssertLines} "
+               + $"building={BuildingQueueAssertLines} shipyard={ShipyardAssertLines} diplomacy={DiplomacyAssertLines} "
                + $"maxDrawMs={MaxDrawMs:0.###} maxRenderMs={MaxRenderMs:0.###} maxOverlaysMs={MaxOverlaysMs:0.###} "
                + $"final='{LastFinalHash}' firstDiff='{FirstDiff}' evidence='{EvidenceLine}'";
     }
@@ -113,6 +147,27 @@ public static class Authoritative4XQaSummarizer
             || line.Contains("applied peer=", StringComparison.Ordinal)
             || line.Contains("processed peer=", StringComparison.Ordinal))
             ++summary.CommandLines;
+
+        if (line.StartsWith("assert ", StringComparison.OrdinalIgnoreCase))
+        {
+            ++summary.FunctionalAssertLines;
+            if (line.Contains("category=budget", StringComparison.OrdinalIgnoreCase))
+                ++summary.BudgetAssertLines;
+            if (line.Contains("category=automation", StringComparison.OrdinalIgnoreCase))
+                ++summary.AutomationAssertLines;
+            if (line.Contains("category=governor", StringComparison.OrdinalIgnoreCase))
+                ++summary.GovernorAssertLines;
+            if (line.Contains("category=trade", StringComparison.OrdinalIgnoreCase))
+                ++summary.TradeAssertLines;
+            if (line.Contains("category=defense", StringComparison.OrdinalIgnoreCase))
+                ++summary.DefenseAssertLines;
+            if (line.Contains("category=building-queue", StringComparison.OrdinalIgnoreCase))
+                ++summary.BuildingQueueAssertLines;
+            if (line.Contains("category=shipyard", StringComparison.OrdinalIgnoreCase))
+                ++summary.ShipyardAssertLines;
+            if (line.Contains("category=diplomacy", StringComparison.OrdinalIgnoreCase))
+                ++summary.DiplomacyAssertLines;
+        }
 
         if (line.Contains(" RESULT ", StringComparison.Ordinal)
             || line.StartsWith("RESULT ", StringComparison.Ordinal))
@@ -201,6 +256,7 @@ public static class Authoritative4XQaSummarizer
             Authoritative4XQaFailureKind.Connection => 70,
             Authoritative4XQaFailureKind.Timeout => 60,
             Authoritative4XQaFailureKind.ProcessFailure => 50,
+            Authoritative4XQaFailureKind.Coverage => 40,
             Authoritative4XQaFailureKind.Unknown => 10,
             _ => 0,
         };

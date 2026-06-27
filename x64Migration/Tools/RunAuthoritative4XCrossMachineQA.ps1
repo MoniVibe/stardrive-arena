@@ -10,6 +10,7 @@ param(
     [int]$Seed = 54545,
     [int]$Iterations = 1,
     [int]$TimeoutSeconds = 240,
+    [int]$HostWarmupSeconds = 15,
     [string]$Configuration = "Debug",
     [switch]$SkipBuild,
     [switch]$SkipDeploy,
@@ -120,6 +121,15 @@ function Get-QASummary {
         RawHashDrift = 0
         NetworkError = 0
         ViewPerf = 0
+        FunctionalAsserts = 0
+        BudgetAsserts = 0
+        AutomationAsserts = 0
+        GovernorAsserts = 0
+        TradeAsserts = 0
+        DefenseAsserts = 0
+        BuildingQueueAsserts = 0
+        ShipyardAsserts = 0
+        DiplomacyAsserts = 0
         MaxDrawMs = 0.0
         HostApplied = 0
         JoinApplied = 0
@@ -141,6 +151,17 @@ function Get-QASummary {
             }
             if ($line -match 'applied peer=host') { $summary.HostApplied++ }
             if ($line -match 'applied peer=join') { $summary.JoinApplied++ }
+            if ($line -match '^assert ') {
+                $summary.FunctionalAsserts++
+                if ($line -match 'category=budget') { $summary.BudgetAsserts++ }
+                if ($line -match 'category=automation') { $summary.AutomationAsserts++ }
+                if ($line -match 'category=governor') { $summary.GovernorAsserts++ }
+                if ($line -match 'category=trade') { $summary.TradeAsserts++ }
+                if ($line -match 'category=defense') { $summary.DefenseAsserts++ }
+                if ($line -match 'category=building-queue') { $summary.BuildingQueueAsserts++ }
+                if ($line -match 'category=shipyard') { $summary.ShipyardAsserts++ }
+                if ($line -match 'category=diplomacy') { $summary.DiplomacyAsserts++ }
+            }
             if ($line -match 'SYNC_MISMATCH|Authoritative sync mismatch') {
                 $summary.SyncMismatch++
                 $summary.FailureKind = 'SyncMismatch'
@@ -183,6 +204,21 @@ function Get-QASummary {
         }
     }
 
+    if ($summary.FailureKind -eq 'None' -and $summary.Ok -gt 0) {
+        $missing = @()
+        if ($summary.BudgetAsserts -lt 1) { $missing += 'budget' }
+        if ($summary.AutomationAsserts -lt 1) { $missing += 'automation' }
+        if ($summary.GovernorAsserts -lt 1) { $missing += 'governor' }
+        if ($summary.TradeAsserts -lt 1) { $missing += 'trade' }
+        if ($summary.DefenseAsserts -lt 1) { $missing += 'defense' }
+        if ($summary.ShipyardAsserts -lt 1) { $missing += 'shipyard' }
+        if ($summary.DiplomacyAsserts -lt 1) { $missing += 'diplomacy' }
+        if ($missing.Count -gt 0) {
+            $summary.FailureKind = 'Coverage'
+            $summary.Evidence = "Missing functional QA assertions: $($missing -join ',')"
+        }
+    }
+
     return [pscustomobject]$summary
 }
 
@@ -193,6 +229,10 @@ if ([string]::IsNullOrWhiteSpace($HostGameRoot)) {
 }
 if ([string]::IsNullOrWhiteSpace($ClientGameRoot)) {
     $ClientGameRoot = $HostGameRoot
+}
+$HostGameRoot = [System.IO.Path]::GetFullPath($HostGameRoot)
+if ([string]::IsNullOrWhiteSpace($ClientSsh)) {
+    $ClientGameRoot = [System.IO.Path]::GetFullPath($ClientGameRoot)
 }
 if ($Iterations -lt 1) { throw "Iterations must be >= 1." }
 if ($Turns -lt 2) { throw "Turns must be >= 2 so both command-injection assertions run." }
@@ -285,7 +325,7 @@ for ($i = 0; $i -lt $Iterations; ++$i) {
         '--timeout', "$TimeoutSeconds", '--seed', "$($Seed + $i)", '--game-root', $HostGameRoot,
         '--output', $hostArtifacts)
     $hostProcess = Start-ProbeProcess $probeExe $hostArgs $hostOut $hostErr
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds $HostWarmupSeconds
 
     if ([string]::IsNullOrWhiteSpace($ClientSsh)) {
         $clientOut = Join-Path $runDir 'client.stdout.txt'
