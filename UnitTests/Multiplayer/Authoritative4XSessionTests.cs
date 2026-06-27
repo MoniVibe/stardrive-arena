@@ -7341,6 +7341,60 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XQaSummarizer_ClassifiesSyncMismatchAndViewPerf_Headless()
+    {
+        string log = """
+        2026-06-27T01:00:00Z COMMAND source=ui peer=3 seq=17 empire=2 kind=QueueBuilding textHash=0x1234 summary='QueueBuilding planet=10'
+        2026-06-27T01:00:01Z RESULT origin=3 seq=17 tick=1575 accepted=True reason='' hash=0xAAAA:0xBBBB digest='0xCCCC/0xDDDD'
+        2026-06-27T01:00:02Z VIEW_PERF view=GalaxyView camZ=1200000 drawMs=24.5 renderMs=8.25 overlaysMs=3.5 iconsMs=2.25 fogMs=1.5 visibleShips=115 systemsInFrustum=37
+        2026-06-27T01:00:03Z SYNC_MISMATCH sessionId=s startFingerprint=f origin=2 seq=-1572 kind=NoOp tick=1575 firstDiff='line=128 authority=S|1199|2 client=S|1199|2'
+        """;
+
+        Authoritative4XQaSummary summary = Authoritative4XQaSummarizer.SummarizeText(log);
+
+        Assert.IsFalse(summary.Passed);
+        Assert.AreEqual(Authoritative4XQaFailureKind.SyncMismatch, summary.FailureKind);
+        Assert.AreEqual(1, summary.CommandLines);
+        Assert.AreEqual(1, summary.ResultLines);
+        Assert.AreEqual(1, summary.SyncMismatchLines);
+        Assert.AreEqual(1, summary.ViewPerfLines);
+        Assert.AreEqual(24.5f, summary.MaxDrawMs, 0.001f);
+        Assert.AreEqual(8.25f, summary.MaxRenderMs, 0.001f);
+        StringAssert.Contains(summary.FirstDiff, "line=128");
+        StringAssert.Contains(summary.OneLine(), "FAIL SyncMismatch");
+        StringAssert.Contains(summary.MaxViewPerfLine, "GalaxyView");
+    }
+
+    [TestMethod]
+    public void Authoritative4XQaSummarizer_ClassifiesPassAndConnectionFailure_Headless()
+    {
+        string passing = """
+        applied peer=host seq=1 kind=SetEmpireBudget tick=10 hash=0x1/0x2
+        applied peer=join seq=1 kind=SetPlanetManualBudget tick=11 hash=0x1/0x2
+        2026-06-27T01:00:02Z RAW_HASH_DRIFT sessionId=s origin=3 seq=12 tick=60 digest='0x1/0x2'
+        [auth4x-probe] OK role=join turns=600 seq=600 tick=600 final=0xABC:0xDEF/0x123 artifact=C:\qa\join.txt
+        """;
+
+        Authoritative4XQaSummary pass = Authoritative4XQaSummarizer.SummarizeText(passing);
+        Assert.IsTrue(pass.Passed, pass.OneLine());
+        Assert.AreEqual(Authoritative4XQaFailureKind.None, pass.FailureKind);
+        Assert.AreEqual(1, pass.HostAppliedCommands);
+        Assert.AreEqual(1, pass.JoinAppliedCommands);
+        Assert.AreEqual(1, pass.RawHashDriftLines);
+        Assert.AreEqual("0xABC:0xDEF/0x123", pass.LastFinalHash);
+
+        string failed = """
+        [auth4x-probe] FAILED role=join turns=600 seq=0 tick=0 failure=A connection attempt failed because the connected party did not properly respond.
+        2026-06-27T01:00:02Z NETWORK_ERROR A connection attempt failed because the connected host has failed to respond.
+        """;
+        Authoritative4XQaSummary connection = Authoritative4XQaSummarizer.SummarizeText(failed);
+        Assert.IsFalse(connection.Passed);
+        Assert.AreEqual(Authoritative4XQaFailureKind.Connection, connection.FailureKind);
+        Assert.AreEqual(2, connection.NetworkErrorLines);
+        StringAssert.Contains(connection.EvidenceLine, "connection");
+    }
+
+    [TestMethod]
     public void Authoritative4XLiveTelemetry_RecordsSyncMismatchEvidence_Headless()
     {
         const ulong Seed = 0x41E4005AUL;

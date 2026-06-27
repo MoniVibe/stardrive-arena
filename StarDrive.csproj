@@ -770,6 +770,7 @@
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XSaveTransfer.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XLiveSession.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XLiveTelemetry.cs" />
+    <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XQaSummary.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XLobby.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XLobbyNetworkFlow.cs" />
     <Compile Include="Ship_Game\Determinism\ReplayValidationResult.cs" />
