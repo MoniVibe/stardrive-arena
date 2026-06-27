@@ -7976,6 +7976,12 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "Remote clients must see their assigned empire's owned system borders instead of fogging them as host-only state.");
             Assert.IsTrue(client.Enemy.SensorNodes.Any(n => n.Source == clientRemotePlanet && n.KnownToPlayer),
                 "Remote clients must see their assigned empire's owned planet sensor range instead of using the serialized host player.");
+            Array<Empire> localKnownOwners = clientRemotePlanet.System.GetKnownOwners(client.Screen.Player);
+            Assert.IsTrue(localKnownOwners.Contains(client.Enemy),
+                "Joined clients should color their owned system names using the assigned local empire.");
+            Array<Empire> noViewerKnownOwners = clientRemotePlanet.System.GetKnownOwners(null);
+            Assert.AreEqual(0, noViewerKnownOwners.Count,
+                "Solar system name drawing must tolerate a temporarily missing local viewer during MP attach/resync.");
             using (var planetScreen = new TestPlanetScreen(client.Screen, clientRemotePlanet))
             {
                 Assert.AreSame(client.Enemy, planetScreen.Player,

@@ -752,15 +752,25 @@ namespace Ship_Game
         public Array<Empire> GetKnownOwners(Empire player)
         {
             var owners = new Array<Empire>();
+            if (player == null)
+                return owners;
 
             foreach (Empire e in OwnerList)
             {
-                player.GetRelations(e, out Relationship ssRel);
-                bool wellKnown = Universe.Debug || e.isPlayer || ssRel.Treaty_Alliance;
-                if (wellKnown)
-                    return OwnerList.ToArrayList();
+                if (e == null)
+                    continue;
 
-                if (ssRel.Known)
+                player.GetRelations(e, out Relationship ssRel);
+                bool wellKnown = Universe.Debug || e == player || e.isPlayer || ssRel?.Treaty_Alliance == true;
+                if (wellKnown)
+                {
+                    foreach (Empire owner in OwnerList)
+                        if (owner != null)
+                            owners.Add(owner);
+                    return owners;
+                }
+
+                if (ssRel?.Known == true)
                     owners.Add(e);
             }
             return owners;
