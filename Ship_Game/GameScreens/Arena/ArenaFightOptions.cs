@@ -462,6 +462,8 @@ public static class ArenaFightOptions
         if (type == FightOptionType.ContenderChallenge)
             return new ArenaFightModifier(ArenaFightModifierKind.EliteVanguard,
                 "Rival Challenge", 0, 0, 1.10f, 1.06f);
+        if (difficulty == FightDifficultyTier.Wildcard && risk != FightRiskTier.Safe)
+            return ArenaFightModifier.GravityWellHazard;
 
         return risk switch
     {

@@ -35,13 +35,17 @@ namespace Ship_Game.AI.CombatTactics
             Ship target = OwnerTarget;
             if (target == null)
                 return CombatMoveState.Error;
-            
-            float maxDistance = Owner.DesiredCombatRange - ((int)Owner.Radius).RoundUpToMultipleOf(10);
-            float minDistance = Math.Max(Owner.DesiredCombatRange - 500f, Owner.DesiredCombatRange * 0.9f);
+
+            float collisionRange = Owner.Radius + target.Radius;
+            float desiredCombatRange = CombatEngagementTuning.AdjustDesiredRange(
+                Owner.DesiredCombatRange, Owner.Radius, target.Radius,
+                Owner.ArenaEngagementBias, Owner.ArenaStandoffDecay, Owner.ArenaCombatTicks);
+
+            float maxDistance = desiredCombatRange - ((int)Owner.Radius).RoundUpToMultipleOf(10);
+            float minDistance = Math.Max(desiredCombatRange - 500f, desiredCombatRange * 0.9f);
             // in general, arty stance is what you use for long range ships.
             // This is fail safe distance logic for large ships with super short range going up against other large ships.
-           
-            float collisionRange = Owner.Radius + target.Radius;
+
             if (minDistance <= collisionRange)       minDistance = collisionRange;
             if (maxDistance < collisionRange + 150f) maxDistance = collisionRange + 150f;
 
@@ -104,5 +108,34 @@ namespace Ship_Game.AI.CombatTactics
             return CombatMoveState.Error;
         }
     }
+
+    public static class CombatEngagementTuning
+    {
+        public const float MaxDecayBias = 0.25f;
+        public const int FullDecayTicks = 5400;
+        public const float BrawlRangeFraction = 0.55f;
+        public const float CollisionBuffer = 500f;
+
+        public static float AdjustDesiredRange(float desiredRange, float ownerRadius, float targetRadius,
+            float engagementBias, bool decayEnabled, int attackTicks)
+        {
+            if (desiredRange <= 0f)
+                return desiredRange;
+
+            float bias = Math.Clamp(engagementBias, 0f, 1f);
+            if (decayEnabled && attackTicks > 0)
+            {
+                float decay = MaxDecayBias * Math.Min(1f, attackTicks / (float)FullDecayTicks);
+                bias = Math.Clamp(bias + decay, 0f, 1f);
+            }
+
+            if (bias <= 0f)
+                return desiredRange;
+
+            float collisionRange = Math.Max(0f, ownerRadius + targetRadius);
+            float brawlRange = Math.Max(collisionRange + CollisionBuffer, desiredRange * BrawlRangeFraction);
+            brawlRange = Math.Min(desiredRange, brawlRange);
+            return desiredRange + (brawlRange - desiredRange) * bias;
+        }
+    }
 }
- 

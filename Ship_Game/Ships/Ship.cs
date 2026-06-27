@@ -925,6 +925,9 @@ namespace Ship_Game.Ships
         public float WeaponsAvgRange { get; private set; }
         public float DesiredCombatRange { get; private set; }
         public float InterceptSpeed { get; private set; }
+        public float ArenaEngagementBias;
+        public bool ArenaStandoffDecay;
+        public int ArenaCombatTicks;
 
         // @return Filtered list of purely offensive weapons
         public Weapon[] OffensiveWeapons => Weapons.Filter(w => w.DamageAmount > 0.1f && !w.TruePD);

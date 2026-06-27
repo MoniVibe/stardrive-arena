@@ -707,6 +707,11 @@ namespace Ship_Game
             OrbitalRadius = value;
         }
 
+        public void SetArenaGravityWellRadius(float value)
+        {
+            GravityWellRadius = Math.Max(0f, value);
+        }
+
         public Building FindBuilding(Predicate<Building> predicate)
         {
             return BuildingList.Find(predicate);

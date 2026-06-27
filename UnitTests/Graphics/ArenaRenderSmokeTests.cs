@@ -20,6 +20,7 @@ using Ship_Game.Data.Texture;
 using Ship_Game.Determinism;
 using Ship_Game.Gameplay;
 using Ship_Game.Ships;
+using Ship_Game.AI.CombatTactics;
 using Ship_Game.Universe;
 using SynapseGaming.LightingSystem.Core;
 using SynapseGaming.LightingSystem.Lights;
@@ -49,6 +50,7 @@ using ArenaFightModifier = Ship_Game.GameScreens.Arena.ArenaFightModifier;
 using ArenaFightModifierKind = Ship_Game.GameScreens.Arena.ArenaFightModifierKind;
 using ArenaFightOptions = Ship_Game.GameScreens.Arena.ArenaFightOptions;
 using ArenaFightOptionsReport = Ship_Game.GameScreens.Arena.ArenaFightOptionsReport;
+using ArenaCombatTuning = Ship_Game.GameScreens.Arena.ArenaCombatTuning;
 using ArenaFightOptionsScreen = Ship_Game.GameScreens.Arena.ArenaFightOptionsScreen;
 using ArenaLootKind = Ship_Game.GameScreens.Arena.ArenaLootKind;
 using ArenaDealershipScreen = Ship_Game.GameScreens.Arena.ArenaDealershipScreen;
@@ -6643,6 +6645,197 @@ public class ArenaRenderSmokeTests : StarDriveTest
                 $"{label} ship must spawn facing its opponent; dot={dot:0.###} " +
                 $"dir={ship.Direction} desired={desired} rotation={ship.Rotation:0.###}.");
         }
+    }
+
+    [TestMethod]
+    public void ArenaAntiKiteAndGravityWellModifier_Headless()
+    {
+        LoadAllGameData();
+
+        const float desiredRange = 12000f;
+        float early = CombatEngagementTuning.AdjustDesiredRange(
+            desiredRange, ownerRadius: 120f, targetRadius: 120f,
+            ArenaCombatTuning.DefaultEngagementBias, decayEnabled: true, attackTicks: 1);
+        float late = CombatEngagementTuning.AdjustDesiredRange(
+            desiredRange, ownerRadius: 120f, targetRadius: 120f,
+            ArenaCombatTuning.DefaultEngagementBias, decayEnabled: true,
+            attackTicks: CombatEngagementTuning.FullDecayTicks);
+        float disabled = CombatEngagementTuning.AdjustDesiredRange(
+            desiredRange, ownerRadius: 120f, targetRadius: 120f,
+            engagementBias: 0f, decayEnabled: false, attackTicks: CombatEngagementTuning.FullDecayTicks);
+
+        Assert.IsTrue(early < desiredRange,
+            $"Arena engagement bias should reduce artillery standoff. desired={desiredRange} adjusted={early}");
+        Assert.IsTrue(late < early,
+            $"The deterministic soft timer should keep forcing standoff inward. early={early} late={late}");
+        Assert.AreEqual(desiredRange, disabled,
+            "Default zero/false ship tuning must leave non-arena artillery range unchanged.");
+
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_antikite_gravity_{Guid.NewGuid():N}.yaml");
+        string savedStaticPath = Arena.CareerSavePath;
+        try
+        {
+            Arena.CareerSavePath = tempPath;
+            Arena screen = Arena.Create("United", ArenaDriveSeed);
+            Assert.IsNotNull(screen, "ArenaFightScreen.Create returned null.");
+            screen.UState.Objects.EnableParallelUpdate = false;
+            screen.UState.EnableDeterministicRng(0xA12EA001u);
+            screen.CreateSimThread = false;
+            screen.LoadContent();
+
+            Ship player = GetShips(screen, "PlayerShips").FirstOrDefault(s => s?.Active == true);
+            Ship enemy = GetShips(screen, "EnemyShips").FirstOrDefault(s => s?.Active == true);
+            Assert.IsNotNull(player, "Anti-kite proof needs a live player ship.");
+            Assert.IsNotNull(enemy, "Anti-kite proof needs a live enemy ship.");
+            Assert.AreEqual(ArenaCombatTuning.DefaultEngagementBias, player.ArenaEngagementBias, 0.0001f,
+                "Arena-spawned player ships must receive the anti-kite engagement bias.");
+            Assert.AreEqual(ArenaCombatTuning.DefaultEngagementBias, enemy.ArenaEngagementBias, 0.0001f,
+                "Arena-spawned enemy ships must receive the anti-kite engagement bias.");
+            Assert.IsTrue(player.ArenaStandoffDecay, "Arena-spawned player ships must enable deterministic standoff decay.");
+            Assert.IsTrue(enemy.ArenaStandoffDecay, "Arena-spawned enemy ships must enable deterministic standoff decay.");
+
+            int systemsBefore = screen.UState.Systems.Count;
+            ArenaFightModifier hazard = ArenaFightModifier.GravityWellHazard;
+            Planet well = hazard.ApplyGravityWell(screen.UState, new SdVector2(950000f, 950000f));
+            Planet again = hazard.ApplyGravityWell(screen.UState, new SdVector2(950000f, 950000f));
+
+            Assert.IsNotNull(well, "Gravity-well modifier must place a real arena center body.");
+            Assert.AreSame(well, again, "Repeated hazard application must reuse the arena well body.");
+            Assert.AreEqual(systemsBefore + 1, screen.UState.Systems.Count,
+                "Gravity-well modifier should add exactly one hidden arena well system.");
+            Assert.AreEqual(hazard.GravityWellRange, screen.UState.P.GravityWellRange, 0.001f,
+                "Gravity-well modifier must enable the universe gravity-well range.");
+            Assert.AreEqual(hazard.GravityWellRange, well.GravityWellRadius, 0.001f,
+                "The placed arena body must have an effective gravity-well radius.");
+        }
+        finally
+        {
+            Arena.CareerSavePath = savedStaticPath;
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { /* best-effort */ }
+        }
+
+        IShipDesign seedDesign = ResourceManager.Ships.Designs
+            .Where(d => Arena.IsLegalCombatCraft(d) && Arena.IsDesignAllowedForCareerLevel(d, 8))
+            .OrderBy(d => Arena.CombatTierForDesign(d))
+            .ThenBy(d => d.BaseStrength)
+            .ThenBy(d => d.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(seedDesign, "Gravity-well roulette proof needs a legal high-level seed design.");
+
+        var vessel = new OwnedVessel(seedDesign.Name, 0f, 0, 0, "Gravity Seed");
+        var career = new ArenaCareer
+        {
+            CareerLevel = 8,
+            Fame = 220,
+            OwnedVessels = new[] { vessel },
+            ActiveVesselId = vessel.VesselId,
+        };
+        FightOption gravityOption = null;
+        for (ulong seed = 0; seed < 32 && gravityOption == null; ++seed)
+        {
+            gravityOption = ArenaFightOptions.GenerateFightOptions(career, 0xA12E_6A7Eul + seed)
+                .FirstOrDefault(o => o.Modifier.Kind == ArenaFightModifierKind.GravityWell);
+        }
+        Assert.IsNotNull(gravityOption,
+            "High-fame wildcard roulette should expose an opt-in gravity-well hazard contract.");
+        Assert.AreEqual(ArenaFightModifier.GravityWellHazard.GravityWellRange,
+            gravityOption.Modifier.GravityWellRange, 0.001f,
+            "Gravity-well roulette option must carry the configured well range.");
+    }
+
+    [TestMethod]
+    public void ArenaAntiKiteBalanceProbe_Headless()
+    {
+        LoadAllGameData();
+
+        var candidates = new List<(IShipDesign Design, float Range, float Strength)>();
+        foreach (IShipDesign design in ResourceManager.Ships.Designs
+                     .Where(d => d is ShipDesign && Arena.IsLegalCombatCraft(d) && Arena.CombatTierForDesign(d) <= 2))
+        {
+            Ship template = null;
+            try
+            {
+                template = Ship.CreateNewShipTemplate(Empire.Void, (ShipDesign)design);
+                if (template?.HasModules == true && template.DesiredCombatRange > 1000f)
+                    candidates.Add((design, template.DesiredCombatRange, Math.Max(1f, design.BaseStrength)));
+            }
+            finally
+            {
+                template?.Dispose();
+            }
+        }
+
+        Assert.IsTrue(candidates.Count >= 2, "Anti-kite balance probe needs at least two legal low-tier warships.");
+        var kiter = candidates
+            .OrderByDescending(c => c.Range)
+            .ThenBy(c => c.Strength)
+            .ThenBy(c => c.Design.Name, StringComparer.Ordinal)
+            .First();
+        var brawler = candidates
+            .Where(c => c.Design.Name != kiter.Design.Name && c.Range < kiter.Range * 0.75f
+                     && c.Strength >= kiter.Strength * 0.40f && c.Strength <= kiter.Strength * 2.50f)
+            .OrderBy(c => Math.Abs(c.Strength - kiter.Strength))
+            .ThenBy(c => c.Range)
+            .ThenBy(c => c.Design.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        if (brawler.Design == null)
+        {
+            brawler = candidates
+                .Where(c => c.Design.Name != kiter.Design.Name)
+                .OrderBy(c => c.Range)
+                .ThenBy(c => Math.Abs(c.Strength - kiter.Strength))
+                .ThenBy(c => c.Design.Name, StringComparer.Ordinal)
+                .First();
+        }
+
+        const int seeds = 4;
+        const int duelTicks = 2400;
+        int beforeWins = 0;
+        int afterWins = 0;
+        float beforeDamage = 0f;
+        float afterDamage = 0f;
+        for (int i = 0; i < seeds; ++i)
+        {
+            ulong seed = 0xA12E_BA1A_CE00ul + (uint)i;
+            DuelResult before = CareerLadder.SimulateDuelForBalanceProbe(
+                kiter.Design, brawler.Design, seed, duelTicks, applyArenaAntiKite: false);
+            DuelResult after = CareerLadder.SimulateDuelForBalanceProbe(
+                kiter.Design, brawler.Design, seed, duelTicks, applyArenaAntiKite: true);
+            if (string.Equals(before.WinnerDesignName, kiter.Design.Name, StringComparison.Ordinal))
+                ++beforeWins;
+            if (string.Equals(after.WinnerDesignName, kiter.Design.Name, StringComparison.Ordinal))
+                ++afterWins;
+            beforeDamage += before.DamageToB;
+            afterDamage += after.DamageToB;
+        }
+
+        float beforeRate = beforeWins / (float)seeds;
+        float afterRate = afterWins / (float)seeds;
+        string report = "{\n"
+            + $"  \"kiter\": \"{kiter.Design.Name}\",\n"
+            + $"  \"kiterRange\": {kiter.Range.ToString("0.###", CultureInfo.InvariantCulture)},\n"
+            + $"  \"brawler\": \"{brawler.Design.Name}\",\n"
+            + $"  \"brawlerRange\": {brawler.Range.ToString("0.###", CultureInfo.InvariantCulture)},\n"
+            + $"  \"seeds\": {seeds},\n"
+            + $"  \"duelTicks\": {duelTicks},\n"
+            + $"  \"kiterWinRateBefore\": {beforeRate.ToString("0.###", CultureInfo.InvariantCulture)},\n"
+            + $"  \"kiterWinRateAfter\": {afterRate.ToString("0.###", CultureInfo.InvariantCulture)},\n"
+            + $"  \"damageBefore\": {(beforeDamage / seeds).ToString("0.###", CultureInfo.InvariantCulture)},\n"
+            + $"  \"damageAfter\": {(afterDamage / seeds).ToString("0.###", CultureInfo.InvariantCulture)}\n"
+            + "}\n";
+        string dir = Path.Combine(Directory.GetCurrentDirectory(), "sim-output");
+        Directory.CreateDirectory(dir);
+        string path = Path.Combine(dir, "arena-anti-kite-balance.json");
+        File.WriteAllText(path, report);
+
+        Console.WriteLine($"[anti-kite-balance] kiter='{kiter.Design.Name}' range={kiter.Range:0} " +
+            $"brawler='{brawler.Design.Name}' range={brawler.Range:0} " +
+            $"winRateBefore={beforeRate:0.###} winRateAfter={afterRate:0.###} report={path}");
+
+        Assert.IsTrue(beforeRate >= 0f && beforeRate <= 1f && afterRate >= 0f && afterRate <= 1f,
+            "Anti-kite balance probe win rates must be bounded.");
+        Assert.IsTrue(kiter.Range > brawler.Range,
+            "The probe must actually compare a longer-range ship against a shorter-range ship.");
     }
 
     [TestMethod]

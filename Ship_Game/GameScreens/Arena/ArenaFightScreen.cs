@@ -3874,6 +3874,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
     {
         Ship ship = Ship.CreateShipAtPoint(state, designName, owner, position);
         FaceArenaShip(ship, facing);
+        ArenaCombatTuning.ApplyAntiKiteDefaults(ship);
         return ship;
     }
 
@@ -3882,6 +3883,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
     {
         Ship ship = Ship.CreateShipAtPoint(state, template, owner, position);
         FaceArenaShip(ship, facing);
+        ArenaCombatTuning.ApplyAntiKiteDefaults(ship);
         return ship;
     }
 
@@ -4106,6 +4108,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         EnemyShips.Clear();
         CurrentBossEncounter = ArenaBossEncounter.None;
         ActiveFightOption = null;
+        UState.P.GravityWellRange = 0f;
 
         if (TrySpawnQueuedChallenge(center))
             return;
@@ -4196,6 +4199,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         }
 
         CurrentFightModifier = option.Modifier;
+        CurrentFightModifier.ApplyGravityWell(UState, center);
         CurrentBossEncounter = option.BossEncounter.Active ? option.BossEncounter : ArenaBossEncounter.None;
         int bossCount = Math.Clamp(option.BossCount, 0, option.EnemyCount);
 

@@ -135,6 +135,8 @@ namespace Ship_Game.Ships
             }
 
             ShieldRechargeTimer += timeStep.FixedTime;
+            if (timeStep.FixedTime > 0f && (ArenaEngagementBias > 0f || ArenaStandoffDecay))
+                ++ArenaCombatTicks;
 
             if (TetheredTo != null)
             {
