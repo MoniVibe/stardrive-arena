@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using Microsoft.Xna.Framework.Graphics;
 using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
@@ -6,6 +7,7 @@ using SDGraphics.Input;
 using Ship_Game.Audio;
 using Ship_Game.GameScreens.MainMenu;
 using Ship_Game.Graphics;
+using Ship_Game.Multiplayer.Authoritative;
 using Vector2 = SDGraphics.Vector2;
 
 namespace Ship_Game;
@@ -22,7 +24,7 @@ public sealed class GamePlayMenuScreen : GameScreen
     UIButton ExitToMainMenu;
     UIButton ExitToWindows;
 
-    public GamePlayMenuScreen(UniverseScreen screen) : base(screen, toPause: screen)
+    public GamePlayMenuScreen(UniverseScreen screen) : base(screen, toPause: PauseTargetFor(screen))
     {
         Universe = screen;
         IsPopup = true;
@@ -55,6 +57,11 @@ public sealed class GamePlayMenuScreen : GameScreen
         ExitToWindows = buttons.Add(ButtonStyle.Default, GameText.ExitToWindows, Exit_OnClick);
     }
 
+    internal static UniverseScreen PauseTargetFor(UniverseScreen universe)
+        => universe?.IsAuthoritative4XMultiplayer == true || Authoritative4XClientContext.IsActive
+            ? null
+            : universe;
+
     public override bool HandleInput(InputState input)
     {
         if (input.KeyPressed(Keys.O) && !GlobalStats.TakingInput)
@@ -71,8 +78,10 @@ public sealed class GamePlayMenuScreen : GameScreen
     {
         // enable/disable buttons based on current status
         bool buttonsEnabled = !Universe.IsSaving && !IsExiting;
-        SaveButton.Enabled = buttonsEnabled;
-        LoadButton.Enabled = buttonsEnabled;
+        Authoritative4XLiveSession live = Universe.Authoritative4XMultiplayer;
+        bool isAuthoritativeMp = live != null;
+        SaveButton.Enabled = buttonsEnabled && (!isAuthoritativeMp || live.IsHost);
+        LoadButton.Enabled = buttonsEnabled && !isAuthoritativeMp;
         ExitToMainMenu.Enabled = buttonsEnabled;
         ExitToWindows.Enabled = buttonsEnabled;
 
@@ -107,12 +116,35 @@ public sealed class GamePlayMenuScreen : GameScreen
     {
         if (DisallowActions()) return;
 
+        if (Universe.IsAuthoritative4XMultiplayer)
+        {
+            if (Universe.TrySaveAuthoritative4XSessionToDefault(out FileInfo savedFile, out string error))
+            {
+                SavingText.Text = savedFile.Name;
+                SavingText.Visible = true;
+                SavingText.Enabled = true;
+                GameAudio.EchoAffirmative();
+            }
+            else
+            {
+                Log.Warning($"Authoritative MP save failed: {error}");
+                GameAudio.NegativeClick();
+            }
+            return;
+        }
+
         ScreenManager.AddScreen(new SaveGameScreen(Universe));
     }
 
     void Load_OnClick(UIButton button)
     {
         if (DisallowActions()) return;
+
+        if (Universe.IsAuthoritative4XMultiplayer)
+        {
+            GameAudio.NegativeClick();
+            return;
+        }
 
         ExitScreen(); // exit before opening new screen
         ScreenManager.AddScreen(new LoadSaveScreen(Universe));

@@ -11,6 +11,7 @@ using Ship_Game.Gameplay;
 using Ship_Game.GameScreens;
 using Ship_Game.GameScreens.ShipDesign;
 using Ship_Game.GameScreens.Universe.Debug;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Ship_Game.UI;
 using Ship_Game.Universe;
@@ -116,7 +117,8 @@ namespace Ship_Game
             public int TurretAngle;
         }
 
-        public ShipDesignScreen(UniverseScreen universe, EmpireUIOverlay empireUi) : base(universe, toPause: universe)
+        public ShipDesignScreen(UniverseScreen universe, EmpireUIOverlay empireUi)
+            : base(universe, toPause: PauseTargetFor(universe))
         {
             ParentUniverse = universe;
             Name = "ShipDesignScreen";
@@ -126,6 +128,11 @@ namespace Ship_Game
             UnlockAllFactionDesigns = universe is DeveloperUniverse;
             EnableDebugFeatures = universe is DeveloperUniverse || universe.Debug;
         }
+
+        internal static UniverseScreen PauseTargetFor(UniverseScreen universe)
+            => universe?.IsAuthoritative4XMultiplayer == true || Authoritative4XClientContext.IsActive
+                ? null
+                : universe;
 
         public void LoadDesignOnOpen(IShipDesign design)
         {

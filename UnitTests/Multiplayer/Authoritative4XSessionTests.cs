@@ -6064,6 +6064,50 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XManagementScreens_DoNotPauseLocalSimulation_Headless()
+    {
+        const ulong Seed = 0x4E5EACD0UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            Assert.AreSame(world.Screen, ShipDesignScreen.PauseTargetFor(world.Screen),
+                "Ship design should keep the existing single-player pause target when authoritative MP is inactive.");
+            Assert.AreSame(world.Screen, FleetDesignScreen.PauseTargetFor(world.Screen),
+                "Fleet design should keep the existing single-player pause target when authoritative MP is inactive.");
+            Assert.AreSame(world.Screen, EmpireManagementScreen.PauseTargetFor(world.Screen),
+                "Empire management should keep the existing single-player pause target when authoritative MP is inactive.");
+            Assert.AreSame(world.Screen, GamePlayMenuScreen.PauseTargetFor(world.Screen),
+                "The in-game menu should keep the existing single-player pause target when authoritative MP is inactive.");
+            Assert.AreSame(world.Screen, GenericLoadSaveScreen.PauseTargetFor(world.Screen),
+                "Stock load/save screens should keep the existing single-player pause target when authoritative MP is inactive.");
+            Assert.AreSame(world.Screen, PopupWindow.PauseTargetFor(world.Screen),
+                "Universe popups should keep the existing single-player pause target when authoritative MP is inactive.");
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       _ => { }, firstSequence: 2000))
+            {
+                Assert.IsNull(ShipDesignScreen.PauseTargetFor(world.Screen),
+                    "Ship design must not locally pause an authoritative multiplayer session.");
+                Assert.IsNull(FleetDesignScreen.PauseTargetFor(world.Screen),
+                    "Fleet design must not locally pause an authoritative multiplayer session.");
+                Assert.IsNull(EmpireManagementScreen.PauseTargetFor(world.Screen),
+                    "Empire management must not locally pause an authoritative multiplayer session.");
+                Assert.IsNull(GamePlayMenuScreen.PauseTargetFor(world.Screen),
+                    "The in-game menu must not locally pause an authoritative multiplayer session.");
+                Assert.IsNull(GenericLoadSaveScreen.PauseTargetFor(world.Screen),
+                    "Stock load/save screens must not locally pause an authoritative multiplayer session.");
+                Assert.IsNull(PopupWindow.PauseTargetFor(world.Screen),
+                    "Universe popups must not locally pause an authoritative multiplayer session.");
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XShipDesignResearch_SubmitsMissingTechsWithoutLocalMutation_Headless()
     {
         const ulong Seed = 0x4E5EACDUL;

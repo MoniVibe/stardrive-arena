@@ -7,6 +7,7 @@ using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
 using SDUtils;
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.UI;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
@@ -39,7 +40,7 @@ namespace Ship_Game
 
         protected GenericLoadSaveScreen(
             GameScreen parent, SLMode mode, string initText, string title, string tabText, bool showSaveExport = false)
-            : base(parent, toPause: parent as UniverseScreen)
+            : base(parent, toPause: PauseTargetFor(parent))
         {
             Mode = mode;
             InitText = initText;
@@ -49,6 +50,14 @@ namespace Ship_Game
             IsPopup = true;
             TransitionOnTime = 0.25f;
             TransitionOffTime = 0.25f;
+        }
+
+        internal static UniverseScreen PauseTargetFor(GameScreen parent)
+        {
+            UniverseScreen universe = parent as UniverseScreen;
+            return universe?.IsAuthoritative4XMultiplayer == true || Authoritative4XClientContext.IsActive
+                ? null
+                : universe;
         }
 
         protected GenericLoadSaveScreen(

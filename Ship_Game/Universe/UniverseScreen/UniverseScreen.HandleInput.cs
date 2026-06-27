@@ -337,7 +337,18 @@ namespace Ship_Game
 
             if (input.QuickSave && !IsSaving)
             {
-                SaveDuringNextUpdate($"Quicksave, {Player.data.Traits.Name}, {UState.StarDate.String()}");
+                if (IsAuthoritative4XMultiplayer)
+                {
+                    if (TrySaveAuthoritative4XSessionToDefault(out _, out string error))
+                        GameAudio.EchoAffirmative();
+                    else
+                    {
+                        Log.Warning($"Authoritative MP quicksave failed: {error}");
+                        GameAudio.NegativeClick();
+                    }
+                }
+                else
+                    SaveDuringNextUpdate($"Quicksave, {Player.data.Traits.Name}, {UState.StarDate.String()}");
             }
 
             if (input.UseRealLights)
@@ -1289,7 +1300,20 @@ namespace Ship_Game
                 return;
 
             if (input.OpenScreenSaveMenu)
-                ScreenManager.AddScreen(new SaveGameScreen(this));
+            {
+                if (IsAuthoritative4XMultiplayer)
+                {
+                    if (TrySaveAuthoritative4XSessionToDefault(out _, out string error))
+                        GameAudio.EchoAffirmative();
+                    else
+                    {
+                        Log.Warning($"Authoritative MP save-menu shortcut failed: {error}");
+                        GameAudio.NegativeClick();
+                    }
+                }
+                else
+                    ScreenManager.AddScreen(new SaveGameScreen(this));
+            }
 
             float worldWidthOnScreen = (float)VisibleWorldRect.Width;
 

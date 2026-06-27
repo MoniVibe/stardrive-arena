@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 
@@ -47,6 +49,37 @@ public partial class UniverseScreen
 
     public bool IsVisibleToLocalPlayerForUi(Ship ship)
         => IsVisibleToLocalPlayerInMapForUi(ship) && UState.IsSystemViewOrCloser;
+
+    public bool TrySaveAuthoritative4XSessionToDefault(out FileInfo savedFile, out string error)
+    {
+        savedFile = null;
+        error = "";
+        Authoritative4XLiveSession live = Authoritative4XLive;
+        if (live == null)
+        {
+            error = "No authoritative multiplayer session is active.";
+            return false;
+        }
+        if (!live.IsHost)
+        {
+            error = "Only the host can save an authoritative multiplayer session.";
+            return false;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(SavedGame.DefaultSaveGameFolder);
+            string stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+            savedFile = new FileInfo(Path.Combine(SavedGame.DefaultSaveGameFolder,
+                $"Authoritative MP {stamp}.sav"));
+            return live.TrySaveSession(savedFile, out error);
+        }
+        catch (Exception e)
+        {
+            error = e.Message;
+            return false;
+        }
+    }
 
     public bool LocalShipCanTakeFleetOrders(Ship ship, bool forAttack = false)
     {

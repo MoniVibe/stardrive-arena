@@ -7,6 +7,7 @@ using SDGraphics;
 using SDGraphics.Input;
 using SDUtils;
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
 
@@ -37,7 +38,7 @@ namespace Ship_Game
         public Planet SelectedPlanet { get; private set; }
         
         public EmpireManagementScreen(UniverseScreen parent, EmpireUIOverlay empUI)
-            : base(parent, toPause: parent)
+            : base(parent, toPause: PauseTargetFor(parent))
         {
             Universe = parent;
             TransitionOnTime = 0.25f;
@@ -86,6 +87,11 @@ namespace Ship_Game
                     Universe.Player.IsCybernetic ? Color.SandyBrown : Color.Green));
             }
         }
+
+        internal static UniverseScreen PauseTargetFor(UniverseScreen universe)
+            => universe?.IsAuthoritative4XMultiplayer == true || Authoritative4XClientContext.IsActive
+                ? null
+                : universe;
 
         public override void Draw(SpriteBatch batch, DrawTimes elapsed)
         {

@@ -96,7 +96,7 @@ namespace Ship_Game
         FleetStanceButtons OrdersButtons;
 
         public FleetDesignScreen(UniverseScreen u, EmpireUIOverlay empireUI, string audioCue = "")
-            : base(u, toPause: u)
+            : base(u, toPause: PauseTargetFor(u))
         {
             Universe = u;
             EmpireUI = empireUI;
@@ -117,6 +117,11 @@ namespace Ship_Game
             int fleetId = (anyFleet?.Key ?? Empire.FirstFleetKey).Clamped(Empire.FirstFleetKey, Empire.LastFleetKey);
             ChangeFleet(fleetId);
         }
+
+        internal static UniverseScreen PauseTargetFor(UniverseScreen universe)
+            => universe?.IsAuthoritative4XMultiplayer == true || Authoritative4XClientContext.IsActive
+                ? null
+                : universe;
 
         void OnFleetNameChanged(string text)
         {
