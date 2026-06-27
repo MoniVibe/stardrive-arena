@@ -140,6 +140,11 @@ function Get-QASummary {
         BuildingQueueAsserts = 0
         ShipyardAsserts = 0
         DiplomacyAsserts = 0
+        ControlAsserts = 0
+        ColonyAsserts = 0
+        ResearchAsserts = 0
+        CommandStreamAsserts = 0
+        LateControlAsserts = 0
         MaxDrawMs = 0.0
         HostApplied = 0
         JoinApplied = 0
@@ -171,6 +176,11 @@ function Get-QASummary {
                 if ($line -match 'category=building-queue') { $summary.BuildingQueueAsserts++ }
                 if ($line -match 'category=shipyard') { $summary.ShipyardAsserts++ }
                 if ($line -match 'category=diplomacy') { $summary.DiplomacyAsserts++ }
+                if ($line -match 'category=control') { $summary.ControlAsserts++ }
+                if ($line -match 'category=colony') { $summary.ColonyAsserts++ }
+                if ($line -match 'category=research') { $summary.ResearchAsserts++ }
+                if ($line -match 'category=command-stream') { $summary.CommandStreamAsserts++ }
+                if ($line -match 'category=late-control') { $summary.LateControlAsserts++ }
             }
             if ($line -match 'SYNC_MISMATCH|Authoritative sync mismatch') {
                 $summary.SyncMismatch++
@@ -223,6 +233,11 @@ function Get-QASummary {
         if ($summary.DefenseAsserts -lt 1) { $missing += 'defense' }
         if ($summary.ShipyardAsserts -lt 1) { $missing += 'shipyard' }
         if ($summary.DiplomacyAsserts -lt 1) { $missing += 'diplomacy' }
+        if ($summary.ControlAsserts -lt 1) { $missing += 'control' }
+        if ($summary.ColonyAsserts -lt 1) { $missing += 'colony' }
+        if ($summary.ResearchAsserts -lt 1) { $missing += 'research' }
+        if ($summary.CommandStreamAsserts -lt 1) { $missing += 'command-stream' }
+        if ($summary.LateControlAsserts -lt 1) { $missing += 'late-control' }
         if ($missing.Count -gt 0) {
             $summary.FailureKind = 'Coverage'
             $summary.Evidence = "Missing functional QA assertions: $($missing -join ',')"
@@ -357,6 +372,7 @@ for ($i = 0; $i -lt $Iterations; ++$i) {
             $remotePrepErr = Join-Path $runDir 'remote-client-task-prep.err.txt'
             $remotePrep = @"
 `$ErrorActionPreference = 'Stop'
+Remove-Item -LiteralPath '$remoteClientDir' -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path '$remoteClientDir' -Force | Out-Null
 "@
             $prepExit = Invoke-RemotePowerShell $ClientSsh $remotePrep $remotePrepOut $remotePrepErr
@@ -436,6 +452,7 @@ Compress-Archive -Force -Path (Join-Path '$remoteClientDir' '*') -DestinationPat
         } else {
             $remoteJoin = @"
 `$ErrorActionPreference = 'Stop'
+Remove-Item -LiteralPath '$remoteClientDir' -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path '$remoteClientDir' -Force | Out-Null
 & (Join-Path '$RemoteRoot' 'probe\Authoritative4XProbe.exe') --role join --host '$HostAddress' --port $Port --turns $Turns --timeout $TimeoutSeconds --seed $($Seed + $i) --game-root '$ClientGameRoot' --output '$remoteClientDir'
 exit `$LASTEXITCODE

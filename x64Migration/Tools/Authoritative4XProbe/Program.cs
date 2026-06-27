@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -358,6 +359,7 @@ sealed class AuthoritativeProbeResult
 sealed class ProbeLog : IDisposable
 {
     readonly StreamWriter Writer;
+    readonly List<string> Lines = new();
 
     public string Path { get; }
 
@@ -370,8 +372,16 @@ sealed class ProbeLog : IDisposable
 
     public void Line(string text)
     {
+        Lines.Add(text);
         Console.WriteLine(text);
         Writer.WriteLine(text);
+    }
+
+    public bool HasCommand(string peerName, int sequence, AuthoritativePlayerCommandKind kind)
+    {
+        string needle = $"peer={peerName} seq={sequence} kind={kind}";
+        return Lines.Any(line => line.Contains(needle, StringComparison.Ordinal)
+                                 && !line.Contains("accepted=False", StringComparison.Ordinal));
     }
 
     public void Payload(string suffix, AuthoritativeStateSnapshot? snapshot)
@@ -477,7 +487,10 @@ static class AuthoritativeProbeRunner
                         result.LastTick = processed.Result.Tick;
                         result.FinalHash = SnapshotHash(processed.Snapshot);
                         result.FinalDigest = processed.Snapshot.SyncDigest;
-                        if (lastJoinSeq <= ProbeCommandPlan.RequiredTurns || lastJoinSeq == options.Turns || lastJoinSeq % 100 == 0)
+                        if (lastJoinSeq <= ProbeCommandPlan.RequiredTurns
+                            || lastJoinSeq == options.Turns
+                            || ProbeCommandPlan.IsLateControlPulse(lastJoinSeq)
+                            || lastJoinSeq % 100 == 0)
                             log.Line($"processed peer=join seq={lastJoinSeq} kind={processed.Command.Kind} tick={processed.Result.Tick} accepted={processed.Result.Accepted} hash={result.FinalHash}/{result.FinalDigest}");
                     }
                     else if (processed.PeerId == flow.HostPeerId)
@@ -507,7 +520,7 @@ static class AuthoritativeProbeRunner
                 return lastJoinSeq >= options.Turns && lastHostSeq >= ProbeCommandPlan.RequiredTurns;
             }, static () => { }, options, $"join commands 1..{options.Turns}");
 
-            plan.AssertApplied(generated, log, "host-authority");
+            plan.AssertApplied(generated, log, "host-authority", options.Turns);
             result.Passed = true;
             log.Line(result.Summary);
             return result;
@@ -606,6 +619,7 @@ static class AuthoritativeProbeRunner
                             result.FinalDigest = processed.Snapshot.SyncDigest;
                             if (processed.Command.Sequence <= ProbeCommandPlan.RequiredTurns
                                 || processed.Command.Sequence == options.Turns
+                                || ProbeCommandPlan.IsLateControlPulse(processed.Command.Sequence)
                                 || processed.Command.Sequence % 100 == 0)
                             {
                                 string rawDrift = client.LastRawHashDrift != null ? " rawHashDrift=true" : "";
@@ -632,10 +646,10 @@ static class AuthoritativeProbeRunner
                     result.FinalHash = SnapshotHash(processed.Snapshot);
                     result.FinalDigest = processed.Snapshot.SyncDigest;
                 }
-                return plan.IsApplied(generated);
+                return plan.IsApplied(generated, options.Turns);
             }, static () => { }, options, "host and join command assertions");
 
-            plan.AssertApplied(generated, log, "join-replica");
+            plan.AssertApplied(generated, log, "join-replica", options.Turns);
             result.Passed = true;
             log.Line(result.Summary);
             return result;
@@ -756,7 +770,7 @@ static class AuthoritativeProbeRunner
 
 sealed class ProbeCommandPlan
 {
-    public const int RequiredTurns = 10;
+    public const int RequiredTurns = 16;
 
     readonly int HostEmpireId;
     readonly int JoinEmpireId;
@@ -780,6 +794,10 @@ sealed class ProbeCommandPlan
     readonly string JoinDesignName;
     readonly string HostDesign64;
     readonly string JoinDesign64;
+    readonly string HostResearchUid;
+    readonly string JoinResearchUid;
+    readonly LaborSplit HostLabor;
+    readonly LaborSplit JoinLabor;
 
     ProbeCommandPlan(int hostEmpireId, int joinEmpireId, int hostPlanetId, int joinPlanetId,
         float hostManualCivilianBudget, float joinManualCivilianBudget,
@@ -790,7 +808,9 @@ sealed class ProbeCommandPlan
         DefenseTargets hostDefense, DefenseTargets joinDefense,
         string hostBuildingName, string joinBuildingName,
         string hostDesignName, string joinDesignName,
-        string hostDesign64, string joinDesign64)
+        string hostDesign64, string joinDesign64,
+        string hostResearchUid, string joinResearchUid,
+        LaborSplit hostLabor, LaborSplit joinLabor)
     {
         HostEmpireId = hostEmpireId;
         JoinEmpireId = joinEmpireId;
@@ -814,6 +834,10 @@ sealed class ProbeCommandPlan
         JoinDesignName = joinDesignName;
         HostDesign64 = hostDesign64;
         JoinDesign64 = joinDesign64;
+        HostResearchUid = hostResearchUid;
+        JoinResearchUid = joinResearchUid;
+        HostLabor = hostLabor;
+        JoinLabor = joinLabor;
     }
 
     public static ProbeCommandPlan Create(Authoritative4XGeneratedGameStart generated, int hostPeerId, int joinPeerId)
@@ -833,6 +857,8 @@ sealed class ProbeCommandPlan
         ResourceManager.Ships.Delete(joinDesignName);
         ShipDesign hostDesign = BuildLegalPlayerDesign(hostEmpire, hostDesignName);
         ShipDesign joinDesign = BuildLegalPlayerDesign(joinEmpire, joinDesignName);
+        LaborSplit hostLabor = LaborFor(hostPlanet, 0.20f, 0.50f, 0.30f);
+        LaborSplit joinLabor = LaborFor(joinPlanet, 0.25f, 0.45f, 0.30f);
 
         return new ProbeCommandPlan(hostEmpireId, joinEmpireId, hostPlanet.Id, joinPlanet.Id,
             hostManualCivilianBudget: 12.5f,
@@ -845,8 +871,7 @@ sealed class ProbeCommandPlan
                                  | AuthoritativePlanetGovernorOptions.ManualOrbitals
                                  | AuthoritativePlanetGovernorOptions.GovGroundDefense,
             joinGovernorOptions: AuthoritativePlanetGovernorOptions.DontScrapBuildings
-                                 | AuthoritativePlanetGovernorOptions.Quarantine
-                                 | AuthoritativePlanetGovernorOptions.SpecializedTradeHub,
+                                 | AuthoritativePlanetGovernorOptions.Quarantine,
             hostTrade: new TradeSlots(1, 2, 0, 3, 4, 0),
             joinTrade: new TradeSlots(2, 1, 0, 4, 3, 0),
             hostDefense: new DefenseTargets(5, 2, 1, 1),
@@ -856,68 +881,113 @@ sealed class ProbeCommandPlan
             hostDesignName: hostDesignName,
             joinDesignName: joinDesignName,
             hostDesign64: hostDesign.GetBase64DesignString(),
-            joinDesign64: joinDesign.GetBase64DesignString());
+            joinDesign64: joinDesign.GetBase64DesignString(),
+            hostResearchUid: PickResearchUid(hostEmpire),
+            joinResearchUid: PickResearchUid(joinEmpire),
+            hostLabor: hostLabor,
+            joinLabor: joinLabor);
     }
 
     public AuthoritativePlayerCommand HostCommand(int sequence)
-        => sequence switch
-        {
-            1 => AuthoritativePlayerCommand.SetEmpireAutomation(sequence, HostEmpireId,
-                AuthoritativeEmpireAutomationFlags.None, "", "", "", "", "", ""),
-            2 => AuthoritativePlayerCommand.SetPlanetManualBudget(sequence, HostEmpireId, HostPlanetId,
-                AuthoritativePlanetBudgetKind.Civilian, HostManualCivilianBudget),
-            3 => AuthoritativePlayerCommand.SetEmpireBudget(sequence, HostEmpireId, HostTaxRate,
-                HostTreasuryGoal, autoTaxes: false),
-            4 => AuthoritativePlayerCommand.SetPlanetGovernorOptions(sequence, HostEmpireId, HostPlanetId,
-                HostGovernorOptions),
-            5 => AuthoritativePlayerCommand.SetPlanetManualTradeSlots(sequence, HostEmpireId, HostPlanetId,
-                HostTrade.FoodImport, HostTrade.ProdImport, HostTrade.ColoImport,
-                HostTrade.FoodExport, HostTrade.ProdExport, HostTrade.ColoExport),
-            6 => AuthoritativePlayerCommand.SetPlanetDefenseTargets(sequence, HostEmpireId, HostPlanetId,
-                HostDefense.GarrisonSize, HostDefense.WantedPlatforms, HostDefense.WantedShipyards,
-                HostDefense.WantedStations),
-            7 => !string.IsNullOrEmpty(HostBuildingName)
-                ? AuthoritativePlayerCommand.QueueBuilding(sequence, HostEmpireId, HostPlanetId, HostBuildingName)
-                : AuthoritativePlayerCommand.NoOp(sequence, HostEmpireId),
-            8 => AuthoritativePlayerCommand.DesignShip(sequence, HostEmpireId, HostDesign64),
-            9 => AuthoritativePlayerCommand.QueueBuild(sequence, HostEmpireId, HostPlanetId, HostDesignName),
-            _ => AuthoritativePlayerCommand.NoOp(sequence, HostEmpireId),
-        };
+        => ScriptCommand(sequence, hostSide: true);
 
     public AuthoritativePlayerCommand JoinCommand(int sequence)
-        => sequence switch
+        => ScriptCommand(sequence, hostSide: false);
+
+    AuthoritativePlayerCommand ScriptCommand(int sequence, bool hostSide)
+    {
+        int empireId = hostSide ? HostEmpireId : JoinEmpireId;
+        int planetId = hostSide ? HostPlanetId : JoinPlanetId;
+        string buildingName = hostSide ? HostBuildingName : JoinBuildingName;
+        string designName = hostSide ? HostDesignName : JoinDesignName;
+        string design64 = hostSide ? HostDesign64 : JoinDesign64;
+        string researchUid = hostSide ? HostResearchUid : JoinResearchUid;
+        LaborSplit labor = hostSide ? HostLabor : JoinLabor;
+
+        if (sequence > RequiredTurns)
+            return LateControlCommand(sequence, hostSide);
+
+        return sequence switch
         {
-            1 => AuthoritativePlayerCommand.SetEmpireAutomation(sequence, JoinEmpireId,
+            1 => AuthoritativePlayerCommand.SetEmpireAutomation(sequence, empireId,
                 AuthoritativeEmpireAutomationFlags.None, "", "", "", "", "", ""),
-            2 => AuthoritativePlayerCommand.SetPlanetManualBudget(sequence, JoinEmpireId, JoinPlanetId,
-                AuthoritativePlanetBudgetKind.Civilian, JoinManualCivilianBudget),
-            3 => AuthoritativePlayerCommand.SetEmpireBudget(sequence, JoinEmpireId, JoinTaxRate,
-                JoinTreasuryGoal, autoTaxes: false),
-            4 => AuthoritativePlayerCommand.SetPlanetGovernorOptions(sequence, JoinEmpireId, JoinPlanetId,
-                JoinGovernorOptions),
-            5 => AuthoritativePlayerCommand.SetPlanetManualTradeSlots(sequence, JoinEmpireId, JoinPlanetId,
-                JoinTrade.FoodImport, JoinTrade.ProdImport, JoinTrade.ColoImport,
-                JoinTrade.FoodExport, JoinTrade.ProdExport, JoinTrade.ColoExport),
-            6 => AuthoritativePlayerCommand.SetPlanetDefenseTargets(sequence, JoinEmpireId, JoinPlanetId,
-                JoinDefense.GarrisonSize, JoinDefense.WantedPlatforms, JoinDefense.WantedShipyards,
-                JoinDefense.WantedStations),
-            7 => !string.IsNullOrEmpty(JoinBuildingName)
-                ? AuthoritativePlayerCommand.QueueBuilding(sequence, JoinEmpireId, JoinPlanetId, JoinBuildingName)
-                : AuthoritativePlayerCommand.NoOp(sequence, JoinEmpireId),
-            8 => AuthoritativePlayerCommand.DesignShip(sequence, JoinEmpireId, JoinDesign64),
-            9 => AuthoritativePlayerCommand.QueueBuild(sequence, JoinEmpireId, JoinPlanetId, JoinDesignName),
-            10 => AuthoritativePlayerCommand.DiplomacyProposal(sequence, JoinEmpireId, HostEmpireId,
+            2 => AuthoritativePlayerCommand.SetPlanetManualBudget(sequence, empireId, planetId,
+                AuthoritativePlanetBudgetKind.Civilian, hostSide ? HostManualCivilianBudget : JoinManualCivilianBudget),
+            3 => AuthoritativePlayerCommand.SetEmpireBudget(sequence, empireId,
+                hostSide ? HostTaxRate : JoinTaxRate,
+                hostSide ? HostTreasuryGoal : JoinTreasuryGoal, autoTaxes: false),
+            4 => AuthoritativePlayerCommand.SetPlanetGovernorOptions(sequence, empireId, planetId,
+                hostSide ? HostGovernorOptions : JoinGovernorOptions),
+            5 => AuthoritativePlayerCommand.SetPlanetManualTradeSlots(sequence, empireId, planetId,
+                (hostSide ? HostTrade : JoinTrade).FoodImport,
+                (hostSide ? HostTrade : JoinTrade).ProdImport,
+                (hostSide ? HostTrade : JoinTrade).ColoImport,
+                (hostSide ? HostTrade : JoinTrade).FoodExport,
+                (hostSide ? HostTrade : JoinTrade).ProdExport,
+                (hostSide ? HostTrade : JoinTrade).ColoExport),
+            6 => AuthoritativePlayerCommand.SetPlanetDefenseTargets(sequence, empireId, planetId,
+                (hostSide ? HostDefense : JoinDefense).GarrisonSize,
+                (hostSide ? HostDefense : JoinDefense).WantedPlatforms,
+                (hostSide ? HostDefense : JoinDefense).WantedShipyards,
+                (hostSide ? HostDefense : JoinDefense).WantedStations),
+            7 => !string.IsNullOrEmpty(buildingName)
+                ? AuthoritativePlayerCommand.QueueBuilding(sequence, empireId, planetId, buildingName)
+                : AuthoritativePlayerCommand.NoOp(sequence, empireId),
+            8 => AuthoritativePlayerCommand.DesignShip(sequence, empireId, design64),
+            9 => AuthoritativePlayerCommand.QueueBuild(sequence, empireId, planetId, designName),
+            10 => hostSide
+                ? AuthoritativePlayerCommand.NoOp(sequence, empireId)
+                : AuthoritativePlayerCommand.DiplomacyProposal(sequence, JoinEmpireId, HostEmpireId,
                 AuthoritativeDiplomacyProposalType.DeclareWar, "probe declare war"),
-            _ => AuthoritativePlayerCommand.NoOp(sequence, JoinEmpireId),
+            11 => AuthoritativePlayerCommand.SetColonyType(sequence, empireId, planetId,
+                hostSide ? Planet.ColonyType.TradeHub : Planet.ColonyType.Colony),
+            12 => AuthoritativePlayerCommand.SetColonyLabor(sequence, empireId, planetId,
+                labor.Food, labor.Production, labor.Research,
+                foodLocked: true, productionLocked: true, researchLocked: true),
+            13 => AuthoritativePlayerCommand.QueueResearch(sequence, empireId, researchUid),
+            14 => AuthoritativePlayerCommand.SetPlanetGoodsState(sequence, empireId, planetId,
+                AuthoritativePlanetGoodsKind.Production, Planet.GoodState.EXPORT),
+            15 => AuthoritativePlayerCommand.RenamePlanet(sequence, empireId, planetId,
+                BasePlanetName(hostSide)),
+            16 => AuthoritativePlayerCommand.SetPlanetManualBudget(sequence, empireId, planetId,
+                AuthoritativePlanetBudgetKind.GroundDefense, hostSide ? 3.75f : 4.25f),
+            _ => AuthoritativePlayerCommand.NoOp(sequence, empireId),
         };
+    }
+
+    AuthoritativePlayerCommand LateControlCommand(int sequence, bool hostSide)
+    {
+        int empireId = hostSide ? HostEmpireId : JoinEmpireId;
+        int planetId = hostSide ? HostPlanetId : JoinPlanetId;
+        LaborSplit labor = hostSide ? HostLabor : JoinLabor;
+        int phase = sequence % 100;
+        return phase switch
+        {
+            0 => AuthoritativePlayerCommand.SetPlanetManualBudget(sequence, empireId, planetId,
+                AuthoritativePlanetBudgetKind.Civilian, ExpectedCivilianBudget(hostSide, sequence)),
+            25 => AuthoritativePlayerCommand.SetEmpireBudget(sequence, empireId,
+                ExpectedTaxRate(hostSide, sequence), ExpectedTreasuryGoal(hostSide, sequence), autoTaxes: false),
+            50 => AuthoritativePlayerCommand.SetColonyLabor(sequence, empireId, planetId,
+                labor.Food, labor.Production, labor.Research,
+                foodLocked: true, productionLocked: true, researchLocked: true),
+            75 => AuthoritativePlayerCommand.RenamePlanet(sequence, empireId, planetId,
+                LatePlanetName(hostSide, sequence)),
+            _ => AuthoritativePlayerCommand.NoOp(sequence, empireId),
+        };
+    }
 
     public string Describe()
         => "script "
            + $"host empire={HostEmpireId} planet={HostPlanetId} building='{HostBuildingName}' design='{HostDesignName}'; "
            + $"join empire={JoinEmpireId} planet={JoinPlanetId} building='{JoinBuildingName}' design='{JoinDesignName}'; "
-           + $"seqs=automation,budget,tax,governor,trade,defense,building,design,ship-build,diplomacy";
+           + $"research='{HostResearchUid}|{JoinResearchUid}'; "
+           + "seqs=automation,budget,tax,governor,trade,defense,building,design,ship-build,diplomacy,"
+           + "colony-type,labor,research,goods,rename,ground-defense,late-control-pulses";
 
-    public void AssertApplied(Authoritative4XGeneratedGameStart generated, ProbeLog log, string label)
+    public static bool IsLateControlPulse(int sequence)
+        => sequence > RequiredTurns && sequence % 100 is 0 or 25 or 50 or 75;
+
+    public void AssertApplied(Authoritative4XGeneratedGameStart generated, ProbeLog log, string label, int turns)
     {
         Empire host = generated.AuthorityUniverse.UState.GetEmpireById(HostEmpireId)
                       ?? throw new InvalidOperationException($"{label}: host empire {HostEmpireId} missing.");
@@ -928,12 +998,14 @@ sealed class ProbeCommandPlan
         Planet joinPlanet = join.GetPlanets().FirstOrDefault(p => p.Id == JoinPlanetId)
                             ?? throw new InvalidOperationException($"{label}: join planet {JoinPlanetId} missing.");
 
-        RequireClose(label, "host manual civilian budget", HostManualCivilianBudget, hostPlanet.ManualCivilianBudget);
-        RequireClose(label, "join manual civilian budget", JoinManualCivilianBudget, joinPlanet.ManualCivilianBudget);
-        RequireClose(label, "host tax", HostTaxRate, host.data.TaxRate);
-        RequireClose(label, "host treasury", HostTreasuryGoal, host.data.treasuryGoal);
-        RequireClose(label, "join tax", JoinTaxRate, join.data.TaxRate);
-        RequireClose(label, "join treasury", JoinTreasuryGoal, join.data.treasuryGoal);
+        RequireControl(label, "host", host, hostPlanet, HostEmpireId, HostPlanetId);
+        RequireControl(label, "join", join, joinPlanet, JoinEmpireId, JoinPlanetId);
+        RequireClose(label, "host manual civilian budget", ExpectedCivilianBudget(hostSide: true, turns), hostPlanet.ManualCivilianBudget);
+        RequireClose(label, "join manual civilian budget", ExpectedCivilianBudget(hostSide: false, turns), joinPlanet.ManualCivilianBudget);
+        RequireClose(label, "host tax", ExpectedTaxRate(hostSide: true, turns), host.data.TaxRate);
+        RequireClose(label, "host treasury", ExpectedTreasuryGoal(hostSide: true, turns), host.data.treasuryGoal);
+        RequireClose(label, "join tax", ExpectedTaxRate(hostSide: false, turns), join.data.TaxRate);
+        RequireClose(label, "join treasury", ExpectedTreasuryGoal(hostSide: false, turns), join.data.treasuryGoal);
         RequireAutomationOff(label, "host", host);
         RequireAutomationOff(label, "join", join);
         RequireGovernor(label, "host", hostPlanet, HostGovernorOptions);
@@ -942,6 +1014,21 @@ sealed class ProbeCommandPlan
         RequireTrade(label, "join", joinPlanet, JoinTrade);
         RequireDefense(label, "host", hostPlanet, HostDefense);
         RequireDefense(label, "join", joinPlanet, JoinDefense);
+        RequireDurableColony(label, "host", host, hostPlanet, Planet.ColonyType.TradeHub, HostResearchUid,
+            ExpectedPlanetName(hostSide: true, turns));
+        RequireDurableColony(label, "join", join, joinPlanet, Planet.ColonyType.Colony, JoinResearchUid,
+            ExpectedPlanetName(hostSide: false, turns));
+        RequireCommandAccepted(log, label, "host", 11, AuthoritativePlayerCommandKind.SetColonyType);
+        RequireCommandAccepted(log, label, "host", 12, AuthoritativePlayerCommandKind.SetColonyLabor);
+        RequireCommandAccepted(log, label, "host", 13, AuthoritativePlayerCommandKind.QueueResearch);
+        RequireCommandAccepted(log, label, "host", 14, AuthoritativePlayerCommandKind.SetPlanetGoodsState);
+        RequireCommandAccepted(log, label, "host", 15, AuthoritativePlayerCommandKind.RenamePlanet);
+        RequireCommandAccepted(log, label, "join", 11, AuthoritativePlayerCommandKind.SetColonyType);
+        RequireCommandAccepted(log, label, "join", 12, AuthoritativePlayerCommandKind.SetColonyLabor);
+        RequireCommandAccepted(log, label, "join", 13, AuthoritativePlayerCommandKind.QueueResearch);
+        RequireCommandAccepted(log, label, "join", 14, AuthoritativePlayerCommandKind.SetPlanetGoodsState);
+        RequireCommandAccepted(log, label, "join", 15, AuthoritativePlayerCommandKind.RenamePlanet);
+        RequireLateControlCommands(log, label, turns);
         if (!string.IsNullOrEmpty(HostBuildingName))
             RequireQueuedBuilding(label, "host", hostPlanet, HostBuildingName);
         if (!string.IsNullOrEmpty(JoinBuildingName))
@@ -955,10 +1042,15 @@ sealed class ProbeCommandPlan
 
         log.Line($"assert {label} category=budget host={HostManualCivilianBudget:0.###}/{HostTaxRate:0.###}/{HostTreasuryGoal:0.###} "
                  + $"join={JoinManualCivilianBudget:0.###}/{JoinTaxRate:0.###}/{JoinTreasuryGoal:0.###}");
+        log.Line($"assert {label} category=control hostEmpire={host.Id} hostPlanet={hostPlanet.Id} joinEmpire={join.Id} joinPlanet={joinPlanet.Id} joinHuman=True");
         log.Line($"assert {label} category=automation hostOff=True joinOff=True");
         log.Line($"assert {label} category=governor host={HostGovernorOptions} join={JoinGovernorOptions}");
         log.Line($"assert {label} category=trade host='{HostTrade}' join='{JoinTrade}'");
         log.Line($"assert {label} category=defense host='{HostDefense}' join='{JoinDefense}'");
+        log.Line($"assert {label} category=colony hostType={hostPlanet.CType} joinType={joinPlanet.CType} hostName='{hostPlanet.Name}' joinName='{joinPlanet.Name}'");
+        log.Line($"assert {label} category=research host='{HostResearchUid}' join='{JoinResearchUid}' hostQueue={host.data.ResearchQueue.Count} joinQueue={join.data.ResearchQueue.Count}");
+        log.Line($"assert {label} category=command-stream colonyLabor=True research=True goods=True rename=True");
+        log.Line($"assert {label} category=late-control turns={turns} joinBudget={joinPlanet.ManualCivilianBudget:0.###} joinTax={join.data.TaxRate:0.###} joinName='{joinPlanet.Name}'");
         if (!string.IsNullOrEmpty(HostBuildingName) || !string.IsNullOrEmpty(JoinBuildingName))
             log.Line($"assert {label} category=building-queue host='{HostBuildingName}' join='{JoinBuildingName}'");
         else
@@ -967,20 +1059,22 @@ sealed class ProbeCommandPlan
         log.Line($"assert {label} category=diplomacy joinDeclaredWar=True");
     }
 
-    public bool IsApplied(Authoritative4XGeneratedGameStart generated)
+    public bool IsApplied(Authoritative4XGeneratedGameStart generated, int turns)
     {
         Empire? host = generated.AuthorityUniverse.UState.GetEmpireById(HostEmpireId);
         Empire? join = generated.AuthorityUniverse.UState.GetEmpireById(JoinEmpireId);
         Planet? hostPlanet = host?.GetPlanets().FirstOrDefault(p => p.Id == HostPlanetId);
         Planet? joinPlanet = join?.GetPlanets().FirstOrDefault(p => p.Id == JoinPlanetId);
-        return Close(hostPlanet?.ManualCivilianBudget ?? float.NaN, HostManualCivilianBudget)
-               && Close(joinPlanet?.ManualCivilianBudget ?? float.NaN, JoinManualCivilianBudget)
-               && Close(host?.data.TaxRate ?? float.NaN, HostTaxRate)
-               && Close(host?.data.treasuryGoal ?? float.NaN, HostTreasuryGoal)
-               && Close(join?.data.TaxRate ?? float.NaN, JoinTaxRate)
-               && Close(join?.data.treasuryGoal ?? float.NaN, JoinTreasuryGoal)
+        return Close(hostPlanet?.ManualCivilianBudget ?? float.NaN, ExpectedCivilianBudget(hostSide: true, turns))
+               && Close(joinPlanet?.ManualCivilianBudget ?? float.NaN, ExpectedCivilianBudget(hostSide: false, turns))
+               && Close(host?.data.TaxRate ?? float.NaN, ExpectedTaxRate(hostSide: true, turns))
+               && Close(host?.data.treasuryGoal ?? float.NaN, ExpectedTreasuryGoal(hostSide: true, turns))
+               && Close(join?.data.TaxRate ?? float.NaN, ExpectedTaxRate(hostSide: false, turns))
+               && Close(join?.data.treasuryGoal ?? float.NaN, ExpectedTreasuryGoal(hostSide: false, turns))
                && hostPlanet != null
                && joinPlanet != null
+               && HasControl(host, hostPlanet, HostEmpireId, HostPlanetId)
+               && HasControl(join, joinPlanet, JoinEmpireId, JoinPlanetId)
                && AutomationOff(host)
                && AutomationOff(join)
                && HasGovernor(hostPlanet, HostGovernorOptions)
@@ -989,6 +1083,10 @@ sealed class ProbeCommandPlan
                && HasTrade(joinPlanet, joinSide: true)
                && HasDefense(hostPlanet, HostDefense)
                && HasDefense(joinPlanet, JoinDefense)
+               && HasDurableColony(host, hostPlanet, Planet.ColonyType.TradeHub, HostResearchUid,
+                   ExpectedPlanetName(hostSide: true, turns))
+               && HasDurableColony(join, joinPlanet, Planet.ColonyType.Colony, JoinResearchUid,
+                   ExpectedPlanetName(hostSide: false, turns))
                && (string.IsNullOrEmpty(HostBuildingName) || ContainsQueuedBuilding(hostPlanet, HostBuildingName))
                && (string.IsNullOrEmpty(JoinBuildingName) || ContainsQueuedBuilding(joinPlanet, JoinBuildingName))
                && host!.CanBuildShip(HostDesignName)
@@ -997,6 +1095,150 @@ sealed class ProbeCommandPlan
                && ContainsQueuedShip(joinPlanet, JoinDesignName)
                && join.IsAtWarWith(host)
                && host.IsAtWarWith(join);
+    }
+
+    float ExpectedCivilianBudget(bool hostSide, int turns)
+    {
+        if (hostSide)
+            return HostManualCivilianBudget;
+        int pulse = LastPulse(turns, phase: 0);
+        if (pulse <= 0)
+            return JoinManualCivilianBudget;
+        return LateCivilianBudget(hostSide, pulse);
+    }
+
+    float ExpectedTaxRate(bool hostSide, int turns)
+    {
+        if (hostSide)
+            return HostTaxRate;
+        int pulse = LastPulse(turns, phase: 25);
+        if (pulse <= 0)
+            return JoinTaxRate;
+        return LateTaxRate(hostSide, pulse);
+    }
+
+    float ExpectedTreasuryGoal(bool hostSide, int turns)
+    {
+        if (hostSide)
+            return HostTreasuryGoal;
+        int pulse = LastPulse(turns, phase: 25);
+        if (pulse <= 0)
+            return JoinTreasuryGoal;
+        return LateTreasuryGoal(hostSide, pulse);
+    }
+
+    string ExpectedPlanetName(bool hostSide, int turns)
+    {
+        if (hostSide)
+            return BasePlanetName(hostSide);
+        int pulse = LastPulse(turns, phase: 75);
+        return pulse <= 0 ? BasePlanetName(hostSide) : LatePlanetName(hostSide, pulse);
+    }
+
+    static int LastPulse(int turns, int phase)
+    {
+        for (int sequence = turns; sequence > RequiredTurns; --sequence)
+            if (sequence % 100 == phase)
+                return sequence;
+        return 0;
+    }
+
+    static float LateCivilianBudget(bool hostSide, int sequence)
+        => (hostSide ? 9.5f : 11.5f) + ((sequence / 100) % 4);
+
+    static float LateTaxRate(bool hostSide, int sequence)
+        => (hostSide ? 0.18f : 0.24f) + ((sequence / 100) % 3) * 0.01f;
+
+    static float LateTreasuryGoal(bool hostSide, int sequence)
+        => (hostSide ? 0.42f : 0.36f) + ((sequence / 100) % 3) * 0.02f;
+
+    string BasePlanetName(bool hostSide)
+        => hostSide ? $"QAH-{HostPlanetId}" : $"QAJ-{JoinPlanetId}";
+
+    string LatePlanetName(bool hostSide, int sequence)
+        => $"{BasePlanetName(hostSide)}-{sequence}";
+
+    static LaborSplit LaborFor(Planet planet, float food, float production, float research)
+        => planet.IsCybernetic
+            ? new LaborSplit(0f, 0.60f, 0.40f)
+            : new LaborSplit(food, production, research);
+
+    static string PickResearchUid(Empire empire)
+        => empire.TechEntries
+               .Where(t => t.Discovered && t.CanBeResearched && !t.Unlocked)
+               .OrderBy(t => t.UID, StringComparer.Ordinal)
+               .Select(t => t.UID)
+               .FirstOrDefault()
+           ?? throw new InvalidOperationException($"Empire {empire.Id} needs at least one discovered, researchable tech.");
+
+    static void RequireControl(string label, string side, Empire empire, Planet planet, int empireId, int planetId)
+    {
+        if (!HasControl(empire, planet, empireId, planetId))
+            throw new InvalidOperationException($"{label}: {side} control identity was lost for empire {empireId} planet {planetId}.");
+    }
+
+    static bool HasControl(Empire? empire, Planet? planet, int empireId, int planetId)
+        => empire != null
+           && planet != null
+           && empire.Id == empireId
+           && planet.Id == planetId
+           && planet.Owner == empire
+           && AuthoritativeHumanPlayers.IsHumanControlled(empire);
+
+    static void RequireDurableColony(string label, string side, Empire empire, Planet planet,
+        Planet.ColonyType type, string researchUid, string planetName)
+    {
+        if (!HasDurableColony(empire, planet, type, researchUid, planetName))
+            throw new InvalidOperationException($"{label}: {side} colony/research controls did not persist.");
+    }
+
+    static bool HasDurableColony(Empire? empire, Planet? planet, Planet.ColonyType type,
+        string researchUid, string planetName)
+    {
+        return empire != null
+               && planet != null
+               && planet.CType == type
+               && string.Equals(planet.Name, planetName, StringComparison.Ordinal)
+               && HasResearchAccepted(empire, researchUid);
+    }
+
+    static void RequireCommandAccepted(ProbeLog log, string label, string peerName, int sequence,
+        AuthoritativePlayerCommandKind kind)
+    {
+        if (!log.HasCommand(peerName, sequence, kind))
+            throw new InvalidOperationException($"{label}: {peerName} {kind} seq {sequence} was not accepted/applied.");
+    }
+
+    void RequireLateControlCommands(ProbeLog log, string label, int turns)
+    {
+        foreach (int sequence in LatePulseSequences(turns))
+        {
+            AuthoritativePlayerCommandKind expected = (sequence % 100) switch
+            {
+                0 => AuthoritativePlayerCommandKind.SetPlanetManualBudget,
+                25 => AuthoritativePlayerCommandKind.SetEmpireBudget,
+                50 => AuthoritativePlayerCommandKind.SetColonyLabor,
+                75 => AuthoritativePlayerCommandKind.RenamePlanet,
+                _ => AuthoritativePlayerCommandKind.NoOp,
+            };
+            RequireCommandAccepted(log, label, "join", sequence, expected);
+        }
+    }
+
+    static IEnumerable<int> LatePulseSequences(int turns)
+    {
+        for (int sequence = RequiredTurns + 1; sequence <= turns; ++sequence)
+        {
+            if (IsLateControlPulse(sequence))
+                yield return sequence;
+        }
+    }
+
+    static bool HasResearchAccepted(Empire empire, string researchUid)
+    {
+        return string.Equals(empire.Research.Topic, researchUid, StringComparison.Ordinal)
+               || empire.data.ResearchQueue.Contains(researchUid)
+               || empire.UnlockedTechs.Any(t => string.Equals(t.UID, researchUid, StringComparison.Ordinal));
     }
 
     static Planet FirstPlanet(Authoritative4XGeneratedGameStart generated, int empireId)
@@ -1153,6 +1395,20 @@ sealed class ProbeCommandPlan
     }
 
     static bool Close(float actual, float expected) => Math.Abs(expected - actual) <= 0.00001f;
+
+    readonly struct LaborSplit
+    {
+        public readonly float Food;
+        public readonly float Production;
+        public readonly float Research;
+
+        public LaborSplit(float food, float production, float research)
+        {
+            Food = food;
+            Production = production;
+            Research = research;
+        }
+    }
 
     readonly struct TradeSlots
     {

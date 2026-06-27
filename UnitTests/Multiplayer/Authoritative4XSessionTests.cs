@@ -7467,6 +7467,11 @@ public class Authoritative4XSessionTests : StarDriveTest
         assert host-authority category=building-queue host='Factory' join='Factory'
         assert host-authority category=shipyard host='MP QA Host Scout' join='MP QA Join Scout'
         assert host-authority category=diplomacy joinDeclaredWar=True
+        assert host-authority category=control hostEmpire=1 hostPlanet=10 joinEmpire=2 joinPlanet=384 joinHuman=True
+        assert host-authority category=colony hostType=TradeHub joinType=Colony hostName='MP QA Host World 10' joinName='MP QA Join World 384'
+        assert host-authority category=research host='TECH_A' join='TECH_B' hostQueue=1 joinQueue=1
+        assert host-authority category=command-stream colonyLabor=True research=True goods=True rename=True
+        assert host-authority category=late-control turns=600 joinBudget=13.5 joinTax=0.25 joinName='MP QA Join World 384 Pulse 575'
         2026-06-27T01:00:02Z RAW_HASH_DRIFT sessionId=s origin=3 seq=12 tick=60 digest='0x1/0x2'
         [auth4x-probe] OK role=join turns=600 seq=600 tick=600 final=0xABC:0xDEF/0x123 artifact=C:\qa\join.txt
         """;
@@ -7475,7 +7480,7 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.IsTrue(pass.Passed, pass.OneLine());
         Assert.AreEqual(Authoritative4XQaFailureKind.None, pass.FailureKind);
         Assert.IsTrue(pass.HasFunctionalCoverage, pass.OneLine());
-        Assert.AreEqual(8, pass.FunctionalAssertLines);
+        Assert.AreEqual(13, pass.FunctionalAssertLines);
         Assert.AreEqual(1, pass.HostAppliedCommands);
         Assert.AreEqual(1, pass.JoinAppliedCommands);
         Assert.AreEqual(1, pass.RawHashDriftLines);

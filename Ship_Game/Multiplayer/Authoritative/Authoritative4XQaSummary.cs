@@ -37,6 +37,11 @@ public sealed class Authoritative4XQaSummary
     public int BuildingQueueAssertLines;
     public int ShipyardAssertLines;
     public int DiplomacyAssertLines;
+    public int ControlAssertLines;
+    public int ColonyAssertLines;
+    public int ResearchAssertLines;
+    public int CommandStreamAssertLines;
+    public int LateControlAssertLines;
     public int HostAppliedCommands;
     public int JoinAppliedCommands;
     public float MaxDrawMs;
@@ -56,7 +61,12 @@ public sealed class Authoritative4XQaSummary
            && TradeAssertLines > 0
            && DefenseAssertLines > 0
            && ShipyardAssertLines > 0
-           && DiplomacyAssertLines > 0;
+           && DiplomacyAssertLines > 0
+           && ControlAssertLines > 0
+           && ColonyAssertLines > 0
+           && ResearchAssertLines > 0
+           && CommandStreamAssertLines > 0
+           && LateControlAssertLines > 0;
 
     public Authoritative4XQaFailureKind EffectiveFailureKind
     {
@@ -81,6 +91,7 @@ public sealed class Authoritative4XQaSummary
                + $"asserts={FunctionalAssertLines} budget={BudgetAssertLines} automation={AutomationAssertLines} "
                + $"governor={GovernorAssertLines} trade={TradeAssertLines} defense={DefenseAssertLines} "
                + $"building={BuildingQueueAssertLines} shipyard={ShipyardAssertLines} diplomacy={DiplomacyAssertLines} "
+               + $"control={ControlAssertLines} colony={ColonyAssertLines} research={ResearchAssertLines} commandStream={CommandStreamAssertLines} lateControl={LateControlAssertLines} "
                + $"maxDrawMs={MaxDrawMs:0.###} maxRenderMs={MaxRenderMs:0.###} maxOverlaysMs={MaxOverlaysMs:0.###} "
                + $"final='{LastFinalHash}' firstDiff='{FirstDiff}' evidence='{EvidenceLine}'";
     }
@@ -167,6 +178,16 @@ public static class Authoritative4XQaSummarizer
                 ++summary.ShipyardAssertLines;
             if (line.Contains("category=diplomacy", StringComparison.OrdinalIgnoreCase))
                 ++summary.DiplomacyAssertLines;
+            if (line.Contains("category=control", StringComparison.OrdinalIgnoreCase))
+                ++summary.ControlAssertLines;
+            if (line.Contains("category=colony", StringComparison.OrdinalIgnoreCase))
+                ++summary.ColonyAssertLines;
+            if (line.Contains("category=research", StringComparison.OrdinalIgnoreCase))
+                ++summary.ResearchAssertLines;
+            if (line.Contains("category=command-stream", StringComparison.OrdinalIgnoreCase))
+                ++summary.CommandStreamAssertLines;
+            if (line.Contains("category=late-control", StringComparison.OrdinalIgnoreCase))
+                ++summary.LateControlAssertLines;
         }
 
         if (line.Contains(" RESULT ", StringComparison.Ordinal)
