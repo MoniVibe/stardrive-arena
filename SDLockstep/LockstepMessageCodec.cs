@@ -25,6 +25,10 @@ public static class LockstepMessageCodec
     const byte AuthoritativeCommandResult = 21;
     const byte AuthoritativeStateSnapshot = 22;
     const byte AuthoritativeDiplomacyPopup = 23;
+    const byte AuthoritativeSaveTransferBegin = 24;
+    const byte AuthoritativeSaveTransferChunk = 25;
+    const byte AuthoritativeSaveTransferEnd = 26;
+    const byte AuthoritativeResyncRequest = 27;
 
     public static byte[] Encode(LockstepMessage message, int toPeer)
     {
@@ -155,6 +159,35 @@ public static class LockstepMessageCodec
                     WriteString(w, popup.Terms);
                     w.Write(popup.RequiresResponse);
                     WriteString(w, popup.Message);
+                    break;
+                case AuthoritativeSaveTransferBeginMessage begin:
+                    w.Write(AuthoritativeSaveTransferBegin);
+                    w.Write(begin.TransferId);
+                    w.Write(begin.TotalBytes);
+                    w.Write(begin.TotalChunks);
+                    w.Write(begin.ChunkSize);
+                    WriteString(w, begin.SaveFileName);
+                    WriteString(w, begin.MetadataYaml);
+                    WriteString(w, begin.Sha256);
+                    WriteString(w, begin.Reason);
+                    break;
+                case AuthoritativeSaveTransferChunkMessage chunk:
+                    w.Write(AuthoritativeSaveTransferChunk);
+                    w.Write(chunk.TransferId);
+                    w.Write(chunk.ChunkIndex);
+                    w.Write(chunk.Offset);
+                    WriteBytes(w, chunk.Data);
+                    break;
+                case AuthoritativeSaveTransferEndMessage end:
+                    w.Write(AuthoritativeSaveTransferEnd);
+                    w.Write(end.TransferId);
+                    WriteString(w, end.Sha256);
+                    break;
+                case AuthoritativeResyncRequestMessage resync:
+                    w.Write(AuthoritativeResyncRequest);
+                    w.Write(resync.Tick);
+                    WriteString(w, resync.ClientDigest);
+                    WriteString(w, resync.Reason);
                     break;
                 default:
                     throw new InvalidDataException($"Unsupported lockstep message type {message.GetType().FullName}");
@@ -339,6 +372,43 @@ public static class LockstepMessageCodec
                     Message = ReadString(r),
                 };
                 break;
+            case AuthoritativeSaveTransferBegin:
+                message = new AuthoritativeSaveTransferBeginMessage
+                {
+                    TransferId = r.ReadInt32(),
+                    TotalBytes = r.ReadInt32(),
+                    TotalChunks = r.ReadInt32(),
+                    ChunkSize = r.ReadInt32(),
+                    SaveFileName = ReadString(r),
+                    MetadataYaml = ReadString(r),
+                    Sha256 = ReadString(r),
+                    Reason = ReadString(r),
+                };
+                break;
+            case AuthoritativeSaveTransferChunk:
+                message = new AuthoritativeSaveTransferChunkMessage
+                {
+                    TransferId = r.ReadInt32(),
+                    ChunkIndex = r.ReadInt32(),
+                    Offset = r.ReadInt32(),
+                    Data = ReadBytes(r),
+                };
+                break;
+            case AuthoritativeSaveTransferEnd:
+                message = new AuthoritativeSaveTransferEndMessage
+                {
+                    TransferId = r.ReadInt32(),
+                    Sha256 = ReadString(r),
+                };
+                break;
+            case AuthoritativeResyncRequest:
+                message = new AuthoritativeResyncRequestMessage
+                {
+                    Tick = r.ReadUInt32(),
+                    ClientDigest = ReadString(r),
+                    Reason = ReadString(r),
+                };
+                break;
             default:
                 throw new InvalidDataException($"Unsupported lockstep wire message type {type}");
         }
@@ -350,6 +420,19 @@ public static class LockstepMessageCodec
     static string ReadString(BinaryReader r) => r.ReadString() ?? "";
     static string ReadOptionalString(BinaryReader r)
         => r.BaseStream.Position < r.BaseStream.Length ? ReadString(r) : "";
+    static void WriteBytes(BinaryWriter w, byte[] value)
+    {
+        value ??= Array.Empty<byte>();
+        w.Write(value.Length);
+        w.Write(value);
+    }
+    static byte[] ReadBytes(BinaryReader r)
+    {
+        int length = r.ReadInt32();
+        if (length < 0 || length > 1_048_576)
+            throw new InvalidDataException($"Invalid lockstep byte payload length {length}");
+        return r.ReadBytes(length);
+    }
 }
 
 public readonly struct DecodedLockstepMessage

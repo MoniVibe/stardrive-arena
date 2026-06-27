@@ -767,6 +767,7 @@
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XClientContext.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XSession.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XSessionSave.cs" />
+    <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XSaveTransfer.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XLiveSession.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XLiveTelemetry.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XLobby.cs" />

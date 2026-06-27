@@ -137,6 +137,28 @@ public static class Authoritative4XSessionSave
         YamlSerializer.SerializeOne(metadataFile, EncodeYamlScalars(metadata));
     }
 
+    public static string SerializeMetadata(Authoritative4XSessionMetadata metadata)
+    {
+        if (metadata == null)
+            throw new ArgumentNullException(nameof(metadata));
+
+        using var writer = new StringWriter(CultureInfo.InvariantCulture);
+        YamlSerializer.SerializeOne(writer, EncodeYamlScalars(metadata));
+        return writer.ToString();
+    }
+
+    public static Authoritative4XSessionMetadata DeserializeMetadata(string yaml)
+    {
+        using var reader = new StringReader(yaml ?? "");
+        using var parser = new YamlParser("Authoritative4XSessionMetadata", reader);
+        Authoritative4XSessionMetadata metadata = parser.DeserializeOne<Authoritative4XSessionMetadata>()
+                                                  ?? throw new InvalidDataException(
+                                                      "Authoritative 4X metadata was empty.");
+        DecodeYamlScalars(metadata);
+        ValidateMetadata(metadata);
+        return metadata;
+    }
+
     public static Authoritative4XSessionMetadata LoadMetadata(FileInfo saveFile)
     {
         FileInfo metadataFile = MetadataFileFor(saveFile);
@@ -147,13 +169,18 @@ public static class Authoritative4XSessionSave
                                                   ?? throw new InvalidDataException(
                                                       $"Authoritative 4X metadata was empty: {metadataFile.FullName}");
         DecodeYamlScalars(metadata);
+        ValidateMetadata(metadata);
+        return metadata;
+    }
+
+    static void ValidateMetadata(Authoritative4XSessionMetadata metadata)
+    {
         if (metadata.Version <= 0 || metadata.Version > Authoritative4XSessionMetadata.CurrentVersion)
             throw new InvalidDataException($"Unsupported authoritative 4X metadata version {metadata.Version}.");
         if (metadata.ToPeerEmpireMap().Count == 0)
             throw new InvalidDataException("Authoritative 4X metadata contains no peer-to-empire mappings.");
         if (metadata.NormalizedHumanEmpireIds().Length == 0)
             throw new InvalidDataException("Authoritative 4X metadata contains no human empire ids.");
-        return metadata;
     }
 
     public static Authoritative4XLoadedSession Load(FileInfo saveFile, bool startSimThread = false)

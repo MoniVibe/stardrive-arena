@@ -44,3 +44,36 @@ public sealed class AuthoritativeDiplomacyPopupMessage : LockstepMessage
     public bool RequiresResponse;
     public string Message = "";
 }
+
+public sealed class AuthoritativeSaveTransferBeginMessage : LockstepMessage
+{
+    public int TransferId;
+    public int TotalBytes;
+    public int TotalChunks;
+    public int ChunkSize;
+    public string SaveFileName = "";
+    public string MetadataYaml = "";
+    public string Sha256 = "";
+    public string Reason = "";
+}
+
+public sealed class AuthoritativeSaveTransferChunkMessage : LockstepMessage
+{
+    public int TransferId;
+    public int ChunkIndex;
+    public int Offset;
+    public byte[] Data = System.Array.Empty<byte>();
+}
+
+public sealed class AuthoritativeSaveTransferEndMessage : LockstepMessage
+{
+    public int TransferId;
+    public string Sha256 = "";
+}
+
+public sealed class AuthoritativeResyncRequestMessage : LockstepMessage
+{
+    public uint Tick;
+    public string ClientDigest = "";
+    public string Reason = "";
+}

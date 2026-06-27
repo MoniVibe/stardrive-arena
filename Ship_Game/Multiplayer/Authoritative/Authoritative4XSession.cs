@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Collections.Generic;
@@ -1024,6 +1025,8 @@ public sealed class Authoritative4XNetworkHost : IDisposable
     readonly int LocalPeerId;
     readonly List<AuthoritativeDiplomacyPopup> LocalPopups = new();
     readonly List<Authoritative4XProcessedCommand> ProcessedCommands = new();
+    readonly List<AuthoritativeResyncRequestMessage> ResyncRequests = new();
+    int NextSaveTransferId = 1;
 
     public AuthoritativeCommandResult LastResult { get; private set; }
     public AuthoritativeStateSnapshot LastAuthoritySnapshot { get; private set; }
@@ -1040,6 +1043,13 @@ public sealed class Authoritative4XNetworkHost : IDisposable
         Authoritative4XProcessedCommand[] processed = ProcessedCommands.ToArray();
         ProcessedCommands.Clear();
         return processed;
+    }
+
+    public AuthoritativeResyncRequestMessage[] DrainResyncRequests()
+    {
+        AuthoritativeResyncRequestMessage[] requests = ResyncRequests.ToArray();
+        ResyncRequests.Clear();
+        return requests;
     }
 
     public Authoritative4XNetworkHost(UniverseScreen authorityUniverse, TcpLockstepTransport transport,
@@ -1079,12 +1089,28 @@ public sealed class Authoritative4XNetworkHost : IDisposable
         }
     }
 
+    public void SendSaveTransfer(int peerId, FileInfo saveFile,
+        Authoritative4XSessionMetadata metadata, string reason = "")
+    {
+        int transferId = NextSaveTransferId++;
+        foreach (LockstepMessage message in Authoritative4XSaveTransfer.CreateMessages(saveFile,
+                     metadata, HostPeerId, transferId, reason))
+        {
+            Transport.Send(peerId, message);
+        }
+    }
+
     void OnHostMessage(LockstepMessage message)
     {
-        if (message is not AuthoritativeCommandRequestMessage request)
-            return;
-
-        ProcessCommand(request.FromPeer, AuthoritativePlayerCommand.FromMessage(request));
+        switch (message)
+        {
+            case AuthoritativeResyncRequestMessage request:
+                ResyncRequests.Add(request);
+                return;
+            case AuthoritativeCommandRequestMessage commandRequest:
+                ProcessCommand(commandRequest.FromPeer, AuthoritativePlayerCommand.FromMessage(commandRequest));
+                return;
+        }
     }
 
     void ProcessCommand(int fromPeer, AuthoritativePlayerCommand command)
@@ -1148,12 +1174,15 @@ public sealed class Authoritative4XNetworkClient : IDisposable
     readonly Dictionary<AuthoritativeCommandKey, AuthoritativePlayerCommand> Pending = new();
     readonly List<AuthoritativeDiplomacyPopup> Popups = new();
     readonly List<Authoritative4XProcessedCommand> ProcessedCommands = new();
+    readonly List<Authoritative4XReceivedSave> ReceivedSaves = new();
+    readonly Authoritative4XSaveTransferReceiver SaveTransfers = new();
 
     public int PeerId { get; }
     public AuthoritativeCommandResult LastResult { get; private set; }
     public AuthoritativeStateSnapshot LastAuthoritySnapshot { get; private set; }
     public AuthoritativeStateSnapshot LastClientSnapshot => Replica.LastSnapshot;
     public Authoritative4XRawHashDrift LastRawHashDrift => Replica.LastRawHashDrift;
+    public Authoritative4XSyncMismatchException LastSyncMismatch { get; private set; }
     public string LastError => Transport.LastError;
 
     public Authoritative4XProcessedCommand[] DrainProcessedCommands()
@@ -1161,6 +1190,13 @@ public sealed class Authoritative4XNetworkClient : IDisposable
         Authoritative4XProcessedCommand[] processed = ProcessedCommands.ToArray();
         ProcessedCommands.Clear();
         return processed;
+    }
+
+    public Authoritative4XReceivedSave[] DrainReceivedSaves()
+    {
+        Authoritative4XReceivedSave[] saves = ReceivedSaves.ToArray();
+        ReceivedSaves.Clear();
+        return saves;
     }
 
     public Authoritative4XNetworkClient(UniverseScreen clientUniverse, TcpLockstepTransport transport,
@@ -1214,7 +1250,22 @@ public sealed class Authoritative4XNetworkClient : IDisposable
                         out AuthoritativePlayerCommand command))
                     throw new InvalidOperationException("Received authoritative snapshot without a matching command result.");
                 Pending.Remove(new AuthoritativeCommandKey(LastResult.OriginPeer, LastResult.Sequence));
-                Replica.ApplyAuthoritativeResult(command, LastResult, LastAuthoritySnapshot);
+                try
+                {
+                    Replica.ApplyAuthoritativeResult(command, LastResult, LastAuthoritySnapshot);
+                }
+                catch (Authoritative4XSyncMismatchException e)
+                {
+                    LastSyncMismatch = e;
+                    Transport.Send(Authoritative4XNetworkHost.HostPeerId, new AuthoritativeResyncRequestMessage
+                    {
+                        FromPeer = PeerId,
+                        Tick = e.ClientSnapshot?.Tick ?? 0,
+                        ClientDigest = e.ClientSnapshot?.SyncDigest ?? "",
+                        Reason = e.Message,
+                    });
+                    throw;
+                }
                 ProcessedCommands.Add(new Authoritative4XProcessedCommand(LastResult.OriginPeer,
                     command, LastResult, LastClientSnapshot));
                 break;
@@ -1223,6 +1274,19 @@ public sealed class Authoritative4XNetworkClient : IDisposable
                 break;
             case SessionControlMessage controlMessage:
                 Replica.ApplySessionControl(controlMessage.Paused, controlMessage.GameSpeed);
+                break;
+            case AuthoritativeSaveTransferBeginMessage:
+            case AuthoritativeSaveTransferChunkMessage:
+            case AuthoritativeSaveTransferEndMessage:
+                if (SaveTransfers.TryAccept(message, out Authoritative4XReceivedSave received, out string error)
+                    && received != null)
+                {
+                    ReceivedSaves.Add(received);
+                }
+                else if (error.NotEmpty())
+                {
+                    throw new InvalidDataException(error);
+                }
                 break;
         }
     }

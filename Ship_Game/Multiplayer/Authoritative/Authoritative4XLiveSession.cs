@@ -213,22 +213,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
 
         try
         {
-            var metadata = new Authoritative4XSessionMetadata
-            {
-                Version = Authoritative4XSessionMetadata.CurrentVersion,
-                SessionId = LiveSessionId,
-                StartFingerprint = LiveStartFingerprint,
-                SettingsHash = "",
-                GenerationSeed = Universe.UState.P.GenerationSeed,
-                HostPeerId = LocalPeerId,
-                LocalPeerId = LocalPeerId,
-                LastProcessedTick = checked((int)Math.Min(LastSnapshot?.Tick ?? 0, int.MaxValue)),
-                HumanEmpireIds = HumanEmpireIds.OrderBy(id => id).ToArray(),
-                EmpireIdByPeer = EmpireByPeer.OrderBy(kv => kv.Key)
-                    .Select(kv => new Authoritative4XPeerEmpireSave { PeerId = kv.Key, EmpireId = kv.Value })
-                    .ToArray(),
-            };
-            Authoritative4XSessionSave.Save(Universe, saveFile, metadata);
+            Authoritative4XSessionSave.Save(Universe, saveFile, BuildMetadata());
             return true;
         }
         catch (Exception e)
@@ -237,6 +222,50 @@ public sealed class Authoritative4XLiveSession : IDisposable
             return false;
         }
     }
+
+    public bool TrySendSessionSaveToPeer(int peerId, FileInfo saveFile, out string error,
+        string reason = "host-save-transfer")
+    {
+        error = "";
+        if (Disposed)
+        {
+            error = "Authoritative session is disposed.";
+            return false;
+        }
+        if (Role != Authoritative4XLiveRole.Host)
+        {
+            error = "Only the host can send authoritative multiplayer saves.";
+            return false;
+        }
+
+        try
+        {
+            saveFile ??= new FileInfo(Path.Combine(Path.GetTempPath(), "stardrive-auth4x-host-saves",
+                $"mp-session-{Guid.NewGuid():N}.sav"));
+            Authoritative4XSessionMetadata metadata = BuildMetadata();
+            Authoritative4XSessionSave.Save(Universe, saveFile, metadata);
+            Host.SendSaveTransfer(peerId, saveFile, metadata, reason);
+            Telemetry?.Event("SAVE_TRANSFER_SENT",
+                $"peer={peerId} file='{saveFile.FullName}' bytes={saveFile.Length} reason='{reason}'");
+            return true;
+        }
+        catch (Exception e)
+        {
+            error = e.Message;
+            Telemetry?.Event("SAVE_TRANSFER_ERROR", e.Message);
+            return false;
+        }
+    }
+
+    public Authoritative4XReceivedSave[] DrainReceivedSessionSaves()
+        => Role == Authoritative4XLiveRole.Client
+            ? Client.DrainReceivedSaves()
+            : Array.Empty<Authoritative4XReceivedSave>();
+
+    public AuthoritativeResyncRequestMessage[] DrainResyncRequests()
+        => Role == Authoritative4XLiveRole.Host
+            ? Host.DrainResyncRequests()
+            : Array.Empty<AuthoritativeResyncRequestMessage>();
 
     public bool TryDequeueDiplomacyPopup(out AuthoritativeDiplomacyPopup popup)
     {
@@ -249,6 +278,23 @@ public sealed class Authoritative4XLiveSession : IDisposable
         popup = DiplomacyPopups.Dequeue();
         return true;
     }
+
+    Authoritative4XSessionMetadata BuildMetadata()
+        => new()
+        {
+            Version = Authoritative4XSessionMetadata.CurrentVersion,
+            SessionId = LiveSessionId,
+            StartFingerprint = LiveStartFingerprint,
+            SettingsHash = "",
+            GenerationSeed = Universe.UState.P.GenerationSeed,
+            HostPeerId = LocalPeerId,
+            LocalPeerId = LocalPeerId,
+            LastProcessedTick = checked((int)Math.Min(LastSnapshot?.Tick ?? 0, int.MaxValue)),
+            HumanEmpireIds = HumanEmpireIds.OrderBy(id => id).ToArray(),
+            EmpireIdByPeer = EmpireByPeer.OrderBy(kv => kv.Key)
+                .Select(kv => new Authoritative4XPeerEmpireSave { PeerId = kv.Key, EmpireId = kv.Value })
+                .ToArray(),
+        };
 
     void EnqueuePopups(IEnumerable<AuthoritativeDiplomacyPopup> popups)
     {

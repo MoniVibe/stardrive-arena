@@ -804,6 +804,71 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(popup.Terms, popupCopy.Terms);
         Assert.AreEqual(popup.RequiresResponse, popupCopy.RequiresResponse);
         Assert.AreEqual(popup.Message, popupCopy.Message);
+
+        var transferBegin = new AuthoritativeSaveTransferBeginMessage
+        {
+            FromPeer = 1,
+            TransferId = 77,
+            TotalBytes = 12_345,
+            TotalChunks = 3,
+            ChunkSize = 4096,
+            SaveFileName = "mp-session.sav",
+            MetadataYaml = "Authoritative4XSessionMetadata:\n  Version: 1\n",
+            Sha256 = "ABCDEF",
+            Reason = "join-load"
+        };
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(transferBegin, toPeer: 3));
+        var transferBeginCopy = (AuthoritativeSaveTransferBeginMessage)decoded.Message;
+        Assert.AreEqual(3, decoded.ToPeer);
+        Assert.AreEqual(transferBegin.TransferId, transferBeginCopy.TransferId);
+        Assert.AreEqual(transferBegin.TotalBytes, transferBeginCopy.TotalBytes);
+        Assert.AreEqual(transferBegin.TotalChunks, transferBeginCopy.TotalChunks);
+        Assert.AreEqual(transferBegin.ChunkSize, transferBeginCopy.ChunkSize);
+        Assert.AreEqual(transferBegin.SaveFileName, transferBeginCopy.SaveFileName);
+        Assert.AreEqual(transferBegin.MetadataYaml, transferBeginCopy.MetadataYaml);
+        Assert.AreEqual(transferBegin.Sha256, transferBeginCopy.Sha256);
+        Assert.AreEqual(transferBegin.Reason, transferBeginCopy.Reason);
+
+        var transferChunk = new AuthoritativeSaveTransferChunkMessage
+        {
+            FromPeer = 1,
+            TransferId = 77,
+            ChunkIndex = 2,
+            Offset = 8192,
+            Data = new byte[] { 1, 2, 3, 4, 5 }
+        };
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(transferChunk, toPeer: 3));
+        var transferChunkCopy = (AuthoritativeSaveTransferChunkMessage)decoded.Message;
+        Assert.AreEqual(transferChunk.TransferId, transferChunkCopy.TransferId);
+        Assert.AreEqual(transferChunk.ChunkIndex, transferChunkCopy.ChunkIndex);
+        Assert.AreEqual(transferChunk.Offset, transferChunkCopy.Offset);
+        CollectionAssert.AreEqual(transferChunk.Data, transferChunkCopy.Data);
+
+        var transferEnd = new AuthoritativeSaveTransferEndMessage
+        {
+            FromPeer = 1,
+            TransferId = 77,
+            Sha256 = "ABCDEF"
+        };
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(transferEnd, toPeer: 3));
+        var transferEndCopy = (AuthoritativeSaveTransferEndMessage)decoded.Message;
+        Assert.AreEqual(transferEnd.TransferId, transferEndCopy.TransferId);
+        Assert.AreEqual(transferEnd.Sha256, transferEndCopy.Sha256);
+
+        var resync = new AuthoritativeResyncRequestMessage
+        {
+            FromPeer = 3,
+            Tick = 290,
+            ClientDigest = "0xCLIENT",
+            Reason = "firstDiff line=149"
+        };
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(resync, toPeer: 1));
+        var resyncCopy = (AuthoritativeResyncRequestMessage)decoded.Message;
+        Assert.AreEqual(1, decoded.ToPeer);
+        Assert.AreEqual(resync.FromPeer, resyncCopy.FromPeer);
+        Assert.AreEqual(resync.Tick, resyncCopy.Tick);
+        Assert.AreEqual(resync.ClientDigest, resyncCopy.ClientDigest);
+        Assert.AreEqual(resync.Reason, resyncCopy.Reason);
     }
 
     [TestMethod]
@@ -7284,6 +7349,21 @@ public class Authoritative4XSessionTests : StarDriveTest
             StringAssert.Contains(mismatch.Message, "firstDiff",
                 "Live crash text should include the first canonical payload difference for cross-machine triage.");
 
+            AuthoritativeResyncRequestMessage[] resyncRequests = Array.Empty<AuthoritativeResyncRequestMessage>();
+            DateTime resyncDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (resyncRequests.Length == 0 && DateTime.UtcNow < resyncDeadline)
+            {
+                host.Poll();
+                resyncRequests = host.DrainResyncRequests();
+                System.Threading.Thread.Sleep(5);
+            }
+            Assert.AreEqual(1, resyncRequests.Length,
+                "A mismatching client should request an authoritative resync from the host.");
+            Assert.AreEqual(Peer, resyncRequests[0].FromPeer);
+            Assert.AreEqual(mismatch.ClientSnapshot.Tick, resyncRequests[0].Tick);
+            Assert.AreEqual(mismatch.ClientSnapshot.SyncDigest, resyncRequests[0].ClientDigest);
+            StringAssert.Contains(resyncRequests[0].Reason, "firstDiff");
+
             liveClient.Dispose();
             string text = File.ReadAllText(path);
             StringAssert.Contains(text, "SYNC_MISMATCH");
@@ -8484,6 +8564,119 @@ public class Authoritative4XSessionTests : StarDriveTest
         {
             if (Directory.Exists(temp))
                 Directory.Delete(temp, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XSaveTransfer_CarriesHostSaveToClientCacheAndResumes_Headless()
+    {
+        LoadAllGameData();
+
+        string hostTemp = Path.Combine(Path.GetTempPath(), "stardrive-auth4x-transfer-host-" + Guid.NewGuid().ToString("N"));
+        string clientTemp = Path.Combine(Path.GetTempPath(), "stardrive-auth4x-transfer-client-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(hostTemp);
+        Directory.CreateDirectory(clientTemp);
+
+        try
+        {
+            IEmpireData[] races = ResourceManager.MajorRaces
+                .Where(r => !r.IsFactionOrMinorRace)
+                .OrderBy(r => RacePreference(r), StringComparer.Ordinal)
+                .Take(2)
+                .ToArray();
+            Assert.IsTrue(races.Length >= 2, "The MP save-transfer proof needs two playable major races.");
+
+            var settings = new Authoritative4XGameSettings
+            {
+                GenerationSeed = 0x51A4E,
+                GalaxySize = GalSize.Tiny,
+                StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+                Mode = RaceDesignScreen.GameMode.Sandbox,
+                Difficulty = GameDifficulty.Normal,
+                NumOpponents = 1,
+                Pace = 1f,
+                TurnTimer = 5,
+                GameSpeed = 1f,
+                StartPaused = true,
+            };
+
+            var lobby = new Authoritative4XLobby(hostPlayerPeerId: 2, hostName: "Host");
+            lobby.Join(3, "Client");
+            Assert.IsTrue(lobby.SetSettings(2, settings).Valid);
+            Assert.IsTrue(lobby.SetPlayerSelection(2, RacePreference(races[0]), Array.Empty<string>()).Valid);
+            Assert.IsTrue(lobby.SetPlayerSelection(3, RacePreference(races[1]), Array.Empty<string>()).Valid);
+            Assert.IsTrue(lobby.SetReady(2, true).Valid);
+            Assert.IsTrue(lobby.SetReady(3, true).Valid);
+
+            FileInfo hostSave = new(Path.Combine(hostTemp, "host-session.sav"));
+            LockstepMessage[] messages;
+            Authoritative4XSessionMetadata metadata;
+            using (Authoritative4XLobbyStartResult started = lobby.StartInProcess())
+            {
+                int peer3Empire = started.EmpireIdForPeer(3);
+                started.Session.SubmitFromClient(3,
+                    AuthoritativePlayerCommand.SetEmpireBudget(500, peer3Empire, taxRate: 0.27f,
+                        treasuryGoal: 0.42f, autoTaxes: false));
+                AssertAccepted(started.Session, 3);
+
+                metadata = Authoritative4XSessionMetadata.FromGenerated(started.GeneratedGame,
+                    hostPeerId: 2, localPeerId: 2, sessionId: "transfer-session",
+                    startFingerprint: "0xTRANSFER", started.Session.LastAuthoritySnapshot.Tick);
+                Authoritative4XSessionSave.Save(started.AuthorityUniverse, hostSave, metadata);
+                messages = Authoritative4XSaveTransfer.CreateMessages(hostSave, metadata,
+                    Authoritative4XNetworkHost.HostPeerId, transferId: 9001,
+                    reason: "join-load", chunkSize: 64 * 1024);
+            }
+
+            Assert.IsTrue(messages.OfType<AuthoritativeSaveTransferChunkMessage>().ToArray().Length > 1,
+                "The proof should exercise multi-chunk transfer framing.");
+            File.Delete(hostSave.FullName);
+            FileInfo hostSidecar = Authoritative4XSessionSave.MetadataFileFor(hostSave);
+            if (hostSidecar.Exists)
+                hostSidecar.Delete();
+
+            var receiver = new Authoritative4XSaveTransferReceiver(new DirectoryInfo(clientTemp));
+            Authoritative4XReceivedSave received = null;
+            foreach (LockstepMessage message in messages)
+            {
+                DecodedLockstepMessage decoded =
+                    LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(message, toPeer: 3));
+                Assert.AreEqual(3, decoded.ToPeer);
+                if (receiver.TryAccept(decoded.Message, out Authoritative4XReceivedSave justReceived,
+                        out string error))
+                {
+                    received = justReceived;
+                }
+                Assert.IsTrue(error.IsEmpty(), error);
+            }
+
+            Assert.IsNotNull(received, "The client should reconstruct a received authoritative save.");
+            Assert.IsTrue(received.SaveFile.Exists, "The received save should be written to the client cache.");
+            Assert.IsTrue(received.MetadataFile.Exists, "The received metadata sidecar should be written to the client cache.");
+            Assert.IsTrue(received.SaveFile.FullName.StartsWith(clientTemp, StringComparison.OrdinalIgnoreCase),
+                "The client should load the transferred host save from its own cache, not the host's path.");
+            Assert.AreEqual("transfer-session", received.Metadata.SessionId);
+            Assert.AreEqual("join-load", received.Reason);
+            Assert.AreEqual(2, received.Metadata.ToPeerEmpireMap().Count);
+            CollectionAssert.AreEqual(metadata.ToPeerEmpireMap().OrderBy(kv => kv.Key).Select(kv => kv.Key).ToArray(),
+                received.Metadata.ToPeerEmpireMap().OrderBy(kv => kv.Key).Select(kv => kv.Key).ToArray());
+
+            using Authoritative4XLoadedSession loaded = Authoritative4XSessionSave.Load(received.SaveFile);
+            int peer2Empire = loaded.EmpireIdForPeer(2);
+            var authority = new Authoritative4XAuthority(loaded.Universe,
+                humanEmpireIds: loaded.HumanEmpireIds);
+            (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) = authority.Process(
+                AuthoritativePlayerCommand.SetEmpireBudget(501, peer2Empire, taxRate: 0.21f,
+                    treasuryGoal: 0.35f, autoTaxes: false));
+            Assert.IsTrue(result.Accepted, result.Reason);
+            Assert.IsNotNull(snapshot);
+        }
+        finally
+        {
+            if (Directory.Exists(hostTemp))
+                Directory.Delete(hostTemp, recursive: true);
+            if (Directory.Exists(clientTemp))
+                Directory.Delete(clientTemp, recursive: true);
         }
     }
 
