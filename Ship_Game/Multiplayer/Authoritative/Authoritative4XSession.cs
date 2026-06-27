@@ -50,6 +50,48 @@ public sealed class AuthoritativeStateSnapshot
             Payload = message.Payload ?? "",
         };
 
+    public void ApplyEmpireRuntimePayload(UniverseState universe)
+    {
+        if (universe == null || string.IsNullOrEmpty(Payload))
+            return;
+
+        foreach (string rawLine in Payload.Split('\n'))
+        {
+            string line = rawLine.TrimEnd('\r');
+            if (!line.StartsWith("E|", StringComparison.Ordinal))
+                continue;
+
+            string[] p = line.Split('|');
+            if (p.Length < 15
+                || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int empireId)
+                || empireId <= 0
+                || empireId > universe.Empires.Count)
+            {
+                continue;
+            }
+
+            Empire empire = universe.GetEmpireById(empireId);
+            if (empire == null)
+                continue;
+
+            if (TryParseFloatBits(p[4], out float money))
+                empire.Money = money;
+            if (TryParseFloatBits(p[5], out float taxRate))
+                empire.data.TaxRate = taxRate;
+            if (TryParseFloatBits(p[6], out float treasuryGoal))
+                empire.data.treasuryGoal = treasuryGoal;
+            if (int.TryParse(p[8], NumberStyles.Integer, CultureInfo.InvariantCulture, out int flags))
+                ApplyAutomationFlags(empire, (AuthoritativeEmpireAutomationFlags)flags);
+
+            empire.data.CurrentAutoFreighter = p[9] ?? "";
+            empire.data.CurrentAutoColony = p[10] ?? "";
+            empire.data.CurrentAutoScout = p[11] ?? "";
+            empire.data.CurrentConstructor = p[12] ?? "";
+            empire.data.CurrentResearchStation = p[13] ?? "";
+            empire.data.CurrentMiningStation = p[14] ?? "";
+        }
+    }
+
     public static AuthoritativeStateSnapshot Capture(UniverseScreen universe, uint tick,
         DeterminismProfile profile = DeterminismProfile.ReplayWinX64Float)
     {
@@ -615,6 +657,36 @@ public sealed class AuthoritativeStateSnapshot
             or ShipAI.Plan.RotateInlineWithVelocity;
 
     static uint FloatBits(float value) => System.BitConverter.SingleToUInt32Bits(value);
+    static bool TryParseFloatBits(string text, out float value)
+    {
+        value = 0f;
+        if (!uint.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out uint bits))
+            return false;
+        value = BitConverter.UInt32BitsToSingle(bits);
+        return true;
+    }
+
+    static void ApplyAutomationFlags(Empire empire, AuthoritativeEmpireAutomationFlags flags)
+    {
+        flags &= AuthoritativeEmpireAutomationFlags.All;
+        empire.AutoPickConstructors = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickConstructors);
+        empire.AutoPickBestColonizer = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestColonizer);
+        empire.AutoPickBestFreighter = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter);
+        empire.AutoResearch = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoResearch);
+        empire.AutoBuildTerraformers = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildTerraformers);
+        empire.AutoTaxes = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoTaxes);
+        empire.AutoPickBestResearchStation = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation);
+        empire.AutoPickBestMiningStation = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation);
+        empire.AutoExplore = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoExplore);
+        empire.AutoColonize = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoColonize);
+        empire.AutoBuildSpaceRoads = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildSpaceRoads);
+        empire.AutoFreighters = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoFreighters);
+        empire.AutoBuildResearchStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations);
+        empire.AutoBuildMiningStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations);
+
+        bool rushAll = flags.HasFlag(AuthoritativeEmpireAutomationFlags.RushAllConstruction);
+        empire.RushAllConstruction = rushAll;
+    }
 }
 
 public sealed class Authoritative4XAuthority
@@ -698,6 +770,7 @@ public sealed class Authoritative4XClientReplica
 
         Universe.SingleSimulationStep(Step);
         Tick++;
+        authoritySnapshot.ApplyEmpireRuntimePayload(Universe.UState);
         LastSnapshot = AuthoritativeStateSnapshot.Capture(Universe, Tick);
         bool rawHashMismatch = LastSnapshot.HashLo != authoritySnapshot.HashLo
                                || LastSnapshot.HashHi != authoritySnapshot.HashHi;

@@ -20,6 +20,22 @@ public sealed class Authoritative4XPeerEmpireSave
 }
 
 [StarDataType]
+public sealed class Authoritative4XEmpireRuntimeSave
+{
+    [StarData] public int EmpireId;
+    [StarData] public int MoneyBits;
+    [StarData] public int TaxRateBits;
+    [StarData] public int TreasuryGoalBits;
+    [StarData] public int AutomationFlags;
+    [StarData] public string CurrentAutoFreighter = "";
+    [StarData] public string CurrentAutoColony = "";
+    [StarData] public string CurrentAutoScout = "";
+    [StarData] public string CurrentConstructor = "";
+    [StarData] public string CurrentResearchStation = "";
+    [StarData] public string CurrentMiningStation = "";
+}
+
+[StarDataType]
 public sealed class Authoritative4XSessionMetadata
 {
     public const int CurrentVersion = 1;
@@ -34,6 +50,7 @@ public sealed class Authoritative4XSessionMetadata
     [StarData] public int LastProcessedTick;
     [StarData] public int[] HumanEmpireIds = Array.Empty<int>();
     [StarData] public Authoritative4XPeerEmpireSave[] EmpireIdByPeer = Array.Empty<Authoritative4XPeerEmpireSave>();
+    [StarData] public Authoritative4XEmpireRuntimeSave[] EmpireRuntimeState = Array.Empty<Authoritative4XEmpireRuntimeSave>();
 
     public IReadOnlyDictionary<int, int> ToPeerEmpireMap()
         => (EmpireIdByPeer ?? Array.Empty<Authoritative4XPeerEmpireSave>())
@@ -69,6 +86,7 @@ public sealed class Authoritative4XSessionMetadata
                 .OrderBy(kv => kv.Key)
                 .Select(kv => new Authoritative4XPeerEmpireSave { PeerId = kv.Key, EmpireId = kv.Value })
                 .ToArray(),
+            EmpireRuntimeState = Authoritative4XSessionSave.CaptureEmpireRuntimeState(generated.AuthorityUniverse),
         };
     }
 
@@ -207,6 +225,7 @@ public static class Authoritative4XSessionSave
         AuthoritativeHumanPlayers.SetHumanControlledEmpires(universe.UState, humanEmpireIds);
         foreach (int empireId in humanEmpireIds)
             Authoritative4XLobby.DisableHumanEmpireAutomation(universe.UState.GetEmpireById(empireId));
+        ApplyEmpireRuntimeState(universe.UState, metadata.EmpireRuntimeState);
 
         universe.CreateSimThread = false;
         universe.UState.Objects.EnableParallelUpdate = false;
@@ -214,6 +233,105 @@ public static class Authoritative4XSessionSave
         int seed = metadata.GenerationSeed != 0 ? metadata.GenerationSeed : universe.UState.P.GenerationSeed;
         universe.UState.EnableDeterministicRng((uint)seed ^ 0x4D503458u);
     }
+
+    public static Authoritative4XEmpireRuntimeSave[] CaptureEmpireRuntimeState(UniverseScreen universe)
+        => universe != null
+            ? CaptureEmpireRuntimeState(universe.UState)
+            : Array.Empty<Authoritative4XEmpireRuntimeSave>();
+
+    static Authoritative4XEmpireRuntimeSave[] CaptureEmpireRuntimeState(UniverseState universe)
+        => universe?.Empires
+            .OrderBy(e => e.Id)
+            .Select(e => new Authoritative4XEmpireRuntimeSave
+            {
+                EmpireId = e.Id,
+                MoneyBits = FloatBits(e.Money),
+                TaxRateBits = FloatBits(e.data.TaxRate),
+                TreasuryGoalBits = FloatBits(e.data.treasuryGoal),
+                AutomationFlags = (int)AutomationFlags(e),
+                CurrentAutoFreighter = e.data.CurrentAutoFreighter ?? "",
+                CurrentAutoColony = e.data.CurrentAutoColony ?? "",
+                CurrentAutoScout = e.data.CurrentAutoScout ?? "",
+                CurrentConstructor = e.data.CurrentConstructor ?? "",
+                CurrentResearchStation = e.data.CurrentResearchStation ?? "",
+                CurrentMiningStation = e.data.CurrentMiningStation ?? "",
+            })
+            .ToArray() ?? Array.Empty<Authoritative4XEmpireRuntimeSave>();
+
+    static void ApplyEmpireRuntimeState(UniverseState universe, Authoritative4XEmpireRuntimeSave[] states)
+    {
+        if (universe == null || states == null || states.Length == 0)
+            return;
+
+        foreach (Authoritative4XEmpireRuntimeSave state in states)
+        {
+            Empire empire = state.EmpireId > 0 && state.EmpireId <= universe.Empires.Count
+                ? universe.GetEmpireById(state.EmpireId)
+                : null;
+            if (empire == null)
+                continue;
+
+            empire.Money = FloatFromBits(state.MoneyBits);
+            empire.data.TaxRate = FloatFromBits(state.TaxRateBits);
+            empire.data.treasuryGoal = FloatFromBits(state.TreasuryGoalBits);
+            ApplyAutomationFlags(empire, (AuthoritativeEmpireAutomationFlags)state.AutomationFlags);
+            empire.data.CurrentAutoFreighter = state.CurrentAutoFreighter ?? "";
+            empire.data.CurrentAutoColony = state.CurrentAutoColony ?? "";
+            empire.data.CurrentAutoScout = state.CurrentAutoScout ?? "";
+            empire.data.CurrentConstructor = state.CurrentConstructor ?? "";
+            empire.data.CurrentResearchStation = state.CurrentResearchStation ?? "";
+            empire.data.CurrentMiningStation = state.CurrentMiningStation ?? "";
+        }
+    }
+
+    static void ApplyAutomationFlags(Empire empire, AuthoritativeEmpireAutomationFlags flags)
+    {
+        if (empire == null)
+            return;
+
+        flags &= AuthoritativeEmpireAutomationFlags.All;
+        empire.AutoPickConstructors = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickConstructors);
+        empire.AutoPickBestColonizer = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestColonizer);
+        empire.AutoPickBestFreighter = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter);
+        empire.AutoResearch = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoResearch);
+        empire.AutoBuildTerraformers = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildTerraformers);
+        empire.AutoTaxes = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoTaxes);
+        empire.AutoPickBestResearchStation = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation);
+        empire.AutoPickBestMiningStation = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation);
+        empire.AutoExplore = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoExplore);
+        empire.AutoColonize = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoColonize);
+        empire.AutoBuildSpaceRoads = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildSpaceRoads);
+        empire.AutoFreighters = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoFreighters);
+        empire.AutoBuildResearchStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations);
+        empire.AutoBuildMiningStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations);
+
+        bool rushAll = flags.HasFlag(AuthoritativeEmpireAutomationFlags.RushAllConstruction);
+        empire.RushAllConstruction = rushAll;
+    }
+
+    static AuthoritativeEmpireAutomationFlags AutomationFlags(Empire e)
+    {
+        var flags = AuthoritativeEmpireAutomationFlags.None;
+        if (e.AutoPickConstructors) flags |= AuthoritativeEmpireAutomationFlags.AutoPickConstructors;
+        if (e.AutoPickBestColonizer) flags |= AuthoritativeEmpireAutomationFlags.AutoPickBestColonizer;
+        if (e.AutoPickBestFreighter) flags |= AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter;
+        if (e.AutoResearch) flags |= AuthoritativeEmpireAutomationFlags.AutoResearch;
+        if (e.AutoBuildTerraformers) flags |= AuthoritativeEmpireAutomationFlags.AutoBuildTerraformers;
+        if (e.AutoTaxes) flags |= AuthoritativeEmpireAutomationFlags.AutoTaxes;
+        if (e.AutoPickBestResearchStation) flags |= AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation;
+        if (e.AutoPickBestMiningStation) flags |= AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation;
+        if (e.AutoExplore) flags |= AuthoritativeEmpireAutomationFlags.AutoExplore;
+        if (e.AutoColonize) flags |= AuthoritativeEmpireAutomationFlags.AutoColonize;
+        if (e.AutoBuildSpaceRoads) flags |= AuthoritativeEmpireAutomationFlags.AutoBuildSpaceRoads;
+        if (e.AutoFreighters) flags |= AuthoritativeEmpireAutomationFlags.AutoFreighters;
+        if (e.AutoBuildResearchStations) flags |= AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations;
+        if (e.AutoBuildMiningStations) flags |= AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations;
+        if (e.RushAllConstruction) flags |= AuthoritativeEmpireAutomationFlags.RushAllConstruction;
+        return flags;
+    }
+
+    static int FloatBits(float value) => BitConverter.SingleToInt32Bits(value);
+    static float FloatFromBits(int bits) => BitConverter.Int32BitsToSingle(bits);
 
     static void NormalizeLoadedConstructionQueueDesigns(UniverseState universe)
     {
@@ -247,6 +365,22 @@ public static class Authoritative4XSessionSave
             EmpireIdByPeer = metadata.EmpireIdByPeer?
                 .Select(m => new Authoritative4XPeerEmpireSave { PeerId = m.PeerId, EmpireId = m.EmpireId })
                 .ToArray() ?? Array.Empty<Authoritative4XPeerEmpireSave>(),
+            EmpireRuntimeState = metadata.EmpireRuntimeState?
+                .Select(e => new Authoritative4XEmpireRuntimeSave
+                {
+                    EmpireId = e.EmpireId,
+                    MoneyBits = e.MoneyBits,
+                    TaxRateBits = e.TaxRateBits,
+                    TreasuryGoalBits = e.TreasuryGoalBits,
+                    AutomationFlags = e.AutomationFlags,
+                    CurrentAutoFreighter = EncodeYamlScalar(e.CurrentAutoFreighter),
+                    CurrentAutoColony = EncodeYamlScalar(e.CurrentAutoColony),
+                    CurrentAutoScout = EncodeYamlScalar(e.CurrentAutoScout),
+                    CurrentConstructor = EncodeYamlScalar(e.CurrentConstructor),
+                    CurrentResearchStation = EncodeYamlScalar(e.CurrentResearchStation),
+                    CurrentMiningStation = EncodeYamlScalar(e.CurrentMiningStation),
+                })
+                .ToArray() ?? Array.Empty<Authoritative4XEmpireRuntimeSave>(),
         };
 
     static void DecodeYamlScalars(Authoritative4XSessionMetadata metadata)
@@ -254,6 +388,15 @@ public static class Authoritative4XSessionSave
         metadata.SessionId = DecodeYamlScalar(metadata.SessionId);
         metadata.StartFingerprint = DecodeYamlScalar(metadata.StartFingerprint);
         metadata.SettingsHash = DecodeYamlScalar(metadata.SettingsHash);
+        foreach (Authoritative4XEmpireRuntimeSave e in metadata.EmpireRuntimeState ?? Array.Empty<Authoritative4XEmpireRuntimeSave>())
+        {
+            e.CurrentAutoFreighter = DecodeYamlScalar(e.CurrentAutoFreighter);
+            e.CurrentAutoColony = DecodeYamlScalar(e.CurrentAutoColony);
+            e.CurrentAutoScout = DecodeYamlScalar(e.CurrentAutoScout);
+            e.CurrentConstructor = DecodeYamlScalar(e.CurrentConstructor);
+            e.CurrentResearchStation = DecodeYamlScalar(e.CurrentResearchStation);
+            e.CurrentMiningStation = DecodeYamlScalar(e.CurrentMiningStation);
+        }
     }
 
     static string EncodeYamlScalar(string value)

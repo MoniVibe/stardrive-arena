@@ -6960,6 +6960,57 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XClientReplica_ReconcilesEmpireRuntimeRowBeforeDigest_Headless()
+    {
+        const ulong Seed = 0x4E4D50495245UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var replica = new Authoritative4XClientReplica(client.Screen, humanEmpireIds: new[] { client.Player.Id });
+            var command = AuthoritativePlayerCommand.NoOp(241, authority.Player.Id);
+            var result = new AuthoritativeCommandResult
+            {
+                Sequence = 241,
+                OriginPeer = 2,
+                Accepted = false,
+                Tick = 1,
+                Reason = "",
+            };
+
+            authority.Screen.SingleSimulationStep(new FixedSimTime(1f / 60f));
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 1);
+
+            client.Player.Money += 77.125f;
+            client.Player.data.TaxRate = 0f;
+            client.Player.data.treasuryGoal = 0f;
+            client.Player.AutoTaxes = !authority.Player.AutoTaxes;
+
+            replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
+
+            Assert.AreEqual(authoritySnapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                "The passive replica should apply the host empire runtime row before computing the canonical digest.");
+            Assert.AreEqual(BitConverter.SingleToUInt32Bits(authority.Player.Money),
+                BitConverter.SingleToUInt32Bits(client.Player.Money),
+                "The host snapshot should repair client money drift exactly.");
+            Assert.AreEqual(BitConverter.SingleToUInt32Bits(authority.Player.data.TaxRate),
+                BitConverter.SingleToUInt32Bits(client.Player.data.TaxRate),
+                "The host snapshot should repair client tax-rate drift exactly.");
+            Assert.AreEqual(BitConverter.SingleToUInt32Bits(authority.Player.data.treasuryGoal),
+                BitConverter.SingleToUInt32Bits(client.Player.data.treasuryGoal),
+                "The host snapshot should repair client treasury-goal drift exactly.");
+            Assert.AreEqual(authority.Player.AutoTaxes, client.Player.AutoTaxes,
+                "The host snapshot should repair client tax automation state.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XSnapshot_IgnoresVolatileShipMovementScratchButTracksDurableOrders_Headless()
     {
         LoadAllGameData();
@@ -9025,9 +9076,11 @@ public class Authoritative4XSessionTests : StarDriveTest
             }
 
             FileInfo saveFile = new(Path.Combine(temp, "mp-session.sav"));
+            int savedPeer3Empire;
             using (Authoritative4XLobbyStartResult started = lobby.StartInProcess())
             {
                 int peer3Empire = started.EmpireIdForPeer(3);
+                savedPeer3Empire = peer3Empire;
                 started.Session.SubmitFromClient(3,
                     AuthoritativePlayerCommand.SetEmpireBudget(200, peer3Empire, taxRate: 0.22f,
                         treasuryGoal: 0.44f, autoTaxes: false));
@@ -9050,6 +9103,14 @@ public class Authoritative4XSessionTests : StarDriveTest
             CollectionAssert.AreEqual(new[] { 2, 3, 4 }, loadedMetadata.ToPeerEmpireMap().Keys.OrderBy(k => k).ToArray());
 
             using Authoritative4XLoadedSession loadedAuthority = Authoritative4XSessionSave.Load(saveFile);
+            Empire authorityPeer3 = loadedAuthority.Universe.UState.GetEmpireById(savedPeer3Empire);
+            Assert.AreEqual(0.22f, authorityPeer3.data.TaxRate, 0.0001f,
+                "Authoritative MP save/load must preserve the saved peer's tax rate exactly enough for canonical sync.");
+            Assert.AreEqual(0.44f, authorityPeer3.data.treasuryGoal, 0.0001f,
+                "Authoritative MP save/load must preserve the saved peer's treasury goal.");
+            Assert.IsFalse(authorityPeer3.AutoTaxes,
+                "Authoritative MP save/load must preserve manual tax mode for human empires.");
+
             int peer4Empire = loadedAuthority.EmpireIdForPeer(4);
             var authority = new Authoritative4XAuthority(loadedAuthority.Universe,
                 humanEmpireIds: loadedAuthority.HumanEmpireIds);
@@ -9169,6 +9230,15 @@ public class Authoritative4XSessionTests : StarDriveTest
                 received.Metadata.ToPeerEmpireMap().OrderBy(kv => kv.Key).Select(kv => kv.Key).ToArray());
 
             using Authoritative4XLoadedSession loaded = Authoritative4XSessionSave.Load(received.SaveFile);
+            int loadedPeer3Empire = loaded.EmpireIdForPeer(3);
+            Empire clientPeer3 = loaded.Universe.UState.GetEmpireById(loadedPeer3Empire);
+            Assert.AreEqual(0.27f, clientPeer3.data.TaxRate, 0.0001f,
+                "Transferred host saves must preserve the joining peer's tax rate after client-cache load.");
+            Assert.AreEqual(0.42f, clientPeer3.data.treasuryGoal, 0.0001f,
+                "Transferred host saves must preserve the joining peer's treasury goal after client-cache load.");
+            Assert.IsFalse(clientPeer3.AutoTaxes,
+                "Transferred host saves must preserve manual tax mode after client-cache load.");
+
             int peer2Empire = loaded.EmpireIdForPeer(2);
             var authority = new Authoritative4XAuthority(loaded.Universe,
                 humanEmpireIds: loaded.HumanEmpireIds);

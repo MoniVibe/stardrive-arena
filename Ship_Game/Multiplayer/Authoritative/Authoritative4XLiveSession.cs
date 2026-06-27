@@ -420,6 +420,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
             EmpireIdByPeer = EmpireByPeer.OrderBy(kv => kv.Key)
                 .Select(kv => new Authoritative4XPeerEmpireSave { PeerId = kv.Key, EmpireId = kv.Value })
                 .ToArray(),
+            EmpireRuntimeState = Authoritative4XSessionSave.CaptureEmpireRuntimeState(Universe),
         };
 
     void EnqueuePopups(IEnumerable<AuthoritativeDiplomacyPopup> popups)
