@@ -482,7 +482,7 @@ namespace Ship_Game.Universe.SolarBodies
             {
                 ConstructionQueue.Add(item);
                 QueueSnapshotDirty = true;
-                if (!P.OwnerIsPlayer)
+                if (!P.OwnerIsHumanControlled)
                 {
                     int totalFreighters = Owner.TotalFreighters;
                     ConstructionQueue.Sort(q => q.GetAndUpdatePriorityForAI(P, totalFreighters));

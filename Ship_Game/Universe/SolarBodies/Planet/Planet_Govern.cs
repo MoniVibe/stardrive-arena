@@ -48,11 +48,11 @@ namespace Ship_Game
                 return; // No Governor? Never mind!
 
             // Switch to Core for AI if there is nothing in the research queue (Does not actually change assigned Governor)
-            if ((!OwnerIsPlayer || Owner.AutoResearch) && CType == ColonyType.Research && Owner.Research.NoTopic)
+            if ((!OwnerIsHumanControlled || Owner.AutoResearch) && CType == ColonyType.Research && Owner.Research.NoTopic)
                 CType = ColonyType.Core;
 
             // Change to core colony if there is only 1 planet so the AI can build stuff
-            if (!OwnerIsPlayer && Owner.GetPlanets().Count == 1)
+            if (!OwnerIsHumanControlled && Owner.GetPlanets().Count == 1)
                 CType = ColonyType.Core;
 
             if (CType != ColonyType.TradeHub)
@@ -140,7 +140,7 @@ namespace Ship_Game
 
         void BuildAndScrapBuildings(PlanetBudget colonyBudget)
         {
-            if (OwnerIsPlayer && SpecializedTradeHub)
+            if (OwnerIsHumanControlled && SpecializedTradeHub)
                 return;
 
             BuildAndScrapCivilianBuildings(colonyBudget.RemainingCivilian, colonyBudget.CivilianTolerance);

@@ -7,6 +7,7 @@ using Ship_Game.Gameplay;
 using Ship_Game.Ships;
 using Ship_Game.Data.Serialization;
 using Ship_Game.ExtensionMethods;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Universe;
 using Ship_Game.Universe.SolarBodies;
 using Ship_Game.Utils;
@@ -190,7 +191,21 @@ namespace Ship_Game
         [StarData] public string Name;
         public string Description;
         [StarData] public Empire Owner;
-        public bool OwnerIsPlayer => Owner != null && Owner.isPlayer;
+        public bool OwnerIsPlayer
+        {
+            get
+            {
+                if (Owner == null)
+                    return false;
+
+                UniverseScreen screen = Universe?.Screen;
+                if (screen?.IsAuthoritative4XMultiplayer == true)
+                    return Owner == screen.Player;
+
+                return Owner.isPlayer || Owner == screen?.Player;
+            }
+        }
+        public bool OwnerIsHumanControlled => AuthoritativeHumanPlayers.IsHumanControlled(Owner);
         [StarData] public float OrbitalAngle; // OrbitalAngle in DEGREES
         [StarData] public float OrbitalRadius { get; protected set; }
         [StarData] public bool HasRings;
@@ -631,7 +646,7 @@ namespace Ship_Game
             thisPlanet.ManualOrbitals = false;
             thisPlanet.Station?.RemoveSceneObject(); // remove current SO, so it can get reloaded properly
 
-            if (newOwner.isPlayer && !newOwner.AutoColonize)
+            if (AuthoritativeHumanPlayers.IsHumanControlled(newOwner) && !newOwner.AutoColonize)
                 CType = Planet.ColonyType.Colony;
             else
                 CType = newOwner.AssessColonyNeeds(thisPlanet);

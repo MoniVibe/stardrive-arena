@@ -7939,6 +7939,14 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "The chosen client-side planet should belong to the peer's assigned empire.");
             Assert.AreSame(client.Player, clientHostPlanet.Owner,
                 "The chosen client-side host planet should belong to the host empire.");
+            Assert.IsTrue(clientRemotePlanet.OwnerIsPlayer,
+                "Remote authoritative clients should treat their assigned empire's planets as local player-owned.");
+            Assert.IsFalse(clientHostPlanet.OwnerIsPlayer,
+                "Remote authoritative clients should not treat the serialized host empire's planets as local-owned.");
+            Assert.IsTrue(authorityRemotePlanet.OwnerIsHumanControlled,
+                "The host authority should still classify remote peer planets as human-controlled for automation suppression.");
+            Assert.IsFalse(authorityRemotePlanet.OwnerIsPlayer,
+                "The host authority should not classify a remote peer planet as the host's local UI planet.");
 
             Assert.AreSame(client.Enemy, client.Screen.Player,
                 "The visible client screen should render and command the empire assigned to this peer.");
@@ -8905,6 +8913,25 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.IsTrue(AuthoritativeHumanPlayers.IsHumanControlled(empire),
                     $"Peer {peer}'s empire should be registered as human-controlled.");
                 Assert.IsTrue(empire.GetPlanets().Count > 0, $"Peer {peer}'s empire should have a homeworld.");
+                foreach (Planet planet in empire.GetPlanets())
+                {
+                    Assert.IsTrue(planet.OwnerIsHumanControlled,
+                        $"Peer {peer}'s planet {planet.Name} should be treated as human-controlled for automation.");
+                    Assert.AreEqual(Planet.ColonyType.Colony, planet.CType,
+                        $"Peer {peer}'s generated planet {planet.Name} should start in manual colony mode.");
+                    Assert.IsFalse(planet.GovOrbitals, $"Peer {peer}'s generated planet {planet.Name} should not auto-build orbitals.");
+                    Assert.IsFalse(planet.GovGroundDefense, $"Peer {peer}'s generated planet {planet.Name} should not auto-build defenses.");
+                    Assert.IsFalse(planet.AutoBuildTroops, $"Peer {peer}'s generated planet {planet.Name} should not auto-build troops.");
+                    Assert.IsFalse(planet.ManualOrbitals, $"Peer {peer}'s generated planet {planet.Name} should not retain AI orbital flags.");
+                    Assert.AreEqual(0, planet.ConstructionQueue.Count,
+                        $"Peer {peer}'s generated planet {planet.Name} should not inherit an AI/governor queue.");
+                }
+
+                Planet homeworld = empire.GetPlanets().First(p => p.IsHomeworld);
+                int homeworldQueue = homeworld.ConstructionQueue.Count;
+                homeworld.DoGoverning();
+                Assert.AreEqual(homeworldQueue, homeworld.ConstructionQueue.Count,
+                    $"Peer {peer}'s manual homeworld governor should not enqueue AI work.");
             }
 
             Empire hostEmpire = us.GetEmpireById(started.EmpireIdForPeer(2));

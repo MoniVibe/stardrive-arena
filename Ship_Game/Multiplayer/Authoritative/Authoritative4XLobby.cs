@@ -472,8 +472,22 @@ public sealed class Authoritative4XLobby
         if (empire == null)
             return;
 
+        ConfigureGeneratedHumanPlanets(empire);
         empire.Research?.Reset();
         RemoveMachineLocalPlayerDesigns(empire);
+    }
+
+    static void ConfigureGeneratedHumanPlanets(Empire empire)
+    {
+        foreach (Planet planet in empire.GetPlanets())
+        {
+            planet.CType = Planet.ColonyType.Colony;
+            planet.GovOrbitals = false;
+            planet.GovGroundDefense = false;
+            planet.AutoBuildTroops = false;
+            planet.ManualOrbitals = false;
+            planet.Construction.ClearQueue();
+        }
     }
 
     internal static void RemoveMachineLocalPlayerDesigns(Empire empire)

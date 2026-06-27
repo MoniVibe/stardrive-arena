@@ -465,8 +465,8 @@ namespace Ship_Game
             if (b.IsMilitary
                 || b.IsTerraformer
                 || b.IsBiospheres  // Different logic for the above
-                || OwnerIsPlayer && b.BuildOnlyOnce
-                || !OwnerIsPlayer && b.BuildOnlyOnce && Level < (int)DevelopmentLevel.MegaWorld
+                || OwnerIsHumanControlled && b.BuildOnlyOnce
+                || !OwnerIsHumanControlled && b.BuildOnlyOnce && Level < (int)DevelopmentLevel.MegaWorld
                 // If starving and dont have low prod potential and this building does not produce
                 // food while we have food buildings available for build, filter it
                 || NonCybernetic && IsStarving && !LowProdPotential && !b.ProducesFood && buildingsCanBuild.Any(f => f.ProducesFood))
@@ -495,7 +495,7 @@ namespace Ship_Game
             else if (!overBudget)
                 return false;
 
-            if (b.IsPlayerAdded && OwnerIsPlayer
+            if (b.IsPlayerAdded && OwnerIsHumanControlled
                 || b.MoneyBuildingAndProfitable(b.ActualMaintenance(this), PopulationBillion)
                 || !WillMaintainPositiveFoodOutput(b)
                 || !IsBuildingOnHabitableTile(b) && replacing  // Dont allow buildings on non habitable tiles to be scrapped when replacing
@@ -695,7 +695,7 @@ namespace Ship_Game
 
         void TryBuildTerraformers(float budget)
         {
-            if (OwnerIsPlayer && !Owner.AutoBuildTerraformers
+            if (OwnerIsHumanControlled && !Owner.AutoBuildTerraformers
                 || !AreTerraformersNeeded
                 || IsStarving
                 || TerraformerInTheWorks
@@ -784,7 +784,7 @@ namespace Ship_Game
 
         void TryScrapBiospheres()
         {
-            if (OwnerIsPlayer && GovernorShouldNotScrapBuilding || !HasBuilding(b => b.IsBiospheres && !b.IsPlayerAdded))
+            if (OwnerIsHumanControlled && GovernorShouldNotScrapBuilding || !HasBuilding(b => b.IsBiospheres && !b.IsPlayerAdded))
                 return;
 
             var potentialBio = TilesList.Filter(

@@ -76,7 +76,7 @@ namespace Ship_Game
 
         void SetupColonyType()
         {
-            if (OwnerIsPlayer && !Owner.AutoColonize)
+            if (OwnerIsHumanControlled && !Owner.AutoColonize)
                 CType = ColonyType.Colony;
             else
                 CType = Owner.AssessColonyNeeds(this);

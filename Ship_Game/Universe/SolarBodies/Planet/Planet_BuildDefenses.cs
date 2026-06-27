@@ -27,7 +27,7 @@ namespace Ship_Game
         private void BuildPlatformsAndStations(PlanetBudget budget) // Rewritten by Fat Bastard
         {
             if (CType == ColonyType.Colony 
-                || OwnerIsPlayer && (!GovOrbitals || SpecializedTradeHub)
+                || OwnerIsHumanControlled && (!GovOrbitals || SpecializedTradeHub)
                 || SpaceCombatNearPlanet
                 || !HasSpacePort)
             {
@@ -56,7 +56,7 @@ namespace Ship_Game
         void BuildOrScrapPlatforms(Array<Ship> orbitals, byte wanted, float budget, float tolerance)
             => BuildOrScrapOrbitals(orbitals, wanted, RoleName.platform, budget, tolerance);
 
-        bool GovernorShouldNotScrapBuilding => OwnerIsPlayer && DontScrapBuildings;
+        bool GovernorShouldNotScrapBuilding => OwnerIsHumanControlled && DontScrapBuildings;
 
         private Array<Ship> FilterOrbitals(RoleName role)
         {
@@ -372,7 +372,7 @@ namespace Ship_Game
 
         public void BuildTroopsForEvents()
         {
-            if (Troops.Count > 0 || OwnerIsPlayer || TroopsInTheWorks || !EventsOnTiles())
+            if (Troops.Count > 0 || OwnerIsHumanControlled || TroopsInTheWorks || !EventsOnTiles())
                 return;
 
             if (CanBuildInfantry)
@@ -381,7 +381,7 @@ namespace Ship_Game
 
         public void BuildTroops() // Relevant only for players with the Garrison Checkbox checked.
         {
-            if (!OwnerIsPlayer || !AutoBuildTroops || RecentCombat)
+            if (!OwnerIsHumanControlled || !AutoBuildTroops || RecentCombat)
                 return;
 
             int numTroopsInTheWorks = NumTroopsInTheWorks;
@@ -425,13 +425,13 @@ namespace Ship_Game
 
         void BuildAndScrapMilitaryBuildings(float budget, float tolerance)
         {
-            if (OwnerIsPlayer && !GovGroundDefense && !HasBlueprints
+            if (OwnerIsHumanControlled && !GovGroundDefense && !HasBlueprints
                 || MilitaryBuildingInTheWorks)
             {
                 return;
             }
 
-            if (budget < tolerance && (HasBlueprints || GovGroundDefense || !OwnerIsPlayer))
+            if (budget < tolerance && (HasBlueprints || GovGroundDefense || !OwnerIsHumanControlled))
             {
                 TryScrapMilitaryBuilding();
                 return;
@@ -442,7 +442,7 @@ namespace Ship_Game
             {
                 TryScrapMilitaryBuilding();
             }
-            else if (GovGroundDefense || !OwnerIsPlayer || HasBlueprints)
+            else if (GovGroundDefense || !OwnerIsHumanControlled || HasBlueprints)
             {
                 TryBuildMilitaryBuilding(budget);
             }
@@ -462,7 +462,7 @@ namespace Ship_Game
 
             if (best == null)
             {
-                if (!HasExclusiveBlueprints && (!OwnerIsPlayer || GovGroundDefense))
+                if (!HasExclusiveBlueprints && (!OwnerIsHumanControlled || GovGroundDefense))
                     best = BuildingsCanBuild.FindMaxFiltered(b => b.IsMilitary && b.ActualMaintenance(this) <= budget,
                                                              b => b.CostEffectiveness);
             }
