@@ -118,7 +118,7 @@ namespace Ship_Game.AI.ExpansionAI
         /// </summary>
         public void RunExpansionPlanner()
         {
-            if (Owner.isPlayer && !Owner.AutoColonize)
+            if (Owner.IsHumanControlled && !Owner.AutoColonize)
                 return;
 
             if (ExpandSearchTimer > 0)
@@ -131,7 +131,7 @@ namespace Ship_Game.AI.ExpansionAI
             }
 
             int ourPlanetsNum = Owner.GetPlanets().Count;
-            if (!Owner.isPlayer)
+            if (!Owner.IsHumanControlled)
             {
                 var goals = Owner.AI.CountGoals(g => g.Type == GoalType.StandbyColonyShip);
                 if (goals < Owner.DifficultyModifiers.StandByColonyShips.UpperBound(ourPlanetsNum - 1))
@@ -275,7 +275,7 @@ namespace Ship_Game.AI.ExpansionAI
         public void CheckClaim(Empire thievingEmpire, Relationship thiefRelationship, Planet claimedPlanet)
         {
             SolarSystem system = claimedPlanet.System;
-            if (!Owner.isPlayer
+            if (!Owner.IsHumanControlled
                 && !Owner.IsFaction
                 && thievingEmpire != Owner
                 && thiefRelationship.Known
@@ -287,7 +287,7 @@ namespace Ship_Game.AI.ExpansionAI
                 float distanceToThem = system.Position.SqDist(thievingEmpire.WeightedCenter) 
                                        * Owner.PersonalityModifiers.CloserToUsClaimWarn;
 
-                bool closerToUs = thievingEmpire.isPlayer && distanceToUs < distanceToThem;
+                bool closerToUs = thievingEmpire.IsHumanControlled && distanceToUs < distanceToThem;
                 if (warnedThem || closerToUs)
                 {
                     thiefRelationship.StoleOurColonyClaim(Owner, claimedPlanet, out bool newTheft);

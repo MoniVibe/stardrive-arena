@@ -110,7 +110,7 @@ namespace Ship_Game.AI
 
             // for the player they don't use some budgets. so distribute them to areas they do
             // spy budget is a special case currently and is not distributed.
-            if (OwnerEmpire.isPlayer)
+            if (OwnerEmpire.IsHumanControlled)
             {
                 float budgetBalance = (build + spy) * 0.5f;
                 defense            += budgetBalance;
@@ -160,7 +160,7 @@ namespace Ship_Game.AI
 
         float DetermineSpyBudget(float treasuryGoal, float percentOfMoney)
         {
-            if (OwnerEmpire.isPlayer)
+            if (OwnerEmpire.IsHumanControlled)
                 return 0;
 
             bool notKnown = !OwnerEmpire.AllRelations.Any(r => r.Known && !r.Them.IsFaction);
@@ -217,7 +217,7 @@ namespace Ship_Game.AI
 
         // As the empire grows, it wants more and more money in the bank, and it is getting out of proportion
         // resulting high taxes. This will reduce the goal to maintain low tax by the AI
-        public float GoalEqualizer => OwnerEmpire.isPlayer || OwnerEmpire.Money  < 2000 ? 1 : (1 + OwnerEmpire.Money * 0.00004f).UpperBound(4);
+        public float GoalEqualizer => OwnerEmpire.IsHumanControlled || OwnerEmpire.Money  < 2000 ? 1 : (1 + OwnerEmpire.Money * 0.00004f).UpperBound(4);
 
         /// <summary>
         /// Creates a ratio between cash on hand above what we want on hand and treasury goal
@@ -237,7 +237,7 @@ namespace Ship_Game.AI
 
         private void AutoSetTaxes(float treasuryGoal, float money)
         {
-            if (OwnerEmpire.isPlayer && !OwnerEmpire.AutoTaxes)
+            if (OwnerEmpire.IsHumanControlled && !OwnerEmpire.AutoTaxes)
                 return;
 
             if (money <= 0)
@@ -266,7 +266,7 @@ namespace Ship_Game.AI
             if (treasuryGoal > 1000f)
             {
                 // If about 50% to treasury start reducing amount wanted (or 90% for the player)
-                float reducer          = treasuryGoal / (OwnerEmpire.isPlayer ? 9f : 2f);
+                float reducer          = treasuryGoal / (OwnerEmpire.IsHumanControlled ? 9f : 2f);
                 closeToGoalCompensator = Math.Min(treasuryGap  / reducer, 1);
             }
             float amount = OwnerEmpire.AllSpending + neededPerTurnForeTreasury;
@@ -278,7 +278,7 @@ namespace Ship_Game.AI
 
         float SetBudgetForArea(float percentOfIncome, float treasuryGoal, float risk = 1)
         {
-            float budget = treasuryGoal * percentOfIncome * (OwnerEmpire.isPlayer ? 1 : risk);
+            float budget = treasuryGoal * percentOfIncome * (OwnerEmpire.IsHumanControlled ? 1 : risk);
             return budget.LowerBound(1);
         }
 

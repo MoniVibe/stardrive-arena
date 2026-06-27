@@ -135,7 +135,8 @@ namespace Ship_Game
         // guarded by `isPlayer && OracleSidekickEnabled` (+ the relevant Auto* slice flag).
         [StarData] public bool OracleSidekickEnabled;
 
-        public bool IsAIControlled => !isPlayer || AISidekickEnabled;
+        public bool IsHumanControlled => AuthoritativeHumanPlayers.IsHumanControlled(this);
+        public bool IsAIControlled => !IsHumanControlled || AISidekickEnabled;
 
         // Hand this empire fully over to the AI (every slice). For per-slice control, set the individual
         // Auto* flags instead (e.g. AutoMilitary / AutoSpy / AutoResearch) and leave AISidekickEnabled off.

@@ -78,7 +78,7 @@ namespace Ship_Game.Commands.Goals
         {
             if (StationToBuild == null)
             {
-                StationToBuild = !Owner.isPlayer || Owner.AutoPickBestMiningStation
+                StationToBuild = !Owner.IsHumanControlled || Owner.AutoPickBestMiningStation
                     ? ShipBuilder.PickMiningStation(Owner)
                     : ResourceManager.Ships.GetDesign(Owner.data.MiningStation, throwIfError: true);
             }
@@ -223,13 +223,13 @@ namespace Ship_Game.Commands.Goals
         bool NeedsRefit(out IShipDesign betterStation)
         {
             betterStation = null;
-            if (Owner.isPlayer && !Owner.AutoBuildMiningStations)
+            if (Owner.IsHumanControlled && !Owner.AutoBuildMiningStations)
                 return false;
 
             // BestMiningStationWeCanBuild is null until Empire.UpdateBestOrbitals has run, and
             // can also stay null if the mod's data.MiningStation no longer resolves (Combined Arms
             // renames designs). No candidate -> nothing to refit toward.
-            string bestRefit = Owner.isPlayer && !Owner.AutoPickBestMiningStation
+            string bestRefit = Owner.IsHumanControlled && !Owner.AutoPickBestMiningStation
                 ? Owner.data.MiningStation
                 : Owner.BestMiningStationWeCanBuild?.Name;
             if (bestRefit.IsEmpty())

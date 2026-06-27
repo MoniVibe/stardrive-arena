@@ -55,7 +55,7 @@ namespace Ship_Game.AI.ExpansionAI
             float enemyStr = Owner.KnownEnemyStrengthNoResearchStationsIn(planet.System);
             if (enemyStr > 0)
             {
-                if (Owner.isPlayer || Owner.HasWarTaskTargetingSystem(planet.System))
+                if (Owner.IsHumanControlled || Owner.HasWarTaskTargetingSystem(planet.System))
                     return false;
 
                 Owner.AddDefenseSystemGoal(planet.System, Owner.KnownEnemyStrengthIn(planet.System), AI.Tasks.MilitaryTaskImportance.Normal);
@@ -77,7 +77,7 @@ namespace Ship_Game.AI.ExpansionAI
         {
             if (Universe.P.DisableMiningOps
                 || !Owner.CanBuildMiningStations
-                || Owner.isPlayer && !Owner.AutoBuildMiningStations)
+                || Owner.IsHumanControlled && !Owner.AutoBuildMiningStations)
             {
                 return false;
             }
@@ -110,4 +110,3 @@ namespace Ship_Game.AI.ExpansionAI
         }
     }
 }
-

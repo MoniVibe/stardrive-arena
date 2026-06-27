@@ -31,7 +31,7 @@ namespace Ship_Game
         public int MaxFreightersInQueue  => (int)Math.Ceiling((OwnedPlanets.Count / 5f)).Clamped(2, 5);
         public int TotalFreighters       => OwnedShips.Count(s => s?.IsFreighter == true);
         public int AverageTradeIncome    => AllTimeTradeIncome / TurnCount;
-        public bool ManualTrade          => isPlayer && !AutoFreighters;
+        public bool ManualTrade          => IsHumanControlled && !AutoFreighters;
         public float TotalAvgTradeIncome => TotalTradeTreatiesIncome() + AverageTradeIncome;
         public bool EconomicSafeToBuildFreighter => AI.CreditRating >= 0.4;
         public int TotalLevelsOfPirateFactionsAtWar => Universe.PirateFactions.Sum(e => IsAtWarWith(e) ? e.Pirates.Level : 0);

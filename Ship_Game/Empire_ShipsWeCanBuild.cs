@@ -368,7 +368,7 @@ public sealed partial class Empire
 
     public bool ChooseScoutShipToBuild(out IShipDesign scout)
     {
-        if (isPlayer && ResourceManager.Ships.GetDesign(Universe.Player.data.CurrentAutoScout, out scout))
+        if (IsHumanControlled && ResourceManager.Ships.GetDesign(data.CurrentAutoScout, out scout))
             return true;
 
         var scoutShipsWeCanBuild = new Array<IShipDesign>();

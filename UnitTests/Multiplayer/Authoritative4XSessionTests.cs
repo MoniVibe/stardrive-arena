@@ -5975,6 +5975,88 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XRemoteHumanEmpire_UsesHumanAutomationGates_Headless()
+    {
+        const ulong Seed = 0xA470A14UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            AuthoritativeHumanPlayers.SetHumanControlledEmpires(world.UState, world.Player.Id, world.Enemy.Id);
+            ClearEmpireAutomation(world.Enemy);
+            UnlockAllShipsFor(world.Enemy);
+            world.Enemy.UpdateShipsWeCanBuild();
+
+            Assert.IsFalse(world.Enemy.isPlayer, "The fixture's second empire must stay non-local to reproduce the MP host view.");
+            Assert.IsTrue(world.Enemy.IsHumanControlled, "Authoritative registration must make the non-local empire human-controlled.");
+            Assert.IsFalse(world.Enemy.IsAIControlled, "Remote humans must not be treated as AI-controlled when no sidekick is enabled.");
+
+            Assert.IsTrue(world.Enemy.ManualTrade,
+                "A remote human with AutoFreighters off must be in manual trade mode, not host-side AI trade mode.");
+            world.Enemy.AutoFreighters = true;
+            Assert.IsFalse(world.Enemy.ManualTrade,
+                "Explicit AutoFreighters delegation should still enable automated trade for remote humans.");
+            world.Enemy.AutoFreighters = false;
+
+            world.Enemy.Money = 0f;
+            world.Enemy.AutoTaxes = false;
+            world.Enemy.data.TaxRate = 0.33f;
+            world.Enemy.AI.RunEconomicPlanner();
+            Assert.AreEqual(0.33f, world.Enemy.data.TaxRate, 0.001f,
+                "Remote-human budget recalculation must honor manual taxes instead of applying AI auto-tax logic.");
+
+            IShipDesign[] scouts = world.Enemy.ShipsWeCanBuildSnapshot
+                .Where(s => s.IsShipGoodToBuild(world.Enemy) && s.Role == RoleName.scout)
+                .OrderBy(s => s.BaseStrength)
+                .ThenBy(s => s.Name, StringComparer.Ordinal)
+                .ToArray();
+            Assert.IsTrue(scouts.Length >= 1,
+                "Need at least one buildable scout to prove the selected remote-human scout design is respected.");
+            world.Player.data.CurrentAutoScout = "not-a-real-scout";
+            world.Enemy.data.CurrentAutoScout = scouts[0].Name;
+            Assert.IsTrue(world.Enemy.ChooseScoutShipToBuild(out IShipDesign pickedScout),
+                "Remote-human scout picker must use that empire's selected scout, not the host player's selection.");
+            Assert.AreEqual(scouts[0].Name, pickedScout.Name,
+                "Remote-human scout picker must read the remote empire's selected auto-scout design.");
+
+            Planet secondEnemyPlanet = AddDummyPlanetToEmpire(new Vector2(-200_000, 700_000), world.Enemy,
+                fertility: 1f, minerals: 1f, maxPop: 5f);
+            typeof(Empire).GetField("<CanBuildPlatforms>k__BackingField",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                ?.SetValue(world.Enemy, true);
+            Assert.IsTrue(world.Enemy.CanBuildPlatforms,
+                "The fixture must reach the road-manager gate being tested.");
+            int roadsBefore = world.Enemy.AI.SpaceRoadsManager.SpaceRoads.Count;
+            world.Enemy.AutoBuildSpaceRoads = false;
+            world.Enemy.AI.SpaceRoadsManager.AddSpaceRoadHeat(world.EnemyPlanet.System, secondEnemyPlanet.System, 100_000f);
+            Assert.AreEqual(roadsBefore, world.Enemy.AI.SpaceRoadsManager.SpaceRoads.Count,
+                "Remote humans with AutoBuildSpaceRoads off must not create space-road automation.");
+            world.Enemy.AutoBuildSpaceRoads = true;
+            world.Enemy.AI.SpaceRoadsManager.AddSpaceRoadHeat(world.EnemyPlanet.System, secondEnemyPlanet.System, 100_000f);
+            Assert.IsTrue(world.Enemy.AI.SpaceRoadsManager.SpaceRoads.Count > roadsBefore,
+                "Explicit AutoBuildSpaceRoads delegation should still create space-road automation.");
+
+            Planet neutralPlanet = AddDummyPlanet(new Vector2(-420_000, 720_000), fertility: 1f, minerals: 1f, pop: 5f);
+            world.Enemy.AutoColonize = false;
+            var manualGoal = new MarkForColonization(neutralPlanet, world.Enemy, isManual: true);
+            Assert.IsFalse(manualGoal.AIControlsColonizationForTest,
+                "A remote-human manual colonization goal must use player/manual behavior.");
+            var autoOffGoal = new MarkForColonization(neutralPlanet, world.Enemy, isManual: false);
+            Assert.IsFalse(autoOffGoal.AIControlsColonizationForTest,
+                "A remote human with AutoColonize off must not use AI colonization behavior.");
+            world.Enemy.AutoColonize = true;
+            var autoOnGoal = new MarkForColonization(neutralPlanet, world.Enemy, isManual: false);
+            Assert.IsTrue(autoOnGoal.AIControlsColonizationForTest,
+                "Explicit AutoColonize delegation should still enable AI colonization behavior.");
+        }
+        finally
+        {
+            AuthoritativeHumanPlayers.Clear(world.UState);
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientContext_SubmitsEmpireBudgetWithoutLocalMutation_Headless()
     {
         const ulong Seed = 0xB0D6ECUL;

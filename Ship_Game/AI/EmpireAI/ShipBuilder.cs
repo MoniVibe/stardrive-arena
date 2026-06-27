@@ -30,7 +30,7 @@ namespace Ship_Game.AI
             public MinMaxStrength(float maxStrength, Empire empire)
             {
                 float max = empire.DifficultyModifiers.ShipBuildStrMax;
-                float min = empire.isPlayer ? max : empire.DifficultyModifiers.ShipBuildStrMin;
+                float min = empire.IsHumanControlled ? max : empire.DifficultyModifiers.ShipBuildStrMin;
                 Min = min * maxStrength;
                 Max = max * maxStrength;
             }
@@ -121,7 +121,7 @@ namespace Ship_Game.AI
 
             // We choose the first item for the player to overcome edge case where several ships have the same str
             // because for the player - min str and max str is set to be the same to get the best ship)
-            IShipDesign pickedShip = empire.isPlayer ? bestShips[0] : empire.Random.Item(bestShips);
+            IShipDesign pickedShip = empire.IsHumanControlled ? bestShips[0] : empire.Random.Item(bestShips);
 
             if (false && empire.Universe?.Debug == true)
             {
@@ -145,7 +145,7 @@ namespace Ship_Game.AI
 
         public static bool PickColonyShip(Empire empire, out IShipDesign colonyShip)
         {
-            if (empire.isPlayer && !empire.AutoPickBestColonizer)
+            if (empire.IsHumanControlled && !empire.AutoPickBestColonizer)
             {
                 ResourceManager.Ships.GetDesign(empire.data.CurrentAutoColony, out colonyShip);
             }
@@ -185,7 +185,7 @@ namespace Ship_Game.AI
         
         public static IShipDesign PickResearchStation(Empire empire)
         {
-            if (empire.isPlayer && !empire.AutoPickBestResearchStation)
+            if (empire.IsHumanControlled && !empire.AutoPickBestResearchStation)
             {
                 if (!empire.CanBuildResearchStations)
                     return null;
@@ -223,7 +223,7 @@ namespace Ship_Game.AI
 
         public static IShipDesign PickMiningStation(Empire empire)
         {
-            if (empire.isPlayer && !empire.AutoPickBestMiningStation)
+            if (empire.IsHumanControlled && !empire.AutoPickBestMiningStation)
             {
                 if (!empire.CanBuildMiningStations)
                     return null;
@@ -291,8 +291,8 @@ namespace Ship_Game.AI
         {
             float fastVsBig = empire.FastVsBigFreighterRatio;
             int levelsOfPiratesAtWarWithUs = empire.TotalLevelsOfPirateFactionsAtWar;
-            if (empire.isPlayer 
-                && !empire.Universe.Player.AutoPickBestFreighter 
+            if (empire.IsHumanControlled
+                && !empire.AutoPickBestFreighter
                 && ResourceManager.Ships.GetDesign(empire.data.CurrentAutoFreighter, out IShipDesign freighter))
             {
                 return freighter;
@@ -343,7 +343,7 @@ namespace Ship_Game.AI
         public static IShipDesign PickConstructor(Empire empire, float buildCost, bool GetCheapest)
         {
             IShipDesign constructor = null;
-            if (empire.isPlayer && !empire.AutoPickConstructors)
+            if (empire.IsHumanControlled && !empire.AutoPickConstructors)
             {
                 string constructorId = empire.data.ConstructorShip;
                 if (!ResourceManager.Ships.GetDesign(constructorId, out constructor))

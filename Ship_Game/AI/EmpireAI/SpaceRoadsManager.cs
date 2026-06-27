@@ -28,7 +28,7 @@ namespace Ship_Game.AI
         public float ProjectorBridgeRadiusThreshold => Owner.GetProjectorRadius() * 0.6f;
 
         bool ShouldManageRoads => Owner.CanBuildPlatforms
-                                  && (!Owner.isPlayer || Owner.isPlayer && Owner.AutoBuildSpaceRoads);
+                                  && (!Owner.IsHumanControlled || Owner.AutoBuildSpaceRoads);
 
         [StarDataConstructor]
         SpaceRoadsManager() {}
@@ -251,7 +251,7 @@ namespace Ship_Game.AI
             if (ship.System == null
                 || ship.System.HasPlanetsOwnedBy(ship.Loyalty)
                 || Owner.IsFaction
-                || Owner.isPlayer && !Owner.AutoBuildSpaceRoads)
+                || Owner.IsHumanControlled && !Owner.AutoBuildSpaceRoads)
             {
                 return;
             }

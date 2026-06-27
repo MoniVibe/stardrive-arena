@@ -39,7 +39,7 @@ namespace Ship_Game.Commands.Goals
         {
             TargetPlanet = toColonize;
             IsManualColonizationOrder = isManual;
-            if (!owner.isPlayer
+            if (!owner.IsHumanControlled
                 && (TargetPlanet.System.OwnerList.Count == 0
                     || TargetPlanet.System.OwnerList.Count > 0 && TargetPlanet.System.IsExclusivelyOwnedBy(Owner)))
             {
@@ -76,7 +76,7 @@ namespace Ship_Game.Commands.Goals
 
         GoalStep CreateClaimTask()
         {
-            if (Owner.isPlayer)
+            if (Owner.IsHumanControlled)
                 return GoalStep.GoToNextStep;
 
             if (PositiveEnemyPresence(out float spaceStrength))
@@ -369,7 +369,8 @@ namespace Ship_Game.Commands.Goals
             ReleaseShipFromGoal();
         }
 
-        bool AIControlsColonization => !Owner.isPlayer || (Owner.isPlayer && Owner.AutoColonize && !IsManualColonizationOrder);
+        public bool AIControlsColonizationForTest => AIControlsColonization;
+        bool AIControlsColonization => !Owner.IsHumanControlled || Owner.AutoColonize && !IsManualColonizationOrder;
 
         // Checks if the ship is not taken by another colonization goal
         bool NotAssignedToColonizationGoal(Ship colonyShip)
@@ -385,7 +386,7 @@ namespace Ship_Game.Commands.Goals
 
         void TryRushColonyShip(int queueIndex)
         {
-            if (Owner.isPlayer || queueIndex != 0 || !Owner.AI.SafeToRushColonyShips)
+            if (Owner.IsHumanControlled || queueIndex != 0 || !Owner.AI.SafeToRushColonyShips)
                 return;
 
             float rush = 50f.UpperBound(PlanetBuildingAt.ProdHere);

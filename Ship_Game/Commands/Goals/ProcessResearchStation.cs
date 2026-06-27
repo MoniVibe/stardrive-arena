@@ -89,7 +89,7 @@ namespace Ship_Game.Commands.Goals
 
             if (StationToBuild == null)
             {
-                StationToBuild = !Owner.isPlayer || Owner.AutoPickBestResearchStation 
+                StationToBuild = !Owner.IsHumanControlled || Owner.AutoPickBestResearchStation
                     ? ShipBuilder.PickResearchStation(Owner) 
                     : ResourceManager.Ships.GetDesign(Owner.data.ResearchStation, throwIfError: true);
             }
@@ -248,10 +248,10 @@ namespace Ship_Game.Commands.Goals
         bool NeedsRefit(out IShipDesign betterStation)
         {
             betterStation = null;
-            if (Owner.isPlayer && !Owner.AutoBuildResearchStations)
+            if (Owner.IsHumanControlled && !Owner.AutoBuildResearchStations)
                 return false;
 
-            string bestRefit = Owner.isPlayer && !Owner.AutoPickBestResearchStation
+            string bestRefit = Owner.IsHumanControlled && !Owner.AutoPickBestResearchStation
                 ? Owner.data.CurrentResearchStation
                 : Owner.BestResearchStationWeCanBuild?.Name;
 

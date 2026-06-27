@@ -68,7 +68,7 @@ namespace Ship_Game.AI.ExpansionAI
 
         void TryClearArea(SolarSystem system, InfluenceStatus influense, Empire enemy, float knownStr)
         {
-            if (Owner.isPlayer || knownStr > Owner.OffensiveStrength * 0.334f)
+            if (Owner.IsHumanControlled || knownStr > Owner.OffensiveStrength * 0.334f)
                 return; 
 
             bool shouldClearArea = !Owner.PersonalityModifiers.ClearNeutralExoticSystems && influense == InfluenceStatus.Friendly
@@ -84,7 +84,7 @@ namespace Ship_Game.AI.ExpansionAI
             if (Universe.P.DisableResearchStations
                 ||(Owner.Universe.StarDate % 1).Greater(0)
                 || !Owner.CanBuildResearchStations
-                || Owner.isPlayer && !Owner.AutoBuildResearchStations)
+                || Owner.IsHumanControlled && !Owner.AutoBuildResearchStations)
             {
                 return false;
             }
