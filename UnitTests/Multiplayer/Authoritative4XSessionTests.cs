@@ -7620,6 +7620,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             Planet.ColonyType mismatchCommandType = firstType == Planet.ColonyType.Core
                 ? Planet.ColonyType.Industrial
                 : Planet.ColonyType.Core;
+            authority.UState.FogMapBytes = new byte[] { 255, 128, 64, 32 };
             Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetColonyType(clientJoinPlanet, mismatchCommandType),
                 "The live join client should submit a second command that exposes the forced mismatch.");
 
@@ -7668,6 +7669,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreSame(recoveredUniverse.UState.GetEmpire(authority.Enemy.Id),
                 recoveredUniverse.Authoritative4XLocalPlayerForUi,
                 "The recovered client should keep the join peer's local empire assignment.");
+            Assert.IsNull(recoveredUniverse.UState.FogMapBytes,
+                "A passive client must not import the host's saved fog texture during resync recovery.");
 
             AuthoritativeStateSnapshot recoveredHostSnapshot =
                 AuthoritativeStateSnapshot.Capture(recoveredHostUniverse, 0);
@@ -7916,7 +7919,10 @@ public class Authoritative4XSessionTests : StarDriveTest
                 new[] { authority.Player.Id, authority.Enemy.Id });
             Authoritative4XLiveSession liveClient = Authoritative4XLiveSession.ClientGame(client.Screen,
                 clientTransport, Peer, client.Enemy.Id, new[] { client.Player.Id, client.Enemy.Id });
+            client.UState.FogMapBytes = new byte[] { 1, 2, 3, 4 };
             client.Screen.AttachAuthoritative4XMultiplayer(liveClient);
+            Assert.IsNull(client.UState.FogMapBytes,
+                "Remote authoritative clients must discard host-side saved fog and rebuild from their assigned empire.");
             Planet clientRemotePlanet = client.UState.GetPlanet(authority.EnemyPlanet.Id);
             Planet clientHostPlanet = client.UState.GetPlanet(authority.Planet.Id);
             Planet authorityRemotePlanet = authority.UState.GetPlanet(clientRemotePlanet?.Id ?? 0);

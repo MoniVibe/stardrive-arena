@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
+using Color = Microsoft.Xna.Framework.Color;
 
 namespace Ship_Game;
 
@@ -22,13 +23,47 @@ public partial class UniverseScreen
     {
         DetachAuthoritative4XMultiplayer();
         Authoritative4XLive = session;
-        Authoritative4XLocalPlayer = UState.GetEmpire(session.LocalEmpireId);
-        if (Authoritative4XLocalPlayer == null)
+        EnsureAuthoritative4XLocalBinding(forceVisibilityRefresh: true);
+    }
+
+    void EnsureAuthoritative4XLocalBinding(bool forceVisibilityRefresh = false)
+    {
+        if (Authoritative4XLive == null)
+            return;
+
+        Empire local = UState.GetEmpire(Authoritative4XLive.LocalEmpireId);
+        if (local == null)
             throw new System.InvalidOperationException(
-                $"Authoritative 4X local empire {session.LocalEmpireId} was not found.");
-        if (EmpireUI != null)
-            EmpireUI.Player = Authoritative4XLocalPlayer;
-        RefreshAuthoritative4XLocalVisibility();
+                $"Authoritative 4X local empire {Authoritative4XLive.LocalEmpireId} was not found.");
+
+        bool changed = Authoritative4XLocalPlayer != local;
+        Authoritative4XLocalPlayer = local;
+        if (EmpireUI != null && EmpireUI.Player != local)
+            EmpireUI.Player = local;
+
+        if (local != UState.Player && (changed || UState.FogMapBytes != null))
+            ClearAuthoritative4XImportedFogMap();
+        if (changed || forceVisibilityRefresh)
+            RefreshAuthoritative4XLocalVisibility();
+    }
+
+    void ClearAuthoritative4XImportedFogMap()
+    {
+        UState.FogMapBytes = null;
+        if (ScreenManager?.GraphicsDevice == null
+            || FogMapTargetA == null || FogMapTargetA.IsDisposed
+            || FogMapTargetB == null || FogMapTargetB.IsDisposed)
+        {
+            return;
+        }
+
+        var device = ScreenManager.GraphicsDevice;
+        device.SetRenderTarget(FogMapTargetA);
+        device.Clear(Color.Transparent);
+        device.SetRenderTarget(FogMapTargetB);
+        device.Clear(Color.Transparent);
+        device.SetRenderTarget(null);
+        FogMap = FogMapTargetA;
     }
 
     public bool IsLocalEmpireForUi(Empire empire)
@@ -187,6 +222,7 @@ public partial class UniverseScreen
 
     void UpdateAuthoritative4XMultiplayer()
     {
+        EnsureAuthoritative4XLocalBinding();
         Authoritative4XLive?.Poll();
         if (Authoritative4XLive != null
             && Authoritative4XLive.TryRecoverClientFromReceivedSave(out UniverseScreen recoveredUniverse,

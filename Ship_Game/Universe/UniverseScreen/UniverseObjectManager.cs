@@ -391,17 +391,18 @@ namespace Ship_Game
             void UpdateShips(int start, int end)
             {
                 bool debug = UState.Debug;
+                Empire viewer = Universe.Player ?? UState.Player;
                 for (int i = start; i < end; ++i)
                 {
                     Ship ship = allShips[i];
                     ship.Update(timeStep);
                     ship.UpdateModulePositions(timeStep);
                     // make sure dying ships can be seen. and show all ships in DEBUG
-                    if ((ship.Loyalty.AlliedWithPlayer ||
-                        ship.Dying && ship.KnownByEmpires.KnownByPlayer(UState))
+                    if ((ship.Loyalty == viewer || ship.Loyalty.IsAlliedWith(viewer) ||
+                        ship.Dying && ship.KnownByEmpires.KnownBy(viewer))
                         || debug)
                     {
-                        ship.KnownByEmpires.SetSeen(UState.Player);
+                        ship.KnownByEmpires.SetSeen(viewer);
                     }
                 }
             }
