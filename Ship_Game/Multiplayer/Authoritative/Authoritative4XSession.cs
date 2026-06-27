@@ -1147,6 +1147,7 @@ public sealed class Authoritative4XNetworkClient : IDisposable
     readonly Authoritative4XClientReplica Replica;
     readonly Dictionary<AuthoritativeCommandKey, AuthoritativePlayerCommand> Pending = new();
     readonly List<AuthoritativeDiplomacyPopup> Popups = new();
+    readonly List<Authoritative4XProcessedCommand> ProcessedCommands = new();
 
     public int PeerId { get; }
     public AuthoritativeCommandResult LastResult { get; private set; }
@@ -1154,6 +1155,13 @@ public sealed class Authoritative4XNetworkClient : IDisposable
     public AuthoritativeStateSnapshot LastClientSnapshot => Replica.LastSnapshot;
     public Authoritative4XRawHashDrift LastRawHashDrift => Replica.LastRawHashDrift;
     public string LastError => Transport.LastError;
+
+    public Authoritative4XProcessedCommand[] DrainProcessedCommands()
+    {
+        Authoritative4XProcessedCommand[] processed = ProcessedCommands.ToArray();
+        ProcessedCommands.Clear();
+        return processed;
+    }
 
     public Authoritative4XNetworkClient(UniverseScreen clientUniverse, TcpLockstepTransport transport,
         int peerId, int[] humanEmpireIds = null)
@@ -1207,6 +1215,8 @@ public sealed class Authoritative4XNetworkClient : IDisposable
                     throw new InvalidOperationException("Received authoritative snapshot without a matching command result.");
                 Pending.Remove(new AuthoritativeCommandKey(LastResult.OriginPeer, LastResult.Sequence));
                 Replica.ApplyAuthoritativeResult(command, LastResult, LastAuthoritySnapshot);
+                ProcessedCommands.Add(new Authoritative4XProcessedCommand(LastResult.OriginPeer,
+                    command, LastResult, LastClientSnapshot));
                 break;
             case AuthoritativeDiplomacyPopupMessage popupMessage:
                 Popups.Add(AuthoritativeDiplomacyPopup.FromMessage(popupMessage));

@@ -413,6 +413,7 @@ static class AuthoritativeProbeRunner
 
     public static AuthoritativeProbeResult RunHost(AuthoritativeProbeOptions options)
     {
+        EnsureScriptTurns(options);
         using var log = new ProbeLog(options, "host");
         var result = new AuthoritativeProbeResult { Role = "host", Turns = options.Turns, ArtifactPath = log.Path };
         var flow = new Authoritative4XLobbyNetworkFlow();
@@ -457,7 +458,12 @@ static class AuthoritativeProbeRunner
             host = new Authoritative4XNetworkHost(generated.AuthorityUniverse, transport,
                 generated.EmpireIdByPeer, generated.HumanEmpireIds, flow.HostPeerId);
 
-            int lastSeq = 0;
+            ProbeCommandPlan plan = ProbeCommandPlan.Create(generated, flow.HostPeerId, flow.JoinPeerId);
+            log.Line(plan.Describe());
+
+            int lastJoinSeq = 0;
+            int lastHostSeq = 0;
+            int hostSubmittedSeq = 0;
             PumpUntil(() =>
             {
                 host.Poll();
@@ -465,18 +471,42 @@ static class AuthoritativeProbeRunner
                 {
                     if (processed.PeerId == flow.JoinPeerId)
                     {
-                        lastSeq = Math.Max(lastSeq, processed.Command.Sequence);
-                        result.LastSequence = lastSeq;
+                        lastJoinSeq = Math.Max(lastJoinSeq, processed.Command.Sequence);
+                        result.LastSequence = lastJoinSeq;
                         result.LastTick = processed.Result.Tick;
                         result.FinalHash = SnapshotHash(processed.Snapshot);
                         result.FinalDigest = processed.Snapshot.SyncDigest;
-                        if (lastSeq == 1 || lastSeq == options.Turns || lastSeq % 100 == 0)
-                            log.Line($"processed seq={lastSeq} tick={processed.Result.Tick} accepted={processed.Result.Accepted} hash={result.FinalHash}/{result.FinalDigest}");
+                        if (lastJoinSeq <= ProbeCommandPlan.RequiredTurns || lastJoinSeq == options.Turns || lastJoinSeq % 100 == 0)
+                            log.Line($"processed peer=join seq={lastJoinSeq} kind={processed.Command.Kind} tick={processed.Result.Tick} accepted={processed.Result.Accepted} hash={result.FinalHash}/{result.FinalDigest}");
+                    }
+                    else if (processed.PeerId == flow.HostPeerId)
+                    {
+                        lastHostSeq = Math.Max(lastHostSeq, processed.Command.Sequence);
+                        result.LastTick = processed.Result.Tick;
+                        result.FinalHash = SnapshotHash(processed.Snapshot);
+                        result.FinalDigest = processed.Snapshot.SyncDigest;
+                        log.Line($"processed peer=host seq={processed.Command.Sequence} kind={processed.Command.Kind} tick={processed.Result.Tick} accepted={processed.Result.Accepted} hash={result.FinalHash}/{result.FinalDigest}");
+                    }
+
+                    if (!processed.Result.Accepted)
+                    {
+                        string peer = processed.PeerId == flow.HostPeerId ? "host" : "join";
+                        throw new InvalidOperationException($"Host rejected {peer} seq {processed.Command.Sequence} {processed.Command.Kind}: {processed.Result.Reason}");
                     }
                 }
-                return lastSeq >= options.Turns;
+
+                while (hostSubmittedSeq < ProbeCommandPlan.RequiredTurns && lastJoinSeq >= 1)
+                {
+                    ++hostSubmittedSeq;
+                    AuthoritativePlayerCommand command = plan.HostCommand(hostSubmittedSeq);
+                    log.Line($"submit peer=host seq={hostSubmittedSeq} kind={command.Kind}");
+                    host.SubmitLocal(flow.HostPeerId, command);
+                }
+
+                return lastJoinSeq >= options.Turns && lastHostSeq >= ProbeCommandPlan.RequiredTurns;
             }, static () => { }, options, $"join commands 1..{options.Turns}");
 
+            plan.AssertApplied(generated, log, "host-authority");
             result.Passed = true;
             log.Line(result.Summary);
             return result;
@@ -499,6 +529,7 @@ static class AuthoritativeProbeRunner
 
     public static AuthoritativeProbeResult RunJoin(AuthoritativeProbeOptions options)
     {
+        EnsureScriptTurns(options);
         using var log = new ProbeLog(options, "join");
         var result = new AuthoritativeProbeResult { Role = "join", Turns = options.Turns, ArtifactPath = log.Path };
         var flow = new Authoritative4XLobbyNetworkFlow();
@@ -538,41 +569,72 @@ static class AuthoritativeProbeRunner
             client = new Authoritative4XNetworkClient(generated.AuthorityUniverse, transport,
                 flow.JoinPeerId, generated.HumanEmpireIds);
 
-            int empireId = generated.EmpireIdForPeer(flow.JoinPeerId);
-            Planet planet = FirstPlanetForPeer(generated, flow.JoinPeerId);
-            Planet.ColonyType target = planet.CType == Planet.ColonyType.Research
-                ? Planet.ColonyType.Military
-                : Planet.ColonyType.Research;
-            log.Line($"script firstCommand=SetColonyType empire={empireId} planet={planet.Id} target={target}");
+            ProbeCommandPlan plan = ProbeCommandPlan.Create(generated, flow.HostPeerId, flow.JoinPeerId);
+            log.Line(plan.Describe());
 
             for (int seq = 1; seq <= options.Turns; ++seq)
             {
-                AuthoritativePlayerCommand command = seq == 1
-                    ? AuthoritativePlayerCommand.SetColonyType(seq, empireId, planet.Id, target)
-                    : AuthoritativePlayerCommand.NoOp(seq, empireId);
+                AuthoritativePlayerCommand command = plan.JoinCommand(seq);
                 client.Submit(command);
                 int expected = seq;
+                bool sawExpected = false;
                 PumpUntil(() =>
                 {
                     client.Poll();
-                    return client.LastResult?.OriginPeer == flow.JoinPeerId
-                           && client.LastResult.Sequence == expected
-                           && client.LastClientSnapshot != null;
-                }, static () => { }, options, $"result seq={expected}");
+                    foreach (Authoritative4XProcessedCommand processed in client.DrainProcessedCommands())
+                    {
+                        string peerName = processed.PeerId == flow.HostPeerId ? "host" : "join";
+                        if (!processed.Result.Accepted)
+                            throw new InvalidOperationException($"Host rejected {peerName} seq {processed.Command.Sequence} {processed.Command.Kind}: {processed.Result.Reason}");
 
-                result.LastSequence = seq;
-                result.LastTick = client.LastResult!.Tick;
-                result.FinalHash = SnapshotHash(client.LastClientSnapshot);
-                result.FinalDigest = client.LastClientSnapshot!.SyncDigest;
-                if (seq == 1 || seq == options.Turns || seq % 100 == 0)
-                {
-                    string rawDrift = client.LastRawHashDrift != null ? " rawHashDrift=true" : "";
-                    log.Line($"applied seq={seq} tick={result.LastTick} accepted={client.LastResult.Accepted} hash={result.FinalHash}/{result.FinalDigest}{rawDrift}");
-                }
-                if (!client.LastResult.Accepted)
-                    throw new InvalidOperationException($"Host rejected seq {seq}: {client.LastResult.Reason}");
+                        if (processed.PeerId == flow.HostPeerId)
+                        {
+                            if (processed.Command.Sequence <= ProbeCommandPlan.RequiredTurns)
+                            {
+                                string rawDrift = client.LastRawHashDrift != null ? " rawHashDrift=true" : "";
+                                log.Line($"applied peer=host seq={processed.Command.Sequence} kind={processed.Command.Kind} tick={processed.Result.Tick} hash={SnapshotHash(processed.Snapshot)}/{processed.Snapshot.SyncDigest}{rawDrift}");
+                            }
+                            continue;
+                        }
+
+                        if (processed.PeerId == flow.JoinPeerId)
+                        {
+                            result.LastSequence = processed.Command.Sequence;
+                            result.LastTick = processed.Result.Tick;
+                            result.FinalHash = SnapshotHash(processed.Snapshot);
+                            result.FinalDigest = processed.Snapshot.SyncDigest;
+                            if (processed.Command.Sequence <= ProbeCommandPlan.RequiredTurns
+                                || processed.Command.Sequence == options.Turns
+                                || processed.Command.Sequence % 100 == 0)
+                            {
+                                string rawDrift = client.LastRawHashDrift != null ? " rawHashDrift=true" : "";
+                                log.Line($"applied peer=join seq={processed.Command.Sequence} kind={processed.Command.Kind} tick={result.LastTick} accepted={processed.Result.Accepted} hash={result.FinalHash}/{result.FinalDigest}{rawDrift}");
+                            }
+                            if (processed.Command.Sequence == expected)
+                                sawExpected = true;
+                        }
+                    }
+                    return sawExpected;
+                }, static () => { }, options, $"result seq={expected}");
             }
 
+            PumpUntil(() =>
+            {
+                client.Poll();
+                foreach (Authoritative4XProcessedCommand processed in client.DrainProcessedCommands())
+                {
+                    string peerName = processed.PeerId == flow.HostPeerId ? "host" : "join";
+                    if (!processed.Result.Accepted)
+                        throw new InvalidOperationException($"Host rejected {peerName} seq {processed.Command.Sequence} {processed.Command.Kind}: {processed.Result.Reason}");
+                    log.Line($"applied peer={peerName} seq={processed.Command.Sequence} kind={processed.Command.Kind} tick={processed.Result.Tick} hash={SnapshotHash(processed.Snapshot)}/{processed.Snapshot.SyncDigest}");
+                    result.LastTick = processed.Result.Tick;
+                    result.FinalHash = SnapshotHash(processed.Snapshot);
+                    result.FinalDigest = processed.Snapshot.SyncDigest;
+                }
+                return plan.IsApplied(generated);
+            }, static () => { }, options, "host and join command assertions");
+
+            plan.AssertApplied(generated, log, "join-replica");
             result.Passed = true;
             log.Line(result.Summary);
             return result;
@@ -634,6 +696,12 @@ static class AuthoritativeProbeRunner
             ? Array.Empty<string>()
             : value.Split(new[] { '|', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
+    static void EnsureScriptTurns(AuthoritativeProbeOptions options)
+    {
+        if (options.Turns < ProbeCommandPlan.RequiredTurns)
+            throw new ArgumentException($"The authoritative 4X probe requires at least {ProbeCommandPlan.RequiredTurns} turns to inject and assert both player command scripts.");
+    }
+
     static Planet FirstPlanetForPeer(Authoritative4XGeneratedGameStart generated, int peerId)
     {
         int empireId = generated.EmpireIdForPeer(peerId);
@@ -683,6 +751,137 @@ static class AuthoritativeProbeRunner
         log.Line($"envHash={ProbeEnvironment.Hash()} envSummary='{ProbeEnvironment.Summary()}'");
         log.Line($"seed={options.Seed} races='{string.Join("|", DefaultRaces(options))}' traits='{options.HostTraits}'/'{options.JoinTraits}'");
     }
+}
+
+sealed class ProbeCommandPlan
+{
+    public const int RequiredTurns = 2;
+
+    readonly int HostEmpireId;
+    readonly int JoinEmpireId;
+    readonly int HostPlanetId;
+    readonly int JoinPlanetId;
+    readonly float HostManualCivilianBudget;
+    readonly float JoinManualCivilianBudget;
+    readonly float HostTaxRate;
+    readonly float HostTreasuryGoal;
+    readonly float JoinTaxRate;
+    readonly float JoinTreasuryGoal;
+
+    ProbeCommandPlan(int hostEmpireId, int joinEmpireId, int hostPlanetId, int joinPlanetId,
+        float hostManualCivilianBudget, float joinManualCivilianBudget,
+        float hostTaxRate, float hostTreasuryGoal, float joinTaxRate, float joinTreasuryGoal)
+    {
+        HostEmpireId = hostEmpireId;
+        JoinEmpireId = joinEmpireId;
+        HostPlanetId = hostPlanetId;
+        JoinPlanetId = joinPlanetId;
+        HostManualCivilianBudget = hostManualCivilianBudget;
+        JoinManualCivilianBudget = joinManualCivilianBudget;
+        HostTaxRate = hostTaxRate;
+        HostTreasuryGoal = hostTreasuryGoal;
+        JoinTaxRate = joinTaxRate;
+        JoinTreasuryGoal = joinTreasuryGoal;
+    }
+
+    public static ProbeCommandPlan Create(Authoritative4XGeneratedGameStart generated, int hostPeerId, int joinPeerId)
+    {
+        int hostEmpireId = generated.EmpireIdForPeer(hostPeerId);
+        int joinEmpireId = generated.EmpireIdForPeer(joinPeerId);
+        Planet hostPlanet = FirstPlanet(generated, hostEmpireId);
+        Planet joinPlanet = FirstPlanet(generated, joinEmpireId);
+        return new ProbeCommandPlan(hostEmpireId, joinEmpireId, hostPlanet.Id, joinPlanet.Id,
+            hostManualCivilianBudget: 12.5f,
+            joinManualCivilianBudget: 17.25f,
+            hostTaxRate: 0.17f,
+            hostTreasuryGoal: 0.41f,
+            joinTaxRate: 0.23f,
+            joinTreasuryGoal: 0.37f);
+    }
+
+    public AuthoritativePlayerCommand HostCommand(int sequence)
+        => sequence switch
+        {
+            1 => AuthoritativePlayerCommand.SetPlanetManualBudget(sequence, HostEmpireId, HostPlanetId,
+                AuthoritativePlanetBudgetKind.Civilian, HostManualCivilianBudget),
+            2 => AuthoritativePlayerCommand.SetEmpireBudget(sequence, HostEmpireId, HostTaxRate,
+                HostTreasuryGoal, autoTaxes: false),
+            _ => AuthoritativePlayerCommand.NoOp(sequence, HostEmpireId),
+        };
+
+    public AuthoritativePlayerCommand JoinCommand(int sequence)
+        => sequence switch
+        {
+            1 => AuthoritativePlayerCommand.SetPlanetManualBudget(sequence, JoinEmpireId, JoinPlanetId,
+                AuthoritativePlanetBudgetKind.Civilian, JoinManualCivilianBudget),
+            2 => AuthoritativePlayerCommand.SetEmpireBudget(sequence, JoinEmpireId, JoinTaxRate,
+                JoinTreasuryGoal, autoTaxes: false),
+            _ => AuthoritativePlayerCommand.NoOp(sequence, JoinEmpireId),
+        };
+
+    public string Describe()
+        => "script "
+           + $"host: seq1=SetPlanetManualBudget empire={HostEmpireId} planet={HostPlanetId} civilian={HostManualCivilianBudget:0.###}; "
+           + $"seq2=SetEmpireBudget tax={HostTaxRate:0.###} treasury={HostTreasuryGoal:0.###}; "
+           + $"join: seq1=SetPlanetManualBudget empire={JoinEmpireId} planet={JoinPlanetId} civilian={JoinManualCivilianBudget:0.###}; "
+           + $"seq2=SetEmpireBudget tax={JoinTaxRate:0.###} treasury={JoinTreasuryGoal:0.###}";
+
+    public void AssertApplied(Authoritative4XGeneratedGameStart generated, ProbeLog log, string label)
+    {
+        Empire host = generated.AuthorityUniverse.UState.GetEmpireById(HostEmpireId)
+                      ?? throw new InvalidOperationException($"{label}: host empire {HostEmpireId} missing.");
+        Empire join = generated.AuthorityUniverse.UState.GetEmpireById(JoinEmpireId)
+                      ?? throw new InvalidOperationException($"{label}: join empire {JoinEmpireId} missing.");
+        Planet hostPlanet = host.GetPlanets().FirstOrDefault(p => p.Id == HostPlanetId)
+                            ?? throw new InvalidOperationException($"{label}: host planet {HostPlanetId} missing.");
+        Planet joinPlanet = join.GetPlanets().FirstOrDefault(p => p.Id == JoinPlanetId)
+                            ?? throw new InvalidOperationException($"{label}: join planet {JoinPlanetId} missing.");
+
+        RequireClose(label, "host manual civilian budget", HostManualCivilianBudget, hostPlanet.ManualCivilianBudget);
+        RequireClose(label, "join manual civilian budget", JoinManualCivilianBudget, joinPlanet.ManualCivilianBudget);
+        RequireClose(label, "host tax", HostTaxRate, host.data.TaxRate);
+        RequireClose(label, "host treasury", HostTreasuryGoal, host.data.treasuryGoal);
+        RequireClose(label, "join tax", JoinTaxRate, join.data.TaxRate);
+        RequireClose(label, "join treasury", JoinTreasuryGoal, join.data.treasuryGoal);
+        if (host.AutoTaxes || join.AutoTaxes)
+            throw new InvalidOperationException($"{label}: command script expected AutoTaxes off for both human empires.");
+
+        log.Line($"assert {label}: host planet {HostPlanetId} civilian={hostPlanet.ManualCivilianBudget:0.###}, "
+                 + $"host budget={host.data.TaxRate:0.###}/{host.data.treasuryGoal:0.###}; "
+                 + $"join planet {JoinPlanetId} civilian={joinPlanet.ManualCivilianBudget:0.###}, "
+                 + $"join budget={join.data.TaxRate:0.###}/{join.data.treasuryGoal:0.###}");
+    }
+
+    public bool IsApplied(Authoritative4XGeneratedGameStart generated)
+    {
+        Empire? host = generated.AuthorityUniverse.UState.GetEmpireById(HostEmpireId);
+        Empire? join = generated.AuthorityUniverse.UState.GetEmpireById(JoinEmpireId);
+        Planet? hostPlanet = host?.GetPlanets().FirstOrDefault(p => p.Id == HostPlanetId);
+        Planet? joinPlanet = join?.GetPlanets().FirstOrDefault(p => p.Id == JoinPlanetId);
+        return Close(hostPlanet?.ManualCivilianBudget ?? float.NaN, HostManualCivilianBudget)
+               && Close(joinPlanet?.ManualCivilianBudget ?? float.NaN, JoinManualCivilianBudget)
+               && Close(host?.data.TaxRate ?? float.NaN, HostTaxRate)
+               && Close(host?.data.treasuryGoal ?? float.NaN, HostTreasuryGoal)
+               && Close(join?.data.TaxRate ?? float.NaN, JoinTaxRate)
+               && Close(join?.data.treasuryGoal ?? float.NaN, JoinTreasuryGoal)
+               && host?.AutoTaxes == false
+               && join?.AutoTaxes == false;
+    }
+
+    static Planet FirstPlanet(Authoritative4XGeneratedGameStart generated, int empireId)
+    {
+        Empire empire = generated.AuthorityUniverse.UState.GetEmpireById(empireId);
+        return empire?.GetPlanets().OrderBy(p => p.Id).FirstOrDefault()
+               ?? throw new InvalidOperationException($"Empire {empireId} has no planets.");
+    }
+
+    static void RequireClose(string label, string field, float expected, float actual)
+    {
+        if (!Close(actual, expected))
+            throw new InvalidOperationException($"{label}: expected {field} {expected:R}, got {actual:R}.");
+    }
+
+    static bool Close(float actual, float expected) => Math.Abs(expected - actual) <= 0.00001f;
 }
 
 static class ProbeEnvironment
