@@ -41,6 +41,11 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
     public string LastError { get; private set; } = "";
     public int LocalMessageCount { get; private set; }
     public int RemoteMessageCount { get; private set; }
+    public int RemoteWriteCount { get; private set; }
+    public int DeliveredMessageCount { get; private set; }
+    public int PendingRemoteCount { get { lock (Gate) return PendingRemote.Count; } }
+    public int InboundRemoteCount { get { lock (Gate) return InboundRemote.Count; } }
+    public Action<string> AuthoritativeFrameTrace { get; set; }
 
     TcpLockstepTransport(int remotePeerId, bool multiRemote = false)
     {
@@ -143,16 +148,24 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
         if (message == null)
             return;
 
+        bool local = false;
         lock (Gate)
         {
             if (LocalInbox.ContainsKey(toPeer))
             {
                 LocalInbox[toPeer].Enqueue(message);
                 LocalMessageCount++;
-                return;
+                local = true;
             }
         }
 
+        if (local)
+        {
+            TraceAuthoritativeFrame("send-local", toPeer, message);
+            return;
+        }
+
+        TraceAuthoritativeFrame("send-remote", toPeer, message);
         SendRemote(new RemoteEnvelope(toPeer, message));
     }
 
@@ -252,6 +265,7 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
                     InboundRemote.Enqueue(new RemoteEnvelope(decoded.ToPeer, decoded.Message));
                     RemoteMessageCount++;
                 }
+                TraceAuthoritativeFrame("read-remote", decoded.ToPeer, decoded.Message, connection.PeerId);
                 FlushPendingRemote();
             }
         }
@@ -295,13 +309,19 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
     void SendRemote(RemoteEnvelope envelope)
     {
         RemoteConnection connection;
+        bool pending = false;
         lock (Gate)
         {
             if (!TryGetConnectionLocked(envelope.ToPeer, out connection))
             {
                 PendingRemote.Enqueue(envelope);
-                return;
+                pending = true;
             }
+        }
+        if (pending)
+        {
+            TraceAuthoritativeFrame("send-remote-pending", envelope.ToPeer, envelope.Message);
+            return;
         }
         WriteRemote(envelope, connection);
     }
@@ -323,13 +343,19 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
             foreach (RemoteEnvelope envelope in pending)
             {
                 RemoteConnection connection;
+                bool waiting = false;
                 lock (Gate)
                 {
                     if (!TryGetConnectionLocked(envelope.ToPeer, out connection))
                     {
                         PendingRemote.Enqueue(envelope);
-                        continue;
+                        waiting = true;
                     }
+                }
+                if (waiting)
+                {
+                    TraceAuthoritativeFrame("flush-pending-wait", envelope.ToPeer, envelope.Message);
+                    continue;
                 }
                 WriteRemote(envelope, connection);
                 wroteAny = true;
@@ -356,7 +382,10 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
                 connection.Stream.Write(length, 0, length.Length);
                 connection.Stream.Write(payload, 0, payload.Length);
                 connection.Stream.Flush();
+                lock (Gate)
+                    RemoteWriteCount++;
             }
+            TraceAuthoritativeFrame("write-remote", envelope.ToPeer, envelope.Message, connection.PeerId);
         }
         catch (Exception ex)
         {
@@ -367,6 +396,7 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
                 IsConnected = Connections.Any(c => c.Connected);
                 PendingRemote.Enqueue(envelope);
             }
+            TraceAuthoritativeFrame("write-remote-error", envelope.ToPeer, envelope.Message, connection.PeerId);
         }
     }
 
@@ -417,11 +447,79 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
                 observers = new List<Action<LockstepMessage>>(list);
         }
 
+        lock (Gate)
+            DeliveredMessageCount++;
+        TraceAuthoritativeFrame("deliver", peerId, message);
         if (observers != null)
             foreach (Action<LockstepMessage> observer in observers)
                 observer(message);
         receiver?.Invoke(message);
     }
+
+    void TraceAuthoritativeFrame(string stage, int toPeer, LockstepMessage message, int connectionPeer = 0)
+    {
+        Action<string> sink = AuthoritativeFrameTrace;
+        if (sink == null || !TryDescribeAuthoritativeFrame(message, out string frame))
+            return;
+
+        int local;
+        int remoteRead;
+        int remoteWrite;
+        int delivered;
+        int pending;
+        int inbound;
+        bool connected;
+        string error;
+        lock (Gate)
+        {
+            local = LocalMessageCount;
+            remoteRead = RemoteMessageCount;
+            remoteWrite = RemoteWriteCount;
+            delivered = DeliveredMessageCount;
+            pending = PendingRemote.Count;
+            inbound = InboundRemote.Count;
+            connected = IsConnected;
+            error = LastError ?? "";
+        }
+
+        try
+        {
+            sink($"{stage} to={toPeer} from={message.FromPeer} connPeer={connectionPeer} {frame} "
+                 + $"counts local={local} remoteRead={remoteRead} remoteWrite={remoteWrite} "
+                 + $"delivered={delivered} pending={pending} inbound={inbound} connected={connected} "
+                 + $"error='{OneLine(error)}'");
+        }
+        catch
+        {
+            // Diagnostics must never perturb the transport.
+        }
+    }
+
+    static bool TryDescribeAuthoritativeFrame(LockstepMessage message, out string frame)
+    {
+        switch (message)
+        {
+            case AuthoritativeCommandRequestMessage request:
+                frame = $"frame=req seq={request.Sequence} empire={request.EmpireId} kind={request.Kind} "
+                        + $"subject={request.SubjectId} target={request.TargetId} "
+                        + $"textChars={(request.Text ?? "").Length}";
+                return true;
+            case AuthoritativeCommandResultMessage result:
+                frame = $"frame=result seq={result.Sequence} origin={result.OriginPeer} "
+                        + $"accepted={result.Accepted} tick={result.Tick} reasonChars={(result.Reason ?? "").Length}";
+                return true;
+            case AuthoritativeStateSnapshotMessage snapshot:
+                frame = $"frame=snapshot tick={snapshot.Tick} hash=0x{snapshot.HashHi:X16}:0x{snapshot.HashLo:X16} "
+                        + $"digest='{OneLine(snapshot.SyncDigest)}' payloadChars={(snapshot.Payload ?? "").Length}";
+                return true;
+            default:
+                frame = "";
+                return false;
+        }
+    }
+
+    static string OneLine(string text)
+        => string.IsNullOrEmpty(text) ? "" : text.Replace('\r', ' ').Replace('\n', ' ');
 
     readonly struct RemoteEnvelope
     {

@@ -183,6 +183,9 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
             Write("NETWORK_ERROR", error, retainRecent: true);
     }
 
+    public void WireFrame(string details)
+        => Write("WIRE", details ?? "", retainRecent: true);
+
     public void Dispose()
     {
         Write("END", $"utc={DateTime.UtcNow:O}");

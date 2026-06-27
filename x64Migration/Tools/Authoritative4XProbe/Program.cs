@@ -448,6 +448,7 @@ static class AuthoritativeProbeRunner
 
             SessionLobbyMessage? receivedJoin = null;
             transport = TcpLockstepTransport.HostMulti(options.Port);
+            transport.AuthoritativeFrameTrace = line => log.Line("wire " + line);
             transport.Register(flow.AuthorityPeerId, message =>
             {
                 if (message is SessionLobbyMessage lobby)
@@ -565,6 +566,7 @@ static class AuthoritativeProbeRunner
 
             SessionStartMessage? receivedStart = null;
             transport = TcpLockstepTransport.JoinAsPeer(options.Host, options.Port, flow.JoinPeerId, flow.AuthorityPeerId);
+            transport.AuthoritativeFrameTrace = line => log.Line("wire " + line);
             transport.Register(flow.JoinPeerId, message =>
             {
                 if (message is SessionStartMessage start)

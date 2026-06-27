@@ -95,6 +95,9 @@ public sealed class Authoritative4XLiveSession : IDisposable
         LiveStartFingerprint = startFingerprint ?? "";
         Telemetry = Authoritative4XLiveTelemetry.Start(role, localPeerId, localEmpireId,
             empireByPeer, humanEmpireIds, LiveSessionId, LiveStartFingerprint, startSummary);
+        TcpLockstepTransport transport = Host?.SharedTransport ?? Client?.SharedTransport;
+        if (Telemetry != null && transport != null)
+            transport.AuthoritativeFrameTrace = Telemetry.WireFrame;
         UiContext = Authoritative4XClientContext.Begin(localPeerId, localEmpireId, SubmitFromUi,
             Math.Max(1, firstUiSequence));
     }
