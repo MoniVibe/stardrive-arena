@@ -7926,6 +7926,10 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsFalse(clientEmpire.AutoMilitary);
             Assert.IsFalse(clientEmpire.AutoSpy);
             Assert.IsTrue(clientEmpire.Research.NoTopic, "Generated join human should not inherit an AI research pick.");
+            Assert.IsFalse(hostEmpire.ShipsWeCanBuildSnapshot.Any(d => d.IsPlayerDesign),
+                "Generated host human must not inherit machine-local saved player designs.");
+            Assert.IsFalse(clientEmpire.ShipsWeCanBuildSnapshot.Any(d => d.IsPlayerDesign),
+                "Generated join human must not inherit machine-local saved player designs.");
 
             clientEmpire.AutoResearch = true;
             clientEmpire.AI.Update();
@@ -7938,6 +7942,62 @@ public class Authoritative4XSessionTests : StarDriveTest
         {
             // StarDriveTest.Cleanup unloads extra data; this keeps the intent explicit for future test edits.
         }
+    }
+
+    [TestMethod]
+    public void Authoritative4XLobby_RemovesMachineLocalPlayerDesigns_Headless()
+    {
+        LoadAllGameData();
+
+        IEmpireData[] races = ResourceManager.MajorRaces
+            .Where(r => !r.IsFactionOrMinorRace)
+            .OrderBy(r => RacePreference(r), StringComparer.Ordinal)
+            .Take(2)
+            .ToArray();
+        Assert.IsTrue(races.Length >= 2, "The local-design scrub proof needs two playable major races.");
+
+        var settings = new Authoritative4XGameSettings
+        {
+            GenerationSeed = 0x4B1B4B4,
+            GalaxySize = GalSize.Tiny,
+            StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+            Mode = RaceDesignScreen.GameMode.Sandbox,
+            Difficulty = GameDifficulty.Normal,
+            NumOpponents = 1,
+            Pace = 1.5f,
+            TurnTimer = 4,
+            ExtraPlanets = 1,
+            StartingPlanetRichnessBonus = 1f,
+            GameSpeed = 1f,
+            StartPaused = true,
+        };
+
+        var lobby = new Authoritative4XLobby(hostPlayerPeerId: 2, hostName: "Host");
+        lobby.Join(3, "Client");
+        Assert.IsTrue(lobby.SetSettings(2, settings).Valid);
+        Assert.IsTrue(lobby.SetPlayerSelection(2, RacePreference(races[0]), Array.Empty<string>()).Valid);
+        Assert.IsTrue(lobby.SetPlayerSelection(3, RacePreference(races[1]), Array.Empty<string>()).Valid);
+        Assert.IsTrue(lobby.SetReady(2, true).Valid);
+        Assert.IsTrue(lobby.SetReady(3, true).Valid);
+
+        using Authoritative4XGeneratedGameStart generated = lobby.StartGeneratedGame();
+        Empire hostEmpire = generated.AuthorityUniverse.UState.GetEmpireById(generated.EmpireIdForPeer(2));
+        Assert.IsNotNull(hostEmpire);
+        Assert.IsFalse(hostEmpire.ShipsWeCanBuildSnapshot.Any(d => d.IsPlayerDesign),
+            "The generated MP setup should already strip saved player designs.");
+
+        ShipDesign localOnlyDesign = BuildLegalPlayerDesign(hostEmpire, "Codex MP Local Player Design");
+        int stockBuildableCount = hostEmpire.ShipsWeCanBuildSnapshot.Count(d => !d.IsPlayerDesign);
+        Assert.IsTrue(hostEmpire.AddBuildableShip(localOnlyDesign), "The synthetic local player design must enter the buildable list.");
+        Assert.IsTrue(hostEmpire.ShipsWeCanBuildSnapshot.Any(d => ReferenceEquals(d, localOnlyDesign)));
+
+        Authoritative4XLobby.RemoveMachineLocalPlayerDesigns(hostEmpire);
+
+        Assert.IsFalse(hostEmpire.ShipsWeCanBuildSnapshot.Any(d => ReferenceEquals(d, localOnlyDesign)),
+            "Machine-local player designs must not participate in generated multiplayer empires.");
+        Assert.IsFalse(hostEmpire.ShipsWeCanBuildSnapshot.Any(d => d.IsPlayerDesign));
+        Assert.AreEqual(stockBuildableCount, hostEmpire.ShipsWeCanBuildSnapshot.Count(d => !d.IsPlayerDesign),
+            "The scrubber must leave stock buildable designs intact.");
     }
 
     [TestMethod]

@@ -7,6 +7,7 @@ using SDUtils.Deterministic;
 using Ship_Game.Data;
 using Ship_Game.Determinism;
 using Ship_Game.GameScreens.NewGame;
+using Ship_Game.Ships;
 using Ship_Game.Universe;
 using static Ship_Game.RaceDesignScreen;
 
@@ -464,6 +465,13 @@ public sealed class Authoritative4XLobby
         empire.data.CurrentResearchStation = "";
         empire.data.CurrentMiningStation = "";
         empire.Research?.Reset();
+        RemoveMachineLocalPlayerDesigns(empire);
+    }
+
+    internal static void RemoveMachineLocalPlayerDesigns(Empire empire)
+    {
+        foreach (IShipDesign design in empire.ShipsWeCanBuildSnapshot.Where(d => d.IsPlayerDesign).ToArray())
+            empire.RemoveBuildableShip(design);
     }
 
     static EmpireData CreateEmpireData(IEmpireData race, string[] traitOptions, bool player)

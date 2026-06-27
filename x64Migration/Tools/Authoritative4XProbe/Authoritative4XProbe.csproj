@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <AssemblyName>Authoritative4XProbe</AssemblyName>
+    <RootNamespace>StarDrive.Tools.Authoritative4XProbe</RootNamespace>
+    <AssemblyVersion>1.60.0.0</AssemblyVersion>
+    <FileVersion>1.60.0.0</FileVersion>
+    <Version>1.60.0-authoritative4x-probe</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <Deterministic>true</Deterministic>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>$(NoWarn);NETSDK1206;CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\StarDrive.csproj" />
+    <ProjectReference Include="..\..\..\SDLockstep\SDLockstep.csproj" />
+  </ItemGroup>
+
+</Project>
