@@ -1026,12 +1026,18 @@ public sealed class Authoritative4XNetworkHost : IDisposable
     readonly List<AuthoritativeDiplomacyPopup> LocalPopups = new();
     readonly List<Authoritative4XProcessedCommand> ProcessedCommands = new();
     readonly List<AuthoritativeResyncRequestMessage> ResyncRequests = new();
+    readonly List<AuthoritativeResyncAckMessage> ResyncAcks = new();
+    readonly HashSet<int> PendingResyncAcks = new();
     int NextSaveTransferId = 1;
 
     public AuthoritativeCommandResult LastResult { get; private set; }
     public AuthoritativeStateSnapshot LastAuthoritySnapshot { get; private set; }
     public string LastError => Transport.LastError;
     public TcpLockstepTransport SharedTransport => Transport;
+    public int CurrentResyncEpoch { get; private set; }
+    public bool IsResyncInProgress => PendingResyncAcks.Count > 0;
+    public int[] RemotePeerIds => PeerIds.Where(peer => peer != LocalPeerId).OrderBy(peer => peer).ToArray();
+    public int[] PendingResyncPeerIds => PendingResyncAcks.OrderBy(peer => peer).ToArray();
     public AuthoritativeDiplomacyPopup[] DrainLocalPopups()
     {
         AuthoritativeDiplomacyPopup[] popups = LocalPopups.ToArray();
@@ -1053,6 +1059,13 @@ public sealed class Authoritative4XNetworkHost : IDisposable
         return requests;
     }
 
+    public AuthoritativeResyncAckMessage[] DrainResyncAcks()
+    {
+        AuthoritativeResyncAckMessage[] acks = ResyncAcks.ToArray();
+        ResyncAcks.Clear();
+        return acks;
+    }
+
     public Authoritative4XNetworkHost(UniverseScreen authorityUniverse, TcpLockstepTransport transport,
         IReadOnlyDictionary<int, int> empireByPeer, int[] humanEmpireIds = null, int localPeerId = 0)
     {
@@ -1072,7 +1085,38 @@ public sealed class Authoritative4XNetworkHost : IDisposable
 
     public void SubmitLocal(int peerId, AuthoritativePlayerCommand command)
     {
+        if (IsResyncInProgress)
+            return;
         ProcessCommand(peerId, command);
+    }
+
+    public int BeginResyncEpoch(AuthoritativeResyncRequestMessage request)
+    {
+        if (IsResyncInProgress)
+            return CurrentResyncEpoch;
+
+        int[] remotePeers = RemotePeerIds;
+        if (remotePeers.Length == 0)
+            return 0;
+
+        CurrentResyncEpoch++;
+        PendingResyncAcks.Clear();
+        foreach (int peer in remotePeers)
+            PendingResyncAcks.Add(peer);
+
+        var begin = new AuthoritativeResyncBeginMessage
+        {
+            FromPeer = HostPeerId,
+            Epoch = CurrentResyncEpoch,
+            RequestingPeer = request?.FromPeer ?? 0,
+            Tick = request?.Tick ?? 0,
+            ClientDigest = request?.ClientDigest ?? "",
+            Reason = request?.Reason ?? "",
+        };
+        foreach (int peer in remotePeers)
+            Transport.Send(peer, begin);
+
+        return CurrentResyncEpoch;
     }
 
     public void BroadcastControl(bool paused, float gameSpeed)
@@ -1108,7 +1152,13 @@ public sealed class Authoritative4XNetworkHost : IDisposable
             case AuthoritativeResyncRequestMessage request:
                 ResyncRequests.Add(request);
                 return;
+            case AuthoritativeResyncAckMessage ack:
+                if (ack.Epoch == CurrentResyncEpoch && PendingResyncAcks.Remove(ack.FromPeer))
+                    ResyncAcks.Add(ack);
+                return;
             case AuthoritativeCommandRequestMessage commandRequest:
+                if (IsResyncInProgress)
+                    return;
                 ProcessCommand(commandRequest.FromPeer, AuthoritativePlayerCommand.FromMessage(commandRequest));
                 return;
         }
@@ -1178,6 +1228,7 @@ public sealed class Authoritative4XNetworkClient : IDisposable
     readonly List<Authoritative4XReceivedSave> ReceivedSaves = new();
     readonly Authoritative4XSaveTransferReceiver SaveTransfers = new();
     bool WaitingForResync;
+    int CurrentResyncEpoch;
 
     public int PeerId { get; }
     public AuthoritativeCommandResult LastResult { get; private set; }
@@ -1186,6 +1237,8 @@ public sealed class Authoritative4XNetworkClient : IDisposable
     public Authoritative4XRawHashDrift LastRawHashDrift => Replica.LastRawHashDrift;
     public Authoritative4XSyncMismatchException LastSyncMismatch { get; private set; }
     public bool IsWaitingForResync => WaitingForResync;
+    public int ResyncEpoch => CurrentResyncEpoch;
+    public int ReceivedSaveCount => ReceivedSaves.Count;
     public string LastError => Transport.LastError;
     public TcpLockstepTransport SharedTransport => Transport;
 
@@ -1221,6 +1274,22 @@ public sealed class Authoritative4XNetworkClient : IDisposable
         Transport.Send(Authoritative4XNetworkHost.HostPeerId, command.ToMessage(PeerId));
     }
 
+    public void SendResyncAck(uint tick, string loadedDigest, string saveSha256, string error = "")
+    {
+        if (CurrentResyncEpoch <= 0)
+            return;
+
+        Transport.Send(Authoritative4XNetworkHost.HostPeerId, new AuthoritativeResyncAckMessage
+        {
+            FromPeer = PeerId,
+            Epoch = CurrentResyncEpoch,
+            Tick = tick,
+            LoadedDigest = loadedDigest ?? "",
+            SaveSha256 = saveSha256 ?? "",
+            Error = error ?? "",
+        });
+    }
+
     public void Poll() => Transport.Poll();
     public AuthoritativeDiplomacyPopup[] PopupsForClient() => Popups.ToArray();
     public AuthoritativeDiplomacyPopup[] DrainPopupsForClient()
@@ -1235,6 +1304,11 @@ public sealed class Authoritative4XNetworkClient : IDisposable
     {
         switch (message)
         {
+            case AuthoritativeResyncBeginMessage begin:
+                CurrentResyncEpoch = begin.Epoch;
+                WaitingForResync = true;
+                Pending.Clear();
+                break;
             case AuthoritativeSaveTransferBeginMessage:
             case AuthoritativeSaveTransferChunkMessage:
             case AuthoritativeSaveTransferEndMessage:

@@ -29,6 +29,8 @@ public static class LockstepMessageCodec
     const byte AuthoritativeSaveTransferChunk = 25;
     const byte AuthoritativeSaveTransferEnd = 26;
     const byte AuthoritativeResyncRequest = 27;
+    const byte AuthoritativeResyncBegin = 28;
+    const byte AuthoritativeResyncAck = 29;
 
     public static byte[] Encode(LockstepMessage message, int toPeer)
     {
@@ -188,6 +190,22 @@ public static class LockstepMessageCodec
                     w.Write(resync.Tick);
                     WriteString(w, resync.ClientDigest);
                     WriteString(w, resync.Reason);
+                    break;
+                case AuthoritativeResyncBeginMessage begin:
+                    w.Write(AuthoritativeResyncBegin);
+                    w.Write(begin.Epoch);
+                    w.Write(begin.RequestingPeer);
+                    w.Write(begin.Tick);
+                    WriteString(w, begin.ClientDigest);
+                    WriteString(w, begin.Reason);
+                    break;
+                case AuthoritativeResyncAckMessage ack:
+                    w.Write(AuthoritativeResyncAck);
+                    w.Write(ack.Epoch);
+                    w.Write(ack.Tick);
+                    WriteString(w, ack.LoadedDigest);
+                    WriteString(w, ack.SaveSha256);
+                    WriteString(w, ack.Error);
                     break;
                 default:
                     throw new InvalidDataException($"Unsupported lockstep message type {message.GetType().FullName}");
@@ -407,6 +425,26 @@ public static class LockstepMessageCodec
                     Tick = r.ReadUInt32(),
                     ClientDigest = ReadString(r),
                     Reason = ReadString(r),
+                };
+                break;
+            case AuthoritativeResyncBegin:
+                message = new AuthoritativeResyncBeginMessage
+                {
+                    Epoch = r.ReadInt32(),
+                    RequestingPeer = r.ReadInt32(),
+                    Tick = r.ReadUInt32(),
+                    ClientDigest = ReadString(r),
+                    Reason = ReadString(r),
+                };
+                break;
+            case AuthoritativeResyncAck:
+                message = new AuthoritativeResyncAckMessage
+                {
+                    Epoch = r.ReadInt32(),
+                    Tick = r.ReadUInt32(),
+                    LoadedDigest = ReadString(r),
+                    SaveSha256 = ReadString(r),
+                    Error = ReadString(r),
                 };
                 break;
             default:

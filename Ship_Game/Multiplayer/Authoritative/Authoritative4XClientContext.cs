@@ -29,7 +29,7 @@ public sealed class Authoritative4XClientContext : IDisposable
 {
     static Authoritative4XClientContext Active;
 
-    readonly Authoritative4XClientContext Previous;
+    Authoritative4XClientContext Previous;
     readonly Action<AuthoritativePlayerCommand> SubmitCommand;
     int NextSequence;
     bool Disposed;
@@ -54,6 +54,14 @@ public sealed class Authoritative4XClientContext : IDisposable
         Action<AuthoritativePlayerCommand> submitCommand, int firstSequence = 1)
     {
         return new Authoritative4XClientContext(peerId, empireId, firstSequence, submitCommand);
+    }
+
+    public void Activate()
+    {
+        if (Disposed || Active == this)
+            return;
+        Previous = Active;
+        Active = this;
     }
 
     public static bool TrySubmitSetColonyType(Planet planet, Planet.ColonyType type)

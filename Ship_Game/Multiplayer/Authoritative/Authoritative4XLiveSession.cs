@@ -63,6 +63,9 @@ public sealed class Authoritative4XLiveSession : IDisposable
         : null;
     public bool IsWaitingForResync => Role == Authoritative4XLiveRole.Client
                                       && Client?.IsWaitingForResync == true;
+    public bool IsResyncInProgress => Role == Authoritative4XLiveRole.Host
+        ? Host?.IsResyncInProgress == true
+        : Client?.IsWaitingForResync == true;
 
     public string TelemetrySessionPath => Telemetry?.SessionPath ?? "";
     public string TelemetrySessionId => LiveSessionId;
@@ -70,6 +73,9 @@ public sealed class Authoritative4XLiveSession : IDisposable
 
     public void RecordViewPerf(string details)
         => Telemetry?.Event("VIEW_PERF", details ?? "");
+
+    public void ActivateUiCommandContext()
+        => UiContext?.Activate();
 
     Authoritative4XLiveSession(UniverseScreen universe, Authoritative4XLiveRole role,
         int localPeerId, int localEmpireId, Authoritative4XNetworkHost host,
@@ -274,8 +280,12 @@ public sealed class Authoritative4XLiveSession : IDisposable
                 loaded.Metadata.SessionId, loaded.Metadata.StartFingerprint, startSummary, empireByPeer,
                 nextSequence);
             loaded.Universe.AttachAuthoritative4XMultiplayer(recovered);
+            AuthoritativeStateSnapshot loadedSnapshot = AuthoritativeStateSnapshot.Capture(loaded.Universe,
+                checked((uint)Math.Max(0, loaded.Metadata.LastProcessedTick)));
+            Client.SendResyncAck(loadedSnapshot.Tick, loadedSnapshot.SyncDigest, received.Sha256);
             Telemetry?.Event("RESYNC_RECOVERED",
-                $"file='{received.SaveFile.FullName}' sha256={received.Sha256} reason='{received.Reason}'");
+                $"epoch={Client.ResyncEpoch} file='{received.SaveFile.FullName}' "
+                + $"sha256={received.Sha256} digest='{loadedSnapshot.SyncDigest}' reason='{received.Reason}'");
             DisposeRetainingTransportForRecovery();
             recoveredUniverse = loaded.Universe;
             return true;
@@ -303,6 +313,8 @@ public sealed class Authoritative4XLiveSession : IDisposable
             return false;
         }
         if (PendingHostRecoverySave == null)
+            return false;
+        if (Host.IsResyncInProgress)
             return false;
 
         FileInfo save = PendingHostRecoverySave;
@@ -424,6 +436,13 @@ public sealed class Authoritative4XLiveSession : IDisposable
         if (Disposed || command == null)
             return;
 
+        if (IsResyncInProgress)
+        {
+            Telemetry?.Event("COMMAND_BLOCKED_RESYNC",
+                $"peer={LocalPeerId} seq={command.Sequence} kind={command.Kind}");
+            return;
+        }
+
         Telemetry?.Command("ui", LocalPeerId, command);
         if (Role == Authoritative4XLiveRole.Host)
         {
@@ -439,21 +458,51 @@ public sealed class Authoritative4XLiveSession : IDisposable
         if (Role != Authoritative4XLiveRole.Host)
             return;
 
-        foreach (AuthoritativeResyncRequestMessage request in Host.DrainResyncRequests())
+        foreach (AuthoritativeResyncAckMessage ack in Host.DrainResyncAcks())
         {
-            string reason = $"resync tick={request.Tick} digest='{request.ClientDigest}' reason='{request.Reason ?? ""}'";
-            if (TrySendSessionSaveToPeer(request.FromPeer, saveFile: null, out string error, reason))
-            {
-                PendingHostRecoverySave = LastSentSessionSave;
-                PendingHostRecoveryReason = reason;
-                Telemetry?.Event("RESYNC_SAVE_SENT",
-                    $"peer={request.FromPeer} tick={request.Tick} digest='{request.ClientDigest}'");
-            }
-            else
-            {
-                Telemetry?.Event("RESYNC_SAVE_ERROR",
-                    $"peer={request.FromPeer} tick={request.Tick} error='{error}'");
-            }
+            Telemetry?.Event("RESYNC_ACK",
+                $"peer={ack.FromPeer} epoch={ack.Epoch} tick={ack.Tick} "
+                + $"digest='{ack.LoadedDigest}' sha256='{ack.SaveSha256}' error='{ack.Error}'");
+        }
+
+        AuthoritativeResyncRequestMessage[] requests = Host.DrainResyncRequests();
+        if (requests.Length == 0)
+            return;
+
+        if (Host.IsResyncInProgress)
+        {
+            Telemetry?.Event("RESYNC_REQUEST_DURING_EPOCH",
+                $"count={requests.Length} epoch={Host.CurrentResyncEpoch} pending='{string.Join(",", Host.PendingResyncPeerIds)}'");
+            return;
+        }
+
+        AuthoritativeResyncRequestMessage request = requests[0];
+        string reason = $"resync epoch={Host.CurrentResyncEpoch + 1} tick={request.Tick} "
+                        + $"digest='{request.ClientDigest}' reason='{request.Reason ?? ""}'";
+        int epoch = Host.BeginResyncEpoch(request);
+        if (epoch == 0)
+            return;
+
+        try
+        {
+            FileInfo saveFile = new(Path.Combine(Path.GetTempPath(), "stardrive-auth4x-host-saves",
+                $"mp-resync-e{epoch}-{Guid.NewGuid():N}.sav"));
+            Authoritative4XSessionMetadata metadata = BuildMetadata();
+            Authoritative4XSessionSave.Save(Universe, saveFile, metadata);
+            foreach (int peerId in Host.RemotePeerIds)
+                Host.SendSaveTransfer(peerId, saveFile, metadata, reason);
+
+            LastSentSessionSave = saveFile;
+            PendingHostRecoverySave = LastSentSessionSave;
+            PendingHostRecoveryReason = reason;
+            Telemetry?.Event("RESYNC_SAVE_BROADCAST",
+                $"epoch={epoch} peers='{string.Join(",", Host.RemotePeerIds)}' file='{saveFile.FullName}' "
+                + $"bytes={saveFile.Length} reason='{reason}'");
+        }
+        catch (Exception e)
+        {
+            Telemetry?.Event("RESYNC_SAVE_ERROR",
+                $"epoch={epoch} peer={request.FromPeer} tick={request.Tick} error='{e.Message}'");
         }
     }
 
@@ -476,7 +525,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
 
     void SubmitHeartbeat()
     {
-        if (Universe.UState.Paused)
+        if (Universe.UState.Paused || IsResyncInProgress)
             return;
 
         Host.SubmitLocal(LocalPeerId, AuthoritativePlayerCommand.NoOp(HeartbeatSequence--, LocalEmpireId));

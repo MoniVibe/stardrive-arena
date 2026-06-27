@@ -77,3 +77,21 @@ public sealed class AuthoritativeResyncRequestMessage : LockstepMessage
     public string ClientDigest = "";
     public string Reason = "";
 }
+
+public sealed class AuthoritativeResyncBeginMessage : LockstepMessage
+{
+    public int Epoch;
+    public int RequestingPeer;
+    public uint Tick;
+    public string ClientDigest = "";
+    public string Reason = "";
+}
+
+public sealed class AuthoritativeResyncAckMessage : LockstepMessage
+{
+    public int Epoch;
+    public uint Tick;
+    public string LoadedDigest = "";
+    public string SaveSha256 = "";
+    public string Error = "";
+}

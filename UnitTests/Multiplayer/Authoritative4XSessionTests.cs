@@ -876,6 +876,43 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(resync.Tick, resyncCopy.Tick);
         Assert.AreEqual(resync.ClientDigest, resyncCopy.ClientDigest);
         Assert.AreEqual(resync.Reason, resyncCopy.Reason);
+
+        var resyncBegin = new AuthoritativeResyncBeginMessage
+        {
+            FromPeer = 1,
+            Epoch = 4,
+            RequestingPeer = 3,
+            Tick = 291,
+            ClientDigest = "0xCLIENT2",
+            Reason = "broadcast recovery"
+        };
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(resyncBegin, toPeer: 4));
+        var resyncBeginCopy = (AuthoritativeResyncBeginMessage)decoded.Message;
+        Assert.AreEqual(4, decoded.ToPeer);
+        Assert.AreEqual(resyncBegin.Epoch, resyncBeginCopy.Epoch);
+        Assert.AreEqual(resyncBegin.RequestingPeer, resyncBeginCopy.RequestingPeer);
+        Assert.AreEqual(resyncBegin.Tick, resyncBeginCopy.Tick);
+        Assert.AreEqual(resyncBegin.ClientDigest, resyncBeginCopy.ClientDigest);
+        Assert.AreEqual(resyncBegin.Reason, resyncBeginCopy.Reason);
+
+        var resyncAck = new AuthoritativeResyncAckMessage
+        {
+            FromPeer = 4,
+            Epoch = 4,
+            Tick = 292,
+            LoadedDigest = "0xLOADED",
+            SaveSha256 = "DEADBEEF",
+            Error = ""
+        };
+        decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(resyncAck, toPeer: 1));
+        var resyncAckCopy = (AuthoritativeResyncAckMessage)decoded.Message;
+        Assert.AreEqual(1, decoded.ToPeer);
+        Assert.AreEqual(resyncAck.FromPeer, resyncAckCopy.FromPeer);
+        Assert.AreEqual(resyncAck.Epoch, resyncAckCopy.Epoch);
+        Assert.AreEqual(resyncAck.Tick, resyncAckCopy.Tick);
+        Assert.AreEqual(resyncAck.LoadedDigest, resyncAckCopy.LoadedDigest);
+        Assert.AreEqual(resyncAck.SaveSha256, resyncAckCopy.SaveSha256);
+        Assert.AreEqual(resyncAck.Error, resyncAckCopy.Error);
     }
 
     [TestMethod]
@@ -7644,6 +7681,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             Planet.ColonyType postRecoveryType = recoveredJoinPlanet.CType == Planet.ColonyType.Research
                 ? Planet.ColonyType.Military
                 : Planet.ColonyType.Research;
+            recoveredLive.ActivateUiCommandContext();
             Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetColonyType(recoveredJoinPlanet,
                     postRecoveryType),
                 "The rebuilt client UI context should keep submitting commands over the reused TCP transport.");
@@ -8023,6 +8061,138 @@ public class Authoritative4XSessionTests : StarDriveTest
             authority.Screen.Dispose();
             clientA.Screen.Dispose();
             clientB.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XNetworkTcpEightPlayerResync_BroadcastsSaveAndWaitsForAcks_Headless()
+    {
+        LoadAllGameData();
+
+        const int PlayerCount = 8;
+        const int HostPlayerPeer = 2;
+        int[] peers = Enumerable.Range(HostPlayerPeer, PlayerCount).ToArray();
+        int[] remotePeers = peers.Where(peer => peer != HostPlayerPeer).ToArray();
+        IEmpireData[] races = ResourceManager.MajorRaces
+            .Where(r => !r.IsFactionOrMinorRace)
+            .OrderBy(r => RacePreference(r), StringComparer.Ordinal)
+            .Take(PlayerCount)
+            .ToArray();
+        Assert.IsTrue(races.Length >= PlayerCount,
+            "The 8-player TCP resync proof needs at least eight playable major races.");
+
+        var settings = new Authoritative4XGameSettings
+        {
+            GenerationSeed = 0x8A11F01,
+            GalaxySize = GalSize.Tiny,
+            StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+            Mode = RaceDesignScreen.GameMode.Sandbox,
+            Difficulty = GameDifficulty.Normal,
+            NumOpponents = PlayerCount - 1,
+            Pace = 1f,
+            TurnTimer = 5,
+            GameSpeed = 1f,
+            StartPaused = true,
+        };
+
+        var lobby = new Authoritative4XLobby(hostPlayerPeerId: HostPlayerPeer, hostName: "Host");
+        foreach (int peer in remotePeers)
+            lobby.Join(peer, "Client " + peer.ToString());
+
+        Assert.IsTrue(lobby.SetSettings(HostPlayerPeer, settings).Valid);
+        for (int i = 0; i < peers.Length; ++i)
+        {
+            Assert.IsTrue(lobby.SetPlayerSelection(peers[i], RacePreference(races[i]), Array.Empty<string>()).Valid);
+            Assert.IsTrue(lobby.SetReady(peers[i], true).Valid);
+        }
+
+        string tempDir = Path.Combine(Path.GetTempPath(), "stardrive-auth4x-eight-resync-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        using Authoritative4XLobbyStartResult started = lobby.StartInProcess();
+        TcpLockstepTransport[] clientTransports = Array.Empty<TcpLockstepTransport>();
+        Authoritative4XNetworkClient[] networkClients = Array.Empty<Authoritative4XNetworkClient>();
+        try
+        {
+            int port = FreeTcpPort();
+            TcpLockstepTransport hostTransport = TcpLockstepTransport.HostMulti(port);
+            clientTransports = remotePeers
+                .Select(peer => TcpLockstepTransport.JoinAsPeer("127.0.0.1", port, peer,
+                    Authoritative4XNetworkHost.HostPeerId))
+                .ToArray();
+            Assert.IsTrue(hostTransport.WaitForConnections(remotePeers.Length, TimeSpan.FromSeconds(5)),
+                "Authoritative TCP host did not accept every loopback player client.");
+            Assert.IsTrue(WaitForMappedPeers(hostTransport, remotePeers),
+                "Authoritative TCP host did not map every announced player peer id.");
+
+            using var host = new Authoritative4XNetworkHost(started.AuthorityUniverse, hostTransport,
+                started.EmpireIdByPeer, started.HumanEmpireIds, localPeerId: HostPlayerPeer);
+            networkClients = started.Clients
+                .Where(spec => spec.PeerId != HostPlayerPeer)
+                .OrderBy(spec => spec.PeerId)
+                .Select((spec, i) => new Authoritative4XNetworkClient(spec.Universe,
+                    clientTransports[i], spec.PeerId, started.HumanEmpireIds))
+                .ToArray();
+
+            int requestingPeer = remotePeers[0];
+            Authoritative4XNetworkClient requester = networkClients.First(c => c.PeerId == requestingPeer);
+            int requestingEmpire = started.EmpireIdForPeer(requestingPeer);
+            Planet authorityPlanet = started.AuthorityUniverse.UState.Planets
+                .First(p => p.Owner?.Id == requestingEmpire);
+            Planet requesterPlanet = started.Clients.First(c => c.PeerId == requestingPeer)
+                .Universe.UState.GetPlanet(authorityPlanet.Id);
+            Assert.IsNotNull(requesterPlanet);
+            requesterPlanet.SetPrioritizedPort(!authorityPlanet.PrioritizedPort);
+
+            requester.Submit(AuthoritativePlayerCommand.SetEmpireBudget(1_101, requestingEmpire,
+                taxRate: 0.23f, treasuryGoal: 0.44f, autoTaxes: false));
+            PumpTcpUntil(() => requester.IsWaitingForResync, host, networkClients);
+
+            AuthoritativeResyncRequestMessage[] requests = DrainResyncRequestsWithPump(host, networkClients);
+            Assert.AreEqual(1, requests.Length,
+                "The corrupted client should send exactly one resync request for the first mismatch.");
+            Assert.AreEqual(requestingPeer, requests[0].FromPeer);
+
+            int epoch = host.BeginResyncEpoch(requests[0]);
+            Assert.AreEqual(1, epoch);
+            CollectionAssert.AreEqual(remotePeers, host.PendingResyncPeerIds);
+
+            var saveFile = new FileInfo(Path.Combine(tempDir, "authoritative-eight-resync.sav"));
+            var metadata = Authoritative4XSessionMetadata.FromGenerated(started.GeneratedGame,
+                hostPeerId: HostPlayerPeer, localPeerId: HostPlayerPeer,
+                sessionId: "eight-player-resync", startFingerprint: "0x8RESYNC",
+                lastProcessedTick: host.LastAuthoritySnapshot?.Tick ?? 0);
+            Authoritative4XSessionSave.Save(started.AuthorityUniverse, saveFile, metadata);
+            foreach (int peer in host.RemotePeerIds)
+                host.SendSaveTransfer(peer, saveFile, metadata, "eight-player-resync");
+
+            PumpTcpUntil(() => networkClients.All(c => c.IsWaitingForResync && c.ReceivedSaveCount == 1),
+                host, networkClients);
+            Assert.IsTrue(host.IsResyncInProgress,
+                "The host must remain blocked until every remote peer acknowledges the resync save.");
+
+            foreach (Authoritative4XNetworkClient client in networkClients)
+            {
+                Authoritative4XReceivedSave[] saves = client.DrainReceivedSaves();
+                Assert.AreEqual(1, saves.Length,
+                    $"Peer {client.PeerId} should receive the same authoritative recovery save.");
+                Assert.AreEqual("eight-player-resync", saves[0].Reason);
+                client.SendResyncAck((uint)metadata.LastProcessedTick,
+                    "loaded-peer-" + client.PeerId.ToString(), saves[0].Sha256);
+            }
+
+            PumpTcpUntil(() => !host.IsResyncInProgress, host, networkClients);
+            AuthoritativeResyncAckMessage[] acks = host.DrainResyncAcks();
+            CollectionAssert.AreEquivalent(remotePeers, acks.Select(a => a.FromPeer).ToArray());
+            Assert.IsTrue(acks.All(a => a.Epoch == epoch));
+        }
+        finally
+        {
+            foreach (Authoritative4XNetworkClient client in networkClients)
+                client.Dispose();
+            foreach (TcpLockstepTransport transport in clientTransports)
+                transport.Dispose();
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
         }
     }
 
@@ -9139,6 +9309,25 @@ public class Authoritative4XSessionTests : StarDriveTest
         string clientErrors = string.Join("; ", clients.Select(c => c.LastError));
         Assert.IsTrue(done(),
             $"Timed out waiting for authoritative TCP multi-client loopback. host='{host.LastError}' clients='{clientErrors}'");
+    }
+
+    static AuthoritativeResyncRequestMessage[] DrainResyncRequestsWithPump(Authoritative4XNetworkHost host,
+        params Authoritative4XNetworkClient[] clients)
+    {
+        AuthoritativeResyncRequestMessage[] requests = Array.Empty<AuthoritativeResyncRequestMessage>();
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (requests.Length == 0 && DateTime.UtcNow < deadline)
+        {
+            host.Poll();
+            foreach (Authoritative4XNetworkClient client in clients)
+                client.Poll();
+            requests = host.DrainResyncRequests();
+            System.Threading.Thread.Sleep(5);
+        }
+        string clientErrors = string.Join("; ", clients.Select(c => c.LastError));
+        Assert.IsTrue(requests.Length > 0,
+            $"Timed out waiting for an authoritative resync request. host='{host.LastError}' clients='{clientErrors}'");
+        return requests;
     }
 
     static void PumpTransportUntil(Func<bool> done, params TcpLockstepTransport[] transports)
