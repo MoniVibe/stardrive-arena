@@ -7963,6 +7963,11 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreNotEqual(client.EnemyShip.InPlayerSensorRange,
                 client.Screen.IsKnownToLocalPlayerForUi(client.EnemyShip),
                 "The local-view visibility proof must not be just a wrapper around UState.Player visibility.");
+            client.Enemy.UpdateContactsAndBorders(client.Screen, new FixedSimTime(1f / 60f));
+            Assert.IsTrue(client.Enemy.BorderNodes.Any(n => n.Source == clientRemotePlanet.System && n.KnownToPlayer),
+                "Remote clients must see their assigned empire's owned system borders instead of fogging them as host-only state.");
+            Assert.IsTrue(client.Enemy.SensorNodes.Any(n => n.Source == clientRemotePlanet && n.KnownToPlayer),
+                "Remote clients must see their assigned empire's owned planet sensor range instead of using the serialized host player.");
             using (var planetScreen = new TestPlanetScreen(client.Screen, clientRemotePlanet))
             {
                 Assert.AreSame(client.Enemy, planetScreen.Player,
@@ -8264,6 +8269,16 @@ public class Authoritative4XSessionTests : StarDriveTest
             world.Player.UpdateRelationships(takeTurn: true);
             Assert.AreEqual(turnsKnown, rel.TurnsKnown,
                 "A human-vs-human pair must not advance through the AI diplomacy relationship turn.");
+            world.Player.GetRelations(world.Enemy).Known = false;
+            world.Enemy.GetRelations(world.Player).Known = false;
+            world.UState.CanShowDiplomacyScreen = true;
+            DiplomacyScreen.DebugResetScreensShown();
+            world.Player.FirstContact.SetReadyForContact(world.Enemy);
+            world.Player.FirstContact.CheckForFirstContacts(world.Player);
+            Assert.IsTrue(world.Player.IsKnown(world.Enemy));
+            Assert.IsTrue(world.Enemy.IsKnown(world.Player));
+            Assert.AreEqual(0, DiplomacyScreen.DebugScreensShown,
+                "Human-vs-human first contact must set relationship state without opening stock AI diplomacy UI.");
 
             AuthoritativeHumanPlayers.SetHumanControlledEmpires(world.UState, world.Player.Id);
             world.Player.UpdateRelationships(takeTurn: true);

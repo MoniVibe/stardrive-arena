@@ -207,7 +207,7 @@ public sealed partial class Empire
     public void AddBorderNode(Planet planet)
     {
         bool empireKnown = IsThisEmpireKnownByPlayer();
-        bool known = empireKnown || planet.IsExploredBy(Universe.Player);
+        bool known = empireKnown || planet.IsExploredBy(LocalViewer);
 
         // NOTE: planets always provide influence and actually project it from system center.
         if (!IsSystemInOurBorderSystems(planet.System))
@@ -335,7 +335,7 @@ public sealed partial class Empire
         }
         else
         {
-            var player = Universe.Player;
+            var player = LocalViewer;
             foreach (ref InfluenceNode n in borderShips)
             {
                 n.Position = n.Source.Position;
@@ -360,17 +360,21 @@ public sealed partial class Empire
     bool IsThisEmpireWellKnownByPlayer()
     {
         var us = Universe;
-        bool wellKnown = isPlayer
-                         || us.Player?.IsAlliedWith(this) == true // support unit tests without Player
+        Empire viewer = LocalViewer;
+        bool wellKnown = viewer == this
+                         || viewer?.IsAlliedWith(this) == true // support unit tests without Player
                          || us.Debug && (us.Screen.SelectedShip == null || us.Screen.SelectedShip.Loyalty == this);
         return wellKnown;
     }
 
     bool IsThisEmpireKnownByPlayer()
     {
+        Empire viewer = LocalViewer;
         return IsThisEmpireWellKnownByPlayer()
-               || Universe.Player?.IsTradeOrOpenBorders(this) == true;
+               || viewer?.IsTradeOrOpenBorders(this) == true;
     }
+
+    Empire LocalViewer => Universe?.Screen?.Player ?? Universe?.Player;
 
     /// <summary>
     /// Border nodes are empire's projector influence from SSP's and Planets
@@ -403,7 +407,7 @@ public sealed partial class Empire
 
     void AddSensorsFromAllies(Array<InfluenceNode> sensorNodes)
     {
-        bool knownToPlayer = isPlayer;
+        bool knownToPlayer = this == LocalViewer;
 
         foreach (Empire ally in Universe.Empires)
         {
@@ -437,6 +441,7 @@ public sealed partial class Empire
             return;
 
         float projectorRadius = GetProjectorRadius();
+        bool knownToPlayer = this == LocalViewer;
         for (int i = 0; i < data.MoleList.Count; i++)
         {
             Mole mole = data.MoleList[i];
@@ -447,7 +452,7 @@ public sealed partial class Empire
                 {
                     Position = p.Position,
                     Radius = projectorRadius,
-                    KnownToPlayer = isPlayer
+                    KnownToPlayer = knownToPlayer
                 });
             }
         }
