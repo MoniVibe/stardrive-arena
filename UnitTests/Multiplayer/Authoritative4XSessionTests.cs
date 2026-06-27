@@ -9296,10 +9296,13 @@ public class Authoritative4XSessionTests : StarDriveTest
 
             FileInfo saveFile = new(Path.Combine(temp, "mp-session.sav"));
             int savedPeer3Empire;
+            string savedPeer3Tech;
             using (Authoritative4XLobbyStartResult started = lobby.StartInProcess())
             {
                 int peer3Empire = started.EmpireIdForPeer(3);
                 savedPeer3Empire = peer3Empire;
+                savedPeer3Tech = FirstUnlockedTech(
+                    started.AuthorityUniverse.UState.GetEmpireById(peer3Empire)).UID;
                 started.Session.SubmitFromClient(3,
                     AuthoritativePlayerCommand.SetEmpireBudget(200, peer3Empire, taxRate: 0.22f,
                         treasuryGoal: 0.44f, autoTaxes: false));
@@ -9320,9 +9323,14 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual("0xUNITSTART", loadedMetadata.StartFingerprint);
             Assert.AreEqual(3, loadedMetadata.NormalizedHumanEmpireIds().Length);
             CollectionAssert.AreEqual(new[] { 2, 3, 4 }, loadedMetadata.ToPeerEmpireMap().Keys.OrderBy(k => k).ToArray());
+            Assert.IsTrue(loadedMetadata.EmpireTechState.Any(t =>
+                    t.EmpireId == savedPeer3Empire && t.TechUid == savedPeer3Tech),
+                "The authoritative MP save sidecar must carry unlocked tech for non-host human empires.");
 
             using Authoritative4XLoadedSession loadedAuthority = Authoritative4XSessionSave.Load(saveFile);
             Empire authorityPeer3 = loadedAuthority.Universe.UState.GetEmpireById(savedPeer3Empire);
+            Assert.IsTrue(authorityPeer3.HasUnlocked(savedPeer3Tech),
+                "Loading an authoritative MP save must restore sidecar tech unlocks before sync comparison.");
             Assert.AreEqual(0.22f, authorityPeer3.data.TaxRate, 0.0001f,
                 "Authoritative MP save/load must preserve the saved peer's tax rate exactly enough for canonical sync.");
             Assert.AreEqual(0.44f, authorityPeer3.data.treasuryGoal, 0.0001f,
@@ -9351,6 +9359,40 @@ public class Authoritative4XSessionTests : StarDriveTest
         {
             if (Directory.Exists(temp))
                 Directory.Delete(temp, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XSnapshot_AppliesUnlockedTechRowsBeforeDigestCompare_Headless()
+    {
+        const ulong Seed = 0x7EC4A11UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            TechEntry authorityTech = FirstNonRootUnlockedTech(authority.Player);
+            TechEntry clientTech = client.Player.GetTechEntry(authorityTech.UID);
+            clientTech.ResetUnlockedTech();
+            Assert.IsFalse(clientTech.Unlocked,
+                "The test must start with a client missing an authoritative unlocked tech row.");
+
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 0);
+            StringAssert.Contains(authoritySnapshot.Payload,
+                $"U|{authority.Player.Id}|{authorityTech.UID}|{authorityTech.Level}");
+
+            authoritySnapshot.ApplyEmpireRuntimePayload(client.UState);
+
+            Assert.IsTrue(client.Player.HasUnlocked(authorityTech.UID),
+                "Authoritative U| tech rows must be applied before canonical digest comparison.");
+            AuthoritativeStateSnapshot repairedClient = AuthoritativeStateSnapshot.Capture(client.Screen, 0);
+            Assert.AreEqual(authoritySnapshot.SyncDigest, repairedClient.SyncDigest,
+                "Applying authoritative tech rows should repair the canonical payload mismatch seen after resync.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
         }
     }
 
@@ -10467,6 +10509,25 @@ public class Authoritative4XSessionTests : StarDriveTest
 
     static string ResearchQueuePayloadPrefix(Empire empire)
         => $"E|{empire.Id}|{empire.Research.Topic}|{string.Join(",", empire.data.ResearchQueue)}|";
+
+    static TechEntry FirstNonRootUnlockedTech(Empire empire)
+    {
+        TechEntry tech = empire.UnlockedTechs
+            .Where(t => !t.IsRoot)
+            .OrderBy(t => t.UID, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(tech, $"Empire {empire.Id} should have at least one non-root unlocked tech.");
+        return tech;
+    }
+
+    static TechEntry FirstUnlockedTech(Empire empire)
+    {
+        TechEntry tech = empire.UnlockedTechs
+            .OrderBy(t => t.UID, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(tech, $"Empire {empire.Id} should have at least one unlocked tech.");
+        return tech;
+    }
 
     static void MakeAtWar(Empire a, Empire b)
     {

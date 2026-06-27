@@ -36,6 +36,14 @@ public sealed class Authoritative4XEmpireRuntimeSave
 }
 
 [StarDataType]
+public sealed class Authoritative4XEmpireTechSave
+{
+    [StarData] public int EmpireId;
+    [StarData] public string TechUid = "";
+    [StarData] public int Level;
+}
+
+[StarDataType]
 public sealed class Authoritative4XSessionMetadata
 {
     public const int CurrentVersion = 1;
@@ -51,6 +59,7 @@ public sealed class Authoritative4XSessionMetadata
     [StarData] public int[] HumanEmpireIds = Array.Empty<int>();
     [StarData] public Authoritative4XPeerEmpireSave[] EmpireIdByPeer = Array.Empty<Authoritative4XPeerEmpireSave>();
     [StarData] public Authoritative4XEmpireRuntimeSave[] EmpireRuntimeState = Array.Empty<Authoritative4XEmpireRuntimeSave>();
+    [StarData] public Authoritative4XEmpireTechSave[] EmpireTechState = Array.Empty<Authoritative4XEmpireTechSave>();
 
     public IReadOnlyDictionary<int, int> ToPeerEmpireMap()
         => (EmpireIdByPeer ?? Array.Empty<Authoritative4XPeerEmpireSave>())
@@ -87,6 +96,7 @@ public sealed class Authoritative4XSessionMetadata
                 .Select(kv => new Authoritative4XPeerEmpireSave { PeerId = kv.Key, EmpireId = kv.Value })
                 .ToArray(),
             EmpireRuntimeState = Authoritative4XSessionSave.CaptureEmpireRuntimeState(generated.AuthorityUniverse),
+            EmpireTechState = Authoritative4XSessionSave.CaptureEmpireTechState(generated.AuthorityUniverse),
         };
     }
 
@@ -141,6 +151,8 @@ public static class Authoritative4XSessionSave
             throw new ArgumentNullException(nameof(metadata));
 
         saveFile.Directory?.Create();
+        metadata.EmpireRuntimeState = CaptureEmpireRuntimeState(universe);
+        metadata.EmpireTechState = CaptureEmpireTechState(universe);
         new SavedGame(universe).SaveTo(saveFile);
         SaveMetadata(MetadataFileFor(saveFile), metadata);
     }
@@ -226,6 +238,7 @@ public static class Authoritative4XSessionSave
         foreach (int empireId in humanEmpireIds)
             Authoritative4XLobby.DisableHumanEmpireAutomation(universe.UState.GetEmpireById(empireId));
         ApplyEmpireRuntimeState(universe.UState, metadata.EmpireRuntimeState);
+        ApplyEmpireTechState(universe.UState, metadata.EmpireTechState);
 
         universe.CreateSimThread = false;
         universe.UState.Objects.EnableParallelUpdate = false;
@@ -238,6 +251,11 @@ public static class Authoritative4XSessionSave
         => universe != null
             ? CaptureEmpireRuntimeState(universe.UState)
             : Array.Empty<Authoritative4XEmpireRuntimeSave>();
+
+    public static Authoritative4XEmpireTechSave[] CaptureEmpireTechState(UniverseScreen universe)
+        => universe != null
+            ? CaptureEmpireTechState(universe.UState)
+            : Array.Empty<Authoritative4XEmpireTechSave>();
 
     static Authoritative4XEmpireRuntimeSave[] CaptureEmpireRuntimeState(UniverseState universe)
         => universe?.Empires
@@ -257,6 +275,20 @@ public static class Authoritative4XSessionSave
                 CurrentMiningStation = e.data.CurrentMiningStation ?? "",
             })
             .ToArray() ?? Array.Empty<Authoritative4XEmpireRuntimeSave>();
+
+    static Authoritative4XEmpireTechSave[] CaptureEmpireTechState(UniverseState universe)
+        => universe?.Empires
+            .OrderBy(e => e.Id)
+            .SelectMany(e => e.TechEntries
+                .Where(t => t.Unlocked)
+                .OrderBy(t => t.UID, StringComparer.Ordinal)
+                .Select(t => new Authoritative4XEmpireTechSave
+                {
+                    EmpireId = e.Id,
+                    TechUid = t.UID ?? "",
+                    Level = t.Level,
+                }))
+            .ToArray() ?? Array.Empty<Authoritative4XEmpireTechSave>();
 
     static void ApplyEmpireRuntimeState(UniverseState universe, Authoritative4XEmpireRuntimeSave[] states)
     {
@@ -282,6 +314,38 @@ public static class Authoritative4XSessionSave
             empire.data.CurrentResearchStation = state.CurrentResearchStation ?? "";
             empire.data.CurrentMiningStation = state.CurrentMiningStation ?? "";
         }
+    }
+
+    public static void ApplyEmpireTechState(UniverseState universe, Authoritative4XEmpireTechSave[] states)
+    {
+        if (universe == null || states == null || states.Length == 0)
+            return;
+
+        foreach (Authoritative4XEmpireTechSave state in states)
+        {
+            if (state.EmpireId <= 0 || state.EmpireId > universe.Empires.Count || string.IsNullOrEmpty(state.TechUid))
+                continue;
+
+            Empire empire = universe.GetEmpireById(state.EmpireId);
+            if (empire == null || !empire.TryGetTechEntry(state.TechUid, out TechEntry tech) || tech == TechEntry.None)
+                continue;
+
+            ApplyUnlockedTech(empire, tech, state.Level);
+        }
+    }
+
+    public static void ApplyUnlockedTech(Empire empire, TechEntry tech, int authoritativeLevel)
+    {
+        if (empire == null || tech == null || tech == TechEntry.None)
+            return;
+
+        authoritativeLevel = Math.Max(0, authoritativeLevel);
+        if (!tech.Unlocked)
+            empire.UnlockTech(tech, TechUnlockType.Normal, null);
+
+        int guard = 0;
+        while (tech.Unlocked && tech.Level < authoritativeLevel && guard++ < 32)
+            empire.UnlockTech(tech, TechUnlockType.Normal, null);
     }
 
     static void ApplyAutomationFlags(Empire empire, AuthoritativeEmpireAutomationFlags flags)
@@ -383,6 +447,14 @@ public static class Authoritative4XSessionSave
                     CurrentMiningStation = EncodeYamlScalar(e.CurrentMiningStation),
                 })
                 .ToArray() ?? Array.Empty<Authoritative4XEmpireRuntimeSave>(),
+            EmpireTechState = metadata.EmpireTechState?
+                .Select(t => new Authoritative4XEmpireTechSave
+                {
+                    EmpireId = t.EmpireId,
+                    TechUid = EncodeYamlScalar(t.TechUid),
+                    Level = t.Level,
+                })
+                .ToArray() ?? Array.Empty<Authoritative4XEmpireTechSave>(),
         };
 
     static void DecodeYamlScalars(Authoritative4XSessionMetadata metadata)
@@ -399,6 +471,8 @@ public static class Authoritative4XSessionSave
             e.CurrentResearchStation = DecodeYamlScalar(e.CurrentResearchStation);
             e.CurrentMiningStation = DecodeYamlScalar(e.CurrentMiningStation);
         }
+        foreach (Authoritative4XEmpireTechSave t in metadata.EmpireTechState ?? Array.Empty<Authoritative4XEmpireTechSave>())
+            t.TechUid = DecodeYamlScalar(t.TechUid);
     }
 
     static string EncodeYamlScalar(string value)

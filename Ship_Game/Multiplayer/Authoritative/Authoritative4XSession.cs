@@ -58,38 +58,68 @@ public sealed class AuthoritativeStateSnapshot
         foreach (string rawLine in Payload.Split('\n'))
         {
             string line = rawLine.TrimEnd('\r');
-            if (!line.StartsWith("E|", StringComparison.Ordinal))
-                continue;
-
-            string[] p = line.Split('|');
-            if (p.Length < 15
-                || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int empireId)
-                || empireId <= 0
-                || empireId > universe.Empires.Count)
-            {
-                continue;
-            }
-
-            Empire empire = universe.GetEmpireById(empireId);
-            if (empire == null)
-                continue;
-
-            if (TryParseFloatBits(p[4], out float money))
-                empire.Money = money;
-            if (TryParseFloatBits(p[5], out float taxRate))
-                empire.data.TaxRate = taxRate;
-            if (TryParseFloatBits(p[6], out float treasuryGoal))
-                empire.data.treasuryGoal = treasuryGoal;
-            if (int.TryParse(p[8], NumberStyles.Integer, CultureInfo.InvariantCulture, out int flags))
-                ApplyAutomationFlags(empire, (AuthoritativeEmpireAutomationFlags)flags);
-
-            empire.data.CurrentAutoFreighter = p[9] ?? "";
-            empire.data.CurrentAutoColony = p[10] ?? "";
-            empire.data.CurrentAutoScout = p[11] ?? "";
-            empire.data.CurrentConstructor = p[12] ?? "";
-            empire.data.CurrentResearchStation = p[13] ?? "";
-            empire.data.CurrentMiningStation = p[14] ?? "";
+            if (line.StartsWith("E|", StringComparison.Ordinal))
+                ApplyEmpireRuntimeLine(universe, line);
+            else if (line.StartsWith("U|", StringComparison.Ordinal))
+                ApplyUnlockedTechLine(universe, line);
         }
+    }
+
+    static void ApplyEmpireRuntimeLine(UniverseState universe, string line)
+    {
+        string[] p = line.Split('|');
+        if (p.Length < 15
+            || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int empireId)
+            || empireId <= 0
+            || empireId > universe.Empires.Count)
+        {
+            return;
+        }
+
+        Empire empire = universe.GetEmpireById(empireId);
+        if (empire == null)
+            return;
+
+        if (TryParseFloatBits(p[4], out float money))
+            empire.Money = money;
+        if (TryParseFloatBits(p[5], out float taxRate))
+            empire.data.TaxRate = taxRate;
+        if (TryParseFloatBits(p[6], out float treasuryGoal))
+            empire.data.treasuryGoal = treasuryGoal;
+        if (int.TryParse(p[8], NumberStyles.Integer, CultureInfo.InvariantCulture, out int flags))
+            ApplyAutomationFlags(empire, (AuthoritativeEmpireAutomationFlags)flags);
+
+        empire.data.CurrentAutoFreighter = p[9] ?? "";
+        empire.data.CurrentAutoColony = p[10] ?? "";
+        empire.data.CurrentAutoScout = p[11] ?? "";
+        empire.data.CurrentConstructor = p[12] ?? "";
+        empire.data.CurrentResearchStation = p[13] ?? "";
+        empire.data.CurrentMiningStation = p[14] ?? "";
+    }
+
+    static void ApplyUnlockedTechLine(UniverseState universe, string line)
+    {
+        string[] p = line.Split('|');
+        if (p.Length < 4
+            || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int empireId)
+            || empireId <= 0
+            || empireId > universe.Empires.Count)
+        {
+            return;
+        }
+
+        string techUid = p[2] ?? "";
+        if (techUid.IsEmpty())
+            return;
+
+        Empire empire = universe.GetEmpireById(empireId);
+        if (empire == null || !empire.TryGetTechEntry(techUid, out TechEntry tech) || tech == TechEntry.None)
+            return;
+
+        int level = int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedLevel)
+            ? parsedLevel
+            : 0;
+        Authoritative4XSessionSave.ApplyUnlockedTech(empire, tech, level);
     }
 
     public static AuthoritativeStateSnapshot Capture(UniverseScreen universe, uint tick,
