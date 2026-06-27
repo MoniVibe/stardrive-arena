@@ -134,11 +134,12 @@ public enum AuthoritativeEmpireAutomationFlags
     AutoBuildResearchStations = 1 << 12,
     AutoBuildMiningStations = 1 << 13,
     RushAllConstruction = 1 << 14,
+    AutoMilitary = 1 << 15,
     All = AutoPickConstructors | AutoPickBestColonizer | AutoPickBestFreighter
         | AutoResearch | AutoBuildTerraformers | AutoTaxes | AutoPickBestResearchStation
         | AutoPickBestMiningStation | AutoExplore | AutoColonize | AutoBuildSpaceRoads
         | AutoFreighters | AutoBuildResearchStations | AutoBuildMiningStations
-        | RushAllConstruction,
+        | RushAllConstruction | AutoMilitary,
 }
 
 public enum AuthoritativePlanetGoodsKind : byte

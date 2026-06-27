@@ -14,6 +14,7 @@ using Ship_Game.Data.Serialization;
 using Ship_Game.Empires.Components;
 using Ship_Game.GameScreens.DiplomacyScreen;
 using Ship_Game.Fleets;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Universe;
 using Ship_Game.Utils;
 using Vector2 = SDGraphics.Vector2;
@@ -2489,21 +2490,26 @@ namespace Ship_Game
 
         void AssignSniffingTasks()
         {
+            bool humanControlled = AuthoritativeHumanPlayers.IsHumanControlled(this);
             // Oracle sidekick (player-only): spawn parallel scout-sniffing goals like the AI, so it actually
             // discovers the colonizable systems the softened expansion logic wants to claim.
-            if ((!isPlayer || (OracleSidekickEnabled && AutoExplore))
+            bool shouldRunSniffing = !humanControlled
+                                     || (isPlayer && OracleSidekickEnabled && AutoExplore)
+                                     || (!isPlayer && humanControlled && AutoExplore);
+            if (shouldRunSniffing
                 && AI.CountGoals(g => g.Type == GoalType.ScoutSystem) < DifficultyModifiers.NumSystemsToSniff)
                 AI.AddGoal(new ScoutSystem(this));
         }
 
         void AssignExplorationTasks()
         {
-            if (isPlayer && !AutoExplore)
+            bool humanControlled = AuthoritativeHumanPlayers.IsHumanControlled(this);
+            if (humanControlled && !AutoExplore)
                 return;
 
             int unexplored = Universe.Systems.Count(s => !s.IsFullyExploredBy(this)).UpperBound(12);
             var ships = OwnedShips;
-            if (unexplored == 0 && isPlayer)
+            if (unexplored == 0 && humanControlled)
             {
                 // FB: Done exploring, flag can be removed. Maybe add a notification for the player?
                 // We also might be able to turn off AutoExplore for the AI and save the system count
@@ -2521,7 +2527,7 @@ namespace Ship_Game
             }
 
             float desiredScouts = unexplored * Research.Strategy.ExpansionRatio;
-            if (!isPlayer)
+            if (!humanControlled)
                 desiredScouts *= ((int)Universe.P.Difficulty).LowerBound(1);
 
             int numScouts = 0;

@@ -174,6 +174,7 @@ public sealed class Authoritative4XCommandApplicator
         empire.AutoFreighters = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoFreighters);
         empire.AutoBuildResearchStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations);
         empire.AutoBuildMiningStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations);
+        empire.AutoMilitary = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoMilitary);
 
         bool rushAll = flags.HasFlag(AuthoritativeEmpireAutomationFlags.RushAllConstruction);
         empire.RushAllConstruction = rushAll;

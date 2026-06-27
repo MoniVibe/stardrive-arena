@@ -84,6 +84,7 @@ namespace Ship_Game
             rest.AddCheckbox(() => Screen.Player.AutoResearch,          title: GameText.AutoResearch, tooltip: GameText.YourEmpireWillAutomaticallySelect);
             rest.AddCheckbox(() => Screen.Player.AutoBuildTerraformers, title: GameText.AutoBuildTerraformers, tooltip: GameText.AutoBuildTerraformersTip);
             rest.AddCheckbox(() => Screen.Player.AutoTaxes,             title: GameText.AutoTaxes, tooltip: GameText.YourEmpireWillAutomaticallyManage3);
+            rest.AddCheckbox(() => Screen.Player.AutoMilitary,          title: "Auto Military", tooltip: "Let the AI manage military shipbuilding and fleet defense.");
 
             if (ResearchStationsEnabled && Screen.Player.CanBuildResearchStations)
                 rest.AddCheckbox(() => Screen.Player.AutoPickBestResearchStation, title: GameText.AutoPickResearchStation, tooltip: GameText.AutoPickResearchStationTip);
@@ -305,6 +306,7 @@ namespace Ship_Game
             player.AutoFreighters = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoFreighters);
             player.AutoBuildResearchStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations);
             player.AutoBuildMiningStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations);
+            player.AutoMilitary = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoMilitary);
             bool rushAll = flags.HasFlag(AuthoritativeEmpireAutomationFlags.RushAllConstruction);
             player.RushAllConstruction = rushAll;
             Screen.RunOnSimThread(() => player.SwitchRushAllConstruction(rushAll));
@@ -327,6 +329,7 @@ namespace Ship_Game
             if (player.AutoFreighters) flags |= AuthoritativeEmpireAutomationFlags.AutoFreighters;
             if (player.AutoBuildResearchStations) flags |= AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations;
             if (player.AutoBuildMiningStations) flags |= AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations;
+            if (player.AutoMilitary) flags |= AuthoritativeEmpireAutomationFlags.AutoMilitary;
             if (player.RushAllConstruction) flags |= AuthoritativeEmpireAutomationFlags.RushAllConstruction;
             return flags;
         }

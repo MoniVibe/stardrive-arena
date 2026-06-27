@@ -304,6 +304,7 @@ public static class Authoritative4XSessionSave
         empire.AutoFreighters = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoFreighters);
         empire.AutoBuildResearchStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations);
         empire.AutoBuildMiningStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations);
+        empire.AutoMilitary = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoMilitary);
 
         bool rushAll = flags.HasFlag(AuthoritativeEmpireAutomationFlags.RushAllConstruction);
         empire.RushAllConstruction = rushAll;
@@ -326,6 +327,7 @@ public static class Authoritative4XSessionSave
         if (e.AutoFreighters) flags |= AuthoritativeEmpireAutomationFlags.AutoFreighters;
         if (e.AutoBuildResearchStations) flags |= AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations;
         if (e.AutoBuildMiningStations) flags |= AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations;
+        if (e.AutoMilitary) flags |= AuthoritativeEmpireAutomationFlags.AutoMilitary;
         if (e.RushAllConstruction) flags |= AuthoritativeEmpireAutomationFlags.RushAllConstruction;
         return flags;
     }

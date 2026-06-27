@@ -146,7 +146,8 @@ public class Authoritative4XSessionTests : StarDriveTest
         var automationFlags = AuthoritativeEmpireAutomationFlags.AutoExplore
                               | AuthoritativeEmpireAutomationFlags.AutoColonize
                               | AuthoritativeEmpireAutomationFlags.AutoFreighters
-                              | AuthoritativeEmpireAutomationFlags.RushAllConstruction;
+                              | AuthoritativeEmpireAutomationFlags.RushAllConstruction
+                              | AuthoritativeEmpireAutomationFlags.AutoMilitary;
         var automationRequest = AuthoritativePlayerCommand.SetEmpireAutomation(117, 2,
                 automationFlags, "Freighter", "Colony", "Scout", "Constructor",
                 "Research Station", "Mining Station")
@@ -5910,7 +5911,8 @@ public class Authoritative4XSessionTests : StarDriveTest
                         | AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter
                         | AuthoritativeEmpireAutomationFlags.AutoResearch
                         | AuthoritativeEmpireAutomationFlags.AutoTaxes
-                        | AuthoritativeEmpireAutomationFlags.RushAllConstruction;
+                        | AuthoritativeEmpireAutomationFlags.RushAllConstruction
+                        | AuthoritativeEmpireAutomationFlags.AutoMilitary;
             string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
 
             session.SubmitFromClient(AuthoritativePlayerCommand.SetEmpireAutomation(63, authority.Player.Id,
@@ -5943,6 +5945,32 @@ public class Authoritative4XSessionTests : StarDriveTest
         {
             authority.Screen.Dispose();
             client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XRemoteHumanEmpire_DoesNotRunScoutAiWhenAutoExploreOff_Headless()
+    {
+        const ulong Seed = 0xA470A13UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            AuthoritativeHumanPlayers.SetHumanControlledEmpires(world.UState, world.Player.Id, world.Enemy.Id);
+            ClearEmpireAutomation(world.Enemy);
+            world.Enemy.AI.ClearGoals();
+
+            bool didUpdate = world.Enemy.Update(world.UState, new FixedSimTime(world.UState.P.TurnTimer + 10f));
+
+            Assert.IsTrue(didUpdate, "The remote-human empire must execute a real empire turn for this regression.");
+            Assert.IsFalse(world.Enemy.AutoExplore);
+            Assert.IsFalse(world.Enemy.AI.Goals.Any(g => g?.Type is GoalType.BuildScout or GoalType.ScoutSystem),
+                "A registered remote human with AutoExplore off must not be treated as stock AI and queue scouts.");
+        }
+        finally
+        {
+            AuthoritativeHumanPlayers.Clear(world.UState);
+            world.Screen.Dispose();
         }
     }
 
@@ -6010,7 +6038,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             var flags = AuthoritativeEmpireAutomationFlags.AutoExplore
                         | AuthoritativeEmpireAutomationFlags.AutoColonize
                         | AuthoritativeEmpireAutomationFlags.AutoFreighters
-                        | AuthoritativeEmpireAutomationFlags.RushAllConstruction;
+                        | AuthoritativeEmpireAutomationFlags.RushAllConstruction
+                        | AuthoritativeEmpireAutomationFlags.AutoMilitary;
 
             using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
                        submitted.Add, firstSequence: 1850))
@@ -9782,6 +9811,7 @@ public class Authoritative4XSessionTests : StarDriveTest
         empire.AutoFreighters = false;
         empire.AutoBuildResearchStations = false;
         empire.AutoBuildMiningStations = false;
+        empire.AutoMilitary = false;
         empire.RushAllConstruction = false;
         empire.SwitchRushAllConstruction(false);
         empire.data.CurrentAutoFreighter = "";
@@ -9824,6 +9854,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             empire.AutoBuildResearchStations, message);
         Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations),
             empire.AutoBuildMiningStations, message);
+        Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoMilitary),
+            empire.AutoMilitary, message);
         Assert.AreEqual(flags.HasFlag(AuthoritativeEmpireAutomationFlags.RushAllConstruction),
             empire.RushAllConstruction, message);
         Assert.AreEqual(freighter, empire.data.CurrentAutoFreighter ?? "", message);
