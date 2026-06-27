@@ -188,6 +188,19 @@ public partial class UniverseScreen
     void UpdateAuthoritative4XMultiplayer()
     {
         Authoritative4XLive?.Poll();
+        if (Authoritative4XLive != null
+            && Authoritative4XLive.TryRecoverClientFromReceivedSave(out UniverseScreen recoveredUniverse,
+                out string recoveryError))
+        {
+            ScreenManager?.GoToScreen(recoveredUniverse, clear3DObjects: true);
+            return;
+        }
+        if (Authoritative4XLive != null
+            && Authoritative4XLive.TryRecoverHostFromLastSentSave(out recoveredUniverse, out recoveryError))
+        {
+            ScreenManager?.GoToScreen(recoveredUniverse, clear3DObjects: true);
+            return;
+        }
         ShowAuthoritativeDiplomacyPopupIfNeeded();
     }
 

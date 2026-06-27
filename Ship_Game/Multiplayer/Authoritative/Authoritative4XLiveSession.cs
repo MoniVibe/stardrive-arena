@@ -36,6 +36,10 @@ public sealed class Authoritative4XLiveSession : IDisposable
     string LastTelemetryResultKey = "";
     string LastTelemetryError = "";
     string LastTelemetryRawDriftKey = "";
+    string LastTelemetrySyncMismatchKey = "";
+    FileInfo LastSentSessionSave;
+    FileInfo PendingHostRecoverySave;
+    string PendingHostRecoveryReason = "";
     bool Disposed;
 
     public readonly Authoritative4XLiveRole Role;
@@ -54,6 +58,11 @@ public sealed class Authoritative4XLiveSession : IDisposable
     public AuthoritativeStateSnapshot LastSnapshot => Role == Authoritative4XLiveRole.Host
         ? Host?.LastAuthoritySnapshot
         : Client?.LastClientSnapshot;
+    public Authoritative4XSyncMismatchException LastSyncMismatch => Role == Authoritative4XLiveRole.Client
+        ? Client?.LastSyncMismatch
+        : null;
+    public bool IsWaitingForResync => Role == Authoritative4XLiveRole.Client
+                                      && Client?.IsWaitingForResync == true;
 
     public string TelemetrySessionPath => Telemetry?.SessionPath ?? "";
     public string TelemetrySessionId => LiveSessionId;
@@ -66,7 +75,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
         int localPeerId, int localEmpireId, Authoritative4XNetworkHost host,
         Authoritative4XNetworkClient client, IReadOnlyDictionary<int, int> empireByPeer,
         int[] humanEmpireIds, string sessionId = "", string startFingerprint = "",
-        string startSummary = "")
+        string startSummary = "", int firstUiSequence = 1)
     {
         Universe = universe ?? throw new ArgumentNullException(nameof(universe));
         Role = role;
@@ -80,7 +89,8 @@ public sealed class Authoritative4XLiveSession : IDisposable
         LiveStartFingerprint = startFingerprint ?? "";
         Telemetry = Authoritative4XLiveTelemetry.Start(role, localPeerId, localEmpireId,
             empireByPeer, humanEmpireIds, LiveSessionId, LiveStartFingerprint, startSummary);
-        UiContext = Authoritative4XClientContext.Begin(localPeerId, localEmpireId, SubmitFromUi);
+        UiContext = Authoritative4XClientContext.Begin(localPeerId, localEmpireId, SubmitFromUi,
+            Math.Max(1, firstUiSequence));
     }
 
     public static Authoritative4XLiveSession HostGame(UniverseScreen universe,
@@ -100,14 +110,14 @@ public sealed class Authoritative4XLiveSession : IDisposable
     public static Authoritative4XLiveSession ClientGame(UniverseScreen universe,
         TcpLockstepTransport transport, int localPeerId, int localEmpireId, int[] humanEmpireIds,
         string sessionId = "", string startFingerprint = "", string startSummary = "",
-        IReadOnlyDictionary<int, int> empireByPeerForTelemetry = null)
+        IReadOnlyDictionary<int, int> empireByPeerForTelemetry = null, int firstUiSequence = 1)
     {
         var client = new Authoritative4XNetworkClient(universe, transport, localPeerId, humanEmpireIds);
         IReadOnlyDictionary<int, int> empireByPeer = empireByPeerForTelemetry
             ?? new Dictionary<int, int> { [localPeerId] = localEmpireId };
         return new Authoritative4XLiveSession(universe, Authoritative4XLiveRole.Client,
             localPeerId, localEmpireId, host: null, client, empireByPeer, humanEmpireIds,
-            sessionId, startFingerprint, startSummary);
+            sessionId, startFingerprint, startSummary, firstUiSequence);
     }
 
     public void Poll()
@@ -121,6 +131,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
             {
                 Host.Poll();
                 RecordNetworkError();
+                HandleResyncRequests();
                 RecordProcessedCommands();
                 SubmitHeartbeat();
                 RecordProcessedCommands();
@@ -131,6 +142,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
                 Client.Poll();
                 RecordNetworkError();
                 RecordLastResult();
+                RecordSyncMismatch();
                 RecordRawHashDrift();
                 EnqueuePopups(Client.DrainPopupsForClient());
             }
@@ -226,6 +238,104 @@ public sealed class Authoritative4XLiveSession : IDisposable
         }
     }
 
+    public bool TryRecoverClientFromReceivedSave(out UniverseScreen recoveredUniverse, out string error)
+    {
+        recoveredUniverse = null;
+        error = "";
+        if (Disposed)
+        {
+            error = "Authoritative session is disposed.";
+            return false;
+        }
+        if (Role != Authoritative4XLiveRole.Client)
+        {
+            error = "Only passive clients recover from authoritative save transfers.";
+            return false;
+        }
+
+        Authoritative4XReceivedSave[] receivedSaves = DrainReceivedSessionSaves();
+        if (receivedSaves.Length == 0)
+            return false;
+
+        Authoritative4XReceivedSave received = receivedSaves[^1];
+        try
+        {
+            Authoritative4XLoadedSession loaded = Authoritative4XSessionSave.Load(received.SaveFile);
+            IReadOnlyDictionary<int, int> empireByPeer = loaded.Metadata.ToPeerEmpireMap();
+            if (!empireByPeer.TryGetValue(LocalPeerId, out int localEmpireId))
+                throw new InvalidDataException(
+                    $"Received authoritative save does not map local peer {LocalPeerId} to an empire.");
+
+            string startSummary = $"resync reason='{received.Reason}' sha256={received.Sha256} "
+                                  + loaded.Metadata.Summary();
+            int nextSequence = Math.Max(1, (Client.LastResult?.Sequence ?? 0) + 1);
+            Authoritative4XLiveSession recovered = ClientGame(loaded.Universe,
+                Client.SharedTransport, LocalPeerId, localEmpireId, loaded.HumanEmpireIds,
+                loaded.Metadata.SessionId, loaded.Metadata.StartFingerprint, startSummary, empireByPeer,
+                nextSequence);
+            loaded.Universe.AttachAuthoritative4XMultiplayer(recovered);
+            Telemetry?.Event("RESYNC_RECOVERED",
+                $"file='{received.SaveFile.FullName}' sha256={received.Sha256} reason='{received.Reason}'");
+            DisposeRetainingTransportForRecovery();
+            recoveredUniverse = loaded.Universe;
+            return true;
+        }
+        catch (Exception e)
+        {
+            error = e.Message;
+            Telemetry?.Event("RESYNC_RECOVERY_ERROR", e.Message);
+            return false;
+        }
+    }
+
+    public bool TryRecoverHostFromLastSentSave(out UniverseScreen recoveredUniverse, out string error)
+    {
+        recoveredUniverse = null;
+        error = "";
+        if (Disposed)
+        {
+            error = "Authoritative session is disposed.";
+            return false;
+        }
+        if (Role != Authoritative4XLiveRole.Host)
+        {
+            error = "Only hosts recover from their own authoritative save image.";
+            return false;
+        }
+        if (PendingHostRecoverySave == null)
+            return false;
+
+        FileInfo save = PendingHostRecoverySave;
+        string reason = PendingHostRecoveryReason;
+        PendingHostRecoverySave = null;
+        PendingHostRecoveryReason = "";
+        try
+        {
+            Authoritative4XLoadedSession loaded = Authoritative4XSessionSave.Load(save);
+            IReadOnlyDictionary<int, int> empireByPeer = loaded.Metadata.ToPeerEmpireMap();
+            if (!empireByPeer.TryGetValue(LocalPeerId, out int localEmpireId))
+                throw new InvalidDataException(
+                    $"Reloaded authoritative save does not map host peer {LocalPeerId} to an empire.");
+
+            string startSummary = $"host-resync reason='{reason}' " + loaded.Metadata.Summary();
+            Authoritative4XLiveSession recovered = HostGame(loaded.Universe, Host.SharedTransport,
+                LocalPeerId, empireByPeer, loaded.HumanEmpireIds, loaded.Metadata.SessionId,
+                loaded.Metadata.StartFingerprint, startSummary);
+            loaded.Universe.AttachAuthoritative4XMultiplayer(recovered);
+            Telemetry?.Event("RESYNC_HOST_RECOVERED",
+                $"file='{save.FullName}' reason='{reason}'");
+            DisposeRetainingTransportForRecovery();
+            recoveredUniverse = loaded.Universe;
+            return true;
+        }
+        catch (Exception e)
+        {
+            error = e.Message;
+            Telemetry?.Event("RESYNC_HOST_RECOVERY_ERROR", e.Message);
+            return false;
+        }
+    }
+
     public bool TrySendSessionSaveToPeer(int peerId, FileInfo saveFile, out string error,
         string reason = "host-save-transfer")
     {
@@ -248,6 +358,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
             Authoritative4XSessionMetadata metadata = BuildMetadata();
             Authoritative4XSessionSave.Save(Universe, saveFile, metadata);
             Host.SendSaveTransfer(peerId, saveFile, metadata, reason);
+            LastSentSessionSave = saveFile;
             Telemetry?.Event("SAVE_TRANSFER_SENT",
                 $"peer={peerId} file='{saveFile.FullName}' bytes={saveFile.Length} reason='{reason}'");
             return true;
@@ -323,6 +434,29 @@ public sealed class Authoritative4XLiveSession : IDisposable
             Client.Submit(command);
     }
 
+    void HandleResyncRequests()
+    {
+        if (Role != Authoritative4XLiveRole.Host)
+            return;
+
+        foreach (AuthoritativeResyncRequestMessage request in Host.DrainResyncRequests())
+        {
+            string reason = $"resync tick={request.Tick} digest='{request.ClientDigest}' reason='{request.Reason ?? ""}'";
+            if (TrySendSessionSaveToPeer(request.FromPeer, saveFile: null, out string error, reason))
+            {
+                PendingHostRecoverySave = LastSentSessionSave;
+                PendingHostRecoveryReason = reason;
+                Telemetry?.Event("RESYNC_SAVE_SENT",
+                    $"peer={request.FromPeer} tick={request.Tick} digest='{request.ClientDigest}'");
+            }
+            else
+            {
+                Telemetry?.Event("RESYNC_SAVE_ERROR",
+                    $"peer={request.FromPeer} tick={request.Tick} error='{error}'");
+            }
+        }
+    }
+
     void SendControl(bool paused, float speed)
     {
         speed = ClampGameSpeed(speed);
@@ -393,6 +527,24 @@ public sealed class Authoritative4XLiveSession : IDisposable
         Telemetry?.RawHashDrift(drift);
     }
 
+    void RecordSyncMismatch()
+    {
+        if (Role != Authoritative4XLiveRole.Client)
+            return;
+        Authoritative4XSyncMismatchException mismatch = Client?.LastSyncMismatch;
+        if (mismatch == null)
+            return;
+
+        string key = $"{mismatch.Result?.OriginPeer}:{mismatch.Result?.Sequence}:"
+                     + $"{mismatch.ClientSnapshot?.Tick}:{mismatch.ClientSnapshot?.SyncDigest}:"
+                     + $"{mismatch.AuthoritySnapshot?.SyncDigest}";
+        if (string.Equals(key, LastTelemetrySyncMismatchKey, StringComparison.Ordinal))
+            return;
+
+        LastTelemetrySyncMismatchKey = key;
+        Telemetry?.SyncMismatch(mismatch);
+    }
+
     void RecordProcessedCommands(bool force = false)
     {
         if (Role != Authoritative4XLiveRole.Host)
@@ -423,15 +575,22 @@ public sealed class Authoritative4XLiveSession : IDisposable
         }
     }
 
-    public void Dispose()
+    void Dispose(bool disposeNetwork)
     {
         if (Disposed)
             return;
         Disposed = true;
         Telemetry?.Event("DISPOSE", $"role={Role} peer={LocalPeerId}");
         UiContext?.Dispose();
-        Host?.Dispose();
-        Client?.Dispose();
+        if (disposeNetwork)
+        {
+            Host?.Dispose();
+            Client?.Dispose();
+        }
         Telemetry?.Dispose();
     }
+
+    void DisposeRetainingTransportForRecovery() => Dispose(disposeNetwork: false);
+
+    public void Dispose() => Dispose(disposeNetwork: true);
 }

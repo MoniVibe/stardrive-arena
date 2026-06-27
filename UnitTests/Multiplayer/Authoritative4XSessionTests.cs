@@ -7450,18 +7450,14 @@ public class Authoritative4XSessionTests : StarDriveTest
             DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
             while (mismatch == null && DateTime.UtcNow < deadline)
             {
-                try
-                {
-                    liveClient.Poll();
-                }
-                catch (Authoritative4XSyncMismatchException e)
-                {
-                    mismatch = e;
-                }
+                liveClient.Poll();
+                mismatch = liveClient.LastSyncMismatch;
                 System.Threading.Thread.Sleep(5);
             }
 
             Assert.IsNotNull(mismatch, "The deliberately perturbed client replica should report a sync mismatch.");
+            Assert.IsTrue(liveClient.IsWaitingForResync,
+                "A mismatching client should stop applying live traffic until it receives an authoritative save.");
             Assert.AreEqual(1, mismatch.Result.Sequence);
             Assert.AreEqual(AuthoritativePlayerCommandKind.SetColonyType, mismatch.Command.Kind);
             StringAssert.Contains(mismatch.Message, "firstDiff",
@@ -7519,6 +7515,153 @@ public class Authoritative4XSessionTests : StarDriveTest
             authority.Screen.Dispose();
             client.Screen.Dispose();
             try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XLiveClient_RecoversFromHostSaveAfterSyncMismatch_Headless()
+    {
+        const ulong Seed = 0x41E4005BUL;
+        const int HostPeer = 2;
+        const int JoinPeer = 3;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+        UniverseScreen recoveredHostUniverse = null;
+        UniverseScreen recoveredUniverse = null;
+        Authoritative4XLiveSession recoveredHostLive = null;
+        Authoritative4XLiveSession recoveredLive = null;
+
+        try
+        {
+            int port = FreeTcpPort();
+            TcpLockstepTransport hostTransport = TcpLockstepTransport.Host(port, JoinPeer);
+            TcpLockstepTransport clientTransport = TcpLockstepTransport.Join("127.0.0.1", port,
+                Authoritative4XNetworkHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(3)),
+                "Authoritative live resync proof did not connect to the loopback host.");
+
+            var hostPeerMap = new Dictionary<int, int>
+            {
+                [HostPeer] = authority.Player.Id,
+                [JoinPeer] = authority.Enemy.Id,
+            };
+            var clientPeerMap = new Dictionary<int, int>
+            {
+                [HostPeer] = client.Player.Id,
+                [JoinPeer] = client.Enemy.Id,
+            };
+            int[] authorityHumans = { authority.Player.Id, authority.Enemy.Id };
+            int[] clientHumans = { client.Player.Id, client.Enemy.Id };
+
+            authority.UState.Paused = true;
+            client.UState.Paused = true;
+            Authoritative4XLiveSession liveHost = Authoritative4XLiveSession.HostGame(authority.Screen,
+                hostTransport, HostPeer, hostPeerMap, authorityHumans,
+                "resync-recovery-test", "0xRESYNCRECOVERY", "resync recovery proof");
+            authority.Screen.AttachAuthoritative4XMultiplayer(liveHost);
+            Authoritative4XLiveSession liveClient = Authoritative4XLiveSession.ClientGame(client.Screen,
+                clientTransport, JoinPeer, client.Enemy.Id, clientHumans,
+                "resync-recovery-test", "0xRESYNCRECOVERY", "resync recovery proof", clientPeerMap);
+            client.Screen.AttachAuthoritative4XMultiplayer(liveClient);
+
+            Planet clientJoinPlanet = client.UState.GetPlanet(authority.EnemyPlanet.Id);
+            Planet authorityJoinPlanet = authority.UState.GetPlanet(clientJoinPlanet.Id);
+            Assert.IsNotNull(clientJoinPlanet);
+            Assert.IsNotNull(authorityJoinPlanet);
+
+            Planet.ColonyType firstType = clientJoinPlanet.CType == Planet.ColonyType.Research
+                ? Planet.ColonyType.Military
+                : Planet.ColonyType.Research;
+            Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetColonyType(clientJoinPlanet, firstType),
+                "The live join client should submit an ordinary command before the forced mismatch.");
+            PumpLiveTcpUntil(() => NetworkClientCaughtUp(liveClient, JoinPeer, 1), liveHost, liveClient);
+            Assert.IsTrue(liveClient.LastResult.Accepted, liveClient.LastResult.Reason);
+            Assert.AreEqual(firstType, authorityJoinPlanet.CType);
+            Assert.AreEqual(firstType, clientJoinPlanet.CType);
+
+            clientJoinPlanet.SetPrioritizedPort(!authorityJoinPlanet.PrioritizedPort);
+            Planet.ColonyType mismatchCommandType = firstType == Planet.ColonyType.Core
+                ? Planet.ColonyType.Industrial
+                : Planet.ColonyType.Core;
+            Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetColonyType(clientJoinPlanet, mismatchCommandType),
+                "The live join client should submit a second command that exposes the forced mismatch.");
+
+            Authoritative4XLiveSession currentHost = liveHost;
+            DateTime mismatchDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (!liveClient.IsWaitingForResync && DateTime.UtcNow < mismatchDeadline)
+            {
+                currentHost.Poll();
+                liveClient.Poll();
+                System.Threading.Thread.Sleep(5);
+            }
+            Assert.IsTrue(liveClient.IsWaitingForResync,
+                "A mismatching live client should hold further command application until the host save arrives.");
+            Assert.IsNotNull(liveClient.LastSyncMismatch);
+            Assert.AreEqual(2, liveClient.LastSyncMismatch.Result.Sequence);
+
+            string recoveryError = "";
+            DateTime recoveryDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while ((recoveredHostUniverse == null || recoveredUniverse == null) && DateTime.UtcNow < recoveryDeadline)
+            {
+                currentHost.Poll();
+                liveClient.Poll();
+                if (recoveredHostUniverse == null
+                    && currentHost.TryRecoverHostFromLastSentSave(out recoveredHostUniverse,
+                        out recoveryError))
+                {
+                    recoveredHostLive = recoveredHostUniverse.Authoritative4XMultiplayer;
+                    currentHost = recoveredHostLive;
+                    authorityJoinPlanet = recoveredHostUniverse.UState.GetPlanet(authority.EnemyPlanet.Id);
+                }
+                if (recoveredUniverse == null)
+                    liveClient.TryRecoverClientFromReceivedSave(out recoveredUniverse, out recoveryError);
+                System.Threading.Thread.Sleep(5);
+            }
+            Assert.IsNotNull(recoveredHostUniverse,
+                $"The host should also adopt the authoritative save image it sent. error='{recoveryError}'");
+            Assert.IsNotNull(recoveredHostLive,
+                "The recovered host universe should be reattached to a live authoritative host session.");
+            Assert.IsNotNull(recoveredUniverse,
+                $"The client should rebuild its live universe from the authoritative host save. error='{recoveryError}'");
+            recoveredLive = recoveredUniverse.Authoritative4XMultiplayer;
+            Assert.IsNotNull(recoveredLive,
+                "The recovered universe should be reattached to a live authoritative client session.");
+            Assert.IsFalse(recoveredLive.IsWaitingForResync,
+                "The recovered client session should resume normal traffic after loading the host save.");
+            Assert.AreSame(recoveredUniverse.UState.GetEmpire(authority.Enemy.Id),
+                recoveredUniverse.Authoritative4XLocalPlayerForUi,
+                "The recovered client should keep the join peer's local empire assignment.");
+
+            AuthoritativeStateSnapshot recoveredHostSnapshot =
+                AuthoritativeStateSnapshot.Capture(recoveredHostUniverse, 0);
+            AuthoritativeStateSnapshot recoveredClientSnapshot =
+                AuthoritativeStateSnapshot.Capture(recoveredUniverse, 0);
+            Assert.AreEqual(recoveredHostSnapshot.SyncDigest, recoveredClientSnapshot.SyncDigest,
+                "Both peers should continue from the same save/load-normalized authoritative state: "
+                + FirstPayloadDifferenceForTest(recoveredHostSnapshot.Payload, recoveredClientSnapshot.Payload));
+
+            Planet recoveredJoinPlanet = recoveredUniverse.UState.GetPlanet(authority.EnemyPlanet.Id);
+            Planet.ColonyType postRecoveryType = recoveredJoinPlanet.CType == Planet.ColonyType.Research
+                ? Planet.ColonyType.Military
+                : Planet.ColonyType.Research;
+            Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetColonyType(recoveredJoinPlanet,
+                    postRecoveryType),
+                "The rebuilt client UI context should keep submitting commands over the reused TCP transport.");
+            PumpLiveTcpUntil(() => NetworkClientCaughtUp(recoveredLive, JoinPeer, 3),
+                recoveredHostLive, recoveredLive);
+            Assert.IsTrue(recoveredLive.LastResult.Accepted, recoveredLive.LastResult.Reason);
+            Assert.AreEqual(3, recoveredLive.LastResult.Sequence,
+                "Save-based recovery should resume client command numbering instead of reusing old sequence ids.");
+            Assert.AreEqual(postRecoveryType, authorityJoinPlanet.CType);
+            Assert.AreEqual(postRecoveryType, recoveredJoinPlanet.CType);
+            Assert.AreEqual(recoveredHostLive.LastSnapshot.SyncDigest, recoveredLive.LastSnapshot.SyncDigest);
+        }
+        finally
+        {
+            recoveredUniverse?.Dispose();
+            recoveredHostUniverse?.Dispose();
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
         }
     }
 
