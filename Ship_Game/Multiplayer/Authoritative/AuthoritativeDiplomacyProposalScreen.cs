@@ -1,4 +1,5 @@
 using Microsoft.Xna.Framework.Graphics;
+using System.Linq;
 using SDGraphics;
 using Ship_Game.Audio;
 using Color = Microsoft.Xna.Framework.Color;
@@ -17,6 +18,7 @@ public sealed class AuthoritativeDiplomacyProposalScreen : GameScreen
     public const string PeaceButtonName = "auth_diplomacy_propose_peace";
     public const string AllianceButtonName = "auth_diplomacy_propose_alliance";
     public const string TradeButtonName = "auth_diplomacy_propose_trade";
+    public const string TechTradeButtonName = "auth_diplomacy_propose_tech_trade";
     public const string NonAggressionButtonName = "auth_diplomacy_propose_nap";
     public const string BackButtonName = "auth_diplomacy_propose_back";
 
@@ -58,6 +60,8 @@ public sealed class AuthoritativeDiplomacyProposalScreen : GameScreen
             AuthoritativeDiplomacyProposalType.Peace);
         AddProposalButton(x + 190, y + 56, "DECLARE WAR", DeclareWarButtonName,
             AuthoritativeDiplomacyProposalType.DeclareWar);
+        AddProposalButton(x + 380, y + 56, "TECH TRADE", TechTradeButtonName,
+            AuthoritativeDiplomacyProposalType.TechnologyTrade);
 
         Status = Add(new UILabel(new Vector2(PanelRect.X + 24, PanelRect.Bottom - 88),
             "", Fonts.Arial12Bold, Color.LightGray)
@@ -89,8 +93,18 @@ public sealed class AuthoritativeDiplomacyProposalScreen : GameScreen
 
     void Submit(AuthoritativeDiplomacyProposalType type)
     {
+        string terms = type == AuthoritativeDiplomacyProposalType.TechnologyTrade
+            ? FirstOfferableTechnologyUid()
+            : type.ToString();
+        if (type == AuthoritativeDiplomacyProposalType.TechnologyTrade && terms.IsEmpty())
+        {
+            StatusText = "No tradable technology.";
+            GameAudio.NegativeClick();
+            return;
+        }
+
         Authoritative4XUiCommandResult result =
-            Authoritative4XClientContext.TrySubmitDiplomacyProposal(Target, type, type.ToString());
+            Authoritative4XClientContext.TrySubmitDiplomacyProposal(Target, type, terms);
         if (result == Authoritative4XUiCommandResult.Submitted)
         {
             GameAudio.AffirmativeClick();
@@ -101,5 +115,19 @@ public sealed class AuthoritativeDiplomacyProposalScreen : GameScreen
             StatusText = "Proposal blocked.";
             GameAudio.NegativeClick();
         }
+    }
+
+    string FirstOfferableTechnologyUid()
+    {
+        Empire proposer = Universe.Player;
+        if (proposer == null || Target == null)
+            return "";
+
+        return proposer.TechsAvailableForTrade()
+                   .Where(t => t.TheyCanUseThis(proposer, Target))
+                   .OrderBy(t => t.TechCost)
+                   .ThenBy(t => t.UID, System.StringComparer.Ordinal)
+                   .FirstOrDefault()?.UID
+               ?? "";
     }
 }

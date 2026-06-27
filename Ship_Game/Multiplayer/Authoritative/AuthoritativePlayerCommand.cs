@@ -98,6 +98,7 @@ public enum AuthoritativeDiplomacyProposalType : byte
     Peace = 3,
     TradeDeal = 4,
     NonAggression = 5,
+    TechnologyTrade = 6,
 }
 
 public enum AuthoritativeDiplomacyResponseKind : byte

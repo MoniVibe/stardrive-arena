@@ -11,12 +11,16 @@ using System.Threading;
 using SDLockstep;
 using SDUtils.Deterministic;
 using Ship_Game;
+using Ship_Game.AI;
+using Ship_Game.Commands.Goals;
 using Ship_Game.Data;
 using Ship_Game.Determinism;
 using Ship_Game.Gameplay;
 using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
+using Ship_Game.Universe.SolarBodies;
 using SynapseGaming.LightingSystem.Core;
+using Vector2 = SDGraphics.Vector2;
 
 namespace StarDrive.Tools.Authoritative4XProbe;
 
@@ -585,16 +589,20 @@ static class AuthoritativeProbeRunner
 
             ProbeCommandPlan plan = ProbeCommandPlan.Create(generated, flow.HostPeerId, flow.JoinPeerId);
             log.Line(plan.Describe());
+            var pendingPopups = new List<AuthoritativeDiplomacyPopup>();
 
             for (int seq = 1; seq <= options.Turns; ++seq)
             {
-                AuthoritativePlayerCommand command = plan.JoinCommand(seq);
+                AuthoritativePlayerCommand command = plan.RequiresTechnologyTradeResponse(seq)
+                    ? WaitForTechnologyTradeAndBuildResponse(client, plan, pendingPopups, log, options, seq)
+                    : plan.JoinCommand(seq);
                 client.Submit(command);
                 int expected = seq;
                 bool sawExpected = false;
                 PumpUntil(() =>
                 {
                     client.Poll();
+                    pendingPopups.AddRange(client.DrainPopupsForClient());
                     foreach (Authoritative4XProcessedCommand processed in client.DrainProcessedCommands())
                     {
                         string peerName = processed.PeerId == flow.HostPeerId ? "host" : "join";
@@ -678,6 +686,25 @@ static class AuthoritativeProbeRunner
             generated?.Dispose();
             transport?.Dispose();
         }
+    }
+
+    static AuthoritativePlayerCommand WaitForTechnologyTradeAndBuildResponse(Authoritative4XNetworkClient client,
+        ProbeCommandPlan plan, List<AuthoritativeDiplomacyPopup> pendingPopups, ProbeLog log,
+        AuthoritativeProbeOptions options, int sequence)
+    {
+        AuthoritativeDiplomacyPopup? offer = null;
+        PumpUntil(() =>
+        {
+            client.Poll();
+            pendingPopups.AddRange(client.DrainPopupsForClient());
+            offer = pendingPopups.LastOrDefault(p =>
+                p.ProposalType == AuthoritativeDiplomacyProposalType.TechnologyTrade
+                && p.RequiresResponse);
+            return offer != null;
+        }, static () => { }, options, $"technology trade popup seq={sequence}");
+
+        log.Line($"popup peer=join seq={sequence} type={offer!.ProposalType} proposal={offer.ProposalId} terms='{offer.Terms}'");
+        return plan.JoinTechnologyTradeResponse(sequence, offer);
     }
 
     static Authoritative4XGameSettings BuildSettings(AuthoritativeProbeOptions options)
@@ -770,12 +797,16 @@ static class AuthoritativeProbeRunner
 
 sealed class ProbeCommandPlan
 {
-    public const int RequiredTurns = 16;
+    public const int RequiredTurns = 18;
 
     readonly int HostEmpireId;
     readonly int JoinEmpireId;
     readonly int HostPlanetId;
     readonly int JoinPlanetId;
+    readonly int HostColonyShipId;
+    readonly int JoinColonyShipId;
+    readonly int HostColonizePlanetId;
+    readonly int JoinColonizePlanetId;
     readonly float HostManualCivilianBudget;
     readonly float JoinManualCivilianBudget;
     readonly float HostTaxRate;
@@ -796,10 +827,12 @@ sealed class ProbeCommandPlan
     readonly string JoinDesign64;
     readonly string HostResearchUid;
     readonly string JoinResearchUid;
+    readonly string HostTechTradeUid;
     readonly LaborSplit HostLabor;
     readonly LaborSplit JoinLabor;
 
     ProbeCommandPlan(int hostEmpireId, int joinEmpireId, int hostPlanetId, int joinPlanetId,
+        int hostColonyShipId, int joinColonyShipId, int hostColonizePlanetId, int joinColonizePlanetId,
         float hostManualCivilianBudget, float joinManualCivilianBudget,
         float hostTaxRate, float hostTreasuryGoal, float joinTaxRate, float joinTreasuryGoal,
         AuthoritativePlanetGovernorOptions hostGovernorOptions,
@@ -810,12 +843,17 @@ sealed class ProbeCommandPlan
         string hostDesignName, string joinDesignName,
         string hostDesign64, string joinDesign64,
         string hostResearchUid, string joinResearchUid,
+        string hostTechTradeUid,
         LaborSplit hostLabor, LaborSplit joinLabor)
     {
         HostEmpireId = hostEmpireId;
         JoinEmpireId = joinEmpireId;
         HostPlanetId = hostPlanetId;
         JoinPlanetId = joinPlanetId;
+        HostColonyShipId = hostColonyShipId;
+        JoinColonyShipId = joinColonyShipId;
+        HostColonizePlanetId = hostColonizePlanetId;
+        JoinColonizePlanetId = joinColonizePlanetId;
         HostManualCivilianBudget = hostManualCivilianBudget;
         JoinManualCivilianBudget = joinManualCivilianBudget;
         HostTaxRate = hostTaxRate;
@@ -836,6 +874,7 @@ sealed class ProbeCommandPlan
         JoinDesign64 = joinDesign64;
         HostResearchUid = hostResearchUid;
         JoinResearchUid = joinResearchUid;
+        HostTechTradeUid = hostTechTradeUid;
         HostLabor = hostLabor;
         JoinLabor = joinLabor;
     }
@@ -859,8 +898,16 @@ sealed class ProbeCommandPlan
         ShipDesign joinDesign = BuildLegalPlayerDesign(joinEmpire, joinDesignName);
         LaborSplit hostLabor = LaborFor(hostPlanet, 0.20f, 0.50f, 0.30f);
         LaborSplit joinLabor = LaborFor(joinPlanet, 0.25f, 0.45f, 0.30f);
+        (int hostColonizePlanetId, int joinColonizePlanetId) = PickColonizationTargets(generated,
+            hostPlanet.Id, joinPlanet.Id);
+        Ship? hostColony = EnsureProbeColonyShip(generated, hostEmpire, hostPlanet, hostColonizePlanetId);
+        Ship? joinColony = EnsureProbeColonyShip(generated, joinEmpire, joinPlanet, joinColonizePlanetId);
 
         return new ProbeCommandPlan(hostEmpireId, joinEmpireId, hostPlanet.Id, joinPlanet.Id,
+            hostColonyShipId: hostColony?.Id ?? 0,
+            joinColonyShipId: joinColony?.Id ?? 0,
+            hostColonizePlanetId: hostColony != null ? hostColonizePlanetId : 0,
+            joinColonizePlanetId: joinColony != null ? joinColonizePlanetId : 0,
             hostManualCivilianBudget: 12.5f,
             joinManualCivilianBudget: 17.25f,
             hostTaxRate: 0.17f,
@@ -884,6 +931,7 @@ sealed class ProbeCommandPlan
             joinDesign64: joinDesign.GetBase64DesignString(),
             hostResearchUid: PickResearchUid(hostEmpire),
             joinResearchUid: PickResearchUid(joinEmpire),
+            hostTechTradeUid: PrepareTechnologyTrade(hostEmpire, joinEmpire),
             hostLabor: hostLabor,
             joinLabor: joinLabor);
     }
@@ -903,6 +951,8 @@ sealed class ProbeCommandPlan
         string design64 = hostSide ? HostDesign64 : JoinDesign64;
         string researchUid = hostSide ? HostResearchUid : JoinResearchUid;
         LaborSplit labor = hostSide ? HostLabor : JoinLabor;
+        int colonyShipId = hostSide ? HostColonyShipId : JoinColonyShipId;
+        int colonizePlanetId = hostSide ? HostColonizePlanetId : JoinColonizePlanetId;
 
         if (sequence > RequiredTurns)
             return LateControlCommand(sequence, hostSide);
@@ -951,9 +1001,25 @@ sealed class ProbeCommandPlan
                 BasePlanetName(hostSide)),
             16 => AuthoritativePlayerCommand.SetPlanetManualBudget(sequence, empireId, planetId,
                 AuthoritativePlanetBudgetKind.GroundDefense, hostSide ? 3.75f : 4.25f),
+            17 => colonyShipId != 0 && colonizePlanetId != 0
+                ? AuthoritativePlayerCommand.ShipPlanetOrder(sequence, empireId, colonyShipId,
+                    colonizePlanetId, AuthoritativeShipPlanetOrderType.Colonize,
+                    clearOrders: true, MoveOrder.Regular)
+                : AuthoritativePlayerCommand.NoOp(sequence, empireId),
+            18 => hostSide && !string.IsNullOrEmpty(HostTechTradeUid)
+                ? AuthoritativePlayerCommand.DiplomacyProposal(sequence, HostEmpireId, JoinEmpireId,
+                    AuthoritativeDiplomacyProposalType.TechnologyTrade, HostTechTradeUid)
+                : AuthoritativePlayerCommand.NoOp(sequence, empireId),
             _ => AuthoritativePlayerCommand.NoOp(sequence, empireId),
         };
     }
+
+    public bool RequiresTechnologyTradeResponse(int sequence)
+        => sequence == 18 && !string.IsNullOrEmpty(HostTechTradeUid);
+
+    public AuthoritativePlayerCommand JoinTechnologyTradeResponse(int sequence, AuthoritativeDiplomacyPopup popup)
+        => AuthoritativePlayerCommand.DiplomacyResponse(sequence, JoinEmpireId,
+            popup.ProposalId, AuthoritativeDiplomacyResponseKind.Accept);
 
     AuthoritativePlayerCommand LateControlCommand(int sequence, bool hostSide)
     {
@@ -980,9 +1046,10 @@ sealed class ProbeCommandPlan
         => "script "
            + $"host empire={HostEmpireId} planet={HostPlanetId} building='{HostBuildingName}' design='{HostDesignName}'; "
            + $"join empire={JoinEmpireId} planet={JoinPlanetId} building='{JoinBuildingName}' design='{JoinDesignName}'; "
-           + $"research='{HostResearchUid}|{JoinResearchUid}'; "
+           + $"research='{HostResearchUid}|{JoinResearchUid}' techTrade='{HostTechTradeUid}'; "
+           + $"colonize='{HostColonyShipId}->{HostColonizePlanetId}|{JoinColonyShipId}->{JoinColonizePlanetId}'; "
            + "seqs=automation,budget,tax,governor,trade,defense,building,design,ship-build,diplomacy,"
-           + "colony-type,labor,research,goods,rename,ground-defense,late-control-pulses";
+           + "colony-type,labor,research,goods,rename,ground-defense,colonize,tech-trade,late-control-pulses";
 
     public static bool IsLateControlPulse(int sequence)
         => sequence > RequiredTurns && sequence % 100 is 0 or 25 or 50 or 75;
@@ -1028,6 +1095,23 @@ sealed class ProbeCommandPlan
         RequireCommandAccepted(log, label, "join", 13, AuthoritativePlayerCommandKind.QueueResearch);
         RequireCommandAccepted(log, label, "join", 14, AuthoritativePlayerCommandKind.SetPlanetGoodsState);
         RequireCommandAccepted(log, label, "join", 15, AuthoritativePlayerCommandKind.RenamePlanet);
+        if (HasColonizationScript(hostSide: true))
+        {
+            RequireCommandAccepted(log, label, "host", 17, AuthoritativePlayerCommandKind.ShipPlanetOrder);
+            RequireColonizationGoal(label, "host", host, HostColonyShipId, HostColonizePlanetId);
+        }
+        if (HasColonizationScript(hostSide: false))
+        {
+            RequireCommandAccepted(log, label, "join", 17, AuthoritativePlayerCommandKind.ShipPlanetOrder);
+            RequireColonizationGoal(label, "join", join, JoinColonyShipId, JoinColonizePlanetId);
+        }
+        if (!string.IsNullOrEmpty(HostTechTradeUid))
+        {
+            RequireCommandAccepted(log, label, "host", 18, AuthoritativePlayerCommandKind.DiplomacyProposal);
+            RequireCommandAccepted(log, label, "join", 18, AuthoritativePlayerCommandKind.DiplomacyResponse);
+            if (!join.HasUnlocked(HostTechTradeUid))
+                throw new InvalidOperationException($"{label}: join empire did not receive traded technology '{HostTechTradeUid}'.");
+        }
         RequireLateControlCommands(log, label, turns);
         if (!string.IsNullOrEmpty(HostBuildingName))
             RequireQueuedBuilding(label, "host", hostPlanet, HostBuildingName);
@@ -1049,6 +1133,14 @@ sealed class ProbeCommandPlan
         log.Line($"assert {label} category=defense host='{HostDefense}' join='{JoinDefense}'");
         log.Line($"assert {label} category=colony hostType={hostPlanet.CType} joinType={joinPlanet.CType} hostName='{hostPlanet.Name}' joinName='{joinPlanet.Name}'");
         log.Line($"assert {label} category=research host='{HostResearchUid}' join='{JoinResearchUid}' hostQueue={host.data.ResearchQueue.Count} joinQueue={join.data.ResearchQueue.Count}");
+        if (HasColonizationScript(hostSide: true) || HasColonizationScript(hostSide: false))
+            log.Line($"assert {label} category=colonization host={HostColonyShipId}->{HostColonizePlanetId} join={JoinColonyShipId}->{JoinColonizePlanetId}");
+        else
+            log.Line($"assert {label} category=optional-colonization-unavailable reason='generated start lacked colony ship or neutral habitable target'");
+        if (!string.IsNullOrEmpty(HostTechTradeUid))
+            log.Line($"assert {label} category=tech-trade hostOffered='{HostTechTradeUid}' joinUnlocked=True");
+        else
+            log.Line($"assert {label} category=optional-tech-trade-unavailable reason='no legal host-to-join trade tech'");
         log.Line($"assert {label} category=command-stream colonyLabor=True research=True goods=True rename=True");
         log.Line($"assert {label} category=late-control turns={turns} joinBudget={joinPlanet.ManualCivilianBudget:0.###} joinTax={join.data.TaxRate:0.###} joinName='{joinPlanet.Name}'");
         if (!string.IsNullOrEmpty(HostBuildingName) || !string.IsNullOrEmpty(JoinBuildingName))
@@ -1093,6 +1185,11 @@ sealed class ProbeCommandPlan
                && join!.CanBuildShip(JoinDesignName)
                && ContainsQueuedShip(hostPlanet, HostDesignName)
                && ContainsQueuedShip(joinPlanet, JoinDesignName)
+               && (!HasColonizationScript(hostSide: true)
+                   || HasColonizationGoal(host, HostColonyShipId, HostColonizePlanetId))
+               && (!HasColonizationScript(hostSide: false)
+                   || HasColonizationGoal(join, JoinColonyShipId, JoinColonizePlanetId))
+               && (string.IsNullOrEmpty(HostTechTradeUid) || join.HasUnlocked(HostTechTradeUid))
                && join.IsAtWarWith(host)
                && host.IsAtWarWith(join);
     }
@@ -1247,6 +1344,121 @@ sealed class ProbeCommandPlan
         return empire?.GetPlanets().OrderBy(p => p.Id).FirstOrDefault()
                ?? throw new InvalidOperationException($"Empire {empireId} has no planets.");
     }
+
+    static Ship? PickColonyShip(Empire empire)
+        => empire.OwnedShips
+            .Where(s => s.Active && s.ShipData.IsColonyShip && !s.IsPlatformOrStation)
+            .OrderBy(s => s.Id)
+            .FirstOrDefault();
+
+    static Ship? EnsureProbeColonyShip(Authoritative4XGeneratedGameStart generated, Empire empire,
+        Planet homePlanet, int targetPlanetId)
+    {
+        if (targetPlanetId == 0)
+            return null;
+
+        Ship? existing = PickColonyShip(empire);
+        if (existing != null)
+            return existing;
+
+        IShipDesign? design = empire.ShipsWeCanBuildSnapshot
+            .Where(s => s.IsColonyShip && !s.IsPlatformOrStation && !s.IsShipyard)
+            .OrderBy(s => s.BaseCost)
+            .ThenBy(s => s.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        if (design == null)
+            return null;
+
+        Vector2 spawn = homePlanet.Position + new Vector2(12_000f + empire.Id * 1_000f, 4_000f);
+        Ship? ship = Ship.CreateShipAtPoint(generated.AuthorityUniverse.UState, design.Name, empire, spawn);
+        generated.AuthorityUniverse.UState.Objects.UpdateLists(removeInactiveObjects: false);
+        return ship;
+    }
+
+    static (int HostTargetId, int JoinTargetId) PickColonizationTargets(
+        Authoritative4XGeneratedGameStart generated, int hostHomePlanetId, int joinHomePlanetId)
+    {
+        List<Planet> candidates = generated.AuthorityUniverse.UState.Systems
+            .SelectMany(s => s.PlanetList)
+            .Where(p => p.Habitable && p.Owner == null)
+            .Where(p => p.Id != hostHomePlanetId && p.Id != joinHomePlanetId)
+            .OrderBy(p => p.Id)
+            .ToList();
+        if (candidates.Count < 2)
+        {
+            foreach (Planet fallback in generated.AuthorityUniverse.UState.Systems
+                         .SelectMany(s => s.PlanetList)
+                         .Where(p => p.Owner == null)
+                         .Where(p => p.Id != hostHomePlanetId && p.Id != joinHomePlanetId)
+                         .Where(p => candidates.All(c => c.Id != p.Id))
+                         .OrderBy(p => p.Id))
+            {
+                MakeProbeHabitable(fallback);
+                candidates.Add(fallback);
+                if (candidates.Count >= 2)
+                    break;
+            }
+        }
+
+        return candidates.Count switch
+        {
+            0 => (0, 0),
+            1 => (candidates[0].Id, 0),
+            _ => (candidates[0].Id, candidates[1].Id),
+        };
+    }
+
+    static void MakeProbeHabitable(Planet planet)
+    {
+        PlanetType[] habitableTypes = ResourceManager.Planets.Types
+            .Where(t => t.Habitable)
+            .OrderBy(t => t.Id)
+            .ToArray();
+        if (habitableTypes.Length == 0)
+            return;
+
+        planet.PType = habitableTypes[0];
+        PlanetGridSquare? tile = planet.TilesList.OrderBy(t => t.X).ThenBy(t => t.Y).FirstOrDefault();
+        tile?.SetHabitable(true);
+        planet.UpdateMaxPopulation();
+        planet.UpdateIncomes();
+    }
+
+    static string PrepareTechnologyTrade(Empire hostEmpire, Empire joinEmpire)
+    {
+        string techUid = hostEmpire.TechEntries
+                             .Where(t => t.Discovered && t.CanBeResearched && !t.IsMultiLevel)
+                             .Where(t => joinEmpire.TryGetTechEntry(t.UID, out TechEntry targetTech)
+                                         && !targetTech.Unlocked
+                                         && t.TheyCanUseThis(hostEmpire, joinEmpire))
+                             .OrderBy(t => t.TechCost)
+                             .ThenBy(t => t.UID, StringComparer.Ordinal)
+                             .Select(t => t.UID)
+                             .FirstOrDefault()
+                         ?? "";
+        if (string.IsNullOrEmpty(techUid))
+            return "";
+
+        hostEmpire.UnlockTech(techUid, TechUnlockType.Normal);
+        return techUid;
+    }
+
+    bool HasColonizationScript(bool hostSide)
+        => hostSide
+            ? HostColonyShipId != 0 && HostColonizePlanetId != 0
+            : JoinColonyShipId != 0 && JoinColonizePlanetId != 0;
+
+    static void RequireColonizationGoal(string label, string side, Empire empire, int shipId, int planetId)
+    {
+        if (!HasColonizationGoal(empire, shipId, planetId))
+            throw new InvalidOperationException($"{label}: {side} colonization order did not create MarkForColonization ship={shipId} planet={planetId}.");
+    }
+
+    static bool HasColonizationGoal(Empire empire, int shipId, int planetId)
+        => empire.AI.FindGoals<MarkForColonization>()
+            .Any(g => g.TargetPlanet?.Id == planetId
+                      && g.FinishedShip?.Id == shipId
+                      && g.IsManualColonizationOrder);
 
     static Building? TryPickBuildableBuilding(Planet planet)
     {

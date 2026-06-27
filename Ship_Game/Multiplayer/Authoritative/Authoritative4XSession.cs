@@ -129,6 +129,19 @@ public sealed class AuthoritativeStateSnapshot
 
         foreach (Empire e in us.Empires.OrderBy(e => e.Id))
         {
+            foreach (TechEntry tech in e.TechEntries
+                         .Where(t => t.Unlocked)
+                         .OrderBy(t => t.UID, StringComparer.Ordinal))
+            {
+                sb.Append("U|").Append(e.Id)
+                  .Append('|').Append(tech.UID)
+                  .Append('|').Append(tech.Level)
+                  .AppendLine();
+            }
+        }
+
+        foreach (Empire e in us.Empires.OrderBy(e => e.Id))
+        {
             foreach (IShipDesign design in e.ShipsWeCanBuildSnapshot
                          .Where(d => d.IsPlayerDesign)
                          .OrderBy(d => d.Name, StringComparer.Ordinal))

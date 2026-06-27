@@ -142,7 +142,9 @@ function Get-QASummary {
         DiplomacyAsserts = 0
         ControlAsserts = 0
         ColonyAsserts = 0
+        ColonizationAsserts = 0
         ResearchAsserts = 0
+        TechTradeAsserts = 0
         CommandStreamAsserts = 0
         LateControlAsserts = 0
         MaxDrawMs = 0.0
@@ -178,7 +180,9 @@ function Get-QASummary {
                 if ($line -match 'category=diplomacy') { $summary.DiplomacyAsserts++ }
                 if ($line -match 'category=control') { $summary.ControlAsserts++ }
                 if ($line -match 'category=colony') { $summary.ColonyAsserts++ }
+                if ($line -match 'category=colonization') { $summary.ColonizationAsserts++ }
                 if ($line -match 'category=research') { $summary.ResearchAsserts++ }
+                if ($line -match 'category=tech-trade') { $summary.TechTradeAsserts++ }
                 if ($line -match 'category=command-stream') { $summary.CommandStreamAsserts++ }
                 if ($line -match 'category=late-control') { $summary.LateControlAsserts++ }
             }

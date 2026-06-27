@@ -106,6 +106,7 @@ public sealed class AuthoritativeDiplomacyPopupScreen : GameScreen
             AuthoritativeDiplomacyProposalType.Peace => "proposed peace",
             AuthoritativeDiplomacyProposalType.TradeDeal => "proposed a trade deal",
             AuthoritativeDiplomacyProposalType.NonAggression => "proposed a non-aggression pact",
+            AuthoritativeDiplomacyProposalType.TechnologyTrade => "offered a technology trade",
             _ => $"sent {Popup.ProposalType}",
         };
 

@@ -98,10 +98,18 @@ public sealed class AuthoritativeDiplomacyManager
         if (!AuthoritativeHumanPlayers.IsHumanVsHuman(proposer, target))
             return Reject(result, "Authoritative human diplomacy only handles human-to-human proposals.");
 
+        string terms = command.Text ?? "";
+        if (type == AuthoritativeDiplomacyProposalType.TechnologyTrade)
+        {
+            terms = terms.Trim();
+            if (!CanOfferTechnology(proposer, target, terms, out string reason))
+                return Reject(result, reason);
+        }
+
         if (type == AuthoritativeDiplomacyProposalType.DeclareWar)
         {
             ApplyDeclareWar(proposer, target);
-            QueuePopup(0, proposer, target, type, command.Text, requiresResponse: false, "War declared.");
+            QueuePopup(0, proposer, target, type, terms, requiresResponse: false, "War declared.");
             return Accept(result);
         }
 
@@ -112,9 +120,9 @@ public sealed class AuthoritativeDiplomacyManager
             ProposerEmpireId = proposer.Id,
             TargetEmpireId = target.Id,
             Type = type,
-            Terms = command.Text ?? "",
+            Terms = terms,
         };
-        QueuePopup(id, proposer, target, type, command.Text, requiresResponse: true, "Diplomacy proposal received.");
+        QueuePopup(id, proposer, target, type, terms, requiresResponse: true, "Diplomacy proposal received.");
         return Accept(result);
     }
 
@@ -135,19 +143,26 @@ public sealed class AuthoritativeDiplomacyManager
             return Reject(result, $"Proposal source empire {proposal.ProposerEmpireId} not found.");
 
         var response = (AuthoritativeDiplomacyResponseKind)command.TargetId;
-        Pending.Remove(proposalId);
         switch (response)
         {
             case AuthoritativeDiplomacyResponseKind.Accept:
-                ApplyAgreement(proposal.Type, proposer, responder);
+                if (proposal.Type == AuthoritativeDiplomacyProposalType.TechnologyTrade
+                    && !CanOfferTechnology(proposer, responder, proposal.Terms, out string reason))
+                {
+                    return Reject(result, reason);
+                }
+                Pending.Remove(proposalId);
+                ApplyAgreement(proposal.Type, proposer, responder, proposal.Terms);
                 QueuePopup(proposal.Id, responder, proposer, proposal.Type, proposal.Terms, requiresResponse: false,
                     "Diplomacy proposal accepted.");
                 return Accept(result);
             case AuthoritativeDiplomacyResponseKind.Reject:
+                Pending.Remove(proposalId);
                 QueuePopup(proposal.Id, responder, proposer, proposal.Type, proposal.Terms, requiresResponse: false,
                     "Diplomacy proposal rejected.");
                 return Accept(result);
             case AuthoritativeDiplomacyResponseKind.Counter:
+                Pending.Remove(proposalId);
                 int counterId = NextProposalId++;
                 string terms = command.Text ?? "";
                 Pending[counterId] = new AuthoritativeDiplomacyProposalRecord
@@ -166,7 +181,7 @@ public sealed class AuthoritativeDiplomacyManager
         }
     }
 
-    void ApplyAgreement(AuthoritativeDiplomacyProposalType type, Empire proposer, Empire target)
+    void ApplyAgreement(AuthoritativeDiplomacyProposalType type, Empire proposer, Empire target, string terms)
     {
         switch (type)
         {
@@ -188,9 +203,61 @@ public sealed class AuthoritativeDiplomacyManager
             case AuthoritativeDiplomacyProposalType.DeclareWar:
                 ApplyDeclareWar(proposer, target);
                 break;
+            case AuthoritativeDiplomacyProposalType.TechnologyTrade:
+                ApplyTechnologyTrade(proposer, target, terms);
+                break;
         }
 
         Empire.UpdateBilateralRelations(proposer, target);
+    }
+
+    static bool CanOfferTechnology(Empire proposer, Empire target, string techUid, out string reason)
+    {
+        reason = "";
+        if (string.IsNullOrWhiteSpace(techUid))
+        {
+            reason = "Technology trade requires a tech UID.";
+            return false;
+        }
+        techUid = techUid.Trim();
+        if (!proposer.TryGetTechEntry(techUid, out TechEntry proposerTech))
+        {
+            reason = $"Proposer empire {proposer.Id} has no tech entry for {techUid}.";
+            return false;
+        }
+        if (!proposerTech.Unlocked)
+        {
+            reason = $"Proposer empire {proposer.Id} has not unlocked {techUid}.";
+            return false;
+        }
+        if (proposerTech.IsMultiLevel)
+        {
+            reason = $"Technology {techUid} is multi-level and cannot be traded authoritatively yet.";
+            return false;
+        }
+        if (!target.TryGetTechEntry(techUid, out TechEntry targetTech))
+        {
+            reason = $"Target empire {target.Id} has no tech entry for {techUid}.";
+            return false;
+        }
+        if (targetTech.Unlocked)
+        {
+            reason = $"Target empire {target.Id} already has {techUid}.";
+            return false;
+        }
+        if (!proposerTech.TheyCanUseThis(proposer, target))
+        {
+            reason = $"Target empire {target.Id} cannot use {techUid}.";
+            return false;
+        }
+        return true;
+    }
+
+    static void ApplyTechnologyTrade(Empire proposer, Empire target, string techUid)
+    {
+        techUid = (techUid ?? "").Trim();
+        target.UnlockTech(techUid, TechUnlockType.Diplomacy, proposer);
+        proposer.GetRelations(target).NumTechsWeGave += 1;
     }
 
     static void ApplyDeclareWar(Empire proposer, Empire target)

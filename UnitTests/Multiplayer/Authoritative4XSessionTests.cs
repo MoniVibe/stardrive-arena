@@ -8036,6 +8036,7 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "The human proposal picker must not pause only the local authoritative peer.");
             Assert.IsTrue(screen.Find(AuthoritativeDiplomacyProposalScreen.NonAggressionButtonName, out UIButton _));
             Assert.IsTrue(screen.Find(AuthoritativeDiplomacyProposalScreen.TradeButtonName, out UIButton _));
+            Assert.IsTrue(screen.Find(AuthoritativeDiplomacyProposalScreen.TechTradeButtonName, out UIButton _));
             Assert.IsTrue(screen.Find(AuthoritativeDiplomacyProposalScreen.AllianceButtonName, out UIButton _));
             Assert.IsTrue(screen.Find(AuthoritativeDiplomacyProposalScreen.PeaceButtonName, out UIButton _));
             Assert.IsTrue(screen.Find(AuthoritativeDiplomacyProposalScreen.DeclareWarButtonName, out UIButton _));
@@ -8657,7 +8658,26 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsTrue(clientB.Player.IsAlliedWith(clientB.Enemy));
             AssertAllSynced(session, PeerA, PeerB);
 
-            session.SubmitFromClient(PeerA, AuthoritativePlayerCommand.DiplomacyProposal(12, empireB, empireA,
+            string tradeTech = PrepareTechnologyTrade(authority.Player, authority.Enemy,
+                clientA.Player, clientA.Enemy, clientB.Player, clientB.Enemy);
+            session.SubmitFromClient(PeerA, AuthoritativePlayerCommand.DiplomacyProposal(12, empireA, empireB,
+                AuthoritativeDiplomacyProposalType.TechnologyTrade, tradeTech));
+            AssertAccepted(session, PeerA);
+            AuthoritativeDiplomacyPopup techOffer = LastPopup(session, PeerB,
+                AuthoritativeDiplomacyProposalType.TechnologyTrade, requiresResponse: true);
+            Assert.AreEqual(tradeTech, techOffer.Terms);
+            Assert.IsFalse(authority.Enemy.HasUnlocked(tradeTech), "Technology trade must wait for target acceptance.");
+
+            session.SubmitFromClient(PeerB, AuthoritativePlayerCommand.DiplomacyResponse(13, empireB,
+                techOffer.ProposalId, AuthoritativeDiplomacyResponseKind.Accept));
+            AssertAccepted(session, PeerB);
+            Assert.IsTrue(authority.Enemy.HasUnlocked(tradeTech));
+            Assert.IsTrue(clientA.Enemy.HasUnlocked(tradeTech));
+            Assert.IsTrue(clientB.Enemy.HasUnlocked(tradeTech));
+            StringAssert.Contains(session.LastAuthoritySnapshot.Payload, $"U|{empireB}|{tradeTech}|");
+            AssertAllSynced(session, PeerA, PeerB);
+
+            session.SubmitFromClient(PeerA, AuthoritativePlayerCommand.DiplomacyProposal(14, empireB, empireA,
                 AuthoritativeDiplomacyProposalType.NonAggression, "spoof"));
             Assert.IsFalse(session.LastResultFor(PeerA).Accepted);
             StringAssert.Contains(session.LastResultFor(PeerA).Reason, "does not control");
@@ -9547,6 +9567,35 @@ public class Authoritative4XSessionTests : StarDriveTest
         session.SubmitFromClient(targetPeer, AuthoritativePlayerCommand.DiplomacyResponse(sequence + 1,
             targetEmpire, offer.ProposalId, AuthoritativeDiplomacyResponseKind.Accept));
         AssertAccepted(session, targetPeer);
+    }
+
+    static string PrepareTechnologyTrade(Empire authorityProposer, Empire authorityTarget,
+        Empire clientAProposer, Empire clientATarget, Empire clientBProposer, Empire clientBTarget)
+    {
+        string techUid = authorityProposer.TechEntries
+                             .Where(t => t.Discovered && t.CanBeResearched && !t.IsMultiLevel)
+                             .Where(t => authorityTarget.TryGetTechEntry(t.UID, out TechEntry targetTech)
+                                         && !targetTech.Unlocked
+                                         && t.TheyCanUseThis(authorityProposer, authorityTarget))
+                             .OrderBy(t => t.TechCost)
+                             .ThenBy(t => t.UID, StringComparer.Ordinal)
+                             .Select(t => t.UID)
+                             .FirstOrDefault()
+                         ?? throw new AssertFailedException("Need a deterministic unlocked-by-proposer/locked-by-target tech for tech-trade proof.");
+
+        UnlockForTrade(authorityProposer, authorityTarget, techUid);
+        UnlockForTrade(clientAProposer, clientATarget, techUid);
+        UnlockForTrade(clientBProposer, clientBTarget, techUid);
+        return techUid;
+    }
+
+    static void UnlockForTrade(Empire proposer, Empire target, string techUid)
+    {
+        Assert.IsFalse(target.HasUnlocked(techUid), $"Target should start without traded tech {techUid}.");
+        proposer.UnlockTech(techUid, TechUnlockType.Normal);
+        Assert.IsTrue(proposer.HasUnlocked(techUid));
+        Assert.IsTrue(proposer.GetTechEntry(techUid).TheyCanUseThis(proposer, target),
+            $"Target empire {target.Id} should be able to use traded tech {techUid}.");
     }
 
     static WayPoints TestPatrolWaypoints(Vector2 origin)
