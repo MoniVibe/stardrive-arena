@@ -456,6 +456,65 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
     }
 
     [TestMethod]
+    public void ArenaBattleCodesRoundTripReplayFingerprint_Headless()
+    {
+        LoadAllGameData();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_battle_code_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempPath;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+
+        try
+        {
+            var settings = new ArenaMultiplayerSettings
+            {
+                MatchSeed = 0x7E57,
+                RngSeed = 0xB4771E00u,
+                InputDelay = 2,
+                MaxTurns = 90,
+                CommandEveryTurns = 1,
+                HostFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x7001ul),
+                JoinFleetDesignNames = FleetNames(ArenaStartArchetype.Ace, 0x7002ul),
+            }.WithResolvedFleets();
+
+            ArenaMultiplayerRunResult original = ArenaMultiplayerSession.RunInProcess(settings);
+            Assert.IsFalse(original.Desynced,
+                $"Original battle-code source sim desynced at turn {original.DesyncTurn}: {original.DesyncReason}");
+            string originalSequence = ArenaBattleCodes.SequenceSha256(original);
+            string code = ArenaBattleCodes.Export(settings, originalSequence);
+
+            Assert.IsTrue(ArenaBattleCodes.TryImport(code, out ArenaBattleCode imported),
+                imported?.Error ?? "Battle code import failed.");
+            Assert.AreEqual(settings.SettingsHash, imported.Settings.SettingsHash,
+                "Imported settings must reconstruct the exact original match descriptor.");
+            Assert.AreEqual(originalSequence, imported.SequenceSha256,
+                "The battle code must carry the original replay digest.");
+
+            ArenaBattleCodeReplayCheck replay = ArenaBattleCodes.VerifyReplay(imported);
+            Assert.IsTrue(replay.Match, replay.Error);
+            Assert.AreEqual(originalSequence, replay.SequenceSha256,
+                "Export -> import -> resimulate must reproduce the original lockstep fingerprint.");
+
+            string mismatchCode = ArenaBattleCodes.Export(settings, originalSequence,
+                buildHashOverride: "0x0000000000000000");
+            Assert.IsTrue(ArenaBattleCodes.TryImport(mismatchCode, out ArenaBattleCode mismatch),
+                mismatch?.Error ?? "Battle code with build mismatch should still parse.");
+            Assert.IsTrue(mismatch.HasBuildWarning,
+                "A build hash mismatch must warn instead of silently accepting a likely-desync replay.");
+            StringAssert.Contains(mismatch.BuildWarning, "build differs");
+
+            Assert.IsFalse(ArenaBattleCodes.TryImport(code.Substring(0, Math.Max(0, code.Length - 5)),
+                    out ArenaBattleCode truncated),
+                "Truncated battle codes must be rejected cleanly.");
+            Assert.IsFalse(string.IsNullOrWhiteSpace(truncated.Error),
+                "Malformed-code rejection should explain why import failed.");
+        }
+        finally
+        {
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+        }
+    }
+
+    [TestMethod]
     public void ArenaRegularMultiplayerSettings_GeneratesCombinedArmsFullGame_Headless()
     {
         LoadCombinedArmsForArenaMultiplayer();
