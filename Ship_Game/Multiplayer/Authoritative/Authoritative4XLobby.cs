@@ -433,7 +433,7 @@ public sealed class Authoritative4XLobby
             ConfigureHumanEmpire(universe.GetEmpireById(empireId));
     }
 
-    static void ConfigureHumanEmpire(Empire empire)
+    internal static void DisableHumanEmpireAutomation(Empire empire)
     {
         if (empire == null)
             return;
@@ -464,6 +464,14 @@ public sealed class Authoritative4XLobby
         empire.data.CurrentConstructor = "";
         empire.data.CurrentResearchStation = "";
         empire.data.CurrentMiningStation = "";
+    }
+
+    static void ConfigureHumanEmpire(Empire empire)
+    {
+        DisableHumanEmpireAutomation(empire);
+        if (empire == null)
+            return;
+
         empire.Research?.Reset();
         RemoveMachineLocalPlayerDesigns(empire);
     }

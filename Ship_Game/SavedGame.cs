@@ -48,6 +48,12 @@ namespace Ship_Game
             SaveUniverseData(State, SaveFile, collectMemory: false);
         }
 
+        public void SaveTo(FileInfo saveFile, bool collectMemory = false)
+        {
+            SaveFile = saveFile ?? throw new ArgumentNullException(nameof(saveFile));
+            SaveUniverseData(State, SaveFile, collectMemory);
+        }
+
         public TaskResult SaveAsync(string saveAs, Action<Exception> finished)
         {
             SaveFile = new($"{DefaultSaveGameFolder}{saveAs}.sav");
@@ -87,6 +93,7 @@ namespace Ship_Game
             };
 
             // an annoying edge case, someone has created a folder with the same name
+            saveFile.Directory?.Create();
             if (Directory.Exists(saveFile.FullName))
                 Directory.Delete(saveFile.FullName, recursive: true);
 

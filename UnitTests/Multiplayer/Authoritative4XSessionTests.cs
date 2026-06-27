@@ -8395,6 +8395,179 @@ public class Authoritative4XSessionTests : StarDriveTest
         }
     }
 
+    [TestMethod]
+    public void Authoritative4XSessionSave_RoundTripsPeerMapAndResumesCommands_Headless()
+    {
+        LoadAllGameData();
+
+        string temp = Path.Combine(Path.GetTempPath(), "stardrive-auth4x-save-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(temp);
+
+        try
+        {
+            IEmpireData[] races = ResourceManager.MajorRaces
+                .Where(r => !r.IsFactionOrMinorRace)
+                .OrderBy(r => RacePreference(r), StringComparer.Ordinal)
+                .Take(3)
+                .ToArray();
+            Assert.IsTrue(races.Length >= 3, "The MP save/load proof needs three playable major races.");
+
+            var settings = new Authoritative4XGameSettings
+            {
+                GenerationSeed = 0x5A4E110,
+                GalaxySize = GalSize.Tiny,
+                StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+                Mode = RaceDesignScreen.GameMode.Sandbox,
+                Difficulty = GameDifficulty.Normal,
+                NumOpponents = 2,
+                Pace = 1f,
+                TurnTimer = 5,
+                GameSpeed = 1f,
+                StartPaused = true,
+            };
+
+            var lobby = new Authoritative4XLobby(hostPlayerPeerId: 2, hostName: "Host");
+            lobby.Join(3, "Client A");
+            lobby.Join(4, "Client B");
+            Assert.IsTrue(lobby.SetSettings(2, settings).Valid);
+            for (int i = 0; i < 3; ++i)
+            {
+                int peer = 2 + i;
+                Assert.IsTrue(lobby.SetPlayerSelection(peer, RacePreference(races[i]), Array.Empty<string>()).Valid);
+                Assert.IsTrue(lobby.SetReady(peer, true).Valid);
+            }
+
+            FileInfo saveFile = new(Path.Combine(temp, "mp-session.sav"));
+            using (Authoritative4XLobbyStartResult started = lobby.StartInProcess())
+            {
+                int peer3Empire = started.EmpireIdForPeer(3);
+                started.Session.SubmitFromClient(3,
+                    AuthoritativePlayerCommand.SetEmpireBudget(200, peer3Empire, taxRate: 0.22f,
+                        treasuryGoal: 0.44f, autoTaxes: false));
+                AssertAccepted(started.Session, 3);
+
+                var metadata = Authoritative4XSessionMetadata.FromGenerated(started.GeneratedGame,
+                    hostPeerId: 2, localPeerId: 2, sessionId: "unit-session",
+                    startFingerprint: "0xUNITSTART", started.Session.LastAuthoritySnapshot.Tick);
+                Authoritative4XSessionSave.Save(started.AuthorityUniverse, saveFile, metadata);
+            }
+
+            Assert.IsTrue(saveFile.Exists, "The authoritative MP save should write the binary .sav.");
+            FileInfo sidecar = Authoritative4XSessionSave.MetadataFileFor(saveFile);
+            Assert.IsTrue(sidecar.Exists, "The authoritative MP save should write the peer-map sidecar.");
+
+            Authoritative4XSessionMetadata loadedMetadata = Authoritative4XSessionSave.LoadMetadata(saveFile);
+            Assert.AreEqual("unit-session", loadedMetadata.SessionId);
+            Assert.AreEqual("0xUNITSTART", loadedMetadata.StartFingerprint);
+            Assert.AreEqual(3, loadedMetadata.NormalizedHumanEmpireIds().Length);
+            CollectionAssert.AreEqual(new[] { 2, 3, 4 }, loadedMetadata.ToPeerEmpireMap().Keys.OrderBy(k => k).ToArray());
+
+            using Authoritative4XLoadedSession loadedAuthority = Authoritative4XSessionSave.Load(saveFile);
+            int peer4Empire = loadedAuthority.EmpireIdForPeer(4);
+            var authority = new Authoritative4XAuthority(loadedAuthority.Universe,
+                humanEmpireIds: loadedAuthority.HumanEmpireIds);
+            (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) = authority.Process(
+                AuthoritativePlayerCommand.SetEmpireBudget(300, peer4Empire, taxRate: 0.31f,
+                    treasuryGoal: 0.52f, autoTaxes: false));
+            Assert.IsTrue(result.Accepted, result.Reason);
+            Assert.IsNotNull(snapshot);
+            Assert.AreEqual(1u, snapshot.Tick);
+
+            Empire authorityPeer4 = loadedAuthority.Universe.UState.GetEmpireById(peer4Empire);
+            Assert.AreEqual(0.31f, authorityPeer4.data.TaxRate, 0.0001f);
+            Assert.AreEqual(0.52f, authorityPeer4.data.treasuryGoal, 0.0001f);
+            Assert.IsTrue(AuthoritativeHumanPlayers.IsHumanControlled(authorityPeer4));
+            Assert.IsFalse(authorityPeer4.AutoResearch,
+                "Loaded human empires should stay player-controlled after restoring an MP session.");
+        }
+        finally
+        {
+            if (Directory.Exists(temp))
+                Directory.Delete(temp, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XLobby_EightPlayerInProcessSessionRoutesCommandsAndSyncs_Headless()
+    {
+        LoadAllGameData();
+
+        const int PlayerCount = 8;
+        int[] peers = Enumerable.Range(2, PlayerCount).ToArray();
+        IEmpireData[] races = ResourceManager.MajorRaces
+            .Where(r => !r.IsFactionOrMinorRace)
+            .OrderBy(r => RacePreference(r), StringComparer.Ordinal)
+            .Take(PlayerCount)
+            .ToArray();
+        Assert.IsTrue(races.Length >= PlayerCount,
+            "The 8-player MP proof needs at least eight playable major races.");
+
+        var settings = new Authoritative4XGameSettings
+        {
+            GenerationSeed = 0x8A11F00,
+            GalaxySize = GalSize.Tiny,
+            StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+            Mode = RaceDesignScreen.GameMode.Sandbox,
+            Difficulty = GameDifficulty.Normal,
+            NumOpponents = PlayerCount - 1,
+            Pace = 1f,
+            TurnTimer = 5,
+            GameSpeed = 1f,
+            StartPaused = true,
+        };
+
+        var lobby = new Authoritative4XLobby(hostPlayerPeerId: peers[0], hostName: "Host");
+        for (int i = 1; i < peers.Length; ++i)
+            lobby.Join(peers[i], "Client " + i.ToString());
+
+        Assert.IsTrue(lobby.SetSettings(peers[0], settings).Valid);
+        for (int i = 0; i < peers.Length; ++i)
+        {
+            Assert.IsTrue(lobby.SetPlayerSelection(peers[i], RacePreference(races[i]), Array.Empty<string>()).Valid);
+            Assert.IsTrue(lobby.SetReady(peers[i], true).Valid);
+        }
+        Assert.IsTrue(lobby.CanStart().Valid, lobby.CanStart().Reason);
+
+        using Authoritative4XLobbyStartResult started = lobby.StartInProcess();
+        Assert.AreEqual(PlayerCount, started.HumanEmpireIds.Length);
+        Assert.AreEqual(PlayerCount, started.EmpireIdByPeer.Count);
+        CollectionAssert.AreEqual(peers, started.EmpireIdByPeer.Keys.OrderBy(k => k).ToArray());
+
+        for (int i = 0; i < peers.Length; ++i)
+        {
+            int peer = peers[i];
+            int empireId = started.EmpireIdForPeer(peer);
+            float taxRate = 0.10f + i * 0.01f;
+            float treasury = 0.30f + i * 0.02f;
+            started.Session.SubmitFromClient(peer,
+                AuthoritativePlayerCommand.SetEmpireBudget(800 + i, empireId, taxRate, treasury, autoTaxes: false));
+            AssertAccepted(started.Session, peer);
+            AssertAllSynced(started.Session, peers);
+        }
+
+        for (int i = 0; i < peers.Length; ++i)
+        {
+            int peer = peers[i];
+            int empireId = started.EmpireIdForPeer(peer);
+            Empire authorityEmpire = started.AuthorityUniverse.UState.GetEmpireById(empireId);
+            Assert.IsTrue(AuthoritativeHumanPlayers.IsHumanControlled(authorityEmpire),
+                $"Peer {peer}'s empire should stay registered as human-controlled.");
+            Assert.AreEqual(0.10f + i * 0.01f, authorityEmpire.data.TaxRate, 0.0001f,
+                $"Peer {peer}'s command did not stick on the authority.");
+            Assert.AreEqual(0.30f + i * 0.02f, authorityEmpire.data.treasuryGoal, 0.0001f,
+                $"Peer {peer}'s command did not stick on the authority.");
+
+            foreach (Authoritative4XClientSpec client in started.Clients)
+            {
+                Empire replicaEmpire = client.Universe.UState.GetEmpireById(empireId);
+                Assert.AreEqual(authorityEmpire.data.TaxRate, replicaEmpire.data.TaxRate, 0.0001f,
+                    $"Client peer {client.PeerId} did not receive peer {peer}'s tax command.");
+                Assert.AreEqual(authorityEmpire.data.treasuryGoal, replicaEmpire.data.treasuryGoal, 0.0001f,
+                    $"Client peer {client.PeerId} did not receive peer {peer}'s treasury command.");
+            }
+        }
+    }
+
     static void AcceptProposal(Authoritative4XInProcessMultiClientSession session, int proposerPeer, int targetPeer,
         int proposerEmpire, int targetEmpire, int sequence, AuthoritativeDiplomacyProposalType type)
     {

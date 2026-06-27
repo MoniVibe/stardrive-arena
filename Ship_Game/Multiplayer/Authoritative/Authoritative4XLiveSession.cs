@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using SDLockstep;
 
@@ -26,6 +27,8 @@ public sealed class Authoritative4XLiveSession : IDisposable
     readonly Authoritative4XNetworkClient Client;
     readonly Authoritative4XClientContext UiContext;
     readonly Authoritative4XLiveTelemetry Telemetry;
+    readonly IReadOnlyDictionary<int, int> EmpireByPeer;
+    readonly int[] HumanEmpireIds;
     readonly string LiveSessionId;
     readonly string LiveStartFingerprint;
     readonly Queue<AuthoritativeDiplomacyPopup> DiplomacyPopups = new();
@@ -68,6 +71,8 @@ public sealed class Authoritative4XLiveSession : IDisposable
         LocalEmpireId = localEmpireId;
         Host = host;
         Client = client;
+        EmpireByPeer = new Dictionary<int, int>(empireByPeer ?? new Dictionary<int, int>());
+        HumanEmpireIds = (humanEmpireIds ?? Array.Empty<int>()).ToArray();
         LiveSessionId = sessionId ?? "";
         LiveStartFingerprint = startFingerprint ?? "";
         Telemetry = Authoritative4XLiveTelemetry.Start(role, localPeerId, localEmpireId,
@@ -185,6 +190,52 @@ public sealed class Authoritative4XLiveSession : IDisposable
             return false;
         SendControl(paused, ClampGameSpeed(speed));
         return true;
+    }
+
+    public bool TrySaveSession(FileInfo saveFile, out string error)
+    {
+        error = "";
+        if (Disposed)
+        {
+            error = "Authoritative session is disposed.";
+            return false;
+        }
+        if (Role != Authoritative4XLiveRole.Host)
+        {
+            error = "Only the host can save an authoritative multiplayer session.";
+            return false;
+        }
+        if (saveFile == null)
+        {
+            error = "Save file is missing.";
+            return false;
+        }
+
+        try
+        {
+            var metadata = new Authoritative4XSessionMetadata
+            {
+                Version = Authoritative4XSessionMetadata.CurrentVersion,
+                SessionId = LiveSessionId,
+                StartFingerprint = LiveStartFingerprint,
+                SettingsHash = "",
+                GenerationSeed = Universe.UState.P.GenerationSeed,
+                HostPeerId = LocalPeerId,
+                LocalPeerId = LocalPeerId,
+                LastProcessedTick = checked((int)Math.Min(LastSnapshot?.Tick ?? 0, int.MaxValue)),
+                HumanEmpireIds = HumanEmpireIds.OrderBy(id => id).ToArray(),
+                EmpireIdByPeer = EmpireByPeer.OrderBy(kv => kv.Key)
+                    .Select(kv => new Authoritative4XPeerEmpireSave { PeerId = kv.Key, EmpireId = kv.Value })
+                    .ToArray(),
+            };
+            Authoritative4XSessionSave.Save(Universe, saveFile, metadata);
+            return true;
+        }
+        catch (Exception e)
+        {
+            error = e.Message;
+            return false;
+        }
     }
 
     public bool TryDequeueDiplomacyPopup(out AuthoritativeDiplomacyPopup popup)
