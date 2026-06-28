@@ -20,6 +20,7 @@ public sealed class ArenaMultiplayerLobbyConfig
     public string Host = "127.0.0.1";
     [StarData] public string HostEncoded = "";
     [StarData] public int Port = ArenaMultiplayerLobbyScreen.DefaultPort;
+    [StarData] public int PeerSlot = ArenaMultiplayerLobbyScreen.DefaultJoinPeerSlot;
     [StarData] public int Seed = 24237;
     [StarData] public float GameSpeed = 1f;
     [StarData] public string RacePreference = "United";
@@ -48,6 +49,8 @@ public sealed class ArenaMultiplayerLobbyConfig
             Host = "127.0.0.1";
         HostEncoded = EncodeHost(Host);
         Port = Math.Clamp(Port, 1, 65535);
+        PeerSlot = Math.Clamp(PeerSlot, ArenaMultiplayerLobbyScreen.DefaultJoinPeerSlot,
+            ArenaMultiplayerLobbyScreen.LastJoinPeerSlot);
         if (Seed == 0)
             Seed = 24237;
         GameSpeed = ArenaMultiplayerSettings.ClampGameSpeed(GameSpeed);
@@ -88,6 +91,7 @@ public sealed class ArenaMultiplayerLobbyConfig
         {
             Host = screen?.HostForHeadless ?? "127.0.0.1",
             Port = screen?.PortForHeadless ?? ArenaMultiplayerLobbyScreen.DefaultPort,
+            PeerSlot = screen?.JoinPeerSlotForHeadless ?? ArenaMultiplayerLobbyScreen.DefaultJoinPeerSlot,
             Seed = settings.GenerationSeed,
             GameSpeed = settings.GameSpeed,
             RacePreference = screen?.LocalRace ?? "United",

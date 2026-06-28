@@ -169,6 +169,7 @@ public sealed class Authoritative4XLobbyStartResult : IDisposable
 public sealed class Authoritative4XLobby
 {
     public const int AuthorityPeerId = 1;
+    public const int MaxHumanPlayers = 8;
 
     readonly int HostPlayerPeerId;
     readonly Dictionary<int, Authoritative4XLobbyPlayer> Players = new();
@@ -196,6 +197,8 @@ public sealed class Authoritative4XLobby
             existing.PlayerName = playerName ?? existing.PlayerName;
             return existing;
         }
+        if (Players.Count >= MaxHumanPlayers)
+            throw new InvalidOperationException($"Authoritative 4X supports up to {MaxHumanPlayers} human players.");
 
         var player = new Authoritative4XLobbyPlayer(peerId, playerName);
         Players[peerId] = player;

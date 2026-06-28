@@ -9881,6 +9881,71 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XLobbyNetworkFlow_EightPlayerStartPayloadReconstructsRoster_Headless()
+    {
+        LoadAllGameData();
+
+        const int PlayerCount = 8;
+        const int HostPeer = 2;
+        int[] peers = Enumerable.Range(HostPeer, PlayerCount).ToArray();
+        IEmpireData[] races = ResourceManager.MajorRaces
+            .Where(r => !r.IsFactionOrMinorRace)
+            .OrderBy(r => RacePreference(r), StringComparer.Ordinal)
+            .Take(PlayerCount)
+            .ToArray();
+        Assert.IsTrue(races.Length >= PlayerCount,
+            "The 8-player start-payload proof needs at least eight playable major races.");
+
+        var settings = new Authoritative4XGameSettings
+        {
+            GenerationSeed = 0x8A11F08,
+            GalaxySize = GalSize.Tiny,
+            StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+            Mode = RaceDesignScreen.GameMode.Sandbox,
+            Difficulty = GameDifficulty.Normal,
+            NumOpponents = PlayerCount - 1,
+            Pace = 1f,
+            TurnTimer = 5,
+            GameSpeed = 1f,
+            StartPaused = true,
+        };
+
+        var lobby = new Authoritative4XLobby(hostPlayerPeerId: HostPeer, hostName: "Host");
+        foreach (int peer in peers.Skip(1))
+            lobby.Join(peer, "Client " + peer.ToString());
+        Assert.ThrowsExactly<InvalidOperationException>(() => lobby.Join(HostPeer + PlayerCount, "Ninth"),
+            "The authoritative 4X lobby should cap human players at eight.");
+
+        Assert.IsTrue(lobby.SetSettings(HostPeer, settings).Valid);
+        for (int i = 0; i < peers.Length; ++i)
+        {
+            string[] traits = i == 0 ? OneAffordableTrait() : Array.Empty<string>();
+            Assert.IsTrue(lobby.SetPlayerSelection(peers[i], RacePreference(races[i]), traits).Valid);
+            Assert.IsTrue(lobby.SetReady(peers[i], true).Valid);
+        }
+
+        var flow = new Authoritative4XLobbyNetworkFlow(HostPeer, 3);
+        SessionStartMessage start = flow.BuildStartMessage(lobby,
+            ArenaMultiplayerSettings.ProtocolVersion, "0xEIGHT", "eight-player-test");
+        Authoritative4XLobbyPlayer[] decoded =
+            Authoritative4XLobbyNetworkFlow.DecodeRoster(start.AuthoritativePlayerRoster);
+
+        Assert.AreEqual(PlayerCount, decoded.Length);
+        CollectionAssert.AreEqual(peers, decoded.Select(p => p.PeerId).ToArray());
+        Assert.AreEqual("", flow.ValidateStartMessage(start,
+            ArenaMultiplayerSettings.ProtocolVersion, "0xEIGHT", localPeerId: peers[^1]));
+        Assert.AreEqual(PlayerCount, Authoritative4XLobbyNetworkFlow.PlayerCountFromStart(start));
+        Assert.AreEqual(settings.Normalized(PlayerCount).SettingsHash, start.SettingsHash);
+
+        using Authoritative4XGeneratedGameStart authority = flow.CreateGeneratedGame(start);
+        using Authoritative4XGeneratedGameStart client = flow.CreateGeneratedGame(start);
+        CollectionAssert.AreEqual(peers, authority.EmpireIdByPeer.Keys.OrderBy(p => p).ToArray());
+        CollectionAssert.AreEqual(
+            authority.EmpireIdByPeer.OrderBy(kv => kv.Key).Select(kv => kv.Value).ToArray(),
+            client.EmpireIdByPeer.OrderBy(kv => kv.Key).Select(kv => kv.Value).ToArray());
+    }
+
+    [TestMethod]
     public void Authoritative4XLobby_EightPlayerInProcessSessionRoutesCommandsAndSyncs_Headless()
     {
         LoadAllGameData();

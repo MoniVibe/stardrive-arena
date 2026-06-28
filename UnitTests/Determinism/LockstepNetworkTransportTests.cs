@@ -48,6 +48,7 @@ public class LockstepNetworkTransportTests
             JoinLoadoutTrait = "Swarm",
             HostFleet = "Fang Strafer\u001fFang Strafer",
             JoinFleet = "Vulcan Scout",
+            AuthoritativePlayerRoster = "2,1,SG9zdA==,VW5pdGVk,;3,1,Sm9pbg==,S3VscmF0aGk=,QXF1YXRpYw==",
         }, decoded =>
         {
             var msg = (SessionStartMessage)decoded.Message;
@@ -67,6 +68,8 @@ public class LockstepNetworkTransportTests
             Assert.AreEqual("Swarm", msg.JoinLoadoutTrait);
             Assert.AreEqual("Fang Strafer\u001fFang Strafer", msg.HostFleet);
             Assert.AreEqual("Vulcan Scout", msg.JoinFleet);
+            Assert.AreEqual("2,1,SG9zdA==,VW5pdGVk,;3,1,Sm9pbg==,S3VscmF0aGk=,QXF1YXRpYw==",
+                msg.AuthoritativePlayerRoster);
         });
 
         RoundTrip(0, new SessionHelloMessage

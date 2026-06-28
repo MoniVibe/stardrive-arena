@@ -28,12 +28,13 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     public const int DefaultPort = 47377;
     public const int DefaultTurns = 600;
     public const int LiveAuthoritative4XMaxTurns = 0;
+    public const int DefaultJoinPeerSlot = 3;
+    public const int LastJoinPeerSlot = 9;
     const int AuthorityPeerId = Authoritative4XLobby.AuthorityPeerId;
     const int HostPlayerPeerId4X = 2;
-    const int JoinPlayerPeerId4X = 3;
     const string DefaultHost = "127.0.0.1";
     readonly Authoritative4XLobbyNetworkFlow LobbyFlow =
-        new(HostPlayerPeerId4X, JoinPlayerPeerId4X, AuthorityPeerId);
+        new(HostPlayerPeerId4X, DefaultJoinPeerSlot, AuthorityPeerId);
     static readonly GalSize[] GalaxyOptions =
     {
         GalSize.Tiny,
@@ -68,6 +69,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     ArenaMultiplayerRole? LocalRole;
     LobbyPeer LocalPeer = new() { PlayerName = "Local", RacePreference = "United", LoadoutTrait = "Wingmates" };
     LobbyPeer RemotePeer = new() { PlayerName = "Remote", RacePreference = "-", LoadoutTrait = "-", Ready = false };
+    readonly Dictionary<int, LobbyPeer> RemotePeers = new();
+    int JoinPeerSlot = DefaultJoinPeerSlot;
     SessionStartMessage Pending4XStart;
     Action PendingLobbyAction;
     ArenaMultiplayerRunResult LastResult;
@@ -132,6 +135,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     public int PortForHeadless => ParsePort();
     public int SeedForHeadless => ParseSeed();
     public float SpeedForHeadless => ParseSpeed();
+    public int JoinPeerSlotForHeadless => JoinPeerSlot;
+    public int ConnectedPlayerCountForHeadless => 1 + RemotePeers.Count;
     public bool HasTurnsFieldForHeadless => false;
     public Authoritative4XGameSettings Current4XSettingsForHeadless => Build4XSettings();
     public SessionStartMessage Build4XStartForHeadless() => Build4XStartMessage();
@@ -163,6 +168,10 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         RemotePeer.RacePreference = remoteRace;
         RemotePeer.TraitOptions = NormalizeTraitSelection(remoteTraits);
         RemotePeer.LoadoutTrait = ArenaStartArchetype.Wingmates.ToString();
+        RemotePeer.PlayerName = "Join";
+        RemotePeer.Ready = true;
+        RemotePeers.Clear();
+        RemotePeers[DefaultJoinPeerSlot] = RemotePeer;
         StartPaused = s.StartPaused;
         if (SeedEntry != null)
             SeedEntry.Text = s.GenerationSeed.ToString(CultureInfo.InvariantCulture);
@@ -242,6 +251,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         UIButton pause = ArenaTheme.AddPillButton(setup2, "", _ => ToggleStartPaused(), 126f);
         pause.Name = "arena_mp_start_paused";
         pause.DynamicText = () => StartPaused ? "START PAUSED" : "START LIVE";
+        UIButton slot = ArenaTheme.AddPillButton(setup2, "", _ => CycleJoinSlot(), 92f);
+        slot.Name = "arena_mp_peer_slot";
+        slot.DynamicText = () => LocalRole == ArenaMultiplayerRole.Host ? "SLOT HOST" : $"SLOT P{JoinPeerSlot}";
 
         Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 466), "STATUS"));
         for (int i = 0; i < 3; ++i)
@@ -337,6 +349,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
         LocalRole = ArenaMultiplayerRole.Host;
         LocalPeer.PlayerName = "Host";
+        RemotePeers.Clear();
+        RefreshPrimaryRemotePeer();
         ApplyLocalSelection();
         SavePersistentConfig();
         LobbyTelemetry?.Dispose();
@@ -374,7 +388,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
         string host = HostForHeadless;
         LocalRole = ArenaMultiplayerRole.Join;
-        LocalPeer.PlayerName = "Join";
+        LocalPeer.PlayerName = $"P{JoinPeerSlot}";
+        RemotePeers.Clear();
+        RefreshPrimaryRemotePeer();
         ApplyLocalSelection();
         SavePersistentConfig();
         LobbyTelemetry?.Dispose();
@@ -385,7 +401,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         LobbyTelemetry.Event("JOIN_START", $"host={host} port={port}");
         Task.Run(() =>
         {
-            if (TryCreateJoinTransport(host, port, JoinPlayerPeerId4X, AuthorityPeerId,
+            if (TryCreateJoinTransport(host, port, JoinPeerSlot, AuthorityPeerId,
                     out TcpLockstepTransport joinedTransport, out string error))
             {
                 QueueLobbyAction(() => CompleteJoin(host, port, joinedTransport));
@@ -424,19 +440,19 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         }
 
         Transport = joinedTransport;
-        Transport.AddObserver(JoinPlayerPeerId4X, OnJoinMessage);
+        Transport.AddObserver(JoinPeerSlot, OnJoinMessage);
         Transport.Send(AuthorityPeerId, new SessionHelloMessage
         {
-            FromPeer = JoinPlayerPeerId4X,
-            PeerId = JoinPlayerPeerId4X,
+            FromPeer = JoinPeerSlot,
+            PeerId = JoinPeerSlot,
             ProtocolVersion = ArenaMultiplayerSettings.ProtocolVersion,
             PlayerName = LocalPeer.PlayerName,
             BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
             BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
         });
         SendLocalLobby();
-        SetStatus($"JOIN connected to {host}:{port}\nPress ready; host launches the match.");
-        LobbyTelemetry?.Event("JOIN_CONNECT", $"host={host} port={port}");
+        SetStatus($"JOIN connected to {host}:{port} as P{JoinPeerSlot}\nPress ready; host launches the match.");
+        LobbyTelemetry?.Event("JOIN_CONNECT", $"host={host} port={port} peer={JoinPeerSlot}");
         GameAudio.AffirmativeClick();
     }
 
@@ -503,22 +519,25 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             GameAudio.NegativeClick();
             return;
         }
-        if (!LocalPeer.Ready || !RemotePeer.Ready)
+        if (!LocalPeer.Ready || RemotePeers.Count == 0 || RemotePeers.Values.Any(p => !p.Ready))
         {
-            SetStatus("Both players must be ready before launch.");
+            SetStatus("All connected players must be ready before launch.");
             GameAudio.NegativeClick();
             return;
         }
 
-        string error = ArenaMultiplayerPeerSignature.ValidateEnvironment(RemotePeer.BuildHash, RemotePeer.BuildSummary, "remote");
-        if (error.NotEmpty())
+        foreach (KeyValuePair<int, LobbyPeer> remote in RemotePeers.OrderBy(kv => kv.Key))
         {
-            Transport.Send(JoinPlayerPeerId4X,
-                new SessionErrorMessage { FromPeer = AuthorityPeerId, Error = error });
-            SetStatus(error);
-            LobbyTelemetry?.Event("PREFLIGHT_REJECT", error);
-            GameAudio.NegativeClick();
-            return;
+            string error = ArenaMultiplayerPeerSignature.ValidateEnvironment(remote.Value.BuildHash,
+                remote.Value.BuildSummary, $"peer {remote.Key}");
+            if (error.NotEmpty())
+            {
+                Transport.Send(remote.Key, new SessionErrorMessage { FromPeer = AuthorityPeerId, Error = error });
+                SetStatus(error);
+                LobbyTelemetry?.Event("PREFLIGHT_REJECT", error);
+                GameAudio.NegativeClick();
+                return;
+            }
         }
 
         SessionStartMessage start;
@@ -530,8 +549,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         catch (Exception e)
         {
             string startError = $"4X start failed: {e.Message}\n{Build4XStartDiagnostics()}";
-            Transport.Send(JoinPlayerPeerId4X,
-                new SessionErrorMessage { FromPeer = AuthorityPeerId, Error = startError });
+            foreach (int peer in RemotePeers.Keys.OrderBy(p => p))
+                Transport.Send(peer, new SessionErrorMessage { FromPeer = AuthorityPeerId, Error = startError });
             SetStatus(startError);
             LobbyTelemetry?.Event("START_BUILD_REJECT", startError);
             GameAudio.NegativeClick();
@@ -539,33 +558,40 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         }
         LobbyTelemetry?.Event("LAUNCH_HOST",
             $"mode=4x {Authoritative4XLobbyNetworkFlow.StartTelemetrySummary(start)}");
-        Transport.Send(JoinPlayerPeerId4X, start);
+        foreach (int peer in RemotePeers.Keys.OrderBy(p => p))
+            Transport.Send(peer, start);
         LaunchVisible4X(Authoritative4XLiveRole.Host, start);
     }
 
     void OnHostMessage(LockstepMessage message)
     {
-        if (message is SessionHelloMessage h && h.PeerId == JoinPlayerPeerId4X)
+        if (message is SessionHelloMessage h && IsRemotePlayerPeer(h.PeerId))
         {
             string error = h.ProtocolVersion != ArenaMultiplayerSettings.ProtocolVersion
                 ? $"Arena multiplayer protocol mismatch. Local {ArenaMultiplayerSettings.ProtocolVersion}, remote {h.ProtocolVersion}."
-                : ArenaMultiplayerPeerSignature.ValidateEnvironment(h.BuildHash, h.BuildSummary, "remote");
+                : ArenaMultiplayerPeerSignature.ValidateEnvironment(h.BuildHash, h.BuildSummary, $"peer {h.PeerId}");
             if (error.NotEmpty())
             {
                 SetStatus(error);
                 LobbyTelemetry?.Event("HELLO_REJECT", error);
+                Transport?.Send(h.PeerId, new SessionErrorMessage { FromPeer = AuthorityPeerId, Error = error });
             }
             else
             {
+                EnsureRemotePeer(h.PeerId).PlayerName = h.PlayerName.NotEmpty() ? h.PlayerName : $"P{h.PeerId}";
+                EnsureRemotePeer(h.PeerId).BuildHash = h.BuildHash ?? "";
+                EnsureRemotePeer(h.PeerId).BuildSummary = h.BuildSummary ?? "";
                 LobbyTelemetry?.Event("HELLO", $"peer={h.PeerId} summary='{h.BuildSummary}'");
             }
         }
-        if (message is SessionLobbyMessage lobby && lobby.PeerId == JoinPlayerPeerId4X)
+        if (message is SessionLobbyMessage lobby && IsRemotePlayerPeer(lobby.PeerId))
         {
-            RemotePeer = LobbyPeer.From(lobby, "Join");
-            SetStatus($"Remote lobby updated.\n{RemotePeer.Summary}");
+            RemotePeers[lobby.PeerId] = LobbyPeer.From(lobby, $"P{lobby.PeerId}");
+            RefreshPrimaryRemotePeer();
+            SetStatus($"P{lobby.PeerId} lobby updated.\n{RemotePeers.Count + 1} players, {ReadyPlayerCount()}/{RemotePeers.Count + 1} ready.");
             LobbyTelemetry?.Event("REMOTE_LOBBY",
-                $"ready={RemotePeer.Ready} race='{RemotePeer.RacePreference}' summary='{RemotePeer.BuildSummary}'");
+                $"peer={lobby.PeerId} ready={RemotePeers[lobby.PeerId].Ready} race='{RemotePeers[lobby.PeerId].RacePreference}' summary='{RemotePeers[lobby.PeerId].BuildSummary}'");
+            SendLocalLobby();
         }
         if (message is SessionErrorMessage e)
         {
@@ -604,11 +630,11 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             return;
         int peerId = LocalRole == ArenaMultiplayerRole.Host
             ? HostPlayerPeerId4X
-            : JoinPlayerPeerId4X;
-        int toPeer = LocalRole == ArenaMultiplayerRole.Host
-            ? JoinPlayerPeerId4X
-            : AuthorityPeerId;
-        Transport.Send(toPeer, new SessionLobbyMessage
+            : JoinPeerSlot;
+        int[] toPeers = LocalRole == ArenaMultiplayerRole.Host
+            ? RemotePeers.Keys.OrderBy(p => p).ToArray()
+            : new[] { AuthorityPeerId };
+        var message = new SessionLobbyMessage
         {
             FromPeer = peerId,
             PeerId = peerId,
@@ -619,7 +645,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             TraitOptions = LocalPeer.TraitOptions,
             BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
             BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
-        });
+        };
+        foreach (int toPeer in toPeers)
+            Transport.Send(toPeer, message);
     }
 
     void LaunchVisible4X(Authoritative4XLiveRole role, SessionStartMessage start)
@@ -633,7 +661,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             $"role={role} {Authoritative4XLobbyNetworkFlow.StartTelemetrySummary(start)}");
 
         Authoritative4XGeneratedGameStart generated = CreateGenerated4XGame(start);
-        int localPeer = role == Authoritative4XLiveRole.Host ? HostPlayerPeerId4X : JoinPlayerPeerId4X;
+        int localPeer = role == Authoritative4XLiveRole.Host ? HostPlayerPeerId4X : JoinPeerSlot;
         LobbyTelemetry?.Event("LIVE_ATTACH_4X",
             $"role={role} localPeer={localPeer} localEmpire={generated.EmpireIdForPeer(localPeer)} "
             + $"{Authoritative4XLobbyNetworkFlow.StartTelemetrySummary(start)} "
@@ -685,24 +713,27 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             StartingPlanetRichnessBonus = RegularSettings.StartingPlanetRichnessBonus,
             GameSpeed = ParseSpeed(),
             StartPaused = StartPaused,
-        }.Normalized(2);
+        }.Normalized(PlayerCountForStart());
 
     Authoritative4XLobby Build4XLobbyForStart()
     {
         var lobby = new Authoritative4XLobby(HostPlayerPeerId4X,
             LocalPeer.PlayerName.NotEmpty() ? LocalPeer.PlayerName : "Host");
-        lobby.Join(JoinPlayerPeerId4X,
-            RemotePeer.PlayerName.NotEmpty() && RemotePeer.PlayerName != "-"
-                ? RemotePeer.PlayerName
-                : "Join");
+        foreach (KeyValuePair<int, LobbyPeer> remote in RemotePeers.OrderBy(kv => kv.Key))
+            lobby.Join(remote.Key,
+                remote.Value.PlayerName.NotEmpty() && remote.Value.PlayerName != "-"
+                    ? remote.Value.PlayerName
+                    : $"P{remote.Key}");
         RequireLobbyValid(lobby.SetSettings(HostPlayerPeerId4X, Build4XSettings()));
         RequireLobbyValid(lobby.SetPlayerSelection(HostPlayerPeerId4X, LocalPeer.RacePreference,
             Authoritative4XLobbyNetworkFlow.SplitTraitOptions(LocalPeer.TraitOptions)));
-        RequireLobbyValid(lobby.SetPlayerSelection(JoinPlayerPeerId4X,
-            RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference,
-            Authoritative4XLobbyNetworkFlow.SplitTraitOptions(RemotePeer.TraitOptions)));
+        foreach (KeyValuePair<int, LobbyPeer> remote in RemotePeers.OrderBy(kv => kv.Key))
+            RequireLobbyValid(lobby.SetPlayerSelection(remote.Key,
+                remote.Value.RacePreference == "-" ? "" : remote.Value.RacePreference,
+                Authoritative4XLobbyNetworkFlow.SplitTraitOptions(remote.Value.TraitOptions)));
         RequireLobbyValid(lobby.SetReady(HostPlayerPeerId4X, true));
-        RequireLobbyValid(lobby.SetReady(JoinPlayerPeerId4X, true));
+        foreach (int peer in RemotePeers.Keys.OrderBy(p => p))
+            RequireLobbyValid(lobby.SetReady(peer, true));
         return lobby;
     }
 
@@ -716,7 +747,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
     string Validate4XStart(SessionStartMessage start)
     {
-        string flowError = LobbyFlow.ValidateStartMessage(start, ArenaMultiplayerSettings.ProtocolVersion);
+        string flowError = LobbyFlow.ValidateStartMessage(start, ArenaMultiplayerSettings.ProtocolVersion,
+            localPeerId: JoinPeerSlot);
         if (flowError.NotEmpty())
             return $"{flowError}\n{Build4XStartDiagnostics(start)}";
         string error = ArenaMultiplayerPeerSignature.ValidateEnvironment(start.BuildHash, start.BuildSummary, "host");
@@ -729,7 +761,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     string Build4XStartDiagnostics(SessionStartMessage start = null)
     {
         Authoritative4XGameSettings settings = start != null
-            ? Authoritative4XLobbyNetworkFlow.SettingsFromStart(start).Normalized(2)
+            ? Authoritative4XLobbyNetworkFlow.SettingsFromStart(start)
+                .Normalized(Authoritative4XLobbyNetworkFlow.PlayerCountFromStart(start))
             : Build4XSettings();
         string settingsHash = start?.SettingsHash ?? settings.SettingsHash;
         string hostRace = start?.HostRacePreference ?? LocalPeer.RacePreference;
@@ -739,6 +772,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         return $"seed={settings.GenerationSeed} settings={settingsHash} "
                + $"host='{hostRace}' join='{joinRace}' turns={turnText}";
     }
+
+    int PlayerCountForStart()
+        => Math.Max(2, 1 + RemotePeers.Count);
 
     public override void Update(float fixedDeltaTime)
     {
@@ -891,6 +927,22 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         SendLocalLobby();
     }
 
+    void CycleJoinSlot()
+    {
+        if (Transport != null || JoinInProgress)
+        {
+            SetStatus("Peer slot is locked after hosting or joining.");
+            GameAudio.NegativeClick();
+            return;
+        }
+        JoinPeerSlot++;
+        if (JoinPeerSlot > LastJoinPeerSlot)
+            JoinPeerSlot = DefaultJoinPeerSlot;
+        SavePersistentConfig();
+        SetStatus($"Join slot set to P{JoinPeerSlot}. Each remote player needs a unique slot.");
+        GameAudio.AffirmativeClick();
+    }
+
     void ApplyLocalSelection()
     {
         LocalPeer.RacePreference = RaceOptions.Length == 0 ? "United" : RaceOptions[RaceIndex.Clamped(0, RaceOptions.Length - 1)];
@@ -908,6 +960,40 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         GameAudio.NegativeClick();
         return true;
     }
+
+    static bool IsRemotePlayerPeer(int peerId)
+        => peerId >= DefaultJoinPeerSlot && peerId <= LastJoinPeerSlot;
+
+    LobbyPeer EnsureRemotePeer(int peerId)
+    {
+        if (!RemotePeers.TryGetValue(peerId, out LobbyPeer peer))
+        {
+            peer = new LobbyPeer
+            {
+                PlayerName = $"P{peerId}",
+                RacePreference = "-",
+                LoadoutTrait = "-",
+            };
+            RemotePeers[peerId] = peer;
+            RefreshPrimaryRemotePeer();
+        }
+        return peer;
+    }
+
+    void RefreshPrimaryRemotePeer()
+    {
+        RemotePeer = RemotePeers.OrderBy(kv => kv.Key).Select(kv => kv.Value).FirstOrDefault()
+                     ?? new LobbyPeer
+                     {
+                         PlayerName = "Remote",
+                         RacePreference = "-",
+                         LoadoutTrait = "-",
+                         Ready = false,
+                     };
+    }
+
+    int ReadyPlayerCount()
+        => (LocalPeer.Ready ? 1 : 0) + RemotePeers.Values.Count(p => p.Ready);
 
     int ParsePort()
     {
@@ -945,6 +1031,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         }
         LocalPeer.LoadoutTrait = ArenaStartArchetype.Wingmates.ToString();
         StartPaused = PersistentConfig.StartPaused;
+        JoinPeerSlot = PersistentConfig.PeerSlot.Clamped(DefaultJoinPeerSlot, LastJoinPeerSlot);
     }
 
     void SavePersistentConfig()
@@ -1025,7 +1112,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             StartPaused = false,
         }.Normalized(2);
 
-        var flow = new Authoritative4XLobbyNetworkFlow(HostPlayerPeerId4X, JoinPlayerPeerId4X, AuthorityPeerId);
+        var flow = new Authoritative4XLobbyNetworkFlow(HostPlayerPeerId4X, DefaultJoinPeerSlot, AuthorityPeerId);
         return flow.RunLoopbackSelfTest(settings, races[0], OneAffordableTraitOrEmpty(),
             races[1], Array.Empty<string>(), ArenaMultiplayerSettings.ProtocolVersion,
             ArenaMultiplayerPeerSignature.EnvironmentHash(),

@@ -90,6 +90,8 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
                 "The multiplayer lobby must expose host-controlled seconds-per-turn.");
             Assert.IsTrue(lobby.Find("arena_mp_pace", out UIButton _),
                 "The multiplayer lobby must expose host-controlled game pacing.");
+            Assert.IsTrue(lobby.Find("arena_mp_peer_slot", out UIButton _),
+                "The multiplayer lobby must expose a join peer-slot selector for 3-8 remote players.");
             Assert.IsTrue(lobby.Find("arena_mp_host_entry", out UITextEntry _),
                 "The multiplayer lobby must expose a host/IP entry.");
             Assert.IsTrue(lobby.Find("arena_mp_port_entry", out UITextEntry _),
@@ -102,6 +104,8 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
                 "Live multiplayer is indefinite; the lobby should no longer expose a finite turns field.");
             Assert.IsFalse(lobby.HasTurnsFieldForHeadless,
                 "The lobby headless probe should agree that the finite turns field is absent.");
+            Assert.AreEqual(ArenaMultiplayerLobbyScreen.DefaultJoinPeerSlot, lobby.JoinPeerSlotForHeadless,
+                "The default join slot must preserve the existing two-player host/laptop path.");
 
             var ext = new CapturingExtensionPoints();
             new ArenaPlugin().Register(ext);
@@ -164,6 +168,11 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             Assert.AreEqual(races[1], start.JoinRacePreference);
             Assert.AreEqual(hostTrait, start.HostTraitOptions);
             Assert.AreEqual(joinTrait, start.JoinTraitOptions);
+            Authoritative4XLobbyPlayer[] startRoster =
+                Authoritative4XLobbyNetworkFlow.DecodeRoster(start.AuthoritativePlayerRoster);
+            Assert.AreEqual(2, startRoster.Length,
+                "Even the two-player lobby must carry a roster so the same start payload scales to eight players.");
+            CollectionAssert.AreEqual(new[] { 2, 3 }, startRoster.Select(p => p.PeerId).ToArray());
             Assert.AreEqual((int)settings.GalaxySize, start.GalaxySize);
             Assert.AreEqual((int)settings.StarsCount, start.StarsCount);
             Assert.AreEqual((int)settings.Difficulty, start.Difficulty);
@@ -242,6 +251,7 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             {
                 Host = "26.20.119.64",
                 Port = 47378,
+                PeerSlot = 7,
                 Seed = 7654321,
                 GameSpeed = 2f,
                 RacePreference = "United",
@@ -260,6 +270,7 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             var lobby = new ArenaMultiplayerLobbyScreen(ArenaMultiplayerLobbySurface.Authoritative4X);
             Assert.AreEqual("26.20.119.64", lobby.HostForHeadless);
             Assert.AreEqual(47378, lobby.PortForHeadless);
+            Assert.AreEqual(7, lobby.JoinPeerSlotForHeadless);
             Assert.AreEqual(7654321, lobby.SeedForHeadless);
             Assert.AreEqual(2f, lobby.SpeedForHeadless);
             Assert.AreEqual(GalSize.Small, lobby.Current4XSettingsForHeadless.GalaxySize);

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using SDLockstep;
 using SDUtils.Deterministic;
@@ -106,9 +107,10 @@ public sealed class Authoritative4XLobbyNetworkFlow
         if (!canStart.Valid)
             throw new InvalidOperationException(canStart.Reason);
 
+        Authoritative4XLobbyPlayer[] players = lobby.Roster;
         Authoritative4XLobbyPlayer host = FindPlayer(lobby, HostPeerId);
-        Authoritative4XLobbyPlayer join = FindPlayer(lobby, JoinPeerId);
-        Authoritative4XGameSettings settings = lobby.Settings.Normalized(2);
+        Authoritative4XLobbyPlayer join = players.FirstOrDefault(p => p.PeerId != HostPeerId) ?? host;
+        Authoritative4XGameSettings settings = lobby.Settings.Normalized(players.Length);
         return new SessionStartMessage
         {
             FromPeer = AuthorityPeerId,
@@ -127,6 +129,7 @@ public sealed class Authoritative4XLobbyNetworkFlow
             JoinRacePreference = join.RaceName,
             HostTraitOptions = string.Join('|', host.TraitOptions ?? Array.Empty<string>()),
             JoinTraitOptions = string.Join('|', join.TraitOptions ?? Array.Empty<string>()),
+            AuthoritativePlayerRoster = EncodeRoster(players),
             IsAuthoritative4X = true,
             AuthoritativeHostPeerId = HostPeerId,
             AuthoritativeJoinPeerId = JoinPeerId,
@@ -164,6 +167,7 @@ public sealed class Authoritative4XLobbyNetworkFlow
         h.AddString(start.JoinRacePreference ?? "");
         h.AddString(start.HostTraitOptions ?? "");
         h.AddString(start.JoinTraitOptions ?? "");
+        h.AddString(start.AuthoritativePlayerRoster ?? "");
         h.AddBool(start.IsAuthoritative4X);
         h.AddInt(start.AuthoritativeHostPeerId);
         h.AddInt(start.AuthoritativeJoinPeerId);
@@ -206,6 +210,7 @@ public sealed class Authoritative4XLobbyNetworkFlow
                + $"maxTurns={start.MaxTurns} speed={speed} startPaused={start.StartPaused} "
                + $"hostRace='{OneLine(start.HostRacePreference)}' joinRace='{OneLine(start.JoinRacePreference)}' "
                + $"hostTraits='{OneLine(start.HostTraitOptions)}' joinTraits='{OneLine(start.JoinTraitOptions)}' "
+               + $"roster='{RosterTelemetrySummary(start)}' "
                + $"galaxy={start.GalaxySize} stars={start.StarsCount} mode={start.GameMode} "
                + $"difficulty={start.Difficulty} opponents={start.NumOpponents} pace={pace} "
                + $"turnTimer={start.TurnTimer} extraPlanets={start.ExtraPlanets} "
@@ -217,7 +222,7 @@ public sealed class Authoritative4XLobbyNetworkFlow
         => $"empireByPeer='{PeerMap(empireByPeer)}' humanEmpires='{string.Join(",", humanEmpireIds ?? Array.Empty<int>())}'";
 
     public string ValidateStartMessage(SessionStartMessage start, int expectedProtocolVersion,
-        string expectedBuildHash = "")
+        string expectedBuildHash = "", int localPeerId = 0)
     {
         if (start == null)
             return "Host sent no session start.";
@@ -230,10 +235,24 @@ public sealed class Authoritative4XLobbyNetworkFlow
         {
             return $"Authoritative 4X build mismatch. Local {expectedBuildHash}, host {start.BuildHash}.";
         }
-        if (start.AuthoritativeHostPeerId != HostPeerId || start.AuthoritativeJoinPeerId != JoinPeerId)
+        Authoritative4XLobbyPlayer[] roster = DecodeRoster(start.AuthoritativePlayerRoster);
+        if (roster.Length > 0)
+        {
+            if (start.AuthoritativeHostPeerId != HostPeerId)
+                return $"Authoritative host peer mismatch. Host {start.AuthoritativeHostPeerId}, expected {HostPeerId}.";
+            if (roster.Length > Authoritative4XLobby.MaxHumanPlayers)
+                return $"Authoritative 4X supports up to {Authoritative4XLobby.MaxHumanPlayers} human players.";
+            if (roster.All(p => p.PeerId != HostPeerId))
+                return $"Authoritative roster is missing host peer {HostPeerId}.";
+            if (localPeerId > 0 && roster.All(p => p.PeerId != localPeerId))
+                return $"Authoritative roster is missing local peer {localPeerId}.";
+        }
+        else if (start.AuthoritativeHostPeerId != HostPeerId || start.AuthoritativeJoinPeerId != JoinPeerId)
+        {
             return $"Authoritative peer mismatch. Host {start.AuthoritativeHostPeerId}, join {start.AuthoritativeJoinPeerId}.";
+        }
 
-        Authoritative4XGameSettings settings = SettingsFromStart(start).Normalized(2);
+        Authoritative4XGameSettings settings = SettingsFromStart(start).Normalized(PlayerCountFromStart(start));
         return string.Equals(start.SettingsHash, settings.SettingsHash, StringComparison.Ordinal)
             ? ""
             : $"Authoritative 4X settings mismatch. Host {start.SettingsHash}, local {settings.SettingsHash}.";
@@ -245,22 +264,49 @@ public sealed class Authoritative4XLobbyNetworkFlow
         if (!string.IsNullOrEmpty(error))
             throw new InvalidOperationException(error);
 
-        Authoritative4XGameSettings settings = SettingsFromStart(start).Normalized(2);
-        var lobby = new Authoritative4XLobby(HostPeerId, "Host");
-        lobby.Join(JoinPeerId, "Join");
+        Authoritative4XLobbyPlayer[] roster = DecodeRoster(start.AuthoritativePlayerRoster);
+        Authoritative4XGameSettings settings = SettingsFromStart(start).Normalized(PlayerCountFromStart(start));
+        var lobby = new Authoritative4XLobby(HostPeerId,
+            roster.FirstOrDefault(p => p.PeerId == HostPeerId)?.PlayerName ?? "Host");
+        if (roster.Length == 0)
+        {
+            lobby.Join(JoinPeerId, "Join");
+            roster = lobby.Roster;
+        }
+        else
+        {
+            foreach (Authoritative4XLobbyPlayer player in roster.Where(p => p.PeerId != HostPeerId))
+                lobby.Join(player.PeerId, player.PlayerName);
+        }
         Authoritative4XLobbyValidation set = lobby.SetSettings(HostPeerId, settings);
         if (!set.Valid)
             throw new InvalidOperationException(set.Reason);
-        Authoritative4XLobbyValidation host = lobby.SetPlayerSelection(HostPeerId,
-            start.HostRacePreference, SplitTraits(start.HostTraitOptions));
-        if (!host.Valid)
-            throw new InvalidOperationException(host.Reason);
-        Authoritative4XLobbyValidation join = lobby.SetPlayerSelection(JoinPeerId,
-            start.JoinRacePreference, SplitTraits(start.JoinTraitOptions));
-        if (!join.Valid)
-            throw new InvalidOperationException(join.Reason);
-        lobby.SetReady(HostPeerId, true);
-        lobby.SetReady(JoinPeerId, true);
+        if (start.AuthoritativePlayerRoster.IsEmpty())
+        {
+            Authoritative4XLobbyValidation host = lobby.SetPlayerSelection(HostPeerId,
+                start.HostRacePreference, SplitTraits(start.HostTraitOptions));
+            if (!host.Valid)
+                throw new InvalidOperationException(host.Reason);
+            Authoritative4XLobbyValidation join = lobby.SetPlayerSelection(JoinPeerId,
+                start.JoinRacePreference, SplitTraits(start.JoinTraitOptions));
+            if (!join.Valid)
+                throw new InvalidOperationException(join.Reason);
+            lobby.SetReady(HostPeerId, true);
+            lobby.SetReady(JoinPeerId, true);
+        }
+        else
+        {
+            foreach (Authoritative4XLobbyPlayer player in roster)
+            {
+                Authoritative4XLobbyValidation selection = lobby.SetPlayerSelection(player.PeerId,
+                    player.RaceName, player.TraitOptions);
+                if (!selection.Valid)
+                    throw new InvalidOperationException(selection.Reason);
+                Authoritative4XLobbyValidation ready = lobby.SetReady(player.PeerId, player.Ready);
+                if (!ready.Valid)
+                    throw new InvalidOperationException(ready.Reason);
+            }
+        }
         return lobby.StartGeneratedGame();
     }
 
@@ -478,6 +524,62 @@ public sealed class Authoritative4XLobbyNetworkFlow
 
     static string[] SplitTraits(string traits)
         => SplitTraitOptions(traits);
+
+    public static int PlayerCountFromStart(SessionStartMessage start)
+    {
+        int rosterCount = DecodeRoster(start?.AuthoritativePlayerRoster).Length;
+        return rosterCount > 0 ? rosterCount : 2;
+    }
+
+    public static string EncodeRoster(IEnumerable<Authoritative4XLobbyPlayer> players)
+    {
+        if (players == null)
+            return "";
+        return string.Join(";", players
+            .OrderBy(p => p.PeerId)
+            .Select(p => string.Join(",",
+                p.PeerId.ToString(CultureInfo.InvariantCulture),
+                p.Ready ? "1" : "0",
+                B64(p.PlayerName),
+                B64(p.RaceName),
+                B64(string.Join('|', p.TraitOptions ?? Array.Empty<string>())))));
+    }
+
+    public static Authoritative4XLobbyPlayer[] DecodeRoster(string roster)
+    {
+        if (roster.IsEmpty())
+            return Array.Empty<Authoritative4XLobbyPlayer>();
+        var players = new List<Authoritative4XLobbyPlayer>();
+        foreach (string row in roster.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            string[] parts = row.Split(',');
+            if (parts.Length < 5 || !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int peer))
+                throw new InvalidOperationException("Authoritative player roster was malformed.");
+            var player = new Authoritative4XLobbyPlayer(peer, UnB64(parts[2]))
+            {
+                Ready = parts[1] == "1",
+                RaceName = UnB64(parts[3]),
+                TraitOptions = SplitTraitOptions(UnB64(parts[4])),
+            };
+            players.Add(player);
+        }
+        return players.OrderBy(p => p.PeerId).ToArray();
+    }
+
+    static string RosterTelemetrySummary(SessionStartMessage start)
+    {
+        Authoritative4XLobbyPlayer[] roster = DecodeRoster(start?.AuthoritativePlayerRoster);
+        if (roster.Length == 0)
+            return "";
+        return string.Join(",", roster.Select(p =>
+            $"{p.PeerId}:{OneLine(p.PlayerName)}:{OneLine(p.RaceName)}:{(p.Ready ? "ready" : "not-ready")}"));
+    }
+
+    static string B64(string text)
+        => Convert.ToBase64String(Encoding.UTF8.GetBytes(text ?? ""));
+
+    static string UnB64(string text)
+        => text.IsEmpty() ? "" : Encoding.UTF8.GetString(Convert.FromBase64String(text));
 
     static void RequireValid(Authoritative4XLobbyValidation validation, string step)
     {

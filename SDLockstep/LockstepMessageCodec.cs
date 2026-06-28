@@ -115,6 +115,7 @@ public static class LockstepMessageCodec
                     w.Write(start.StartingPlanetRichnessBonus);
                     WriteString(w, start.HostTraitOptions);
                     WriteString(w, start.JoinTraitOptions);
+                    WriteString(w, start.AuthoritativePlayerRoster);
                     break;
                 case SessionControlMessage control:
                     w.Write(SessionControl);
@@ -298,6 +299,7 @@ public static class LockstepMessageCodec
                 float richness = r.BaseStream.Position < r.BaseStream.Length ? r.ReadSingle() : 0f;
                 string hostTraitOptions = ReadOptionalString(r);
                 string joinTraitOptions = ReadOptionalString(r);
+                string authoritativePlayerRoster = ReadOptionalString(r);
                 message = new SessionStartMessage
                 {
                     ProtocolVersion = protocolVersion,
@@ -332,6 +334,7 @@ public static class LockstepMessageCodec
                     StartingPlanetRichnessBonus = richness,
                     HostTraitOptions = hostTraitOptions,
                     JoinTraitOptions = joinTraitOptions,
+                    AuthoritativePlayerRoster = authoritativePlayerRoster,
                 };
                 break;
             case SessionControl:

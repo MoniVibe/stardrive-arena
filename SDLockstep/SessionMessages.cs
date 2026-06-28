@@ -73,6 +73,7 @@ public sealed class SessionStartMessage : LockstepMessage
     public float StartingPlanetRichnessBonus;
     public string HostTraitOptions = "";
     public string JoinTraitOptions = "";
+    public string AuthoritativePlayerRoster = "";
 }
 
 public sealed class SessionControlMessage : LockstepMessage
