@@ -1,6 +1,10 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
+using System.Reflection;
+using System.Threading;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SDLockstep;
 using Ship_Game;
@@ -297,6 +301,85 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             ArenaFightScreen.CareerSavePath = savedStaticPath;
             ArenaMultiplayerLobbyConfig.ConfigPathOverride = savedLobbyConfigPath;
             ArenaFightScreen.PendingPlayerDesignName = null;
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    [TestMethod]
+    public void ArenaMultiplayerLobbyHostStartAckTransitionDoesNotCrashUpdate_Headless()
+    {
+        LoadAllGameData();
+
+        string dir = Path.Combine(Path.GetTempPath(), $"arena_mp_ack_{Guid.NewGuid():N}");
+        string savedConfigPath = ArenaMultiplayerLobbyConfig.ConfigPathOverride;
+        ScreenManager sm = ScreenManager.Instance;
+        TcpLockstepTransport host = null;
+        TcpLockstepTransport client = null;
+        try
+        {
+            Directory.CreateDirectory(dir);
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = Path.Combine(dir, "mp-lobby-config.yaml");
+            sm.ExitAll(clear3DObjects: true);
+
+            string[] races = ResourceManager.MajorRaces
+                .Select(r => r.ArchetypeName.NotEmpty() ? r.ArchetypeName : r.Name)
+                .Where(r => r.NotEmpty())
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(r => r, StringComparer.Ordinal)
+                .Take(2)
+                .ToArray();
+            Assert.IsTrue(races.Length >= 2, "The ACK transition proof needs two races.");
+
+            var lobby = new ArenaMultiplayerLobbyScreen(ArenaMultiplayerLobbySurface.Authoritative4X);
+            sm.GoToScreen(lobby, clear3DObjects: true);
+            lobby.Configure4XForHeadless(new Authoritative4XGameSettings
+            {
+                GenerationSeed = 818181,
+                GalaxySize = GalSize.Tiny,
+                StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+                NumOpponents = 1,
+                StartPaused = true,
+            }, races[0], "", races[1], "");
+            SessionStartMessage start = lobby.Build4XStartForHeadless();
+
+            int port = FreeTcpPort();
+            host = TcpLockstepTransport.HostMulti(port);
+            MethodInfo onHostMessage = typeof(ArenaMultiplayerLobbyScreen).GetMethod("OnHostMessage",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(onHostMessage, "The host lobby message handler must exist.");
+            host.AddObserver(Authoritative4XLobby.AuthorityPeerId,
+                message => onHostMessage.Invoke(lobby, new object[] { message }));
+            SetPrivateField(lobby, "Transport", host);
+            SetPrivateField(lobby, "LocalRole", ArenaMultiplayerRole.Host);
+            SetPrivateField(lobby, "PendingHostStart", start);
+
+            client = TcpLockstepTransport.JoinAsPeer("127.0.0.1", port,
+                ArenaMultiplayerLobbyScreen.DefaultJoinPeerSlot, Authoritative4XLobby.AuthorityPeerId);
+            Assert.IsTrue(host.WaitForConnection(TimeSpan.FromSeconds(3)), "Host did not accept the test client.");
+            client.Send(Authoritative4XLobby.AuthorityPeerId, new SessionStartAckMessage
+            {
+                FromPeer = ArenaMultiplayerLobbyScreen.DefaultJoinPeerSlot,
+                PeerId = ArenaMultiplayerLobbyScreen.DefaultJoinPeerSlot,
+                Accepted = true,
+                StartFingerprint = Authoritative4XLobbyNetworkFlow.StartFingerprint(start),
+            });
+
+            for (int i = 0; i < 200 && !lobby.IsRunning; ++i)
+            {
+                client.Poll();
+                lobby.Update(1f / 60f);
+                Thread.Sleep(5);
+            }
+
+            Assert.IsTrue(lobby.IsRunning,
+                "Receiving the final start ACK during Update should transition the host without dereferencing a cleared transport.");
+        }
+        finally
+        {
+            try { sm.ExitAll(clear3DObjects: true); } catch { }
+            try { client?.Dispose(); } catch { }
+            try { host?.Dispose(); } catch { }
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = savedConfigPath;
             try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
         }
     }
@@ -970,6 +1053,22 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         var titleless = new PluginMainMenuAction("missing_titleless", () => null);
         Assert.IsNull(MainMenuScreen.EnsurePluginMainMenuButtonForHeadless(new UIList(ListLayoutStyle.ResizeList), titleless),
             "Legacy titleless plugin actions must not create visible buttons unless the layout defines them.");
+    }
+
+    static void SetPrivateField(object target, string name, object value)
+    {
+        FieldInfo field = target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.IsNotNull(field, $"Missing private field '{name}'.");
+        field.SetValue(target, value);
+    }
+
+    static int FreeTcpPort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
     }
 
     sealed class CapturingExtensionPoints : IGameExtensionPoints

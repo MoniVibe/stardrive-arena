@@ -1070,15 +1070,18 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     {
         base.Update(fixedDeltaTime);
         DrainPendingLobbyActions();
-        if (Transport != null)
+        TcpLockstepTransport transport = Transport;
+        if (transport != null)
         {
-            Transport.Poll();
-            if (Transport.LastError.NotEmpty())
+            transport.Poll();
+            if (!ReferenceEquals(Transport, transport))
+                return;
+            if (transport.LastError.NotEmpty())
             {
-                SetStatus("NETWORK: " + Transport.LastError);
-                LobbyTelemetry?.NetworkError(Transport.LastError);
+                SetStatus("NETWORK: " + transport.LastError);
+                LobbyTelemetry?.NetworkError(transport.LastError);
             }
-            if (LocalRole == ArenaMultiplayerRole.Host && Transport.IsConnected && CurrentStatus.StartsWith("HOST listening", StringComparison.Ordinal))
+            if (LocalRole == ArenaMultiplayerRole.Host && transport.IsConnected && CurrentStatus.StartsWith("HOST listening", StringComparison.Ordinal))
             {
                 SetStatus("Client connected. Ready up and launch when both sides are ready.");
                 LobbyTelemetry?.Event("CLIENT_CONNECTED");
