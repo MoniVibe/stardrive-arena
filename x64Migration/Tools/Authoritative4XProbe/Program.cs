@@ -128,6 +128,9 @@ sealed class AuthoritativeProbeOptions
           --self-test            Run the existing loopback lobby self-test after content load.
           --help                 Show this help.
 
+        Diagnostics:
+          SD_AUTH4X_WIRE_TRACE=1 enables verbose per-frame transport tracing.
+
         Example:
           Authoritative4XProbe.exe --role host --port 47377 --turns 1600 --game-root "C:\Games\StarDrive2"
           Authoritative4XProbe.exe --role join --host 26.20.119.64 --port 47377 --turns 1600 --game-root "D:\Games\StarDrive2"
@@ -463,7 +466,8 @@ static class AuthoritativeProbeRunner
 
             SessionLobbyMessage? receivedJoin = null;
             transport = TcpLockstepTransport.HostMulti(options.Port);
-            transport.AuthoritativeFrameTrace = line => log.Line("wire " + line);
+            if (Authoritative4XLiveTelemetry.IsWireTraceEnabled())
+                transport.AuthoritativeFrameTrace = line => log.Line("wire " + line);
             transport.Register(flow.AuthorityPeerId, message =>
             {
                 if (message is SessionLobbyMessage lobby)
@@ -581,7 +585,8 @@ static class AuthoritativeProbeRunner
 
             SessionStartMessage? receivedStart = null;
             transport = TcpLockstepTransport.JoinAsPeer(options.Host, options.Port, flow.JoinPeerId, flow.AuthorityPeerId);
-            transport.AuthoritativeFrameTrace = line => log.Line("wire " + line);
+            if (Authoritative4XLiveTelemetry.IsWireTraceEnabled())
+                transport.AuthoritativeFrameTrace = line => log.Line("wire " + line);
             transport.Register(flow.JoinPeerId, message =>
             {
                 if (message is SessionStartMessage start)
@@ -1208,8 +1213,8 @@ sealed class ProbeCommandPlan
                && (string.IsNullOrEmpty(JoinBuildingName) || ContainsQueuedOrCompletedBuilding(joinPlanet, JoinBuildingName))
                && host!.CanBuildShip(HostDesignName)
                && join!.CanBuildShip(JoinDesignName)
-               && ContainsQueuedShip(hostPlanet, HostDesignName)
-               && ContainsQueuedShip(joinPlanet, JoinDesignName)
+               && ContainsQueuedOrOwnedShip(hostPlanet, HostDesignName)
+               && ContainsQueuedOrOwnedShip(joinPlanet, JoinDesignName)
                && (!HasColonizationScript(hostSide: true)
                    || HasColonizationGoal(host, HostColonyShipId, HostColonizePlanetId))
                && (!HasColonizationScript(hostSide: false)
@@ -1476,14 +1481,19 @@ sealed class ProbeCommandPlan
     static void RequireColonizationGoal(string label, string side, Empire empire, int shipId, int planetId)
     {
         if (!HasColonizationGoal(empire, shipId, planetId))
-            throw new InvalidOperationException($"{label}: {side} colonization order did not create MarkForColonization ship={shipId} planet={planetId}.");
+            throw new InvalidOperationException($"{label}: {side} colonization order did not create MarkForColonization or colonize target ship={shipId} planet={planetId}.");
     }
 
     static bool HasColonizationGoal(Empire empire, int shipId, int planetId)
-        => empire.AI.FindGoals<MarkForColonization>()
+    {
+        if (empire.GetPlanets().Any(p => p.Id == planetId))
+            return true;
+
+        return empire.AI.FindGoals<MarkForColonization>()
             .Any(g => g.TargetPlanet?.Id == planetId
                       && g.FinishedShip?.Id == shipId
                       && g.IsManualColonizationOrder);
+    }
 
     static Building? TryPickBuildableBuilding(Planet planet)
     {
@@ -1657,12 +1667,18 @@ sealed class ProbeCommandPlan
 
     static void RequireQueuedShip(string label, string side, Planet planet, string designName)
     {
-        if (!ContainsQueuedShip(planet, designName))
-            throw new InvalidOperationException($"{label}: {side} planet {planet.Id} did not queue ship design '{designName}'.");
+        if (!ContainsQueuedOrOwnedShip(planet, designName))
+            throw new InvalidOperationException($"{label}: {side} planet {planet.Id} did not queue or complete ship design '{designName}'.");
     }
 
     static bool ContainsQueuedShip(Planet planet, string designName)
         => planet.Construction.ContainsShipDesignName(designName);
+
+    static bool ContainsQueuedOrOwnedShip(Planet planet, string designName)
+        => ContainsQueuedShip(planet, designName)
+           || planet.Owner?.OwnedShips.Any(s =>
+                  string.Equals(s.Name, designName, StringComparison.Ordinal)
+                  || string.Equals(s.ShipData?.Name, designName, StringComparison.Ordinal)) == true;
 
     static void RequireClose(string label, string field, float expected, float actual)
     {

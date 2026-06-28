@@ -109,4 +109,25 @@ public class TestRefitQueuePlacement : StarDriveTest
         Assert.AreEqual(2, queue.Count);
         Assert.AreSame(front, queue[0], "Non-refit builds must not jump the queue");
     }
+
+    [TestMethod]
+    public void PlayerBuildingCompletion_DoesNotRequireNotificationManager()
+    {
+        Assert.IsTrue(Homeworld.Construction.Enqueue(NanoMine, playerAdded: true),
+            "Failed to enqueue a manually-added building.");
+        QueueItem item = Homeworld.Construction.GetConstructionQueue()[0];
+        item.ProductionSpent = item.ActualCost;
+
+        // Headless authoritative multiplayer hosts can complete queued player buildings
+        // without a live notification manager attached.
+        Universe.NotificationManager = null;
+        Homeworld.ProdHere = 1f;
+
+        Assert.IsTrue(Homeworld.Construction.RushProduction(0, 1f),
+            "Completed building should be processed out of the queue.");
+        Assert.AreEqual(0, Homeworld.Construction.Count,
+            "Completed building should leave the construction queue.");
+        Assert.IsTrue(Homeworld.BuildingBuilt(NanoMine.BID),
+            "Completed building should be placed even when no notification manager exists.");
+    }
 }

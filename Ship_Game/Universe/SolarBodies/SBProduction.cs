@@ -204,7 +204,7 @@ namespace Ship_Game.Universe.SolarBodies
                 && P.OwnerIsPlayer
                 && (q.IsPlayerAdded || q.Building.IsCapital))
             {
-                P.Universe.Notifications.AddBuildingConstructed(P, b);
+                P.Universe.Notifications?.AddBuildingConstructed(P, b);
             }
 
             return true;
