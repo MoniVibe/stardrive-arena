@@ -35,18 +35,40 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     const string DefaultHost = "127.0.0.1";
     readonly Authoritative4XLobbyNetworkFlow LobbyFlow =
         new(HostPlayerPeerId4X, DefaultJoinPeerSlot, AuthorityPeerId);
+    static readonly RaceDesignScreen.GameMode[] ModeOptions =
+    {
+        RaceDesignScreen.GameMode.Sandbox,
+        RaceDesignScreen.GameMode.Corners,
+        RaceDesignScreen.GameMode.Ring,
+        RaceDesignScreen.GameMode.SmallClusters,
+        RaceDesignScreen.GameMode.BigClusters,
+        RaceDesignScreen.GameMode.SpiralTwoArm,
+        RaceDesignScreen.GameMode.SpiralFourArm,
+        RaceDesignScreen.GameMode.SpiralBarred,
+        RaceDesignScreen.GameMode.SpiralMagellanic,
+        RaceDesignScreen.GameMode.Elimination,
+        RaceDesignScreen.GameMode.Random,
+    };
     static readonly GalSize[] GalaxyOptions =
     {
         GalSize.Tiny,
         GalSize.Small,
         GalSize.Medium,
+        GalSize.Large,
+        GalSize.Huge,
+        GalSize.Epic,
+        GalSize.TrulyEpic,
     };
     static readonly RaceDesignScreen.StarsAbundance[] StarOptions =
     {
+        RaceDesignScreen.StarsAbundance.VeryRare,
         RaceDesignScreen.StarsAbundance.Rare,
+        RaceDesignScreen.StarsAbundance.Uncommon,
         RaceDesignScreen.StarsAbundance.Normal,
         RaceDesignScreen.StarsAbundance.Abundant,
         RaceDesignScreen.StarsAbundance.Crowded,
+        RaceDesignScreen.StarsAbundance.Packed,
+        RaceDesignScreen.StarsAbundance.SuperPacked,
     };
     static readonly GameDifficulty[] DifficultyOptions =
     {
@@ -56,7 +78,22 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         GameDifficulty.Insane,
     };
     static readonly int[] TurnTimerOptions = { 1, 3, 5, 10 };
+    static readonly int[] ExtraPlanetOptions = { 0, 1, 2, 3 };
     static readonly float[] RichnessOptions = { 0f, 1f, 2f, 3f, 5f };
+    static readonly float[] DecayOptions = { 0.2f, 0.5f, 1f, 1.5f, 2f, 3f };
+    static readonly float[] VolcanicOptions = { 0f, 0.5f, 1f, 1.5f, 2f, 3f };
+    static readonly float[] MaintenanceOptions = { 1f, 1.2f, 1.5f, 2f };
+    static readonly float[] GravityOptions = { 0f, 4000f, 8000f, 12000f, 16000f };
+    static readonly float[] FtlOptions = { 0.25f, 0.5f, 0.75f, 1f };
+    static readonly ExtraRemnantPresence[] RemnantOptions =
+    {
+        ExtraRemnantPresence.VeryRare,
+        ExtraRemnantPresence.Rare,
+        ExtraRemnantPresence.Normal,
+        ExtraRemnantPresence.More,
+        ExtraRemnantPresence.MuchMore,
+        ExtraRemnantPresence.Everywhere,
+    };
 
     readonly object Sync = new();
     readonly ArenaMultiplayerLobbySurface Surface;
@@ -80,11 +117,19 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     string[] TraitOptions = Array.Empty<string>();
     int RaceIndex;
     int TraitIndex;
+    int ModeIndex;
     int GalaxyIndex;
     int StarsIndex;
     int DifficultyIndex;
     int TurnTimerIndex = 2;
+    int ExtraPlanetsIndex;
     int RichnessIndex;
+    int DecayIndex = 2;
+    int VolcanicIndex = 2;
+    int MaintenanceIndex;
+    int GravityIndex = 2;
+    int FtlIndex = 3;
+    int ExtraRemnantIndex = 2;
     bool StartPaused;
     bool JoinInProgress;
     bool ScreenExiting;
@@ -153,14 +198,29 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             Mode = s.Mode,
             StarsCount = s.StarsCount,
             GalaxySize = s.GalaxySize,
+            ExtraRemnant = s.ExtraRemnant,
             Difficulty = s.Difficulty,
             NumOpponents = s.NumOpponents,
             Pace = s.Pace,
             TurnTimer = s.TurnTimer,
             ExtraPlanets = s.ExtraPlanets,
+            CustomMineralDecay = s.CustomMineralDecay,
+            VolcanicActivity = s.VolcanicActivity,
             StartingPlanetRichnessBonus = s.StartingPlanetRichnessBonus,
+            ShipMaintenanceMultiplier = s.ShipMaintenanceMultiplier,
+            FTLModifier = s.FTLModifier,
+            EnemyFTLModifier = s.EnemyFTLModifier,
+            GravityWellRange = s.GravityWellRange,
             GameSpeed = s.GameSpeed,
             StartPaused = s.StartPaused,
+            AIUsesPlayerDesigns = s.AIUsesPlayerDesigns,
+            UseUpkeepByHullSize = s.UseUpkeepByHullSize,
+            DisableRemnantStory = s.DisableRemnantStory,
+            EnableRandomizedAIFleetSizes = s.EnableRandomizedAIFleetSizes,
+            DisableAlternateAITraits = s.DisableAlternateAITraits,
+            DisablePirates = s.DisablePirates,
+            DisableResearchStations = s.DisableResearchStations,
+            DisableMiningOps = s.DisableMiningOps,
         };
         LocalPeer.RacePreference = localRace;
         LocalPeer.TraitOptions = NormalizeTraitSelection(localTraits);
@@ -187,15 +247,23 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         TraitOptions = AvailableTraitOptions();
         RaceIndex = Math.Max(0, Array.IndexOf(RaceOptions, LocalPeer.RacePreference));
         TraitIndex = TraitCursorIndex(LocalPeer.TraitOptions);
+        ModeIndex = Math.Max(0, Array.IndexOf(ModeOptions, RegularSettings.Mode));
         GalaxyIndex = Math.Max(0, Array.IndexOf(GalaxyOptions, RegularSettings.GalaxySize));
         StarsIndex = Math.Max(0, Array.IndexOf(StarOptions, RegularSettings.StarsCount));
         DifficultyIndex = Math.Max(0, Array.IndexOf(DifficultyOptions, RegularSettings.Difficulty));
         TurnTimerIndex = Math.Max(0, Array.IndexOf(TurnTimerOptions, RegularSettings.TurnTimer));
+        ExtraPlanetsIndex = Math.Max(0, Array.IndexOf(ExtraPlanetOptions, RegularSettings.ExtraPlanets));
         RichnessIndex = Math.Max(0, Array.IndexOf(RichnessOptions, RegularSettings.StartingPlanetRichnessBonus));
+        DecayIndex = Math.Max(0, Array.IndexOf(DecayOptions, RegularSettings.CustomMineralDecay));
+        VolcanicIndex = Math.Max(0, Array.IndexOf(VolcanicOptions, RegularSettings.VolcanicActivity));
+        MaintenanceIndex = Math.Max(0, Array.IndexOf(MaintenanceOptions, RegularSettings.ShipMaintenanceMultiplier));
+        GravityIndex = Math.Max(0, Array.IndexOf(GravityOptions, RegularSettings.GravityWellRange));
+        FtlIndex = Math.Max(0, Array.IndexOf(FtlOptions, RegularSettings.FTLModifier));
+        ExtraRemnantIndex = Math.Max(0, Array.IndexOf(RemnantOptions, RegularSettings.ExtraRemnant));
         ApplyLocalSelection();
 
         Vector2 c = ScreenCenter;
-        var panel = new RectF(c.X - 440, c.Y - 295, 880, 590);
+        var panel = new RectF(c.X - 440, c.Y - 330, 880, 660);
         Add(ArenaTheme.Panel(panel));
         Add(ArenaTheme.ArenaTitle(new Vector2(panel.X + 24, panel.Y + 24), HeaderTitleForHeadless));
         Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 74), HeaderSubtitleForHeadless));
@@ -222,44 +290,90 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         UIButton traitToggle = ArenaTheme.AddPillButton(setup, "", _ => ToggleTrait(), 142f);
         traitToggle.Name = "arena_mp_trait_toggle";
         traitToggle.DynamicText = TraitToggleLabel;
-        UIButton galaxy = ArenaTheme.AddPillButton(setup, "", _ => CycleGalaxy(), 110f);
+        UIButton mode = ArenaTheme.AddPillButton(setup, "", _ => CycleMode(), 122f);
+        mode.Name = "arena_mp_mode";
+        mode.DynamicText = () => $"MODE {ShortModeName(RegularSettings.Mode)}";
+        UIButton galaxy = ArenaTheme.AddPillButton(setup, "", _ => CycleGalaxy(), 96f);
         galaxy.Name = "arena_mp_regular_settings";
-        galaxy.DynamicText = () => $"MAP {RegularSettings.GalaxySize.ToString().ToUpperInvariant()}";
+        galaxy.DynamicText = () => $"SIZE {RegularSettings.GalaxySize.ToString().ToUpperInvariant()}";
         UIButton stars = ArenaTheme.AddPillButton(setup, "", _ => CycleStars(), 118f);
         stars.Name = "arena_mp_stars";
         stars.DynamicText = () => $"STARS {RegularSettings.StarsCount.ToString().ToUpperInvariant()}";
-        UIButton difficulty = ArenaTheme.AddPillButton(setup, "", _ => CycleDifficulty(), 110f);
-        difficulty.Name = "arena_mp_difficulty";
-        difficulty.DynamicText = () => $"DIFF {RegularSettings.Difficulty.ToString().ToUpperInvariant()}";
 
         UIList setup2 = AddList(new Vector2(panel.X + 24, panel.Y + 430));
         setup2.Direction = new Vector2(1f, 0f);
         setup2.Padding = new Vector2(8f, 8f);
         setup2.LayoutStyle = ListLayoutStyle.ResizeList;
+        UIButton difficulty = ArenaTheme.AddPillButton(setup2, "", _ => CycleDifficulty(), 110f);
+        difficulty.Name = "arena_mp_difficulty";
+        difficulty.DynamicText = () => $"DIFF {RegularSettings.Difficulty.ToString().ToUpperInvariant()}";
         UIButton ai = ArenaTheme.AddPillButton(setup2, "", _ => CycleOpponents(), 88f);
         ai.Name = "arena_mp_opponents";
-        ai.DynamicText = () => $"AI {RegularSettings.NumOpponents}";
+        ai.DynamicText = () => $"EMP {RegularSettings.NumOpponents + 1}";
         UIButton richness = ArenaTheme.AddPillButton(setup2, "", _ => CycleRichness(), 142f);
         richness.Name = "arena_mp_richness";
         richness.DynamicText = () => $"RICH {RegularSettings.StartingPlanetRichnessBonus:0.#}";
-        UIButton turn = ArenaTheme.AddPillButton(setup2, "", _ => CycleTurnTimer(), 126f);
-        turn.Name = "arena_mp_turn_timer";
-        turn.DynamicText = () => $"TURN {RegularSettings.TurnTimer}S";
+        UIButton extraPlanets = ArenaTheme.AddPillButton(setup2, "", _ => CycleExtraPlanets(), 104f);
+        extraPlanets.Name = "arena_mp_extra_planets";
+        extraPlanets.DynamicText = () => $"EXTRA {RegularSettings.ExtraPlanets}";
+        UIButton remnants = ArenaTheme.AddPillButton(setup2, "", _ => CycleRemnants(), 128f);
+        remnants.Name = "arena_mp_remnants";
+        remnants.DynamicText = () => $"REM {ShortRemnantName(RegularSettings.ExtraRemnant)}";
         UIButton pace = ArenaTheme.AddPillButton(setup2, "", _ => CyclePace(), 112f);
         pace.Name = "arena_mp_pace";
         pace.DynamicText = () => $"PACE {RegularSettings.Pace:0.#}X";
-        UIButton pause = ArenaTheme.AddPillButton(setup2, "", _ => ToggleStartPaused(), 126f);
+
+        UIList setup3 = AddList(new Vector2(panel.X + 24, panel.Y + 468));
+        setup3.Direction = new Vector2(1f, 0f);
+        setup3.Padding = new Vector2(8f, 8f);
+        setup3.LayoutStyle = ListLayoutStyle.ResizeList;
+        UIButton turn = ArenaTheme.AddPillButton(setup3, "", _ => CycleTurnTimer(), 104f);
+        turn.Name = "arena_mp_turn_timer";
+        turn.DynamicText = () => $"TURN {RegularSettings.TurnTimer}S";
+        UIButton decay = ArenaTheme.AddPillButton(setup3, "", _ => CycleDecay(), 112f);
+        decay.Name = "arena_mp_decay";
+        decay.DynamicText = () => $"DECAY {RegularSettings.CustomMineralDecay:0.#}";
+        UIButton volcano = ArenaTheme.AddPillButton(setup3, "", _ => CycleVolcanos(), 112f);
+        volcano.Name = "arena_mp_volcanos";
+        volcano.DynamicText = () => $"VOLC {RegularSettings.VolcanicActivity:0.#}";
+        UIButton maint = ArenaTheme.AddPillButton(setup3, "", _ => CycleMaintenance(), 118f);
+        maint.Name = "arena_mp_maintenance";
+        maint.DynamicText = () => $"MAINT {RegularSettings.ShipMaintenanceMultiplier:0.#}";
+        UIButton ftl = ArenaTheme.AddPillButton(setup3, "", _ => CycleFtl(), 110f);
+        ftl.Name = "arena_mp_ftl";
+        ftl.DynamicText = () => $"FTL {RegularSettings.FTLModifier:0.##}";
+        UIButton gravity = ArenaTheme.AddPillButton(setup3, "", _ => CycleGravity(), 110f);
+        gravity.Name = "arena_mp_gravity";
+        gravity.DynamicText = () => $"GW {RegularSettings.GravityWellRange:0}";
+
+        UIList setup4 = AddList(new Vector2(panel.X + 24, panel.Y + 506));
+        setup4.Direction = new Vector2(1f, 0f);
+        setup4.Padding = new Vector2(8f, 8f);
+        setup4.LayoutStyle = ListLayoutStyle.ResizeList;
+        UIButton pause = ArenaTheme.AddPillButton(setup4, "", _ => ToggleStartPaused(), 126f);
         pause.Name = "arena_mp_start_paused";
         pause.DynamicText = () => StartPaused ? "START PAUSED" : "START LIVE";
-        UIButton slot = ArenaTheme.AddPillButton(setup2, "", _ => CycleJoinSlot(), 92f);
+        UIButton slot = ArenaTheme.AddPillButton(setup4, "", _ => CycleJoinSlot(), 92f);
         slot.Name = "arena_mp_peer_slot";
         slot.DynamicText = () => LocalRole == ArenaMultiplayerRole.Host ? "SLOT HOST" : $"SLOT P{JoinPeerSlot}";
+        UIButton pirates = ArenaTheme.AddPillButton(setup4, "", _ => TogglePirates(), 118f);
+        pirates.Name = "arena_mp_pirates";
+        pirates.DynamicText = () => RegularSettings.DisablePirates ? "PIRATES OFF" : "PIRATES ON";
+        UIButton story = ArenaTheme.AddPillButton(setup4, "", _ => ToggleRemnantStory(), 118f);
+        story.Name = "arena_mp_remnant_story";
+        story.DynamicText = () => RegularSettings.DisableRemnantStory ? "STORY OFF" : "STORY ON";
+        UIButton ops = ArenaTheme.AddPillButton(setup4, "", _ => ToggleStationOps(), 118f);
+        ops.Name = "arena_mp_station_ops";
+        ops.DynamicText = StationOpsLabel;
+        UIButton rules = ArenaTheme.AddPillButton(setup4, "", _ => CycleAIRules(), 126f);
+        rules.Name = "arena_mp_ai_rules";
+        rules.DynamicText = AIRulesLabel;
 
-        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 466), "STATUS"));
+        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 534), "STATUS"));
         for (int i = 0; i < 3; ++i)
         {
             int line = i;
-            Add(new UILabel(new Vector2(panel.X + 24, panel.Y + 492 + i * 18),
+            Add(new UILabel(new Vector2(panel.X + 24, panel.Y + 560 + i * 18),
                 StatusLine(line), ArenaTheme.BodySmallFont, ArenaTheme.TextSecondary)
             {
                 DynamicText = _ => StatusLine(line),
@@ -705,14 +819,29 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             Mode = RegularSettings.Mode,
             StarsCount = RegularSettings.StarsCount,
             GalaxySize = RegularSettings.GalaxySize,
+            ExtraRemnant = RegularSettings.ExtraRemnant,
             Difficulty = RegularSettings.Difficulty,
             NumOpponents = RegularSettings.NumOpponents,
             Pace = RegularSettings.Pace,
             TurnTimer = RegularSettings.TurnTimer,
             ExtraPlanets = RegularSettings.ExtraPlanets,
+            CustomMineralDecay = RegularSettings.CustomMineralDecay,
+            VolcanicActivity = RegularSettings.VolcanicActivity,
             StartingPlanetRichnessBonus = RegularSettings.StartingPlanetRichnessBonus,
+            ShipMaintenanceMultiplier = RegularSettings.ShipMaintenanceMultiplier,
+            FTLModifier = RegularSettings.FTLModifier,
+            EnemyFTLModifier = RegularSettings.EnemyFTLModifier,
+            GravityWellRange = RegularSettings.GravityWellRange,
             GameSpeed = ParseSpeed(),
             StartPaused = StartPaused,
+            AIUsesPlayerDesigns = RegularSettings.AIUsesPlayerDesigns,
+            UseUpkeepByHullSize = RegularSettings.UseUpkeepByHullSize,
+            DisableRemnantStory = RegularSettings.DisableRemnantStory,
+            EnableRandomizedAIFleetSizes = RegularSettings.EnableRandomizedAIFleetSizes,
+            DisableAlternateAITraits = RegularSettings.DisableAlternateAITraits,
+            DisablePirates = RegularSettings.DisablePirates,
+            DisableResearchStations = RegularSettings.DisableResearchStations,
+            DisableMiningOps = RegularSettings.DisableMiningOps,
         }.Normalized(PlayerCountForStart());
 
     Authoritative4XLobby Build4XLobbyForStart()
@@ -820,6 +949,15 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         TraitIndex = (TraitIndex + 1) % TraitOptions.Length;
     }
 
+    void CycleMode()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        ModeIndex = (ModeIndex + 1) % ModeOptions.Length;
+        RegularSettings.Mode = ModeOptions[ModeIndex];
+        HostSettingChanged();
+    }
+
     void ToggleTrait()
     {
         if (TraitOptions.Length == 0)
@@ -845,9 +983,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             return;
         GalaxyIndex = (GalaxyIndex + 1) % GalaxyOptions.Length;
         RegularSettings.GalaxySize = GalaxyOptions[GalaxyIndex];
-        LocalPeer.Ready = false;
-        SavePersistentConfig();
-        SendLocalLobby();
+        HostSettingChanged();
     }
 
     void CycleStars()
@@ -856,9 +992,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             return;
         StarsIndex = (StarsIndex + 1) % StarOptions.Length;
         RegularSettings.StarsCount = StarOptions[StarsIndex];
-        LocalPeer.Ready = false;
-        SavePersistentConfig();
-        SendLocalLobby();
+        HostSettingChanged();
     }
 
     void CycleDifficulty()
@@ -867,20 +1001,16 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             return;
         DifficultyIndex = (DifficultyIndex + 1) % DifficultyOptions.Length;
         RegularSettings.Difficulty = DifficultyOptions[DifficultyIndex];
-        LocalPeer.Ready = false;
-        SavePersistentConfig();
-        SendLocalLobby();
+        HostSettingChanged();
     }
 
     void CycleOpponents()
     {
         if (HostSettingsAreLockedToRemote())
             return;
-        int max = Math.Max(1, ResourceManager.MajorRaces.Count - 1);
+        int max = Authoritative4XGameSettings.MaxOpponentsAllowed();
         RegularSettings.NumOpponents = RegularSettings.NumOpponents >= max ? 1 : RegularSettings.NumOpponents + 1;
-        LocalPeer.Ready = false;
-        SavePersistentConfig();
-        SendLocalLobby();
+        HostSettingChanged();
     }
 
     void CycleRichness()
@@ -889,9 +1019,25 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             return;
         RichnessIndex = (RichnessIndex + 1) % RichnessOptions.Length;
         RegularSettings.StartingPlanetRichnessBonus = RichnessOptions[RichnessIndex];
-        LocalPeer.Ready = false;
-        SavePersistentConfig();
-        SendLocalLobby();
+        HostSettingChanged();
+    }
+
+    void CycleExtraPlanets()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        ExtraPlanetsIndex = (ExtraPlanetsIndex + 1) % ExtraPlanetOptions.Length;
+        RegularSettings.ExtraPlanets = ExtraPlanetOptions[ExtraPlanetsIndex];
+        HostSettingChanged();
+    }
+
+    void CycleRemnants()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        ExtraRemnantIndex = (ExtraRemnantIndex + 1) % RemnantOptions.Length;
+        RegularSettings.ExtraRemnant = RemnantOptions[ExtraRemnantIndex];
+        HostSettingChanged();
     }
 
     void CycleTurnTimer()
@@ -900,9 +1046,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             return;
         TurnTimerIndex = (TurnTimerIndex + 1) % TurnTimerOptions.Length;
         RegularSettings.TurnTimer = TurnTimerOptions[TurnTimerIndex];
-        LocalPeer.Ready = false;
-        SavePersistentConfig();
-        SendLocalLobby();
+        HostSettingChanged();
     }
 
     void CyclePace()
@@ -912,6 +1056,111 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         RegularSettings.Pace += 0.5f;
         if (RegularSettings.Pace > 4f)
             RegularSettings.Pace = 1f;
+        HostSettingChanged();
+    }
+
+    void CycleDecay()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        DecayIndex = (DecayIndex + 1) % DecayOptions.Length;
+        RegularSettings.CustomMineralDecay = DecayOptions[DecayIndex];
+        HostSettingChanged();
+    }
+
+    void CycleVolcanos()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        VolcanicIndex = (VolcanicIndex + 1) % VolcanicOptions.Length;
+        RegularSettings.VolcanicActivity = VolcanicOptions[VolcanicIndex];
+        HostSettingChanged();
+    }
+
+    void CycleMaintenance()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        MaintenanceIndex = (MaintenanceIndex + 1) % MaintenanceOptions.Length;
+        RegularSettings.ShipMaintenanceMultiplier = MaintenanceOptions[MaintenanceIndex];
+        HostSettingChanged();
+    }
+
+    void CycleFtl()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        FtlIndex = (FtlIndex + 1) % FtlOptions.Length;
+        RegularSettings.FTLModifier = FtlOptions[FtlIndex];
+        RegularSettings.EnemyFTLModifier = Math.Min(RegularSettings.FTLModifier, 0.5f);
+        HostSettingChanged();
+    }
+
+    void CycleGravity()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        GravityIndex = (GravityIndex + 1) % GravityOptions.Length;
+        RegularSettings.GravityWellRange = GravityOptions[GravityIndex];
+        HostSettingChanged();
+    }
+
+    void TogglePirates()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        RegularSettings.DisablePirates = !RegularSettings.DisablePirates;
+        HostSettingChanged();
+    }
+
+    void ToggleRemnantStory()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        RegularSettings.DisableRemnantStory = !RegularSettings.DisableRemnantStory;
+        HostSettingChanged();
+    }
+
+    void ToggleStationOps()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        if (!RegularSettings.DisableResearchStations && !RegularSettings.DisableMiningOps)
+            RegularSettings.DisableResearchStations = true;
+        else if (RegularSettings.DisableResearchStations && !RegularSettings.DisableMiningOps)
+            RegularSettings.DisableMiningOps = true;
+        else
+        {
+            RegularSettings.DisableResearchStations = false;
+            RegularSettings.DisableMiningOps = false;
+        }
+        HostSettingChanged();
+    }
+
+    void CycleAIRules()
+    {
+        if (HostSettingsAreLockedToRemote())
+            return;
+        if (RegularSettings.AIUsesPlayerDesigns && !RegularSettings.DisableAlternateAITraits && !RegularSettings.EnableRandomizedAIFleetSizes && !RegularSettings.UseUpkeepByHullSize)
+            RegularSettings.AIUsesPlayerDesigns = false;
+        else if (!RegularSettings.AIUsesPlayerDesigns && !RegularSettings.DisableAlternateAITraits)
+            RegularSettings.DisableAlternateAITraits = true;
+        else if (!RegularSettings.EnableRandomizedAIFleetSizes)
+            RegularSettings.EnableRandomizedAIFleetSizes = true;
+        else if (!RegularSettings.UseUpkeepByHullSize)
+            RegularSettings.UseUpkeepByHullSize = true;
+        else
+        {
+            RegularSettings.AIUsesPlayerDesigns = true;
+            RegularSettings.DisableAlternateAITraits = false;
+            RegularSettings.EnableRandomizedAIFleetSizes = false;
+            RegularSettings.UseUpkeepByHullSize = false;
+        }
+        HostSettingChanged();
+    }
+
+    void HostSettingChanged()
+    {
         LocalPeer.Ready = false;
         SavePersistentConfig();
         SendLocalLobby();
@@ -923,8 +1172,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             return;
         StartPaused = !StartPaused;
         RegularSettings.StartPaused = StartPaused;
-        SavePersistentConfig();
-        SendLocalLobby();
+        HostSettingChanged();
     }
 
     void CycleJoinSlot()
@@ -1346,6 +1594,51 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
     static string ShortTraitName(string trait)
         => trait.Length <= 12 ? trait : trait.Substring(0, 9) + "...";
+
+    static string ShortModeName(RaceDesignScreen.GameMode mode)
+        => mode switch
+        {
+            RaceDesignScreen.GameMode.SpiralTwoArm => "2ARM",
+            RaceDesignScreen.GameMode.SpiralFourArm => "4ARM",
+            RaceDesignScreen.GameMode.SpiralBarred => "BARRED",
+            RaceDesignScreen.GameMode.SpiralMagellanic => "MAGELL",
+            RaceDesignScreen.GameMode.SmallClusters => "SCLUST",
+            RaceDesignScreen.GameMode.BigClusters => "BCLUST",
+            RaceDesignScreen.GameMode.Elimination => "ELIM",
+            _ => mode.ToString().ToUpperInvariant(),
+        };
+
+    static string ShortRemnantName(ExtraRemnantPresence presence)
+        => presence switch
+        {
+            ExtraRemnantPresence.VeryRare => "VRARE",
+            ExtraRemnantPresence.MuchMore => "MUCH",
+            _ => presence.ToString().ToUpperInvariant(),
+        };
+
+    string StationOpsLabel()
+    {
+        if (RegularSettings.DisableResearchStations && RegularSettings.DisableMiningOps)
+            return "OPS OFF";
+        if (RegularSettings.DisableResearchStations)
+            return "NO RST";
+        if (RegularSettings.DisableMiningOps)
+            return "NO MIN";
+        return "OPS ON";
+    }
+
+    string AIRulesLabel()
+    {
+        if (!RegularSettings.AIUsesPlayerDesigns)
+            return "NO AI DES";
+        if (RegularSettings.DisableAlternateAITraits)
+            return "AI BASE";
+        if (RegularSettings.EnableRandomizedAIFleetSizes)
+            return "AI FLEET";
+        if (RegularSettings.UseUpkeepByHullSize)
+            return "HULL UPK";
+        return "AI RULES";
+    }
 
     static string SignedTraitCost(string trait)
     {

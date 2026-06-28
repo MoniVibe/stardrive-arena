@@ -136,13 +136,28 @@ public sealed class Authoritative4XLobbyNetworkFlow
             GenerationSeed = settings.GenerationSeed,
             GalaxySize = (int)settings.GalaxySize,
             StarsCount = (int)settings.StarsCount,
+            ExtraRemnant = (int)settings.ExtraRemnant,
             GameMode = (int)settings.Mode,
             Difficulty = (int)settings.Difficulty,
             NumOpponents = settings.NumOpponents,
             Pace = settings.Pace,
             TurnTimer = settings.TurnTimer,
             ExtraPlanets = settings.ExtraPlanets,
+            CustomMineralDecay = settings.CustomMineralDecay,
+            VolcanicActivity = settings.VolcanicActivity,
             StartingPlanetRichnessBonus = settings.StartingPlanetRichnessBonus,
+            ShipMaintenanceMultiplier = settings.ShipMaintenanceMultiplier,
+            FTLModifier = settings.FTLModifier,
+            EnemyFTLModifier = settings.EnemyFTLModifier,
+            GravityWellRange = settings.GravityWellRange,
+            AIUsesPlayerDesigns = settings.AIUsesPlayerDesigns,
+            UseUpkeepByHullSize = settings.UseUpkeepByHullSize,
+            DisableRemnantStory = settings.DisableRemnantStory,
+            EnableRandomizedAIFleetSizes = settings.EnableRandomizedAIFleetSizes,
+            DisableAlternateAITraits = settings.DisableAlternateAITraits,
+            DisablePirates = settings.DisablePirates,
+            DisableResearchStations = settings.DisableResearchStations,
+            DisableMiningOps = settings.DisableMiningOps,
         };
     }
 
@@ -174,13 +189,28 @@ public sealed class Authoritative4XLobbyNetworkFlow
         h.AddInt(start.GenerationSeed);
         h.AddInt(start.GalaxySize);
         h.AddInt(start.StarsCount);
+        h.AddInt(start.ExtraRemnant);
         h.AddInt(start.GameMode);
         h.AddInt(start.Difficulty);
         h.AddInt(start.NumOpponents);
         h.AddFloat(start.Pace);
         h.AddInt(start.TurnTimer);
         h.AddInt(start.ExtraPlanets);
+        h.AddFloat(start.CustomMineralDecay);
+        h.AddFloat(start.VolcanicActivity);
         h.AddFloat(start.StartingPlanetRichnessBonus);
+        h.AddFloat(start.ShipMaintenanceMultiplier);
+        h.AddFloat(start.FTLModifier);
+        h.AddFloat(start.EnemyFTLModifier);
+        h.AddFloat(start.GravityWellRange);
+        h.AddBool(start.AIUsesPlayerDesigns);
+        h.AddBool(start.UseUpkeepByHullSize);
+        h.AddBool(start.DisableRemnantStory);
+        h.AddBool(start.EnableRandomizedAIFleetSizes);
+        h.AddBool(start.DisableAlternateAITraits);
+        h.AddBool(start.DisablePirates);
+        h.AddBool(start.DisableResearchStations);
+        h.AddBool(start.DisableMiningOps);
         return "0x" + h.Value.ToString("X16", CultureInfo.InvariantCulture);
     }
 
@@ -202,6 +232,12 @@ public sealed class Authoritative4XLobbyNetworkFlow
         string speed = start.GameSpeed.ToString("0.###", CultureInfo.InvariantCulture);
         string pace = start.Pace.ToString("0.###", CultureInfo.InvariantCulture);
         string richness = start.StartingPlanetRichnessBonus.ToString("0.###", CultureInfo.InvariantCulture);
+        string decay = start.CustomMineralDecay.ToString("0.###", CultureInfo.InvariantCulture);
+        string volcano = start.VolcanicActivity.ToString("0.###", CultureInfo.InvariantCulture);
+        string maintenance = start.ShipMaintenanceMultiplier.ToString("0.###", CultureInfo.InvariantCulture);
+        string ftl = start.FTLModifier.ToString("0.###", CultureInfo.InvariantCulture);
+        string enemyFtl = start.EnemyFTLModifier.ToString("0.###", CultureInfo.InvariantCulture);
+        string gravity = start.GravityWellRange.ToString("0", CultureInfo.InvariantCulture);
         return $"sessionId={SessionId(start)} startFingerprint={StartFingerprint(start)} "
                + $"protocol={start.ProtocolVersion} buildHash='{OneLine(start.BuildHash)}' "
                + $"buildSummary='{OneLine(start.BuildSummary)}' settingsHash={start.SettingsHash} "
@@ -211,10 +247,15 @@ public sealed class Authoritative4XLobbyNetworkFlow
                + $"hostRace='{OneLine(start.HostRacePreference)}' joinRace='{OneLine(start.JoinRacePreference)}' "
                + $"hostTraits='{OneLine(start.HostTraitOptions)}' joinTraits='{OneLine(start.JoinTraitOptions)}' "
                + $"roster='{RosterTelemetrySummary(start)}' "
-               + $"galaxy={start.GalaxySize} stars={start.StarsCount} mode={start.GameMode} "
+               + $"galaxy={start.GalaxySize} stars={start.StarsCount} mode={start.GameMode} remnant={start.ExtraRemnant} "
                + $"difficulty={start.Difficulty} opponents={start.NumOpponents} pace={pace} "
                + $"turnTimer={start.TurnTimer} extraPlanets={start.ExtraPlanets} "
-               + $"richness={richness}";
+               + $"decay={decay} volcano={volcano} richness={richness} maintenance={maintenance} "
+               + $"ftl={ftl}/{enemyFtl} gravity={gravity} "
+               + $"aiDesigns={start.AIUsesPlayerDesigns} hullUpkeep={start.UseUpkeepByHullSize} "
+               + $"disableRemnants={start.DisableRemnantStory} randomAIFleets={start.EnableRandomizedAIFleetSizes} "
+               + $"disableAltTraits={start.DisableAlternateAITraits} disablePirates={start.DisablePirates} "
+               + $"disableResearchStations={start.DisableResearchStations} disableMiningOps={start.DisableMiningOps}";
     }
 
     public static string EmpireMapTelemetrySummary(IReadOnlyDictionary<int, int> empireByPeer,
@@ -242,6 +283,8 @@ public sealed class Authoritative4XLobbyNetworkFlow
                 return $"Authoritative host peer mismatch. Host {start.AuthoritativeHostPeerId}, expected {HostPeerId}.";
             if (roster.Length > Authoritative4XLobby.MaxHumanPlayers)
                 return $"Authoritative 4X supports up to {Authoritative4XLobby.MaxHumanPlayers} human players.";
+            if (start.NumOpponents + 1 > Authoritative4XGameSettings.MaxTotalMajorEmpires)
+                return $"Authoritative 4X supports up to {Authoritative4XGameSettings.MaxTotalMajorEmpires} total major empires.";
             if (roster.All(p => p.PeerId != HostPeerId))
                 return $"Authoritative roster is missing host peer {HostPeerId}.";
             if (localPeerId > 0 && roster.All(p => p.PeerId != localPeerId))
@@ -503,14 +546,29 @@ public sealed class Authoritative4XLobbyNetworkFlow
             Mode = (RaceDesignScreen.GameMode)start.GameMode,
             StarsCount = (RaceDesignScreen.StarsAbundance)start.StarsCount,
             GalaxySize = (GalSize)start.GalaxySize,
+            ExtraRemnant = (ExtraRemnantPresence)start.ExtraRemnant,
             Difficulty = (GameDifficulty)start.Difficulty,
             NumOpponents = start.NumOpponents,
             Pace = start.Pace,
             TurnTimer = start.TurnTimer,
             ExtraPlanets = start.ExtraPlanets,
+            CustomMineralDecay = start.CustomMineralDecay,
+            VolcanicActivity = start.VolcanicActivity,
             StartingPlanetRichnessBonus = start.StartingPlanetRichnessBonus,
+            ShipMaintenanceMultiplier = start.ShipMaintenanceMultiplier,
+            FTLModifier = start.FTLModifier,
+            EnemyFTLModifier = start.EnemyFTLModifier,
+            GravityWellRange = start.GravityWellRange,
             GameSpeed = start.GameSpeed,
             StartPaused = start.StartPaused,
+            AIUsesPlayerDesigns = start.AIUsesPlayerDesigns,
+            UseUpkeepByHullSize = start.UseUpkeepByHullSize,
+            DisableRemnantStory = start.DisableRemnantStory,
+            EnableRandomizedAIFleetSizes = start.EnableRandomizedAIFleetSizes,
+            DisableAlternateAITraits = start.DisableAlternateAITraits,
+            DisablePirates = start.DisablePirates,
+            DisableResearchStations = start.DisableResearchStations,
+            DisableMiningOps = start.DisableMiningOps,
         };
 
     public static string[] SplitTraitOptions(string traits)

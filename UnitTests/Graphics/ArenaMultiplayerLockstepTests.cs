@@ -150,14 +150,30 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
                 GenerationSeed = 424242,
                 GalaxySize = GalSize.Small,
                 StarsCount = RaceDesignScreen.StarsAbundance.Normal,
+                Mode = RaceDesignScreen.GameMode.Corners,
+                ExtraRemnant = ExtraRemnantPresence.More,
                 Difficulty = GameDifficulty.Hard,
-                NumOpponents = 2,
+                NumOpponents = 12,
                 Pace = 2f,
                 TurnTimer = 3,
                 ExtraPlanets = 1,
+                CustomMineralDecay = 1.5f,
+                VolcanicActivity = 0.5f,
                 StartingPlanetRichnessBonus = 2f,
+                ShipMaintenanceMultiplier = 1.2f,
+                FTLModifier = 0.75f,
+                EnemyFTLModifier = 0.25f,
+                GravityWellRange = 12000f,
                 GameSpeed = 0.5f,
                 StartPaused = true,
+                AIUsesPlayerDesigns = false,
+                UseUpkeepByHullSize = true,
+                DisableRemnantStory = true,
+                EnableRandomizedAIFleetSizes = true,
+                DisableAlternateAITraits = true,
+                DisablePirates = true,
+                DisableResearchStations = true,
+                DisableMiningOps = true,
             }.Normalized(2);
             lobby.Configure4XForHeadless(settings, races[0], hostTrait, races[1], joinTrait);
             SessionStartMessage start = lobby.Build4XStartForHeadless();
@@ -175,23 +191,56 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             CollectionAssert.AreEqual(new[] { 2, 3 }, startRoster.Select(p => p.PeerId).ToArray());
             Assert.AreEqual((int)settings.GalaxySize, start.GalaxySize);
             Assert.AreEqual((int)settings.StarsCount, start.StarsCount);
+            Assert.AreEqual((int)settings.Mode, start.GameMode);
+            Assert.AreEqual(settings.Mode,
+                Authoritative4XLobbyNetworkFlow.SettingsFromStart(start).Normalized(2).Mode);
+            Assert.AreEqual((int)settings.ExtraRemnant, start.ExtraRemnant);
             Assert.AreEqual((int)settings.Difficulty, start.Difficulty);
             Assert.AreEqual(settings.NumOpponents, start.NumOpponents);
             Assert.AreEqual(settings.Pace, start.Pace);
             Assert.AreEqual(settings.TurnTimer, start.TurnTimer);
             Assert.AreEqual(settings.ExtraPlanets, start.ExtraPlanets);
+            Assert.AreEqual(settings.CustomMineralDecay, start.CustomMineralDecay);
+            Assert.AreEqual(settings.VolcanicActivity, start.VolcanicActivity);
             Assert.AreEqual(settings.StartingPlanetRichnessBonus, start.StartingPlanetRichnessBonus);
+            Assert.AreEqual(settings.ShipMaintenanceMultiplier, start.ShipMaintenanceMultiplier);
+            Assert.AreEqual(settings.FTLModifier, start.FTLModifier);
+            Assert.AreEqual(settings.EnemyFTLModifier, start.EnemyFTLModifier);
+            Assert.AreEqual(settings.GravityWellRange, start.GravityWellRange);
+            Assert.AreEqual(settings.AIUsesPlayerDesigns, start.AIUsesPlayerDesigns);
+            Assert.AreEqual(settings.UseUpkeepByHullSize, start.UseUpkeepByHullSize);
+            Assert.AreEqual(settings.DisableRemnantStory, start.DisableRemnantStory);
+            Assert.AreEqual(settings.EnableRandomizedAIFleetSizes, start.EnableRandomizedAIFleetSizes);
+            Assert.AreEqual(settings.DisableAlternateAITraits, start.DisableAlternateAITraits);
+            Assert.AreEqual(settings.DisablePirates, start.DisablePirates);
+            Assert.AreEqual(settings.DisableResearchStations, start.DisableResearchStations);
+            Assert.AreEqual(settings.DisableMiningOps, start.DisableMiningOps);
 
             using (Authoritative4XGeneratedGameStart generated = lobby.CreateGenerated4XGameForHeadless(start))
             {
                 UniverseState us = generated.AuthorityUniverse.UState;
                 Assert.AreEqual(settings.GalaxySize, us.P.GalaxySize);
                 Assert.AreEqual(settings.StarsCount, us.P.StarsCount);
+                Assert.AreEqual(settings.ExtraRemnant, us.P.ExtraRemnant);
                 Assert.AreEqual(settings.Difficulty, us.P.Difficulty);
                 Assert.AreEqual(settings.Pace, us.P.Pace);
                 Assert.AreEqual(settings.TurnTimer, us.P.TurnTimer);
                 Assert.AreEqual(settings.ExtraPlanets, us.P.ExtraPlanets);
+                Assert.AreEqual(settings.CustomMineralDecay, us.P.CustomMineralDecay);
+                Assert.AreEqual(settings.VolcanicActivity, us.P.VolcanicActivity);
                 Assert.AreEqual(settings.StartingPlanetRichnessBonus, us.P.StartingPlanetRichnessBonus);
+                Assert.AreEqual(settings.ShipMaintenanceMultiplier, us.P.ShipMaintenanceMultiplier);
+                Assert.AreEqual(settings.FTLModifier, us.P.FTLModifier);
+                Assert.AreEqual(settings.EnemyFTLModifier, us.P.EnemyFTLModifier);
+                Assert.AreEqual(settings.GravityWellRange, us.P.GravityWellRange);
+                Assert.AreEqual(settings.AIUsesPlayerDesigns, us.P.AIUsesPlayerDesigns);
+                Assert.AreEqual(settings.UseUpkeepByHullSize, us.P.UseUpkeepByHullSize);
+                Assert.AreEqual(settings.DisableRemnantStory, us.P.DisableRemnantStory);
+                Assert.AreEqual(settings.EnableRandomizedAIFleetSizes, us.P.EnableRandomizedAIFleetSizes);
+                Assert.AreEqual(settings.DisableAlternateAITraits, us.P.DisableAlternateAITraits);
+                Assert.AreEqual(settings.DisablePirates, us.P.DisablePirates);
+                Assert.AreEqual(settings.DisableResearchStations, us.P.DisableResearchStations);
+                Assert.AreEqual(settings.DisableMiningOps, us.P.DisableMiningOps);
                 Assert.AreEqual(2, generated.HumanEmpireIds.Length);
                 Empire hostEmpire = us.GetEmpireById(generated.EmpireIdForPeer(2));
                 Empire joinEmpire = us.GetEmpireById(generated.EmpireIdForPeer(3));
@@ -256,14 +305,31 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
                 GameSpeed = 2f,
                 RacePreference = "United",
                 TraitOptions = "",
+                Mode = RaceDesignScreen.GameMode.SpiralBarred,
                 GalaxySize = GalSize.Small,
                 StarsCount = RaceDesignScreen.StarsAbundance.Abundant,
+                ExtraRemnant = ExtraRemnantPresence.Everywhere,
                 Difficulty = GameDifficulty.Hard,
-                NumOpponents = 2,
+                NumOpponents = 99,
                 Pace = 2.5f,
                 TurnTimer = 10,
+                ExtraPlanets = 2,
+                CustomMineralDecay = 1.5f,
+                VolcanicActivity = 0.5f,
                 StartingPlanetRichnessBonus = 3f,
+                ShipMaintenanceMultiplier = 1.2f,
+                FTLModifier = 0.75f,
+                EnemyFTLModifier = 0.25f,
+                GravityWellRange = 12000f,
                 StartPaused = true,
+                AIUsesPlayerDesigns = false,
+                UseUpkeepByHullSize = true,
+                DisableRemnantStory = true,
+                EnableRandomizedAIFleetSizes = true,
+                DisableAlternateAITraits = true,
+                DisablePirates = true,
+                DisableResearchStations = true,
+                DisableMiningOps = true,
             };
             Assert.IsTrue(ArenaMultiplayerLobbyConfig.Save(saved), "Config should save to the temp override path.");
 
@@ -273,14 +339,32 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             Assert.AreEqual(7, lobby.JoinPeerSlotForHeadless);
             Assert.AreEqual(7654321, lobby.SeedForHeadless);
             Assert.AreEqual(2f, lobby.SpeedForHeadless);
+            Assert.AreEqual(RaceDesignScreen.GameMode.SpiralBarred, lobby.Current4XSettingsForHeadless.Mode);
             Assert.AreEqual(GalSize.Small, lobby.Current4XSettingsForHeadless.GalaxySize);
             Assert.AreEqual(RaceDesignScreen.StarsAbundance.Abundant, lobby.Current4XSettingsForHeadless.StarsCount);
+            Assert.AreEqual(ExtraRemnantPresence.Everywhere, lobby.Current4XSettingsForHeadless.ExtraRemnant);
             Assert.AreEqual(GameDifficulty.Hard, lobby.Current4XSettingsForHeadless.Difficulty);
-            Assert.AreEqual(2, lobby.Current4XSettingsForHeadless.NumOpponents);
+            Assert.AreEqual(Authoritative4XGameSettings.MaxTotalMajorEmpires - 1,
+                lobby.Current4XSettingsForHeadless.NumOpponents);
             Assert.AreEqual(2.5f, lobby.Current4XSettingsForHeadless.Pace);
             Assert.AreEqual(10, lobby.Current4XSettingsForHeadless.TurnTimer);
+            Assert.AreEqual(2, lobby.Current4XSettingsForHeadless.ExtraPlanets);
+            Assert.AreEqual(1.5f, lobby.Current4XSettingsForHeadless.CustomMineralDecay);
+            Assert.AreEqual(0.5f, lobby.Current4XSettingsForHeadless.VolcanicActivity);
             Assert.AreEqual(3f, lobby.Current4XSettingsForHeadless.StartingPlanetRichnessBonus);
+            Assert.AreEqual(1.2f, lobby.Current4XSettingsForHeadless.ShipMaintenanceMultiplier);
+            Assert.AreEqual(0.75f, lobby.Current4XSettingsForHeadless.FTLModifier);
+            Assert.AreEqual(0.25f, lobby.Current4XSettingsForHeadless.EnemyFTLModifier);
+            Assert.AreEqual(12000f, lobby.Current4XSettingsForHeadless.GravityWellRange);
             Assert.IsTrue(lobby.Current4XSettingsForHeadless.StartPaused);
+            Assert.IsFalse(lobby.Current4XSettingsForHeadless.AIUsesPlayerDesigns);
+            Assert.IsTrue(lobby.Current4XSettingsForHeadless.UseUpkeepByHullSize);
+            Assert.IsTrue(lobby.Current4XSettingsForHeadless.DisableRemnantStory);
+            Assert.IsTrue(lobby.Current4XSettingsForHeadless.EnableRandomizedAIFleetSizes);
+            Assert.IsTrue(lobby.Current4XSettingsForHeadless.DisableAlternateAITraits);
+            Assert.IsTrue(lobby.Current4XSettingsForHeadless.DisablePirates);
+            Assert.IsTrue(lobby.Current4XSettingsForHeadless.DisableResearchStations);
+            Assert.IsTrue(lobby.Current4XSettingsForHeadless.DisableMiningOps);
             Assert.IsFalse(lobby.HasTurnsFieldForHeadless,
                 "Persisted lobby config must not resurrect the removed finite turns field.");
         }

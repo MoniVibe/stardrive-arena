@@ -116,6 +116,21 @@ public static class LockstepMessageCodec
                     WriteString(w, start.HostTraitOptions);
                     WriteString(w, start.JoinTraitOptions);
                     WriteString(w, start.AuthoritativePlayerRoster);
+                    w.Write(start.ExtraRemnant);
+                    w.Write(start.CustomMineralDecay);
+                    w.Write(start.VolcanicActivity);
+                    w.Write(start.ShipMaintenanceMultiplier);
+                    w.Write(start.FTLModifier);
+                    w.Write(start.EnemyFTLModifier);
+                    w.Write(start.GravityWellRange);
+                    w.Write(start.AIUsesPlayerDesigns);
+                    w.Write(start.UseUpkeepByHullSize);
+                    w.Write(start.DisableRemnantStory);
+                    w.Write(start.EnableRandomizedAIFleetSizes);
+                    w.Write(start.DisableAlternateAITraits);
+                    w.Write(start.DisablePirates);
+                    w.Write(start.DisableResearchStations);
+                    w.Write(start.DisableMiningOps);
                     break;
                 case SessionControlMessage control:
                     w.Write(SessionControl);
@@ -300,6 +315,21 @@ public static class LockstepMessageCodec
                 string hostTraitOptions = ReadOptionalString(r);
                 string joinTraitOptions = ReadOptionalString(r);
                 string authoritativePlayerRoster = ReadOptionalString(r);
+                int extraRemnant = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
+                float mineralDecay = r.BaseStream.Position < r.BaseStream.Length ? r.ReadSingle() : 1f;
+                float volcanicActivity = r.BaseStream.Position < r.BaseStream.Length ? r.ReadSingle() : 1f;
+                float maintenance = r.BaseStream.Position < r.BaseStream.Length ? r.ReadSingle() : 1f;
+                float ftl = r.BaseStream.Position < r.BaseStream.Length ? r.ReadSingle() : 1f;
+                float enemyFtl = r.BaseStream.Position < r.BaseStream.Length ? r.ReadSingle() : 0.5f;
+                float gravityWell = r.BaseStream.Position < r.BaseStream.Length ? r.ReadSingle() : 8000f;
+                bool aiPlayerDesigns = r.BaseStream.Position >= r.BaseStream.Length || r.ReadBoolean();
+                bool hullUpkeep = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
+                bool disableRemnants = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
+                bool randomizedFleets = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
+                bool disableAltTraits = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
+                bool disablePirates = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
+                bool disableResearchStations = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
+                bool disableMiningOps = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
                 message = new SessionStartMessage
                 {
                     ProtocolVersion = protocolVersion,
@@ -331,7 +361,22 @@ public static class LockstepMessageCodec
                     Pace = pace,
                     TurnTimer = turnTimer,
                     ExtraPlanets = extraPlanets,
+                    ExtraRemnant = extraRemnant,
+                    CustomMineralDecay = mineralDecay,
+                    VolcanicActivity = volcanicActivity,
                     StartingPlanetRichnessBonus = richness,
+                    ShipMaintenanceMultiplier = maintenance,
+                    FTLModifier = ftl,
+                    EnemyFTLModifier = enemyFtl,
+                    GravityWellRange = gravityWell,
+                    AIUsesPlayerDesigns = aiPlayerDesigns,
+                    UseUpkeepByHullSize = hullUpkeep,
+                    DisableRemnantStory = disableRemnants,
+                    EnableRandomizedAIFleetSizes = randomizedFleets,
+                    DisableAlternateAITraits = disableAltTraits,
+                    DisablePirates = disablePirates,
+                    DisableResearchStations = disableResearchStations,
+                    DisableMiningOps = disableMiningOps,
                     HostTraitOptions = hostTraitOptions,
                     JoinTraitOptions = joinTraitOptions,
                     AuthoritativePlayerRoster = authoritativePlayerRoster,

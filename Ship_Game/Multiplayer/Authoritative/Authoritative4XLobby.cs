@@ -19,19 +19,36 @@ namespace Ship_Game.Multiplayer.Authoritative;
 /// </summary>
 public sealed class Authoritative4XGameSettings
 {
+    public const int MaxTotalMajorEmpires = 8;
+
     public int GenerationSeed = 54545;
     public GameMode Mode = GameMode.Sandbox;
     public StarsAbundance StarsCount = StarsAbundance.Rare;
     public GalSize GalaxySize = GalSize.Tiny;
+    public ExtraRemnantPresence ExtraRemnant = ExtraRemnantPresence.Normal;
     public GameDifficulty Difficulty = GameDifficulty.Normal;
     public int NumOpponents = 1; // total non-player-one major empires: human opponents plus any AI
     public float Pace = 1f;
     public int TurnTimer = 5;
     public int ExtraPlanets;
+    public float CustomMineralDecay = 1f;
+    public float VolcanicActivity = 1f;
     public float StartingPlanetRichnessBonus;
+    public float ShipMaintenanceMultiplier = 1f;
+    public float FTLModifier = 1f;
+    public float EnemyFTLModifier = 0.5f;
+    public float GravityWellRange = 8000f;
     public float GameSpeed = 1f;
     public bool StartPaused;
     public bool EliminationMode;
+    public bool AIUsesPlayerDesigns = true;
+    public bool UseUpkeepByHullSize;
+    public bool DisableRemnantStory;
+    public bool EnableRandomizedAIFleetSizes;
+    public bool DisableAlternateAITraits;
+    public bool DisablePirates;
+    public bool DisableResearchStations;
+    public bool DisableMiningOps;
 
     public string SettingsHash
     {
@@ -42,15 +59,30 @@ public sealed class Authoritative4XGameSettings
             h.AddInt((int)Mode);
             h.AddInt((int)StarsCount);
             h.AddInt((int)GalaxySize);
+            h.AddInt((int)ExtraRemnant);
             h.AddInt((int)Difficulty);
             h.AddInt(NumOpponents);
             h.AddInt((int)(Pace * 1000f));
             h.AddInt(TurnTimer);
             h.AddInt(ExtraPlanets);
+            h.AddInt((int)(CustomMineralDecay * 1000f));
+            h.AddInt((int)(VolcanicActivity * 1000f));
             h.AddInt((int)(StartingPlanetRichnessBonus * 1000f));
+            h.AddInt((int)(ShipMaintenanceMultiplier * 1000f));
+            h.AddInt((int)(FTLModifier * 1000f));
+            h.AddInt((int)(EnemyFTLModifier * 1000f));
+            h.AddInt((int)(GravityWellRange * 1000f));
             h.AddInt((int)(ClampGameSpeed(GameSpeed) * 1000f));
             h.AddBool(StartPaused);
             h.AddBool(EliminationMode);
+            h.AddBool(AIUsesPlayerDesigns);
+            h.AddBool(UseUpkeepByHullSize);
+            h.AddBool(DisableRemnantStory);
+            h.AddBool(EnableRandomizedAIFleetSizes);
+            h.AddBool(DisableAlternateAITraits);
+            h.AddBool(DisablePirates);
+            h.AddBool(DisableResearchStations);
+            h.AddBool(DisableMiningOps);
             return "0x" + h.Value.ToString("X16", CultureInfo.InvariantCulture);
         }
     }
@@ -62,19 +94,38 @@ public sealed class Authoritative4XGameSettings
             Mode = Mode,
             StarsCount = StarsCount,
             GalaxySize = GalaxySize,
+            ExtraRemnant = ExtraRemnant,
             Difficulty = Difficulty,
-            NumOpponents = Math.Clamp(NumOpponents, Math.Max(1, humanPlayerCount - 1),
-                Math.Max(1, ResourceManager.MajorRaces.Count - 1)),
+            NumOpponents = Math.Clamp(NumOpponents,
+                Math.Clamp(humanPlayerCount - 1, 1, MaxOpponentsAllowed()),
+                MaxOpponentsAllowed()),
             Pace = Math.Clamp(Pace, 1f, 10f),
             TurnTimer = Math.Clamp(TurnTimer, 1, 30),
             ExtraPlanets = Math.Clamp(ExtraPlanets, 0, 3),
+            CustomMineralDecay = Math.Clamp(CustomMineralDecay, 0.2f, 3f),
+            VolcanicActivity = Math.Clamp(VolcanicActivity, 0f, 3f),
             StartingPlanetRichnessBonus = Math.Clamp(StartingPlanetRichnessBonus, 0f, 5f),
+            ShipMaintenanceMultiplier = Math.Clamp(ShipMaintenanceMultiplier, 1f, 2f),
+            FTLModifier = Math.Clamp(FTLModifier, 0.1f, 1f),
+            EnemyFTLModifier = Math.Clamp(EnemyFTLModifier, 0.1f, 1f),
+            GravityWellRange = Math.Clamp(GravityWellRange, 0f, 16000f),
             GameSpeed = ClampGameSpeed(GameSpeed),
             StartPaused = StartPaused,
             EliminationMode = EliminationMode || Mode == GameMode.Elimination,
+            AIUsesPlayerDesigns = AIUsesPlayerDesigns,
+            UseUpkeepByHullSize = UseUpkeepByHullSize,
+            DisableRemnantStory = DisableRemnantStory,
+            EnableRandomizedAIFleetSizes = EnableRandomizedAIFleetSizes,
+            DisableAlternateAITraits = DisableAlternateAITraits,
+            DisablePirates = DisablePirates,
+            DisableResearchStations = DisableResearchStations,
+            DisableMiningOps = DisableMiningOps,
         };
 
     static float ClampGameSpeed(float speed) => Math.Clamp(speed, 0.25f, 8f);
+
+    public static int MaxOpponentsAllowed()
+        => Math.Max(1, Math.Min(MaxTotalMajorEmpires - 1, ResourceManager.MajorRaces.Count - 1));
 }
 
 public sealed class Authoritative4XLobbyValidation
@@ -169,7 +220,7 @@ public sealed class Authoritative4XLobbyStartResult : IDisposable
 public sealed class Authoritative4XLobby
 {
     public const int AuthorityPeerId = 1;
-    public const int MaxHumanPlayers = 8;
+    public const int MaxHumanPlayers = Authoritative4XGameSettings.MaxTotalMajorEmpires;
 
     readonly int HostPlayerPeerId;
     readonly Dictionary<int, Authoritative4XLobbyPlayer> Players = new();
@@ -247,6 +298,8 @@ public sealed class Authoritative4XLobby
     {
         if (Players.Count == 0)
             return Authoritative4XLobbyValidation.Fail("No players are in the lobby.");
+        if (Players.Count > MaxHumanPlayers)
+            return Authoritative4XLobbyValidation.Fail($"Authoritative 4X supports up to {MaxHumanPlayers} human players.");
         foreach (Authoritative4XLobbyPlayer player in Roster)
         {
             if (!player.Validation.Valid)
@@ -401,6 +454,7 @@ public sealed class Authoritative4XLobby
             Mode = s.Mode,
             StarsCount = s.StarsCount,
             GalaxySize = s.GalaxySize,
+            ExtraRemnant = s.ExtraRemnant,
             Difficulty = s.Difficulty,
             NumSystems = numStars,
             NumOpponents = totalOpponents,
@@ -409,8 +463,22 @@ public sealed class Authoritative4XLobby
             GenerationSeed = s.GenerationSeed,
             TurnTimer = s.TurnTimer,
             ExtraPlanets = s.ExtraPlanets,
+            CustomMineralDecay = s.CustomMineralDecay,
+            VolcanicActivity = s.VolcanicActivity,
             StartingPlanetRichnessBonus = s.StartingPlanetRichnessBonus,
+            ShipMaintenanceMultiplier = s.ShipMaintenanceMultiplier,
+            FTLModifier = s.FTLModifier,
+            EnemyFTLModifier = s.EnemyFTLModifier,
+            GravityWellRange = s.GravityWellRange,
             EliminationMode = s.EliminationMode,
+            AIUsesPlayerDesigns = s.AIUsesPlayerDesigns,
+            UseUpkeepByHullSize = s.UseUpkeepByHullSize,
+            DisableRemnantStory = s.DisableRemnantStory,
+            EnableRandomizedAIFleetSizes = s.EnableRandomizedAIFleetSizes,
+            DisableAlternateAITraits = s.DisableAlternateAITraits,
+            DisablePirates = s.DisablePirates,
+            DisableResearchStations = s.DisableResearchStations,
+            DisableMiningOps = s.DisableMiningOps,
             SelectedOpponents = selected,
         };
     }

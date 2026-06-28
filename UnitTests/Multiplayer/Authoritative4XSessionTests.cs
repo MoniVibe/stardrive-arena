@@ -736,7 +736,22 @@ public class Authoritative4XSessionTests : StarDriveTest
             Pace = 2.5f,
             TurnTimer = 4,
             ExtraPlanets = 1,
+            ExtraRemnant = (int)ExtraRemnantPresence.MuchMore,
+            CustomMineralDecay = 1.5f,
+            VolcanicActivity = 0.5f,
             StartingPlanetRichnessBonus = 1.25f,
+            ShipMaintenanceMultiplier = 1.2f,
+            FTLModifier = 0.75f,
+            EnemyFTLModifier = 0.25f,
+            GravityWellRange = 12000f,
+            AIUsesPlayerDesigns = false,
+            UseUpkeepByHullSize = true,
+            DisableRemnantStory = true,
+            EnableRandomizedAIFleetSizes = true,
+            DisableAlternateAITraits = true,
+            DisablePirates = true,
+            DisableResearchStations = true,
+            DisableMiningOps = true,
             HostTraitOptions = "Brutal|Cybernetic",
             JoinTraitOptions = "Aquatic",
         };
@@ -770,7 +785,22 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(start.Pace, startCopy.Pace);
         Assert.AreEqual(start.TurnTimer, startCopy.TurnTimer);
         Assert.AreEqual(start.ExtraPlanets, startCopy.ExtraPlanets);
+        Assert.AreEqual(start.ExtraRemnant, startCopy.ExtraRemnant);
+        Assert.AreEqual(start.CustomMineralDecay, startCopy.CustomMineralDecay);
+        Assert.AreEqual(start.VolcanicActivity, startCopy.VolcanicActivity);
         Assert.AreEqual(start.StartingPlanetRichnessBonus, startCopy.StartingPlanetRichnessBonus);
+        Assert.AreEqual(start.ShipMaintenanceMultiplier, startCopy.ShipMaintenanceMultiplier);
+        Assert.AreEqual(start.FTLModifier, startCopy.FTLModifier);
+        Assert.AreEqual(start.EnemyFTLModifier, startCopy.EnemyFTLModifier);
+        Assert.AreEqual(start.GravityWellRange, startCopy.GravityWellRange);
+        Assert.AreEqual(start.AIUsesPlayerDesigns, startCopy.AIUsesPlayerDesigns);
+        Assert.AreEqual(start.UseUpkeepByHullSize, startCopy.UseUpkeepByHullSize);
+        Assert.AreEqual(start.DisableRemnantStory, startCopy.DisableRemnantStory);
+        Assert.AreEqual(start.EnableRandomizedAIFleetSizes, startCopy.EnableRandomizedAIFleetSizes);
+        Assert.AreEqual(start.DisableAlternateAITraits, startCopy.DisableAlternateAITraits);
+        Assert.AreEqual(start.DisablePirates, startCopy.DisablePirates);
+        Assert.AreEqual(start.DisableResearchStations, startCopy.DisableResearchStations);
+        Assert.AreEqual(start.DisableMiningOps, startCopy.DisableMiningOps);
         Assert.AreEqual(start.HostTraitOptions, startCopy.HostTraitOptions);
         Assert.AreEqual(start.JoinTraitOptions, startCopy.JoinTraitOptions);
 
@@ -8739,13 +8769,30 @@ public class Authoritative4XSessionTests : StarDriveTest
             GenerationSeed = 0x8A11F01,
             GalaxySize = GalSize.Tiny,
             StarsCount = RaceDesignScreen.StarsAbundance.Rare,
-            Mode = RaceDesignScreen.GameMode.Sandbox,
+            Mode = RaceDesignScreen.GameMode.SpiralFourArm,
+            ExtraRemnant = ExtraRemnantPresence.MuchMore,
             Difficulty = GameDifficulty.Normal,
-            NumOpponents = PlayerCount - 1,
+            NumOpponents = 99,
             Pace = 1f,
             TurnTimer = 5,
+            ExtraPlanets = 3,
+            CustomMineralDecay = 1.5f,
+            VolcanicActivity = 0.5f,
+            StartingPlanetRichnessBonus = 2f,
+            ShipMaintenanceMultiplier = 1.2f,
+            FTLModifier = 0.75f,
+            EnemyFTLModifier = 0.25f,
+            GravityWellRange = 12000f,
             GameSpeed = 1f,
             StartPaused = true,
+            AIUsesPlayerDesigns = false,
+            UseUpkeepByHullSize = true,
+            DisableRemnantStory = true,
+            EnableRandomizedAIFleetSizes = true,
+            DisableAlternateAITraits = true,
+            DisablePirates = true,
+            DisableResearchStations = true,
+            DisableMiningOps = true,
         };
 
         var lobby = new Authoritative4XLobby(hostPlayerPeerId: HostPlayerPeer, hostName: "Host");
@@ -9901,13 +9948,30 @@ public class Authoritative4XSessionTests : StarDriveTest
             GenerationSeed = 0x8A11F08,
             GalaxySize = GalSize.Tiny,
             StarsCount = RaceDesignScreen.StarsAbundance.Rare,
-            Mode = RaceDesignScreen.GameMode.Sandbox,
+            Mode = RaceDesignScreen.GameMode.SpiralFourArm,
+            ExtraRemnant = ExtraRemnantPresence.MuchMore,
             Difficulty = GameDifficulty.Normal,
-            NumOpponents = PlayerCount - 1,
+            NumOpponents = 99,
             Pace = 1f,
             TurnTimer = 5,
+            ExtraPlanets = 3,
+            CustomMineralDecay = 1.5f,
+            VolcanicActivity = 0.5f,
+            StartingPlanetRichnessBonus = 2f,
+            ShipMaintenanceMultiplier = 1.2f,
+            FTLModifier = 0.75f,
+            EnemyFTLModifier = 0.25f,
+            GravityWellRange = 12000f,
             GameSpeed = 1f,
             StartPaused = true,
+            AIUsesPlayerDesigns = false,
+            UseUpkeepByHullSize = true,
+            DisableRemnantStory = true,
+            EnableRandomizedAIFleetSizes = true,
+            DisableAlternateAITraits = true,
+            DisablePirates = true,
+            DisableResearchStations = true,
+            DisableMiningOps = true,
         };
 
         var lobby = new Authoritative4XLobby(hostPlayerPeerId: HostPeer, hostName: "Host");
@@ -9936,6 +10000,25 @@ public class Authoritative4XSessionTests : StarDriveTest
             ArenaMultiplayerSettings.ProtocolVersion, "0xEIGHT", localPeerId: peers[^1]));
         Assert.AreEqual(PlayerCount, Authoritative4XLobbyNetworkFlow.PlayerCountFromStart(start));
         Assert.AreEqual(settings.Normalized(PlayerCount).SettingsHash, start.SettingsHash);
+        Assert.AreEqual((int)RaceDesignScreen.GameMode.SpiralFourArm, start.GameMode);
+        Assert.AreEqual(RaceDesignScreen.GameMode.SpiralFourArm,
+            Authoritative4XLobbyNetworkFlow.SettingsFromStart(start).Normalized(PlayerCount).Mode);
+        Assert.AreEqual(Authoritative4XGameSettings.MaxTotalMajorEmpires - 1, start.NumOpponents,
+            "Eight humans must consume all major-empire slots, leaving no extra AI opponents.");
+
+        var tooManyEmpires = new SessionStartMessage
+        {
+            IsAuthoritative4X = true,
+            ProtocolVersion = ArenaMultiplayerSettings.ProtocolVersion,
+            AuthoritativeHostPeerId = HostPeer,
+            AuthoritativePlayerRoster = start.AuthoritativePlayerRoster,
+            NumOpponents = Authoritative4XGameSettings.MaxTotalMajorEmpires,
+            SettingsHash = start.SettingsHash,
+            BuildHash = "0xEIGHT",
+        };
+        StringAssert.Contains(flow.ValidateStartMessage(tooManyEmpires,
+                ArenaMultiplayerSettings.ProtocolVersion, "0xEIGHT", localPeerId: peers[^1]),
+            "total major empires");
 
         using Authoritative4XGeneratedGameStart authority = flow.CreateGeneratedGame(start);
         using Authoritative4XGeneratedGameStart client = flow.CreateGeneratedGame(start);
@@ -9943,6 +10026,25 @@ public class Authoritative4XSessionTests : StarDriveTest
         CollectionAssert.AreEqual(
             authority.EmpireIdByPeer.OrderBy(kv => kv.Key).Select(kv => kv.Value).ToArray(),
             client.EmpireIdByPeer.OrderBy(kv => kv.Key).Select(kv => kv.Value).ToArray());
+        UniverseParams p = authority.AuthorityUniverse.UState.P;
+        Assert.AreEqual(ExtraRemnantPresence.MuchMore, p.ExtraRemnant);
+        Assert.AreEqual(Authoritative4XGameSettings.MaxTotalMajorEmpires - 1, p.NumOpponents);
+        Assert.AreEqual(3, p.ExtraPlanets);
+        Assert.AreEqual(1.5f, p.CustomMineralDecay);
+        Assert.AreEqual(0.5f, p.VolcanicActivity);
+        Assert.AreEqual(2f, p.StartingPlanetRichnessBonus);
+        Assert.AreEqual(1.2f, p.ShipMaintenanceMultiplier);
+        Assert.AreEqual(0.75f, p.FTLModifier);
+        Assert.AreEqual(0.25f, p.EnemyFTLModifier);
+        Assert.AreEqual(12000f, p.GravityWellRange);
+        Assert.IsFalse(p.AIUsesPlayerDesigns);
+        Assert.IsTrue(p.UseUpkeepByHullSize);
+        Assert.IsTrue(p.DisableRemnantStory);
+        Assert.IsTrue(p.EnableRandomizedAIFleetSizes);
+        Assert.IsTrue(p.DisableAlternateAITraits);
+        Assert.IsTrue(p.DisablePirates);
+        Assert.IsTrue(p.DisableResearchStations);
+        Assert.IsTrue(p.DisableMiningOps);
     }
 
     [TestMethod]

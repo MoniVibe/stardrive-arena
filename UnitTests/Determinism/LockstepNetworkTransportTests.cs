@@ -48,6 +48,21 @@ public class LockstepNetworkTransportTests
             JoinLoadoutTrait = "Swarm",
             HostFleet = "Fang Strafer\u001fFang Strafer",
             JoinFleet = "Vulcan Scout",
+            ExtraRemnant = 4,
+            CustomMineralDecay = 1.5f,
+            VolcanicActivity = 0.5f,
+            ShipMaintenanceMultiplier = 1.2f,
+            FTLModifier = 0.75f,
+            EnemyFTLModifier = 0.25f,
+            GravityWellRange = 12000f,
+            AIUsesPlayerDesigns = false,
+            UseUpkeepByHullSize = true,
+            DisableRemnantStory = true,
+            EnableRandomizedAIFleetSizes = true,
+            DisableAlternateAITraits = true,
+            DisablePirates = true,
+            DisableResearchStations = true,
+            DisableMiningOps = true,
             AuthoritativePlayerRoster = "2,1,SG9zdA==,VW5pdGVk,;3,1,Sm9pbg==,S3VscmF0aGk=,QXF1YXRpYw==",
         }, decoded =>
         {
@@ -68,6 +83,21 @@ public class LockstepNetworkTransportTests
             Assert.AreEqual("Swarm", msg.JoinLoadoutTrait);
             Assert.AreEqual("Fang Strafer\u001fFang Strafer", msg.HostFleet);
             Assert.AreEqual("Vulcan Scout", msg.JoinFleet);
+            Assert.AreEqual(4, msg.ExtraRemnant);
+            Assert.AreEqual(1.5f, msg.CustomMineralDecay);
+            Assert.AreEqual(0.5f, msg.VolcanicActivity);
+            Assert.AreEqual(1.2f, msg.ShipMaintenanceMultiplier);
+            Assert.AreEqual(0.75f, msg.FTLModifier);
+            Assert.AreEqual(0.25f, msg.EnemyFTLModifier);
+            Assert.AreEqual(12000f, msg.GravityWellRange);
+            Assert.IsFalse(msg.AIUsesPlayerDesigns);
+            Assert.IsTrue(msg.UseUpkeepByHullSize);
+            Assert.IsTrue(msg.DisableRemnantStory);
+            Assert.IsTrue(msg.EnableRandomizedAIFleetSizes);
+            Assert.IsTrue(msg.DisableAlternateAITraits);
+            Assert.IsTrue(msg.DisablePirates);
+            Assert.IsTrue(msg.DisableResearchStations);
+            Assert.IsTrue(msg.DisableMiningOps);
             Assert.AreEqual("2,1,SG9zdA==,VW5pdGVk,;3,1,Sm9pbg==,S3VscmF0aGk=,QXF1YXRpYw==",
                 msg.AuthoritativePlayerRoster);
         });
