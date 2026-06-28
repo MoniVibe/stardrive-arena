@@ -56,7 +56,8 @@ public sealed class AuthoritativeStateSnapshot
         if (universe == null || string.IsNullOrEmpty(Payload))
             return;
 
-        foreach (string rawLine in Payload.Split('\n'))
+        string[] lines = Payload.Split('\n');
+        foreach (string rawLine in lines)
         {
             string line = rawLine.TrimEnd('\r');
             if (line.StartsWith("E|", StringComparison.Ordinal))
@@ -65,11 +66,15 @@ public sealed class AuthoritativeStateSnapshot
                 ApplyUnlockedTechLine(universe, line);
             else if (line.StartsWith("D|", StringComparison.Ordinal))
                 ApplyPlayerDesignLine(universe, line);
+            else if (line.StartsWith("P|", StringComparison.Ordinal))
+                ApplyPlanetRuntimeLine(universe, line);
             else if (line.StartsWith("Q|", StringComparison.Ordinal))
                 ApplyConstructionQueueRuntimeLine(universe, line);
             else if (line.StartsWith("R|", StringComparison.Ordinal))
                 ApplyRelationshipLine(universe, line);
         }
+
+        ApplyColonizationGoalPayload(universe, lines);
     }
 
     public void ApplyRelationshipPayload(UniverseState universe)
@@ -240,6 +245,147 @@ public sealed class AuthoritativeStateSnapshot
                && string.Equals(item.ShipData?.Name ?? "", p[7] ?? "", StringComparison.Ordinal)
                && string.Equals(item.Building?.Name ?? "", p[8] ?? "", StringComparison.Ordinal)
                && string.Equals(item.TroopType ?? "", p[9] ?? "", StringComparison.Ordinal);
+    }
+
+    static void ApplyPlanetRuntimeLine(UniverseState universe, string line)
+    {
+        string[] p = line.Split('|');
+        if (p.Length < 34
+            || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int planetId))
+        {
+            return;
+        }
+
+        Planet planet = universe.GetPlanet(planetId);
+        if (planet == null)
+            return;
+
+        if (int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int colonyType)
+            && Enum.IsDefined(typeof(Planet.ColonyType), colonyType))
+        {
+            planet.CType = (Planet.ColonyType)colonyType;
+        }
+
+        if (int.TryParse(p[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int garrison))
+            planet.GarrisonSize = garrison;
+        if (TryParseByte(p[5], out byte wantedPlatforms))
+            planet.SetWantedPlatforms(wantedPlatforms);
+        if (TryParseByte(p[6], out byte wantedShipyards))
+            planet.SetWantedShipyards(wantedShipyards);
+        if (TryParseByte(p[7], out byte wantedStations))
+            planet.SetWantedStations(wantedStations);
+
+        if (TryParseFloatBits(p[8], out float foodPercent))
+            planet.Food.Percent = foodPercent;
+        if (TryParseFloatBits(p[9], out float prodPercent))
+            planet.Prod.Percent = prodPercent;
+        if (TryParseFloatBits(p[10], out float resPercent))
+            planet.Res.Percent = resPercent;
+
+        planet.Food.PercentLock = ParseFlag(p[11]);
+        planet.Prod.PercentLock = ParseFlag(p[12]);
+        planet.Res.PercentLock = ParseFlag(p[13]);
+
+        if (int.TryParse(p[14], NumberStyles.Integer, CultureInfo.InvariantCulture, out int foodState)
+            && Enum.IsDefined(typeof(Planet.GoodState), foodState))
+        {
+            planet.FS = (Planet.GoodState)foodState;
+        }
+        if (int.TryParse(p[15], NumberStyles.Integer, CultureInfo.InvariantCulture, out int prodState)
+            && Enum.IsDefined(typeof(Planet.GoodState), prodState))
+        {
+            planet.PS = (Planet.GoodState)prodState;
+        }
+
+        if (int.TryParse(p[16], NumberStyles.Integer, CultureInfo.InvariantCulture, out int foodImport))
+            planet.ManualFoodImportSlots = foodImport;
+        if (int.TryParse(p[17], NumberStyles.Integer, CultureInfo.InvariantCulture, out int prodImport))
+            planet.ManualProdImportSlots = prodImport;
+        if (int.TryParse(p[18], NumberStyles.Integer, CultureInfo.InvariantCulture, out int coloImport))
+            planet.ManualColoImportSlots = coloImport;
+        if (int.TryParse(p[19], NumberStyles.Integer, CultureInfo.InvariantCulture, out int foodExport))
+            planet.ManualFoodExportSlots = foodExport;
+        if (int.TryParse(p[20], NumberStyles.Integer, CultureInfo.InvariantCulture, out int prodExport))
+            planet.ManualProdExportSlots = prodExport;
+        if (int.TryParse(p[21], NumberStyles.Integer, CultureInfo.InvariantCulture, out int coloExport))
+            planet.ManualColoExportSlots = coloExport;
+
+        planet.SetPrioritizedPort(ParseFlag(p[22]));
+        planet.GovOrbitals = ParseFlag(p[23]);
+        planet.AutoBuildTroops = ParseFlag(p[24]);
+        planet.DontScrapBuildings = ParseFlag(p[25]);
+        planet.Quarantine = ParseFlag(p[26]);
+        planet.ManualOrbitals = ParseFlag(p[27]);
+        planet.GovGroundDefense = ParseFlag(p[28]);
+        planet.SetSpecializedTradeHub(ParseFlag(p[29]));
+
+        if (TryParseFloatBits(p[30], out float civilianBudget))
+            planet.SetManualCivBudget(civilianBudget);
+        if (TryParseFloatBits(p[31], out float groundBudget))
+            planet.SetManualGroundDefBudget(groundBudget);
+        if (TryParseFloatBits(p[32], out float spaceBudget))
+            planet.SetManualSpaceDefBudget(spaceBudget);
+    }
+
+    static void ApplyColonizationGoalPayload(UniverseState universe, string[] lines)
+    {
+        var desired = new Dictionary<int, List<ColonizationGoalRuntime>>();
+        foreach (string rawLine in lines)
+        {
+            string line = rawLine.TrimEnd('\r');
+            if (!line.StartsWith("G|", StringComparison.Ordinal))
+                continue;
+
+            string[] p = line.Split('|');
+            if (p.Length < 5
+                || !string.Equals(p[2], "MarkForColonization", StringComparison.Ordinal)
+                || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int empireId)
+                || !int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int targetPlanetId))
+            {
+                continue;
+            }
+
+            int finishedShipId = 0;
+            if (p.Length >= 6)
+                int.TryParse(p[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out finishedShipId);
+
+            if (!desired.TryGetValue(empireId, out List<ColonizationGoalRuntime> goals))
+            {
+                goals = new List<ColonizationGoalRuntime>();
+                desired[empireId] = goals;
+            }
+
+            goals.Add(new ColonizationGoalRuntime(targetPlanetId, ParseFlag(p[4]), finishedShipId));
+        }
+
+        foreach (Empire empire in universe.Empires)
+        {
+            MarkForColonization[] existing = empire.AI.FindGoals<MarkForColonization>();
+            for (int i = 0; i < existing.Length; ++i)
+                empire.AI.RemoveGoal(existing[i]);
+
+            if (!desired.TryGetValue(empire.Id, out List<ColonizationGoalRuntime> goals))
+                continue;
+
+            foreach (ColonizationGoalRuntime runtime in goals
+                         .OrderBy(g => g.TargetPlanetId)
+                         .ThenBy(g => g.FinishedShipId))
+            {
+                Planet target = universe.GetPlanet(runtime.TargetPlanetId);
+                if (target == null)
+                    continue;
+
+                var goal = new MarkForColonization(empire)
+                {
+                    TargetPlanet = target,
+                    IsManualColonizationOrder = runtime.IsManual,
+                    FinishedShip = runtime.FinishedShipId != 0
+                        ? universe.Objects.FindShip(runtime.FinishedShipId)
+                        : null,
+                };
+                empire.AI.AddGoal(goal);
+            }
+        }
     }
 
     static void ApplyRelationshipLine(UniverseState universe, string line)
@@ -877,6 +1023,9 @@ public sealed class AuthoritativeStateSnapshot
             or ShipAI.Plan.RotateInlineWithVelocity;
 
     static uint FloatBits(float value) => System.BitConverter.SingleToUInt32Bits(value);
+    static bool TryParseByte(string text, out byte value)
+        => byte.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+
     static bool TryParseFloatBits(string text, out float value)
     {
         value = 0f;
@@ -907,6 +1056,20 @@ public sealed class AuthoritativeStateSnapshot
 
         bool rushAll = flags.HasFlag(AuthoritativeEmpireAutomationFlags.RushAllConstruction);
         empire.RushAllConstruction = rushAll;
+    }
+
+    readonly struct ColonizationGoalRuntime
+    {
+        public readonly int TargetPlanetId;
+        public readonly bool IsManual;
+        public readonly int FinishedShipId;
+
+        public ColonizationGoalRuntime(int targetPlanetId, bool isManual, int finishedShipId)
+        {
+            TargetPlanetId = targetPlanetId;
+            IsManual = isManual;
+            FinishedShipId = finishedShipId;
+        }
     }
 }
 

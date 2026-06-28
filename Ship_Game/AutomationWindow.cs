@@ -32,7 +32,10 @@ namespace Ship_Game
         {
             Screen = screen;
             const int windowWidth = 220;
-            Rect = new Rectangle(ScreenWidth - 15 - windowWidth, 89, windowWidth, 710);
+            const int rightOverlayReserve = 345;
+            int x = Math.Max(15, ScreenWidth - rightOverlayReserve - 15 - windowWidth);
+            int height = Math.Min(710, Math.Max(420, ScreenHeight - 110));
+            Rect = new Rectangle(x, 89, windowWidth, height);
             CanEscapeFromScreen = false;
         }
 

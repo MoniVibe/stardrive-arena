@@ -548,6 +548,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
     void StartJoin()
     {
+        if (Transport != null && LocalRole == ArenaMultiplayerRole.Join && !JoinInProgress)
+            ResetJoinAttemptForRetry();
+
         if (Transport != null || JoinInProgress)
         {
             SetStatus("Already hosting or joined. Back out to reset the socket.");
@@ -629,11 +632,25 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     {
         JoinInProgress = false;
         LocalRole = null;
+        Transport?.Dispose();
+        Transport = null;
         LobbyTelemetry?.NetworkError(error);
         LobbyTelemetry?.Dispose();
         LobbyTelemetry = null;
-        SetStatus($"FAILED: {error}\nNo response from {host}:{port}. Check host is listening, VPN/IP, and firewall.");
+        SetStatus($"FAILED: {error}\nNo response from {host}:{port}. Check host is listening, VPN/IP, and firewall.\nPress JOIN to retry.");
         GameAudio.NegativeClick();
+    }
+
+    void ResetJoinAttemptForRetry()
+    {
+        Transport?.Dispose();
+        Transport = null;
+        JoinInProgress = false;
+        LocalRole = null;
+        RemotePeers.Clear();
+        RefreshPrimaryRemotePeer();
+        LobbyTelemetry?.Dispose();
+        LobbyTelemetry = null;
     }
 
     void QueueLobbyAction(Action action)
@@ -1078,7 +1095,15 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                 return;
             if (transport.LastError.NotEmpty())
             {
-                SetStatus("NETWORK: " + transport.LastError);
+                string lastError = transport.LastError;
+                if (LocalRole == ArenaMultiplayerRole.Join)
+                {
+                    ResetJoinAttemptForRetry();
+                    SetStatus("NETWORK: " + lastError + "\nPress JOIN to retry.");
+                    return;
+                }
+
+                SetStatus("NETWORK: " + lastError);
                 LobbyTelemetry?.NetworkError(transport.LastError);
             }
             if (LocalRole == ArenaMultiplayerRole.Host && transport.IsConnected && CurrentStatus.StartsWith("HOST listening", StringComparison.Ordinal))

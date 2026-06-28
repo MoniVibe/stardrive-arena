@@ -7914,7 +7914,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsNotNull(host.LastResult, "The host should process the submitted command before the client polls.");
             Assert.AreEqual(1, host.LastResult.Sequence);
 
-            client.Planet.SetPrioritizedPort(!authority.Planet.PrioritizedPort);
+            PlanetGridSquare[] clientTiles = PrepareGroundTroopTiles(client.Planet, columns: 1, rows: 1);
+            clientTiles[0].Biosphere = true;
             Authoritative4XSyncMismatchException mismatch = null;
             DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
             while (mismatch == null && DateTime.UtcNow < deadline)
@@ -8048,7 +8049,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(firstType, authorityJoinPlanet.CType);
             Assert.AreEqual(firstType, clientJoinPlanet.CType);
 
-            clientJoinPlanet.SetPrioritizedPort(!authorityJoinPlanet.PrioritizedPort);
+            PlanetGridSquare[] clientTiles = PrepareGroundTroopTiles(clientJoinPlanet, columns: 1, rows: 1);
+            clientTiles[0].Biosphere = true;
             Planet.ColonyType mismatchCommandType = firstType == Planet.ColonyType.Core
                 ? Planet.ColonyType.Industrial
                 : Planet.ColonyType.Core;
@@ -8841,7 +8843,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             Planet requesterPlanet = started.Clients.First(c => c.PeerId == requestingPeer)
                 .Universe.UState.GetPlanet(authorityPlanet.Id);
             Assert.IsNotNull(requesterPlanet);
-            requesterPlanet.SetPrioritizedPort(!authorityPlanet.PrioritizedPort);
+            PlanetGridSquare[] requesterTiles = PrepareGroundTroopTiles(requesterPlanet, columns: 1, rows: 1);
+            requesterTiles[0].Biosphere = true;
 
             requester.Submit(AuthoritativePlayerCommand.SetEmpireBudget(1_101, requestingEmpire,
                 taxRate: 0.23f, treasuryGoal: 0.44f, autoTaxes: false));
@@ -9797,6 +9800,140 @@ public class Authoritative4XSessionTests : StarDriveTest
             AuthoritativeStateSnapshot repairedClient = AuthoritativeStateSnapshot.Capture(client.Screen, 0);
             Assert.AreEqual(authoritySnapshot.SyncDigest, repairedClient.SyncDigest,
                 "Applying authoritative tech rows should repair the canonical payload mismatch seen after resync.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XSnapshot_AppliesPlanetRuntimeRowsBeforeDigestCompare_Headless()
+    {
+        const ulong Seed = 0xA47A9E7UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            Planet authorityPlanet = authority.EnemyPlanet;
+            Planet clientPlanet = client.UState.GetPlanet(authorityPlanet.Id);
+            authorityPlanet.CType = Planet.ColonyType.TradeHub;
+            authorityPlanet.GarrisonSize = 7;
+            authorityPlanet.SetWantedPlatforms(3);
+            authorityPlanet.SetWantedShipyards(2);
+            authorityPlanet.SetWantedStations(1);
+            authorityPlanet.Food.Percent = 0.2f;
+            authorityPlanet.Prod.Percent = 0.6f;
+            authorityPlanet.Res.Percent = 0.2f;
+            authorityPlanet.Food.PercentLock = true;
+            authorityPlanet.Prod.PercentLock = true;
+            authorityPlanet.Res.PercentLock = false;
+            authorityPlanet.FS = Planet.GoodState.IMPORT;
+            authorityPlanet.PS = Planet.GoodState.EXPORT;
+            authorityPlanet.ManualFoodImportSlots = 2;
+            authorityPlanet.ManualProdImportSlots = 1;
+            authorityPlanet.ManualColoImportSlots = 3;
+            authorityPlanet.ManualFoodExportSlots = 4;
+            authorityPlanet.ManualProdExportSlots = 5;
+            authorityPlanet.ManualColoExportSlots = 6;
+            authorityPlanet.SetPrioritizedPort(true);
+            authorityPlanet.GovOrbitals = true;
+            authorityPlanet.AutoBuildTroops = true;
+            authorityPlanet.DontScrapBuildings = true;
+            authorityPlanet.Quarantine = true;
+            authorityPlanet.ManualOrbitals = true;
+            authorityPlanet.GovGroundDefense = true;
+            authorityPlanet.SetSpecializedTradeHub(true);
+            authorityPlanet.SetManualCivBudget(0.3f);
+            authorityPlanet.SetManualGroundDefBudget(0.4f);
+            authorityPlanet.SetManualSpaceDefBudget(0.5f);
+
+            clientPlanet.CType = Planet.ColonyType.Colony;
+            clientPlanet.GarrisonSize = 0;
+            clientPlanet.Food.Percent = 0.8f;
+            clientPlanet.Prod.Percent = 0.1f;
+            clientPlanet.Res.Percent = 0.1f;
+            clientPlanet.Food.PercentLock = false;
+            clientPlanet.Prod.PercentLock = false;
+            clientPlanet.FS = Planet.GoodState.STORE;
+            clientPlanet.PS = Planet.GoodState.STORE;
+
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 12);
+            StringAssert.Contains(authoritySnapshot.Payload, $"P|{authorityPlanet.Id}|");
+
+            authoritySnapshot.ApplyEmpireRuntimePayload(client.UState);
+
+            Assert.AreEqual(authorityPlanet.CType, clientPlanet.CType);
+            Assert.AreEqual(authorityPlanet.GarrisonSize, clientPlanet.GarrisonSize);
+            Assert.AreEqual(authorityPlanet.Food.Percent, clientPlanet.Food.Percent, 0.0001f);
+            Assert.AreEqual(authorityPlanet.Prod.Percent, clientPlanet.Prod.Percent, 0.0001f);
+            Assert.AreEqual(authorityPlanet.Res.Percent, clientPlanet.Res.Percent, 0.0001f);
+            Assert.AreEqual(authorityPlanet.FS, clientPlanet.FS);
+            Assert.AreEqual(authorityPlanet.PS, clientPlanet.PS);
+            Assert.AreEqual(authorityPlanet.ManualFoodImportSlots, clientPlanet.ManualFoodImportSlots);
+            Assert.AreEqual(authorityPlanet.ManualProdImportSlots, clientPlanet.ManualProdImportSlots);
+            Assert.AreEqual(authorityPlanet.ManualColoImportSlots, clientPlanet.ManualColoImportSlots);
+            Assert.AreEqual(authorityPlanet.ManualFoodExportSlots, clientPlanet.ManualFoodExportSlots);
+            Assert.AreEqual(authorityPlanet.ManualProdExportSlots, clientPlanet.ManualProdExportSlots);
+            Assert.AreEqual(authorityPlanet.ManualColoExportSlots, clientPlanet.ManualColoExportSlots);
+            Assert.AreEqual(authorityPlanet.PrioritizedPort, clientPlanet.PrioritizedPort);
+            Assert.AreEqual(authorityPlanet.GovOrbitals, clientPlanet.GovOrbitals);
+            Assert.AreEqual(authorityPlanet.AutoBuildTroops, clientPlanet.AutoBuildTroops);
+            Assert.AreEqual(authorityPlanet.SpecializedTradeHub, clientPlanet.SpecializedTradeHub);
+
+            AuthoritativeStateSnapshot repairedClient = AuthoritativeStateSnapshot.Capture(client.Screen, 12);
+            Assert.AreEqual(authoritySnapshot.SyncDigest, repairedClient.SyncDigest,
+                "Applying authoritative P| rows should repair the planet runtime drift from live resync logs.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XSnapshot_AppliesColonizationGoalRowsBeforeDigestCompare_Headless()
+    {
+        const ulong Seed = 0xC010D41FUL;
+        BuiltWorld authority = BuildWorld(Seed, includeNeutralPlanet: true);
+        BuiltWorld client = BuildWorld(Seed, includeNeutralPlanet: true);
+
+        try
+        {
+            var authorityGoal = new MarkForColonization(authority.Enemy)
+            {
+                TargetPlanet = authority.NeutralPlanet,
+                IsManualColonizationOrder = false,
+            };
+            authority.Enemy.AI.AddGoal(authorityGoal);
+
+            var staleClientGoal = new MarkForColonization(client.Enemy)
+            {
+                TargetPlanet = client.EnemyPlanet,
+                IsManualColonizationOrder = false,
+            };
+            client.Enemy.AI.AddGoal(staleClientGoal);
+            Assert.IsTrue(client.Enemy.AI.HasGoal(g => g.IsColonizationGoal(client.EnemyPlanet)),
+                "The test must start with the same stale MarkForColonization row shape seen in live logs.");
+
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 24);
+            StringAssert.Contains(authoritySnapshot.Payload,
+                $"G|{authority.Enemy.Id}|MarkForColonization|{authority.NeutralPlanet.Id}|0|0");
+
+            authoritySnapshot.ApplyEmpireRuntimePayload(client.UState);
+
+            MarkForColonization[] clientGoals = client.Enemy.AI.FindGoals<MarkForColonization>();
+            Assert.AreEqual(1, clientGoals.Length);
+            Assert.AreEqual(client.NeutralPlanet, clientGoals[0].TargetPlanet);
+            Assert.IsFalse(client.Enemy.AI.HasGoal(g => g.IsColonizationGoal(client.EnemyPlanet)),
+                "Stale client-only colonization goals must be removed before digest comparison.");
+
+            AuthoritativeStateSnapshot repairedClient = AuthoritativeStateSnapshot.Capture(client.Screen, 24);
+            Assert.AreEqual(authoritySnapshot.SyncDigest, repairedClient.SyncDigest,
+                "Applying authoritative G|MarkForColonization rows should repair the AI goal drift from live logs.");
         }
         finally
         {
