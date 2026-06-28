@@ -604,6 +604,7 @@ static class AuthoritativeProbeRunner
                 PumpUntil(() =>
                 {
                     client.Poll();
+                    ThrowIfClientSyncMismatch(client);
                     pendingPopups.AddRange(client.DrainPopupsForClient());
                     foreach (Authoritative4XProcessedCommand processed in client.DrainProcessedCommands())
                     {
@@ -646,6 +647,7 @@ static class AuthoritativeProbeRunner
             PumpUntil(() =>
             {
                 client.Poll();
+                ThrowIfClientSyncMismatch(client);
                 foreach (Authoritative4XProcessedCommand processed in client.DrainProcessedCommands())
                 {
                     string peerName = processed.PeerId == flow.HostPeerId ? "host" : "join";
@@ -782,6 +784,12 @@ static class AuthoritativeProbeRunner
             Thread.Sleep(2);
         }
         throw new TimeoutException($"Timed out waiting for {waitFor}.{(last == null ? "" : " Last exception: " + last.Message)}");
+    }
+
+    static void ThrowIfClientSyncMismatch(Authoritative4XNetworkClient client)
+    {
+        if (client?.LastSyncMismatch != null)
+            throw client.LastSyncMismatch;
     }
 
     static string SnapshotHash(AuthoritativeStateSnapshot? snapshot)

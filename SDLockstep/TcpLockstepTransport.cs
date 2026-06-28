@@ -440,16 +440,22 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
     {
         Action<LockstepMessage> receiver = null;
         List<Action<LockstepMessage>> observers = null;
+        int observerCount = 0;
+        bool hasReceiver;
         lock (Gate)
         {
             Receivers.TryGetValue(peerId, out receiver);
+            hasReceiver = receiver != null;
             if (Observers.TryGetValue(peerId, out List<Action<LockstepMessage>> list))
+            {
                 observers = new List<Action<LockstepMessage>>(list);
+                observerCount = observers.Count;
+            }
         }
 
         lock (Gate)
             DeliveredMessageCount++;
-        TraceAuthoritativeFrame("deliver", peerId, message);
+        TraceAuthoritativeFrame($"deliver receiver={hasReceiver} observers={observerCount}", peerId, message);
         if (observers != null)
             foreach (Action<LockstepMessage> observer in observers)
                 observer(message);

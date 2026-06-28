@@ -24,6 +24,7 @@
     <Compile Include="PortableLockstepProbe.cs" />
     <Compile Include="..\..\..\SDLockstep\Commands.cs" Link="SDLockstep\Commands.cs" />
     <Compile Include="..\..\..\SDLockstep\CommandSerializer.cs" Link="SDLockstep\CommandSerializer.cs" />
+    <Compile Include="..\..\..\SDLockstep\AuthoritativeMessages.cs" Link="SDLockstep\AuthoritativeMessages.cs" />
     <Compile Include="..\..\..\SDLockstep\FakeTransport.cs" Link="SDLockstep\FakeTransport.cs" />
     <Compile Include="..\..\..\SDLockstep\Lockstep.cs" Link="SDLockstep\Lockstep.cs" />
     <Compile Include="..\..\..\SDLockstep\LockstepClient.cs" Link="SDLockstep\LockstepClient.cs" />

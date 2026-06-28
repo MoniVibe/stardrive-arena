@@ -353,6 +353,7 @@ public static class PortableLockstepRunner
         hostOptions.Port = port;
         joinOptions.Port = port;
         joinOptions.Host = "127.0.0.1";
+        joinOptions.OutputPath = RoleOutputPath(options.OutputPath, "join");
 
         PortableLockstepResult? hostResult = null;
         PortableLockstepResult? joinResult = null;
@@ -377,6 +378,17 @@ public static class PortableLockstepRunner
         if (hostError != null) throw new InvalidOperationException("Loopback host failed.", hostError);
         if (joinError != null) throw new InvalidOperationException("Loopback join failed.", joinError);
         return (hostResult!, joinResult!);
+    }
+
+    static string RoleOutputPath(string path, string role)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return path;
+
+        string directory = Path.GetDirectoryName(path) ?? "";
+        string name = Path.GetFileNameWithoutExtension(path);
+        string extension = Path.GetExtension(path);
+        return Path.Combine(directory, $"{name}-{role}{extension}");
     }
 
     public static PortableLockstepResult RunHost(PortableLockstepOptions options, Action<string>? log = null)

@@ -62,6 +62,8 @@ public sealed class AuthoritativeStateSnapshot
                 ApplyEmpireRuntimeLine(universe, line);
             else if (line.StartsWith("U|", StringComparison.Ordinal))
                 ApplyUnlockedTechLine(universe, line);
+            else if (line.StartsWith("D|", StringComparison.Ordinal))
+                ApplyPlayerDesignLine(universe, line);
         }
     }
 
@@ -120,6 +122,55 @@ public sealed class AuthoritativeStateSnapshot
             ? parsedLevel
             : 0;
         Authoritative4XSessionSave.ApplyUnlockedTech(empire, tech, level);
+    }
+
+    static void ApplyPlayerDesignLine(UniverseState universe, string line)
+    {
+        string[] p = line.Split('|');
+        if (p.Length < 3
+            || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int empireId)
+            || empireId <= 0
+            || empireId > universe.Empires.Count)
+        {
+            return;
+        }
+
+        string designName = p[2] ?? "";
+        if (designName.IsEmpty())
+            return;
+
+        Empire empire = universe.GetEmpireById(empireId);
+        if (empire == null)
+            return;
+
+        if (ResourceManager.Ships.GetDesign(designName, out IShipDesign existing) && existing.IsPlayerDesign)
+        {
+            empire.AddBuildableShip(existing);
+            return;
+        }
+
+        string design64 = p.Length >= 8 ? p[7] ?? "" : "";
+        if (design64.IsEmpty())
+            return;
+
+        ShipDesign design;
+        try
+        {
+            design = ShipDesign.FromBytes(Convert.FromBase64String(design64));
+        }
+        catch
+        {
+            return;
+        }
+
+        if (design == null || !string.Equals(design.Name, designName, StringComparison.Ordinal))
+            return;
+
+        if (!ResourceManager.AddShipTemplate(design, playerDesign: true, readOnly: false))
+            return;
+
+        if (ResourceManager.Ships.GetDesign(design.Name, out IShipDesign registered) && registered.IsPlayerDesign)
+            empire.AddBuildableShip(registered);
     }
 
     public static AuthoritativeStateSnapshot Capture(UniverseScreen universe, uint tick,
@@ -182,6 +233,7 @@ public sealed class AuthoritativeStateSnapshot
                   .Append('|').Append((int)design.Role)
                   .Append('|').Append(FloatBits(design.BaseCost))
                   .Append('|').Append(DesignSlotSignature(design))
+                  .Append('|').Append(DesignBase64(design))
                   .AppendLine();
             }
         }
@@ -475,6 +527,9 @@ public sealed class AuthoritativeStateSnapshot
 
         return sb.ToString();
     }
+
+    static string DesignBase64(IShipDesign design)
+        => design is ShipDesign shipDesign ? shipDesign.GetBase64DesignString() : "";
 
     static string GroundTroopRef(Planet planet, Troop troop)
     {
@@ -1341,6 +1396,7 @@ public sealed class Authoritative4XNetworkClient : IDisposable
     readonly TcpLockstepTransport Transport;
     Authoritative4XClientReplica Replica;
     readonly Dictionary<AuthoritativeCommandKey, AuthoritativePlayerCommand> Pending = new();
+    readonly Queue<AuthoritativeCommandResult> PendingResults = new();
     readonly List<AuthoritativeDiplomacyPopup> Popups = new();
     readonly List<Authoritative4XProcessedCommand> ProcessedCommands = new();
     readonly List<Authoritative4XReceivedSave> ReceivedSaves = new();
@@ -1426,6 +1482,7 @@ public sealed class Authoritative4XNetworkClient : IDisposable
                 CurrentResyncEpoch = begin.Epoch;
                 WaitingForResync = true;
                 Pending.Clear();
+                PendingResults.Clear();
                 break;
             case AuthoritativeSaveTransferBeginMessage:
             case AuthoritativeSaveTransferChunkMessage:
@@ -1457,25 +1514,31 @@ public sealed class Authoritative4XNetworkClient : IDisposable
                     Tick = resultMessage.Tick,
                     Reason = resultMessage.Reason ?? "",
                 };
+                PendingResults.Enqueue(LastResult);
                 break;
             case AuthoritativeStateSnapshotMessage snapshotMessage:
                 if (WaitingForResync)
                     return;
                 LastAuthoritySnapshot = AuthoritativeStateSnapshot.FromMessage(snapshotMessage);
-                if (LastResult == null
-                    || !Pending.TryGetValue(new AuthoritativeCommandKey(LastResult.OriginPeer, LastResult.Sequence),
+                if (PendingResults.Count == 0)
+                    throw new InvalidOperationException("Received authoritative snapshot without a matching command result.");
+
+                AuthoritativeCommandResult result = PendingResults.Dequeue();
+                LastResult = result;
+                if (!Pending.TryGetValue(new AuthoritativeCommandKey(result.OriginPeer, result.Sequence),
                         out AuthoritativePlayerCommand command))
                     throw new InvalidOperationException("Received authoritative snapshot without a matching command result.");
-                Pending.Remove(new AuthoritativeCommandKey(LastResult.OriginPeer, LastResult.Sequence));
+                Pending.Remove(new AuthoritativeCommandKey(result.OriginPeer, result.Sequence));
                 try
                 {
-                    Replica.ApplyAuthoritativeResult(command, LastResult, LastAuthoritySnapshot);
+                    Replica.ApplyAuthoritativeResult(command, result, LastAuthoritySnapshot);
                 }
                 catch (Authoritative4XSyncMismatchException e)
                 {
                     LastSyncMismatch = e;
                     WaitingForResync = true;
                     Pending.Clear();
+                    PendingResults.Clear();
                     Transport.Send(Authoritative4XNetworkHost.HostPeerId, new AuthoritativeResyncRequestMessage
                     {
                         FromPeer = PeerId,
@@ -1485,8 +1548,8 @@ public sealed class Authoritative4XNetworkClient : IDisposable
                     });
                     break;
                 }
-                ProcessedCommands.Add(new Authoritative4XProcessedCommand(LastResult.OriginPeer,
-                    command, LastResult, LastClientSnapshot));
+                ProcessedCommands.Add(new Authoritative4XProcessedCommand(result.OriginPeer,
+                    command, result, LastClientSnapshot));
                 break;
             case AuthoritativeDiplomacyPopupMessage popupMessage:
                 if (WaitingForResync)
