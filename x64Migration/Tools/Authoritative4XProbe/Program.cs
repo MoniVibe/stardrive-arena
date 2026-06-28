@@ -133,7 +133,7 @@ sealed class AuthoritativeProbeOptions
 
         Example:
           Authoritative4XProbe.exe --role host --port 47377 --turns 1600 --game-root "C:\Games\StarDrive2"
-          Authoritative4XProbe.exe --role join --host 26.20.119.64 --port 47377 --turns 1600 --game-root "D:\Games\StarDrive2"
+          Authoritative4XProbe.exe --role join --host 192.0.2.10 --port 47377 --turns 1600 --game-root "C:\Games\StarDrive2"
         """;
 
     public static AuthoritativeProbeOptions Parse(string[] args)

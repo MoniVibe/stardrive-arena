@@ -397,7 +397,7 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             ArenaMultiplayerLobbyConfig.ConfigPathOverride = Path.Combine(dir, "mp-lobby-config.yaml");
             var saved = new ArenaMultiplayerLobbyConfig
             {
-                Host = "26.20.119.64",
+                Host = "192.0.2.10",
                 Port = 47378,
                 PeerSlot = 7,
                 SlotModes = "HACCHCC",
@@ -434,7 +434,7 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             Assert.IsTrue(ArenaMultiplayerLobbyConfig.Save(saved), "Config should save to the temp override path.");
 
             var lobby = new ArenaMultiplayerLobbyScreen(ArenaMultiplayerLobbySurface.Authoritative4X);
-            Assert.AreEqual("26.20.119.64", lobby.HostForHeadless);
+            Assert.AreEqual("192.0.2.10", lobby.HostForHeadless);
             Assert.AreEqual(47378, lobby.PortForHeadless);
             Assert.AreEqual(7, lobby.JoinPeerSlotForHeadless);
             Assert.AreEqual("HACCHCC", lobby.SlotModesForHeadless);
@@ -513,15 +513,15 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             Step();
             Step(Keys.LeftControl, Keys.A);
             Step(Keys.LeftControl);
-            clipboard = "26.20.119.64";
+            clipboard = "192.0.2.10";
             Step(Keys.LeftControl, Keys.V);
             Step(Keys.LeftControl);
-            Assert.AreEqual("26.20.119.64", entry.Text,
+            Assert.AreEqual("192.0.2.10", entry.Text,
                 "Ctrl+A followed by Ctrl+V should replace the entry text with the pasted IP address.");
 
             clipboard = "";
             Step(Keys.LeftControl, Keys.C);
-            Assert.AreEqual("26.20.119.64", clipboard,
+            Assert.AreEqual("192.0.2.10", clipboard,
                 "Ctrl+C should copy the current text entry value.");
         }
         finally
