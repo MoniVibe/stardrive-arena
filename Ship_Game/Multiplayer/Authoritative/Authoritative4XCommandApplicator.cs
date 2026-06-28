@@ -680,8 +680,8 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, $"Target ship {command.TargetId} is inactive.");
         if (target == ship)
             return Reject(result, "A ship cannot attack itself.");
-        if (target.Loyalty == null || !empire.IsEmpireAttackable(target.Loyalty, target))
-            return Reject(result, $"Empire {empire.Id} cannot attack ship {target.Id}.");
+        if (!TryEnsureHostileShipTarget(empire, target, "attack", result, out AuthoritativeCommandResult reject))
+            return reject;
 
         bool queue = string.Equals(command.Text, "queue", StringComparison.Ordinal);
         if (queue)
@@ -725,8 +725,9 @@ public sealed class Authoritative4XCommandApplicator
             case AuthoritativeShipTargetOrderType.Attack:
                 if (ship.IsPlatformOrStation || ship.ShipData.Role == RoleName.troop)
                     return Reject(result, $"Ship {ship.Id} cannot receive authoritative attack target orders.");
-                if (target.Loyalty == empire || !empire.IsEmpireAttackable(target.Loyalty, target))
-                    return Reject(result, $"Empire {empire.Id} cannot attack ship {target.Id}.");
+                if (!TryEnsureHostileShipTarget(empire, target, "attack", result,
+                        out AuthoritativeCommandResult rejectedAttack))
+                    return rejectedAttack;
                 if (queue)
                     ship.AI.OrderQueueSpecificTarget(target);
                 else
@@ -750,8 +751,9 @@ public sealed class Authoritative4XCommandApplicator
                 return Accept(result);
 
             case AuthoritativeShipTargetOrderType.Board:
-                if (target.Loyalty == empire || !empire.IsEmpireAttackable(target.Loyalty, target))
-                    return Reject(result, $"Empire {empire.Id} cannot board ship {target.Id}.");
+                if (!TryEnsureHostileShipTarget(empire, target, "board", result,
+                        out AuthoritativeCommandResult rejectedBoard))
+                    return rejectedBoard;
                 if (!IsSingleTroopTargetOrderShip(ship) || ship.TroopCount == 0)
                     return Reject(result, $"Ship {ship.Id} has no boarding troop.");
                 ship.AI.OrderTroopToBoardShip(target);
@@ -760,6 +762,42 @@ public sealed class Authoritative4XCommandApplicator
             default:
                 return Reject(result, $"Unsupported ship target order {orderType}.");
         }
+    }
+
+    bool TryEnsureHostileShipTarget(Empire empire, Ship target, string verb, AuthoritativeCommandResult result,
+        out AuthoritativeCommandResult reject)
+    {
+        reject = null;
+        if (target?.Loyalty == null)
+        {
+            reject = Reject(result, $"Target ship {target?.Id ?? 0} has no owning empire.");
+            return false;
+        }
+
+        Empire targetEmpire = target.Loyalty;
+        if (targetEmpire == empire)
+        {
+            reject = Reject(result, $"Empire {empire.Id} cannot {verb} ship {target.Id}.");
+            return false;
+        }
+
+        if (empire.IsEmpireAttackable(targetEmpire, target))
+            return true;
+
+        string reason = "";
+        if (Diplomacy != null
+            && AuthoritativeHumanPlayers.IsHumanVsHuman(empire, targetEmpire)
+            && Diplomacy.TryDeclareWarForHostileHumanAction(empire, targetEmpire,
+                $"{verb} ship {target.Id}", out reason)
+            && empire.IsEmpireAttackable(targetEmpire, target))
+        {
+            return true;
+        }
+
+        reject = Reject(result, reason.NotEmpty()
+            ? reason
+            : $"Empire {empire.Id} cannot {verb} ship {target.Id}.");
+        return false;
     }
 
     AuthoritativeCommandResult ApplyShipPlanetOrder(AuthoritativePlayerCommand command, Empire empire,

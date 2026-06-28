@@ -82,6 +82,30 @@ public sealed class AuthoritativeDiplomacyManager
         };
     }
 
+    public bool TryDeclareWarForHostileHumanAction(Empire proposer, Empire target, string terms,
+        out string reason)
+    {
+        reason = "";
+        if (!AuthoritativeHumanPlayers.IsHumanVsHuman(proposer, target))
+        {
+            reason = "Hostile-action auto war only applies between human-controlled empires.";
+            return false;
+        }
+
+        if (!proposer.IsAtWarWith(target))
+        {
+            ApplyDeclareWar(proposer, target);
+            QueuePopup(0, proposer, target, AuthoritativeDiplomacyProposalType.DeclareWar,
+                terms ?? "", requiresResponse: false, "War declared.");
+        }
+
+        if (proposer.IsAtWarWith(target))
+            return true;
+
+        reason = $"Empire {proposer.Id} could not declare war on empire {target.Id}.";
+        return false;
+    }
+
     AuthoritativeCommandResult ApplyProposal(AuthoritativePlayerCommand command, Empire proposer,
         AuthoritativeCommandResult result)
     {

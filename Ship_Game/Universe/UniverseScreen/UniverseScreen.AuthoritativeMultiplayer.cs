@@ -74,6 +74,17 @@ public partial class UniverseScreen
     public bool IsLocalShipForUi(Ship ship)
         => ship?.Loyalty != null && IsLocalEmpireForUi(ship.Loyalty);
 
+    public bool IsHostileShipTargetForUi(Ship ship)
+    {
+        Empire local = Player;
+        Empire target = ship?.Loyalty;
+        return local != null
+               && target != null
+               && target != local
+               && (local.IsEmpireAttackable(target, ship)
+                   || AuthoritativeHumanPlayers.IsHumanVsHuman(local, target));
+    }
+
     public bool IsKnownToLocalPlayerForUi(Ship ship)
     {
         if (ship?.Loyalty == null)

@@ -1128,6 +1128,66 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XHumanShipAttack_AutoDeclaresWarAndSyncs_Headless()
+    {
+        const ulong Seed = 0xB4111E5UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld clientA = BuildWorld(Seed);
+        BuiltWorld clientB = BuildWorld(Seed);
+        const int PeerA = 2;
+        const int PeerB = 3;
+
+        try
+        {
+            int empireA = authority.Player.Id;
+            int empireB = authority.Enemy.Id;
+            MakePeace(authority.Player, authority.Enemy);
+            MakePeace(clientA.Player, clientA.Enemy);
+            MakePeace(clientB.Player, clientB.Enemy);
+            var session = new Authoritative4XInProcessMultiClientSession(authority.Screen, new[]
+            {
+                new Authoritative4XClientSpec(PeerA, empireA, clientA.Screen),
+                new Authoritative4XClientSpec(PeerB, empireB, clientB.Screen),
+            });
+
+            Assert.IsFalse(authority.Player.IsAtWarWith(authority.Enemy),
+                "The proof must start from a neutral human-vs-human relationship.");
+            DiplomacyScreen.DebugResetScreensShown();
+
+            var attack = AuthoritativePlayerCommand.ShipTargetOrder(1, empireB,
+                authority.EnemyShip.Id, authority.Ship.Id, AuthoritativeShipTargetOrderType.Attack);
+            session.SubmitFromClient(PeerB, attack);
+            AssertAccepted(session, PeerB);
+
+            Assert.IsTrue(authority.Player.IsAtWarWith(authority.Enemy),
+                "A human attack on another human's neutral ship should become an explicit war.");
+            Assert.IsTrue(clientA.Player.IsAtWarWith(clientA.Enemy));
+            Assert.IsTrue(clientB.Player.IsAtWarWith(clientB.Enemy));
+            Assert.AreEqual(AIState.AttackTarget, authority.EnemyShip.AI.State);
+            Assert.AreEqual(authority.Ship, authority.EnemyShip.AI.Target);
+            Assert.AreEqual(clientB.Ship, clientB.EnemyShip.AI.Target);
+            Assert.AreEqual(0, DiplomacyScreen.DebugScreensShown,
+                "Auto-war from a human hostile action must not open the stock AI diplomacy screen.");
+
+            AuthoritativeDiplomacyPopup warNotice = LastPopup(session, PeerA,
+                AuthoritativeDiplomacyProposalType.DeclareWar, requiresResponse: false);
+            Assert.AreEqual(empireB, warNotice.ProposerEmpireId);
+            Assert.AreEqual(empireA, warNotice.TargetEmpireId);
+            StringAssert.Contains(warNotice.Terms, "attack ship");
+            AssertAllSynced(session, PeerA, PeerB);
+        }
+        finally
+        {
+            AuthoritativeHumanPlayers.Clear(authority.UState);
+            AuthoritativeHumanPlayers.Clear(clientA.UState);
+            AuthoritativeHumanPlayers.Clear(clientB.UState);
+            authority.Screen.Dispose();
+            clientA.Screen.Dispose();
+            clientB.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XColonizationGoal_MarksCancelsAndSyncs_Headless()
     {
         const ulong Seed = 0xC010412EUL;
@@ -8094,6 +8154,42 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void AuthoritativeDiplomacyProposalScreen_JoinerButtonSubmitsAuthoritativeCommand_Headless()
+    {
+        BuiltWorld world = BuildWorld(0xD1A1063UL);
+        var submitted = new List<AuthoritativePlayerCommand>();
+        try
+        {
+            AuthoritativeHumanPlayers.SetHumanControlledEmpires(world.UState,
+                world.Player.Id, world.Enemy.Id);
+            using (Authoritative4XClientContext.Begin(peerId: 3, empireId: world.Enemy.Id,
+                       submitted.Add, firstSequence: 900))
+            {
+                var screen = new AuthoritativeDiplomacyProposalScreen(world.Screen, world.Screen,
+                    world.Player);
+                screen.LoadContent();
+                Assert.IsTrue(screen.Find(AuthoritativeDiplomacyProposalScreen.DeclareWarButtonName,
+                    out UIButton declare));
+
+                declare.OnClick(declare);
+                Assert.AreEqual(1, submitted.Count,
+                    "A joiner proposal button should emit a network-bound authoritative command.");
+                AuthoritativePlayerCommand command = submitted[0];
+                Assert.AreEqual(AuthoritativePlayerCommandKind.DiplomacyProposal, command.Kind);
+                Assert.AreEqual(900, command.Sequence);
+                Assert.AreEqual(world.Enemy.Id, command.EmpireId);
+                Assert.AreEqual(world.Player.Id, command.SubjectId);
+                Assert.AreEqual((int)AuthoritativeDiplomacyProposalType.DeclareWar, command.TargetId);
+            }
+        }
+        finally
+        {
+            AuthoritativeHumanPlayers.Clear(world.UState);
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XLiveHost_RoutesLocalHumanDiplomacyPopupAndResponse_Headless()
     {
         const ulong Seed = 0xD1A1061UL;
@@ -10579,6 +10675,23 @@ public class Authoritative4XSessionTests : StarDriveTest
             a.AI.DeclareWarOn(b, WarType.BorderConflict);
         Assert.IsTrue(a.IsAtWarWith(b), $"Empire {a.Id} should be at war with {b.Id}.");
         Assert.IsTrue(b.IsAtWarWith(a), $"Empire {b.Id} should be at war with {a.Id}.");
+    }
+
+    static void MakePeace(Empire a, Empire b)
+    {
+        ClearWarOneWay(a, b);
+        ClearWarOneWay(b, a);
+        Empire.UpdateBilateralRelations(a, b);
+        Assert.IsFalse(a.IsAtWarWith(b), $"Empire {a.Id} should be at peace with {b.Id}.");
+        Assert.IsFalse(b.IsAtWarWith(a), $"Empire {b.Id} should be at peace with {a.Id}.");
+    }
+
+    static void ClearWarOneWay(Empire us, Empire them)
+    {
+        Relationship rel = us.GetRelations(them);
+        rel.AtWar = false;
+        rel.CancelPrepareForWar();
+        rel.ActiveWar = null;
     }
 
     static string RacePreference(IEmpireData race)

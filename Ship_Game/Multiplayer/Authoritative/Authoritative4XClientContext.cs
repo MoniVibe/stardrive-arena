@@ -1469,8 +1469,7 @@ public sealed class Authoritative4XClientContext : IDisposable
             AuthoritativeShipTargetOrderType.Attack =>
                 !ship.IsPlatformOrStation
                 && ship.ShipData.Role != RoleName.troop
-                && target.Loyalty != ship.Loyalty
-                && ship.Loyalty.IsEmpireAttackable(target.Loyalty, target),
+                && CanSubmitHostileShipTarget(ship, target),
             AuthoritativeShipTargetOrderType.Escort =>
                 target.Loyalty == ship.Loyalty,
             AuthoritativeShipTargetOrderType.TransferTroops =>
@@ -1479,12 +1478,22 @@ public sealed class Authoritative4XClientContext : IDisposable
                 && ship.TroopCount > 0
                 && target.TroopCapacity > target.TroopCount,
             AuthoritativeShipTargetOrderType.Board =>
-                target.Loyalty != ship.Loyalty
+                CanSubmitHostileShipTarget(ship, target)
                 && IsSingleTroopTargetOrderShip(ship)
-                && ship.TroopCount > 0
-                && ship.Loyalty.IsEmpireAttackable(target.Loyalty, target),
+                && ship.TroopCount > 0,
             _ => false,
         };
+    }
+
+    static bool CanSubmitHostileShipTarget(Ship ship, Ship target)
+    {
+        Empire owner = ship?.Loyalty;
+        Empire targetOwner = target?.Loyalty;
+        return owner != null
+               && targetOwner != null
+               && targetOwner != owner
+               && (owner.IsEmpireAttackable(targetOwner, target)
+                   || AuthoritativeHumanPlayers.IsHumanVsHuman(owner, targetOwner));
     }
 
     static bool IsSingleTroopTargetOrderShip(Ship ship)
