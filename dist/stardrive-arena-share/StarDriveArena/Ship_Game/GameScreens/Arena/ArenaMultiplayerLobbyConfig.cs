@@ -20,6 +20,8 @@ public sealed class ArenaMultiplayerLobbyConfig
     public string Host = "127.0.0.1";
     [StarData] public string HostEncoded = "";
     [StarData] public int Port = ArenaMultiplayerLobbyScreen.DefaultPort;
+    [StarData] public int PeerSlot = ArenaMultiplayerLobbyScreen.DefaultJoinPeerSlot;
+    [StarData] public string SlotModes = "";
     [StarData] public int Seed = 24237;
     [StarData] public float GameSpeed = 1f;
     [StarData] public string RacePreference = "United";
@@ -27,13 +29,28 @@ public sealed class ArenaMultiplayerLobbyConfig
     [StarData] public RaceDesignScreen.GameMode Mode = RaceDesignScreen.GameMode.Sandbox;
     [StarData] public RaceDesignScreen.StarsAbundance StarsCount = RaceDesignScreen.StarsAbundance.Rare;
     [StarData] public GalSize GalaxySize = GalSize.Tiny;
+    [StarData] public ExtraRemnantPresence ExtraRemnant = ExtraRemnantPresence.Normal;
     [StarData] public GameDifficulty Difficulty = GameDifficulty.Normal;
     [StarData] public int NumOpponents = 1;
     [StarData] public float Pace = 1f;
     [StarData] public int TurnTimer = 5;
     [StarData] public int ExtraPlanets;
+    [StarData] public float CustomMineralDecay = 1f;
+    [StarData] public float VolcanicActivity = 1f;
     [StarData] public float StartingPlanetRichnessBonus;
+    [StarData] public float ShipMaintenanceMultiplier = 1f;
+    [StarData] public float FTLModifier = 1f;
+    [StarData] public float EnemyFTLModifier = 0.5f;
+    [StarData] public float GravityWellRange = 8000f;
     [StarData] public bool StartPaused;
+    [StarData] public bool AIUsesPlayerDesigns = true;
+    [StarData] public bool UseUpkeepByHullSize;
+    [StarData] public bool DisableRemnantStory;
+    [StarData] public bool EnableRandomizedAIFleetSizes;
+    [StarData] public bool DisableAlternateAITraits;
+    [StarData] public bool DisablePirates;
+    [StarData] public bool DisableResearchStations;
+    [StarData] public bool DisableMiningOps;
 
     public static string ConfigPath => ConfigPathOverride.NotEmpty()
         ? ConfigPathOverride
@@ -48,16 +65,25 @@ public sealed class ArenaMultiplayerLobbyConfig
             Host = "127.0.0.1";
         HostEncoded = EncodeHost(Host);
         Port = Math.Clamp(Port, 1, 65535);
+        PeerSlot = Math.Clamp(PeerSlot, ArenaMultiplayerLobbyScreen.DefaultJoinPeerSlot,
+            ArenaMultiplayerLobbyScreen.LastJoinPeerSlot);
+        SlotModes = ArenaMultiplayerLobbyScreen.NormalizeSlotModesForConfig(SlotModes, NumOpponents);
         if (Seed == 0)
             Seed = 24237;
         GameSpeed = ArenaMultiplayerSettings.ClampGameSpeed(GameSpeed);
         if (RacePreference.IsEmpty())
             RacePreference = "United";
-        NumOpponents = Math.Max(1, NumOpponents);
+        NumOpponents = Math.Clamp(NumOpponents, 1, Authoritative4XGameSettings.MaxOpponentsAllowed());
         Pace = Math.Clamp(Pace, 1f, 10f);
         TurnTimer = Math.Clamp(TurnTimer, 1, 30);
         ExtraPlanets = Math.Clamp(ExtraPlanets, 0, 3);
+        CustomMineralDecay = Math.Clamp(CustomMineralDecay, 0.2f, 3f);
+        VolcanicActivity = Math.Clamp(VolcanicActivity, 0f, 3f);
         StartingPlanetRichnessBonus = Math.Clamp(StartingPlanetRichnessBonus, 0f, 5f);
+        ShipMaintenanceMultiplier = Math.Clamp(ShipMaintenanceMultiplier, 1f, 2f);
+        FTLModifier = Math.Clamp(FTLModifier, 0.1f, 1f);
+        EnemyFTLModifier = Math.Clamp(EnemyFTLModifier, 0.1f, 1f);
+        GravityWellRange = Math.Clamp(GravityWellRange, 0f, 16000f);
         TraitOptions ??= "";
         return this;
     }
@@ -70,14 +96,29 @@ public sealed class ArenaMultiplayerLobbyConfig
             Mode = Mode,
             StarsCount = StarsCount,
             GalaxySize = GalaxySize,
+            ExtraRemnant = ExtraRemnant,
             Difficulty = Difficulty,
             NumOpponents = NumOpponents,
             Pace = Pace,
             TurnTimer = TurnTimer,
             ExtraPlanets = ExtraPlanets,
+            CustomMineralDecay = CustomMineralDecay,
+            VolcanicActivity = VolcanicActivity,
             StartingPlanetRichnessBonus = StartingPlanetRichnessBonus,
+            ShipMaintenanceMultiplier = ShipMaintenanceMultiplier,
+            FTLModifier = FTLModifier,
+            EnemyFTLModifier = EnemyFTLModifier,
+            GravityWellRange = GravityWellRange,
             GameSpeed = GameSpeed,
             StartPaused = StartPaused,
+            AIUsesPlayerDesigns = AIUsesPlayerDesigns,
+            UseUpkeepByHullSize = UseUpkeepByHullSize,
+            DisableRemnantStory = DisableRemnantStory,
+            EnableRandomizedAIFleetSizes = EnableRandomizedAIFleetSizes,
+            DisableAlternateAITraits = DisableAlternateAITraits,
+            DisablePirates = DisablePirates,
+            DisableResearchStations = DisableResearchStations,
+            DisableMiningOps = DisableMiningOps,
         }.Normalized();
 
     public static ArenaMultiplayerLobbyConfig FromScreen(ArenaMultiplayerLobbyScreen screen)
@@ -88,6 +129,8 @@ public sealed class ArenaMultiplayerLobbyConfig
         {
             Host = screen?.HostForHeadless ?? "127.0.0.1",
             Port = screen?.PortForHeadless ?? ArenaMultiplayerLobbyScreen.DefaultPort,
+            PeerSlot = screen?.JoinPeerSlotForHeadless ?? ArenaMultiplayerLobbyScreen.DefaultJoinPeerSlot,
+            SlotModes = screen?.SlotModesForHeadless ?? "",
             Seed = settings.GenerationSeed,
             GameSpeed = settings.GameSpeed,
             RacePreference = screen?.LocalRace ?? "United",
@@ -95,13 +138,28 @@ public sealed class ArenaMultiplayerLobbyConfig
             Mode = settings.Mode,
             StarsCount = settings.StarsCount,
             GalaxySize = settings.GalaxySize,
+            ExtraRemnant = settings.ExtraRemnant,
             Difficulty = settings.Difficulty,
             NumOpponents = settings.NumOpponents,
             Pace = settings.Pace,
             TurnTimer = settings.TurnTimer,
             ExtraPlanets = settings.ExtraPlanets,
+            CustomMineralDecay = settings.CustomMineralDecay,
+            VolcanicActivity = settings.VolcanicActivity,
             StartingPlanetRichnessBonus = settings.StartingPlanetRichnessBonus,
+            ShipMaintenanceMultiplier = settings.ShipMaintenanceMultiplier,
+            FTLModifier = settings.FTLModifier,
+            EnemyFTLModifier = settings.EnemyFTLModifier,
+            GravityWellRange = settings.GravityWellRange,
             StartPaused = settings.StartPaused,
+            AIUsesPlayerDesigns = settings.AIUsesPlayerDesigns,
+            UseUpkeepByHullSize = settings.UseUpkeepByHullSize,
+            DisableRemnantStory = settings.DisableRemnantStory,
+            EnableRandomizedAIFleetSizes = settings.EnableRandomizedAIFleetSizes,
+            DisableAlternateAITraits = settings.DisableAlternateAITraits,
+            DisablePirates = settings.DisablePirates,
+            DisableResearchStations = settings.DisableResearchStations,
+            DisableMiningOps = settings.DisableMiningOps,
         }.Normalized();
     }
 
