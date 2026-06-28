@@ -21,6 +21,7 @@ public static class LockstepMessageCodec
     const byte SessionError = 13;
     const byte SessionLobby = 14;
     const byte SessionControl = 15;
+    const byte SessionStartAck = 16;
     const byte AuthoritativeCommandRequest = 20;
     const byte AuthoritativeCommandResult = 21;
     const byte AuthoritativeStateSnapshot = 22;
@@ -131,6 +132,13 @@ public static class LockstepMessageCodec
                     w.Write(start.DisablePirates);
                     w.Write(start.DisableResearchStations);
                     w.Write(start.DisableMiningOps);
+                    break;
+                case SessionStartAckMessage ack:
+                    w.Write(SessionStartAck);
+                    w.Write(ack.PeerId);
+                    w.Write(ack.Accepted);
+                    WriteString(w, ack.StartFingerprint);
+                    WriteString(w, ack.Error);
                     break;
                 case SessionControlMessage control:
                     w.Write(SessionControl);
@@ -380,6 +388,15 @@ public static class LockstepMessageCodec
                     HostTraitOptions = hostTraitOptions,
                     JoinTraitOptions = joinTraitOptions,
                     AuthoritativePlayerRoster = authoritativePlayerRoster,
+                };
+                break;
+            case SessionStartAck:
+                message = new SessionStartAckMessage
+                {
+                    PeerId = r.ReadInt32(),
+                    Accepted = r.ReadBoolean(),
+                    StartFingerprint = ReadString(r),
+                    Error = ReadString(r),
                 };
                 break;
             case SessionControl:

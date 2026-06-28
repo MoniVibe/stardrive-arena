@@ -143,6 +143,24 @@ public class LockstepNetworkTransportTests
             Assert.AreEqual("env", msg.BuildHash);
         });
 
+        RoundTrip(1, new SessionStartAckMessage
+        {
+            FromPeer = 3,
+            PeerId = 3,
+            Accepted = true,
+            StartFingerprint = "0x1234",
+            Error = "",
+        }, decoded =>
+        {
+            var msg = (SessionStartAckMessage)decoded.Message;
+            Assert.AreEqual(1, decoded.ToPeer);
+            Assert.AreEqual(3, msg.FromPeer);
+            Assert.AreEqual(3, msg.PeerId);
+            Assert.IsTrue(msg.Accepted);
+            Assert.AreEqual("0x1234", msg.StartFingerprint);
+            Assert.AreEqual("", msg.Error);
+        });
+
         RoundTrip(2, new SessionControlMessage { FromPeer = 0, Paused = true, GameSpeed = 0.5f }, decoded =>
         {
             var msg = (SessionControlMessage)decoded.Message;

@@ -23,6 +23,13 @@ public enum ArenaMultiplayerLobbySurface
     Authoritative4X,
 }
 
+enum ArenaMultiplayerSlotMode
+{
+    Human,
+    AI,
+    Closed,
+}
+
 public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 {
     public const int DefaultPort = 47377;
@@ -107,8 +114,11 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     LobbyPeer LocalPeer = new() { PlayerName = "Local", RacePreference = "United", LoadoutTrait = "Wingmates" };
     LobbyPeer RemotePeer = new() { PlayerName = "Remote", RacePreference = "-", LoadoutTrait = "-", Ready = false };
     readonly Dictionary<int, LobbyPeer> RemotePeers = new();
+    readonly Dictionary<int, ArenaMultiplayerSlotMode> SlotModes = new();
+    readonly HashSet<int> AcceptedStartPeers = new();
     int JoinPeerSlot = DefaultJoinPeerSlot;
     SessionStartMessage Pending4XStart;
+    SessionStartMessage PendingHostStart;
     Action PendingLobbyAction;
     ArenaMultiplayerRunResult LastResult;
     Authoritative4XLobbySelfTestResult Last4XSelfTestResult;
@@ -149,6 +159,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         TransitionOnTime  = 0.2f;
         TransitionOffTime = 0.2f;
         ApplyPersistentConfig(ArenaMultiplayerLobbyConfig.Load());
+        ApplySlotModesFromConfig(PersistentConfig?.SlotModes, RegularSettings.NumOpponents);
     }
 
     public ArenaMultiplayerLobbySurface SurfaceMode => Surface;
@@ -182,6 +193,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     public float SpeedForHeadless => ParseSpeed();
     public int JoinPeerSlotForHeadless => JoinPeerSlot;
     public int ConnectedPlayerCountForHeadless => 1 + RemotePeers.Count;
+    public int EffectiveOpponentCountForHeadless => EffectiveOpponentCountForStart();
+    public string SlotModeForHeadless(int peerId) => SlotModeLabel(SlotMode(peerId));
+    public string SlotModesForHeadless => EncodeSlotModes();
     public bool HasTurnsFieldForHeadless => false;
     public Authoritative4XGameSettings Current4XSettingsForHeadless => Build4XSettings();
     public SessionStartMessage Build4XStartForHeadless() => Build4XStartMessage();
@@ -232,6 +246,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         RemotePeer.Ready = true;
         RemotePeers.Clear();
         RemotePeers[DefaultJoinPeerSlot] = RemotePeer;
+        InitializeSlotModesFromOpponentCount(s.NumOpponents);
+        SlotModes[DefaultJoinPeerSlot] = ArenaMultiplayerSlotMode.Human;
         StartPaused = s.StartPaused;
         if (SeedEntry != null)
             SeedEntry.Text = s.GenerationSeed.ToString(CultureInfo.InvariantCulture);
@@ -273,8 +289,14 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         AddField(panel.X + 210, panel.Y + 164, "SEED", ParseSeed().ToString(CultureInfo.InvariantCulture), out SeedEntry, allowPeriod: false, maxChars: 9, "arena_mp_seed_entry");
         AddField(panel.X + 396, panel.Y + 164, "SPEED", ParseSpeed().ToString(CultureInfo.InvariantCulture), out SpeedEntry, allowPeriod: true, maxChars: 4, "arena_mp_speed_entry");
 
-        AddPeerCard(new RectF(panel.X + 24, panel.Y + 222, 392, 126), "YOU", () => LocalPeer);
-        AddPeerCard(new RectF(panel.X + 440, panel.Y + 222, 392, 126), "REMOTE", () => RemotePeer);
+        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 206), "PLAYER SLOTS"));
+        for (int peerSlot = HostPlayerPeerId4X; peerSlot <= LastJoinPeerSlot; ++peerSlot)
+        {
+            int index = peerSlot - HostPlayerPeerId4X;
+            int col = index % 4;
+            int row = index / 4;
+            AddSlotCard(new RectF(panel.X + 24 + col * 208f, panel.Y + 232 + row * 62f, 198, 56), peerSlot);
+        }
 
         Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 364), "SETUP"));
         UIList setup = AddList(new Vector2(panel.X + 24, panel.Y + 392));
@@ -430,6 +452,39 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         {
             DynamicText = _ => peer().Summary,
         });
+    }
+
+    void AddSlotCard(RectF rect, int peerId)
+    {
+        UIPanel card = ArenaTheme.Card(rect);
+        card.Name = $"arena_mp_slot_{peerId}";
+        Add(card);
+        Add(new UILabel(new Vector2(rect.X + 8, rect.Y + 7), "", ArenaTheme.BodySmallFont, ArenaTheme.Amber)
+        {
+            DynamicText = _ => SlotTitle(peerId),
+        });
+        Add(new UILabel(new Vector2(rect.X + 8, rect.Y + 25), "", ArenaTheme.BodySmallFont, ArenaTheme.TextPrimary)
+        {
+            DynamicText = _ => SlotStatus(peerId),
+        });
+        Add(new UILabel(new Vector2(rect.X + 8, rect.Y + 41), "", ArenaTheme.BodySmallFont, ArenaTheme.TextMuted)
+        {
+            DynamicText = _ => SlotDetail(peerId),
+        });
+        if (peerId == HostPlayerPeerId4X)
+            return;
+
+        UIButton mode = ArenaTheme.PillButton("", _ => CycleSlotMode(peerId), 58f, 20f);
+        mode.Name = $"arena_mp_slot_mode_{peerId}";
+        mode.Pos = new Vector2(rect.Right - 64, rect.Y + 6);
+        mode.DynamicText = () => SlotModeLabel(SlotMode(peerId));
+        Add(mode);
+
+        UIButton kick = ArenaTheme.PillButton("KICK", _ => KickSlot(peerId), 58f, 20f);
+        kick.Name = $"arena_mp_slot_kick_{peerId}";
+        kick.Pos = new Vector2(rect.Right - 64, rect.Y + 30);
+        kick.DynamicText = () => RemotePeers.ContainsKey(peerId) ? "KICK" : "-";
+        Add(kick);
     }
 
     void StartSelfTest()
@@ -627,13 +682,25 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             GameAudio.NegativeClick();
             return;
         }
-        if (!Transport.IsConnected)
+        if (PendingHostStart != null)
+        {
+            SetStatus("Launch already sent. Waiting for client start acknowledgements.");
+            GameAudio.NegativeClick();
+            return;
+        }
+        if (!Transport.IsConnected && AISlotCount() == 0)
         {
             SetStatus("Waiting for a client connection.");
             GameAudio.NegativeClick();
             return;
         }
-        if (!LocalPeer.Ready || RemotePeers.Count == 0 || RemotePeers.Values.Any(p => !p.Ready))
+        if (EffectiveOpponentCountForStart() == 0)
+        {
+            SetStatus("Open at least one human or AI slot before launch.");
+            GameAudio.NegativeClick();
+            return;
+        }
+        if (!LocalPeer.Ready || RemotePeers.Any(kv => SlotMode(kv.Key) == ArenaMultiplayerSlotMode.Human && !kv.Value.Ready))
         {
             SetStatus("All connected players must be ready before launch.");
             GameAudio.NegativeClick();
@@ -672,15 +739,30 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         }
         LobbyTelemetry?.Event("LAUNCH_HOST",
             $"mode=4x {Authoritative4XLobbyNetworkFlow.StartTelemetrySummary(start)}");
+        PendingHostStart = start;
+        AcceptedStartPeers.Clear();
         foreach (int peer in RemotePeers.Keys.OrderBy(p => p))
             Transport.Send(peer, start);
-        LaunchVisible4X(Authoritative4XLiveRole.Host, start);
+        if (RemotePeers.Count == 0)
+        {
+            LaunchVisible4X(Authoritative4XLiveRole.Host, start);
+            return;
+        }
+        SetStatus("Launch sent. Waiting for client start acknowledgements.");
     }
 
     void OnHostMessage(LockstepMessage message)
     {
         if (message is SessionHelloMessage h && IsRemotePlayerPeer(h.PeerId))
         {
+            if (!SlotAcceptsHuman(h.PeerId))
+            {
+                string slotError = $"Slot P{h.PeerId} is {SlotModeLabel(SlotMode(h.PeerId))}; choose an open HUMAN slot.";
+                SetStatus(slotError);
+                LobbyTelemetry?.Event("HELLO_SLOT_REJECT", slotError);
+                Transport?.Send(h.PeerId, new SessionErrorMessage { FromPeer = AuthorityPeerId, Error = slotError });
+                return;
+            }
             string error = h.ProtocolVersion != ArenaMultiplayerSettings.ProtocolVersion
                 ? $"Arena multiplayer protocol mismatch. Local {ArenaMultiplayerSettings.ProtocolVersion}, remote {h.ProtocolVersion}."
                 : ArenaMultiplayerPeerSignature.ValidateEnvironment(h.BuildHash, h.BuildSummary, $"peer {h.PeerId}");
@@ -692,25 +774,73 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             }
             else
             {
-                EnsureRemotePeer(h.PeerId).PlayerName = h.PlayerName.NotEmpty() ? h.PlayerName : $"P{h.PeerId}";
-                EnsureRemotePeer(h.PeerId).BuildHash = h.BuildHash ?? "";
-                EnsureRemotePeer(h.PeerId).BuildSummary = h.BuildSummary ?? "";
+                LobbyPeer peer = EnsureRemotePeer(h.PeerId);
+                peer.PlayerName = h.PlayerName.NotEmpty() ? h.PlayerName : $"P{h.PeerId}";
+                peer.BuildHash = h.BuildHash ?? "";
+                peer.BuildSummary = h.BuildSummary ?? "";
                 LobbyTelemetry?.Event("HELLO", $"peer={h.PeerId} summary='{h.BuildSummary}'");
             }
         }
         if (message is SessionLobbyMessage lobby && IsRemotePlayerPeer(lobby.PeerId))
         {
+            if (!SlotAcceptsHuman(lobby.PeerId))
+            {
+                string slotError = $"Slot P{lobby.PeerId} is {SlotModeLabel(SlotMode(lobby.PeerId))}; lobby update ignored.";
+                SetStatus(slotError);
+                LobbyTelemetry?.Event("REMOTE_LOBBY_SLOT_REJECT", slotError);
+                Transport?.Send(lobby.PeerId, new SessionErrorMessage { FromPeer = AuthorityPeerId, Error = slotError });
+                return;
+            }
             RemotePeers[lobby.PeerId] = LobbyPeer.From(lobby, $"P{lobby.PeerId}");
             RefreshPrimaryRemotePeer();
+            SyncOpponentCountFromSlots();
             SetStatus($"P{lobby.PeerId} lobby updated.\n{RemotePeers.Count + 1} players, {ReadyPlayerCount()}/{RemotePeers.Count + 1} ready.");
             LobbyTelemetry?.Event("REMOTE_LOBBY",
                 $"peer={lobby.PeerId} ready={RemotePeers[lobby.PeerId].Ready} race='{RemotePeers[lobby.PeerId].RacePreference}' summary='{RemotePeers[lobby.PeerId].BuildSummary}'");
             SendLocalLobby();
         }
+        if (message is SessionStartAckMessage ack && IsRemotePlayerPeer(ack.PeerId))
+            HandleStartAck(ack);
         if (message is SessionErrorMessage e)
         {
             SetStatus(e.Error);
             LobbyTelemetry?.Event("SESSION_ERROR", e.Error);
+        }
+    }
+
+    void HandleStartAck(SessionStartAckMessage ack)
+    {
+        if (PendingHostStart == null)
+            return;
+        string expected = Authoritative4XLobbyNetworkFlow.StartFingerprint(PendingHostStart);
+        if (!string.Equals(ack.StartFingerprint, expected, StringComparison.Ordinal))
+        {
+            string error = $"P{ack.PeerId} acknowledged a different start payload.";
+            SetStatus(error);
+            LobbyTelemetry?.Event("START_ACK_REJECT", $"{error} expected={expected} actual={ack.StartFingerprint}");
+            return;
+        }
+        if (!ack.Accepted)
+        {
+            string error = $"P{ack.PeerId} rejected launch: {ack.Error}";
+            SetStatus(error);
+            LobbyTelemetry?.Event("START_ACK_REJECT", error);
+            return;
+        }
+
+        AcceptedStartPeers.Add(ack.PeerId);
+        int[] required = RemotePeers.Keys.OrderBy(p => p).ToArray();
+        LobbyTelemetry?.Event("START_ACK", $"peer={ack.PeerId} accepted={AcceptedStartPeers.Count}/{required.Length}");
+        if (required.All(peer => AcceptedStartPeers.Contains(peer)))
+        {
+            SessionStartMessage start = PendingHostStart;
+            PendingHostStart = null;
+            SetStatus("All clients accepted launch. Starting authoritative game.");
+            LaunchVisible4X(Authoritative4XLiveRole.Host, start);
+        }
+        else
+        {
+            SetStatus($"Launch accepted by {AcceptedStartPeers.Count}/{required.Length} clients.");
         }
     }
 
@@ -720,21 +850,44 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             RemotePeer = LobbyPeer.From(lobby, "Host");
         if (message is SessionStartMessage start)
         {
+            string fingerprint = Authoritative4XLobbyNetworkFlow.StartFingerprint(start);
             string error = Validate4XStart(start);
             if (error.NotEmpty())
             {
                 SetStatus(error);
                 LobbyTelemetry?.Event("START_REJECT", error);
+                Transport?.Send(AuthorityPeerId, new SessionStartAckMessage
+                {
+                    FromPeer = JoinPeerSlot,
+                    PeerId = JoinPeerSlot,
+                    Accepted = false,
+                    StartFingerprint = fingerprint,
+                    Error = error,
+                });
                 return;
             }
             LobbyTelemetry?.Event("START_RECEIVED",
                 $"mode=4x {Authoritative4XLobbyNetworkFlow.StartTelemetrySummary(start)}");
+            Transport?.Send(AuthorityPeerId, new SessionStartAckMessage
+            {
+                FromPeer = JoinPeerSlot,
+                PeerId = JoinPeerSlot,
+                Accepted = true,
+                StartFingerprint = fingerprint,
+            });
             Pending4XStart = start;
         }
         if (message is SessionErrorMessage e)
         {
             SetStatus(e.Error);
             LobbyTelemetry?.Event("SESSION_ERROR", e.Error);
+            if (e.Error.StartsWith("Slot P", StringComparison.Ordinal))
+            {
+                Transport?.Dispose();
+                Transport = null;
+                LocalRole = null;
+                JoinInProgress = false;
+            }
         }
     }
 
@@ -769,6 +922,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         if (Transport == null)
             return;
         Launching = true;
+        PendingHostStart = null;
+        AcceptedStartPeers.Clear();
         TcpLockstepTransport transport = Transport;
         Transport = null;
         LobbyTelemetry?.Event("LAUNCH_VISIBLE_4X",
@@ -821,7 +976,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             GalaxySize = RegularSettings.GalaxySize,
             ExtraRemnant = RegularSettings.ExtraRemnant,
             Difficulty = RegularSettings.Difficulty,
-            NumOpponents = RegularSettings.NumOpponents,
+            NumOpponents = Math.Max(RegularSettings.NumOpponents, EffectiveOpponentCountForStart()),
             Pace = RegularSettings.Pace,
             TurnTimer = RegularSettings.TurnTimer,
             ExtraPlanets = RegularSettings.ExtraPlanets,
@@ -848,7 +1003,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     {
         var lobby = new Authoritative4XLobby(HostPlayerPeerId4X,
             LocalPeer.PlayerName.NotEmpty() ? LocalPeer.PlayerName : "Host");
-        foreach (KeyValuePair<int, LobbyPeer> remote in RemotePeers.OrderBy(kv => kv.Key))
+        foreach (KeyValuePair<int, LobbyPeer> remote in RemotePeers
+                     .Where(kv => SlotMode(kv.Key) == ArenaMultiplayerSlotMode.Human)
+                     .OrderBy(kv => kv.Key))
             lobby.Join(remote.Key,
                 remote.Value.PlayerName.NotEmpty() && remote.Value.PlayerName != "-"
                     ? remote.Value.PlayerName
@@ -856,12 +1013,16 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         RequireLobbyValid(lobby.SetSettings(HostPlayerPeerId4X, Build4XSettings()));
         RequireLobbyValid(lobby.SetPlayerSelection(HostPlayerPeerId4X, LocalPeer.RacePreference,
             Authoritative4XLobbyNetworkFlow.SplitTraitOptions(LocalPeer.TraitOptions)));
-        foreach (KeyValuePair<int, LobbyPeer> remote in RemotePeers.OrderBy(kv => kv.Key))
+        foreach (KeyValuePair<int, LobbyPeer> remote in RemotePeers
+                     .Where(kv => SlotMode(kv.Key) == ArenaMultiplayerSlotMode.Human)
+                     .OrderBy(kv => kv.Key))
             RequireLobbyValid(lobby.SetPlayerSelection(remote.Key,
                 remote.Value.RacePreference == "-" ? "" : remote.Value.RacePreference,
                 Authoritative4XLobbyNetworkFlow.SplitTraitOptions(remote.Value.TraitOptions)));
         RequireLobbyValid(lobby.SetReady(HostPlayerPeerId4X, true));
-        foreach (int peer in RemotePeers.Keys.OrderBy(p => p))
+        foreach (int peer in RemotePeers.Keys
+                     .Where(peer => SlotMode(peer) == ArenaMultiplayerSlotMode.Human)
+                     .OrderBy(p => p))
             RequireLobbyValid(lobby.SetReady(peer, true));
         return lobby;
     }
@@ -903,7 +1064,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     }
 
     int PlayerCountForStart()
-        => Math.Max(2, 1 + RemotePeers.Count);
+        => HumanPlayerCountForStart();
 
     public override void Update(float fixedDeltaTime)
     {
@@ -1010,6 +1171,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             return;
         int max = Authoritative4XGameSettings.MaxOpponentsAllowed();
         RegularSettings.NumOpponents = RegularSettings.NumOpponents >= max ? 1 : RegularSettings.NumOpponents + 1;
+        InitializeSlotModesFromOpponentCount(RegularSettings.NumOpponents);
+        foreach (int peer in RemotePeers.Keys)
+            SlotModes[peer] = ArenaMultiplayerSlotMode.Human;
         HostSettingChanged();
     }
 
@@ -1200,6 +1364,197 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         RegularSettings.JoinRacePreference = RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference;
     }
 
+    void InitializeSlotModesFromOpponentCount(int opponents)
+    {
+        ApplySlotModesFromConfig(DefaultSlotModesForOpponentCount(opponents), opponents);
+    }
+
+    void ApplySlotModesFromConfig(string encoded, int opponents)
+    {
+        string modes = NormalizeSlotModesForConfig(encoded, opponents);
+        SlotModes.Clear();
+        for (int peer = DefaultJoinPeerSlot; peer <= LastJoinPeerSlot; ++peer)
+        {
+            char code = modes[peer - DefaultJoinPeerSlot];
+            SlotModes[peer] = code == 'A'
+                ? ArenaMultiplayerSlotMode.AI
+                : code == 'C'
+                    ? ArenaMultiplayerSlotMode.Closed
+                    : ArenaMultiplayerSlotMode.Human;
+        }
+    }
+
+    public static string NormalizeSlotModesForConfig(string encoded, int opponents)
+    {
+        if (encoded.IsEmpty())
+            return DefaultSlotModesForOpponentCount(opponents);
+
+        char[] modes = new char[LastJoinPeerSlot - DefaultJoinPeerSlot + 1];
+        for (int i = 0; i < modes.Length; ++i)
+        {
+            char code = i < encoded.Length ? char.ToUpperInvariant(encoded[i]) : 'C';
+            modes[i] = code is 'H' or 'A' or 'C' ? code : 'C';
+        }
+        return new string(modes);
+    }
+
+    static string DefaultSlotModesForOpponentCount(int opponents)
+    {
+        int clampedOpponents = Math.Clamp(opponents, 1, LastJoinPeerSlot - HostPlayerPeerId4X);
+        char[] modes = Enumerable.Repeat('C', LastJoinPeerSlot - DefaultJoinPeerSlot + 1).ToArray();
+        modes[0] = 'H';
+        for (int i = 1; i < clampedOpponents && i < modes.Length; ++i)
+            modes[i] = 'A';
+        return new string(modes);
+    }
+
+    string EncodeSlotModes()
+    {
+        char[] modes = new char[LastJoinPeerSlot - DefaultJoinPeerSlot + 1];
+        for (int peer = DefaultJoinPeerSlot; peer <= LastJoinPeerSlot; ++peer)
+        {
+            modes[peer - DefaultJoinPeerSlot] = SlotMode(peer) switch
+            {
+                ArenaMultiplayerSlotMode.AI => 'A',
+                ArenaMultiplayerSlotMode.Closed => 'C',
+                _ => 'H',
+            };
+        }
+        return new string(modes);
+    }
+
+    ArenaMultiplayerSlotMode SlotMode(int peerId)
+    {
+        if (peerId == HostPlayerPeerId4X)
+            return ArenaMultiplayerSlotMode.Human;
+        if (RemotePeers.ContainsKey(peerId))
+            return ArenaMultiplayerSlotMode.Human;
+        return SlotModes.TryGetValue(peerId, out ArenaMultiplayerSlotMode mode)
+            ? mode
+            : peerId == DefaultJoinPeerSlot
+                ? ArenaMultiplayerSlotMode.Human
+                : ArenaMultiplayerSlotMode.Closed;
+    }
+
+    int ConnectedHumanRemoteCount()
+        => RemotePeers.Keys.Count(peer => SlotMode(peer) == ArenaMultiplayerSlotMode.Human);
+
+    int AISlotCount()
+        => Enumerable.Range(DefaultJoinPeerSlot, LastJoinPeerSlot - DefaultJoinPeerSlot + 1)
+            .Count(peer => !RemotePeers.ContainsKey(peer) && SlotMode(peer) == ArenaMultiplayerSlotMode.AI);
+
+    int EffectiveOpponentCountForStart()
+        => Math.Clamp(ConnectedHumanRemoteCount() + AISlotCount(), 0,
+            Authoritative4XGameSettings.MaxTotalMajorEmpires - 1);
+
+    int HumanPlayerCountForStart()
+        => 1 + ConnectedHumanRemoteCount();
+
+    void SyncOpponentCountFromSlots()
+    {
+        int opponents = EffectiveOpponentCountForStart();
+        RegularSettings.NumOpponents = Math.Max(1, opponents);
+    }
+
+    void CycleSlotMode(int peerId)
+    {
+        if (peerId == HostPlayerPeerId4X)
+            return;
+        if (LocalRole == ArenaMultiplayerRole.Join)
+        {
+            SetStatus("Host controls lobby slots.");
+            GameAudio.NegativeClick();
+            return;
+        }
+
+        ArenaMultiplayerSlotMode next = SlotMode(peerId) switch
+        {
+            ArenaMultiplayerSlotMode.Human => ArenaMultiplayerSlotMode.AI,
+            ArenaMultiplayerSlotMode.AI => ArenaMultiplayerSlotMode.Closed,
+            _ => ArenaMultiplayerSlotMode.Human,
+        };
+        SlotModes[peerId] = next;
+        if (next != ArenaMultiplayerSlotMode.Human)
+            KickSlot(peerId, next == ArenaMultiplayerSlotMode.AI ? "Slot converted to AI." : "Slot closed.");
+        SyncOpponentCountFromSlots();
+        LocalPeer.Ready = false;
+        SavePersistentConfig();
+        SendLocalLobby();
+        SetStatus($"P{peerId} set to {SlotModeLabel(next)}.");
+        GameAudio.AffirmativeClick();
+    }
+
+    void KickSlot(int peerId, string reason = "Kicked by host.")
+    {
+        if (peerId == HostPlayerPeerId4X)
+            return;
+        if (LocalRole == ArenaMultiplayerRole.Join)
+        {
+            SetStatus("Only the host can manage slots.");
+            GameAudio.NegativeClick();
+            return;
+        }
+        if (RemotePeers.Remove(peerId))
+        {
+            if (reason == "Kicked by host.")
+                SlotModes[peerId] = ArenaMultiplayerSlotMode.Closed;
+            Transport?.Send(peerId, new SessionErrorMessage
+            {
+                FromPeer = AuthorityPeerId,
+                Error = $"Slot P{peerId}: {reason}",
+            });
+            AcceptedStartPeers.Remove(peerId);
+            RefreshPrimaryRemotePeer();
+            SyncOpponentCountFromSlots();
+            SavePersistentConfig();
+            SetStatus($"P{peerId} removed. Slot is {SlotModeLabel(SlotMode(peerId))}.");
+            LobbyTelemetry?.Event("SLOT_KICK", $"peer={peerId} reason='{reason}' mode={SlotMode(peerId)}");
+            GameAudio.AffirmativeClick();
+        }
+    }
+
+    bool SlotAcceptsHuman(int peerId)
+        => IsRemotePlayerPeer(peerId) && SlotMode(peerId) == ArenaMultiplayerSlotMode.Human;
+
+    string SlotTitle(int peerId)
+        => peerId == HostPlayerPeerId4X ? "P2 HOST" : $"P{peerId} {SlotModeLabel(SlotMode(peerId))}";
+
+    string SlotStatus(int peerId)
+    {
+        if (peerId == HostPlayerPeerId4X)
+            return $"{LocalPeer.PlayerName} | {(LocalPeer.Ready ? "READY" : "NOT READY")}";
+        if (RemotePeers.TryGetValue(peerId, out LobbyPeer peer))
+            return $"{peer.PlayerName} | {(peer.Ready ? "READY" : "NOT READY")}";
+        return SlotMode(peerId) switch
+        {
+            ArenaMultiplayerSlotMode.AI => "AI empire",
+            ArenaMultiplayerSlotMode.Closed => "Closed",
+            _ => "Open",
+        };
+    }
+
+    string SlotDetail(int peerId)
+    {
+        if (peerId == HostPlayerPeerId4X)
+            return $"{LocalPeer.RacePreference} | {TraitLabel(LocalPeer.TraitOptions)}";
+        if (RemotePeers.TryGetValue(peerId, out LobbyPeer peer))
+            return $"{peer.RacePreference} | {TraitLabel(peer.TraitOptions)}";
+        return SlotMode(peerId) switch
+        {
+            ArenaMultiplayerSlotMode.AI => "Counts as one AI opponent",
+            ArenaMultiplayerSlotMode.Closed => "Not used at launch",
+            _ => "Waiting for player",
+        };
+    }
+
+    static string SlotModeLabel(ArenaMultiplayerSlotMode mode)
+        => mode switch
+        {
+            ArenaMultiplayerSlotMode.AI => "AI",
+            ArenaMultiplayerSlotMode.Closed => "CLOSED",
+            _ => "HUMAN",
+        };
+
     bool HostSettingsAreLockedToRemote()
     {
         if (LocalRole != ArenaMultiplayerRole.Join)
@@ -1216,6 +1571,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     {
         if (!RemotePeers.TryGetValue(peerId, out LobbyPeer peer))
         {
+            SlotModes[peerId] = ArenaMultiplayerSlotMode.Human;
             peer = new LobbyPeer
             {
                 PlayerName = $"P{peerId}",

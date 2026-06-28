@@ -91,6 +91,14 @@ public sealed class SessionStartMessage : LockstepMessage
     public string AuthoritativePlayerRoster = "";
 }
 
+public sealed class SessionStartAckMessage : LockstepMessage
+{
+    public int PeerId;
+    public bool Accepted;
+    public string StartFingerprint = "";
+    public string Error = "";
+}
+
 public sealed class SessionControlMessage : LockstepMessage
 {
     public bool Paused;

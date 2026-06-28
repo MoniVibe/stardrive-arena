@@ -92,6 +92,18 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
                 "The multiplayer lobby must expose host-controlled game pacing.");
             Assert.IsTrue(lobby.Find("arena_mp_peer_slot", out UIButton _),
                 "The multiplayer lobby must expose a join peer-slot selector for 3-8 remote players.");
+            for (int peer = 2; peer <= 9; ++peer)
+            {
+                Assert.IsTrue(lobby.Find($"arena_mp_slot_{peer}", out UIPanel _),
+                    $"The multiplayer lobby must expose fixed visible slot P{peer}.");
+                if (peer > 2)
+                {
+                    Assert.IsTrue(lobby.Find($"arena_mp_slot_mode_{peer}", out UIButton _),
+                        $"The host must be able to cycle P{peer} between human, AI, and closed.");
+                    Assert.IsTrue(lobby.Find($"arena_mp_slot_kick_{peer}", out UIButton _),
+                        $"The host must be able to kick/clear P{peer}.");
+                }
+            }
             Assert.IsTrue(lobby.Find("arena_mp_host_entry", out UITextEntry _),
                 "The multiplayer lobby must expose a host/IP entry.");
             Assert.IsTrue(lobby.Find("arena_mp_port_entry", out UITextEntry _),
@@ -176,6 +188,10 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
                 DisableMiningOps = true,
             }.Normalized(2);
             lobby.Configure4XForHeadless(settings, races[0], hostTrait, races[1], joinTrait);
+            Assert.AreEqual("HAAAAAA", lobby.SlotModesForHeadless,
+                "A full eight-empires setup should expose P3 as the human join slot and P4-P9 as AI slots.");
+            Assert.AreEqual(settings.NumOpponents, lobby.EffectiveOpponentCountForHeadless,
+                "The fixed slot model should count connected humans plus AI slots as total opponents.");
             SessionStartMessage start = lobby.Build4XStartForHeadless();
             Assert.IsTrue(start.IsAuthoritative4X, "The visible MP lobby should now launch the authoritative 4X path.");
             Assert.AreEqual(ArenaMultiplayerLobbyScreen.LiveAuthoritative4XMaxTurns, start.MaxTurns,
@@ -301,6 +317,7 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
                 Host = "26.20.119.64",
                 Port = 47378,
                 PeerSlot = 7,
+                SlotModes = "HACCHCC",
                 Seed = 7654321,
                 GameSpeed = 2f,
                 RacePreference = "United",
@@ -337,6 +354,10 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             Assert.AreEqual("26.20.119.64", lobby.HostForHeadless);
             Assert.AreEqual(47378, lobby.PortForHeadless);
             Assert.AreEqual(7, lobby.JoinPeerSlotForHeadless);
+            Assert.AreEqual("HACCHCC", lobby.SlotModesForHeadless);
+            Assert.AreEqual("HUMAN", lobby.SlotModeForHeadless(3));
+            Assert.AreEqual("AI", lobby.SlotModeForHeadless(4));
+            Assert.AreEqual("CLOSED", lobby.SlotModeForHeadless(5));
             Assert.AreEqual(7654321, lobby.SeedForHeadless);
             Assert.AreEqual(2f, lobby.SpeedForHeadless);
             Assert.AreEqual(RaceDesignScreen.GameMode.SpiralBarred, lobby.Current4XSettingsForHeadless.Mode);
