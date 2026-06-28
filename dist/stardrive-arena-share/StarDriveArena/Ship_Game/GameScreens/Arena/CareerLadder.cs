@@ -369,6 +369,14 @@ public static class CareerLadder
         => SimulateDuel(designA, designB, seed, duelTicks, DuelSpawnOffset);
 
     public static DuelResult SimulateDuel(IShipDesign designA, IShipDesign designB, ulong seed, int duelTicks, float spawnOffset)
+        => SimulateDuel(designA, designB, seed, duelTicks, spawnOffset, applyArenaAntiKite: true);
+
+    public static DuelResult SimulateDuelForBalanceProbe(IShipDesign designA, IShipDesign designB,
+        ulong seed, int duelTicks, bool applyArenaAntiKite)
+        => SimulateDuel(designA, designB, seed, duelTicks, DuelSpawnOffset, applyArenaAntiKite);
+
+    static DuelResult SimulateDuel(IShipDesign designA, IShipDesign designB, ulong seed,
+        int duelTicks, float spawnOffset, bool applyArenaAntiKite)
     {
         if (designA == null) throw new ArgumentNullException(nameof(designA));
         if (designB == null) throw new ArgumentNullException(nameof(designB));
@@ -401,6 +409,11 @@ public static class CareerLadder
             if (shipA == null || shipB == null)
                 throw new InvalidOperationException($"Failed to spawn duel ships: '{designA.Name}' vs '{designB.Name}'.");
 
+            if (applyArenaAntiKite)
+            {
+                ArenaCombatTuning.ApplyAntiKiteDefaults(shipA);
+                ArenaCombatTuning.ApplyAntiKiteDefaults(shipB);
+            }
             shipA.SensorRange = 400000f;
             shipB.SensorRange = 400000f;
             float initialHealthA = shipA.Health;
@@ -479,8 +492,9 @@ public static class CareerLadder
         if (duelTicks < 1) throw new ArgumentOutOfRangeException(nameof(duelTicks));
         if (spawnOffset <= 0f) throw new ArgumentOutOfRangeException(nameof(spawnOffset));
 
-        DuelResult forward = SimulateDuel(designA, designB, seed, duelTicks, spawnOffset);
-        DuelResult swapped = SimulateDuel(designB, designA, seed ^ 0x5EED_5EEDul, duelTicks, spawnOffset);
+        DuelResult forward = SimulateDuel(designA, designB, seed, duelTicks, spawnOffset, applyArenaAntiKite: false);
+        DuelResult swapped = SimulateDuel(designB, designA, seed ^ 0x5EED_5EEDul, duelTicks, spawnOffset,
+            applyArenaAntiKite: false);
         int winsA = 0;
         int winsB = 0;
         if (string.Equals(forward.WinnerDesignName, designA.Name, StringComparison.Ordinal)) ++winsA; else ++winsB;
@@ -626,6 +640,7 @@ public static class CareerLadder
             Ship ship = Ship.CreateShipAtPoint(us, team[i].Design.Name, empire, new Vector2(x, y));
             if (ship == null)
                 throw new InvalidOperationException($"Failed to spawn team ship: {team[i].Design.Name}");
+            ArenaCombatTuning.ApplyAntiKiteDefaults(ship);
             ship.SensorRange = 400000f;
             ships.Add(ship);
         }
@@ -781,13 +796,13 @@ public static class CareerLadder
     {
         if (winsA != winsB)
             return winsA > winsB ? designA.Name : designB.Name;
-        if (Greater(damageByA, damageByB))
+        if (GreaterFairEvidence(damageByA, damageByB))
             return designA.Name;
-        if (Greater(damageByB, damageByA))
+        if (GreaterFairEvidence(damageByB, damageByA))
             return designB.Name;
-        if (Greater(retainedStrengthA, retainedStrengthB))
+        if (GreaterFairEvidence(retainedStrengthA, retainedStrengthB))
             return designA.Name;
-        if (Greater(retainedStrengthB, retainedStrengthA))
+        if (GreaterFairEvidence(retainedStrengthB, retainedStrengthA))
             return designB.Name;
         return FallbackByDesignStrength(designA, designB);
     }
@@ -813,6 +828,8 @@ public static class CareerLadder
     }
 
     static bool Greater(float a, float b) => a > b + CombatEvidenceEpsilon;
+    static bool GreaterFairEvidence(float a, float b)
+        => a > b + Math.Max(CombatEvidenceEpsilon, (Math.Abs(a) + Math.Abs(b)) * 0.02f);
 
     static string FallbackByDesignStrength(IShipDesign designA, IShipDesign designB)
     {

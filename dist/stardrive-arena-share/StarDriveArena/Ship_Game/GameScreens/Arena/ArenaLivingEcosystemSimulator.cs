@@ -290,6 +290,10 @@ public static class ArenaLivingEcosystemSimulator
             .ToArray();
     }
 
+    public static int RetireAndReplaceForHeadless(ArenaCareer career, IShipDesign[] legal,
+        int season, ulong seed, ref int rookieSerial)
+        => RetireAndReplace(career, legal, season, seed, ref rookieSerial);
+
     static int RetireAndReplace(ArenaCareer career, IShipDesign[] legal, int season, ulong seed, ref int rookieSerial)
     {
         career.NormalizeForPersistence();
@@ -300,6 +304,7 @@ public static class ArenaLivingEcosystemSimulator
         int maxRetire = Math.Max(1, roster.Length / 4);
         ContenderRecord[] retirees = roster
             .Where(c => c != null && c.Seasons >= MinRetirementSeasons)
+            .Where(c => c.NemesisOfVesselId.IsEmpty())
             .OrderBy(c => c.Rating)
             .ThenByDescending(c => c.Seasons)
             .ThenBy(c => c.Name, StringComparer.Ordinal)

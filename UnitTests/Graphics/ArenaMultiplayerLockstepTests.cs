@@ -14,6 +14,8 @@ using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Plugins;
 using Ship_Game.Universe;
 using SynapseGaming.LightingSystem.Core;
+using UnitTests.UI;
+using Keys = SDGraphics.Input.Keys;
 
 namespace UnitTests.Graphics;
 
@@ -28,7 +30,9 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         string dir = Path.Combine(Path.GetTempPath(), $"arena_mp_lobby_{Guid.NewGuid():N}");
         string savedSlotDir = CareerManager.SlotDirectoryOverride;
         string savedStaticPath = ArenaFightScreen.CareerSavePath;
+        string savedLobbyConfigPath = ArenaMultiplayerLobbyConfig.ConfigPathOverride;
         string tempPath = Path.Combine(dir, "lobby.yaml");
+        string tempConfigPath = Path.Combine(dir, "mp-lobby-config.yaml");
         ScreenManager sm = ScreenManager.Instance;
 
         try
@@ -36,6 +40,7 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             Directory.CreateDirectory(dir);
             CareerManager.SlotDirectoryOverride = dir;
             ArenaFightScreen.CareerSavePath = tempPath;
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = tempConfigPath;
             ArenaFightScreen.PendingPlayerDesignName = null;
             sm.ExitAll(clear3DObjects: true);
 
@@ -93,6 +98,10 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
                 "The multiplayer lobby must expose a host-controlled match seed.");
             Assert.IsTrue(lobby.Find("arena_mp_speed_entry", out UITextEntry _),
                 "The multiplayer lobby must expose a host-controlled game speed.");
+            Assert.IsFalse(lobby.Find("arena_mp_turns_entry", out UITextEntry _),
+                "Live multiplayer is indefinite; the lobby should no longer expose a finite turns field.");
+            Assert.IsFalse(lobby.HasTurnsFieldForHeadless,
+                "The lobby headless probe should agree that the finite turns field is absent.");
 
             var ext = new CapturingExtensionPoints();
             new ArenaPlugin().Register(ext);
@@ -149,6 +158,8 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             lobby.Configure4XForHeadless(settings, races[0], hostTrait, races[1], joinTrait);
             SessionStartMessage start = lobby.Build4XStartForHeadless();
             Assert.IsTrue(start.IsAuthoritative4X, "The visible MP lobby should now launch the authoritative 4X path.");
+            Assert.AreEqual(ArenaMultiplayerLobbyScreen.LiveAuthoritative4XMaxTurns, start.MaxTurns,
+                "Live authoritative 4X starts should be unbounded; finite turn counts belong to probes/self-tests.");
             Assert.AreEqual(races[0], start.HostRacePreference);
             Assert.AreEqual(races[1], start.JoinRacePreference);
             Assert.AreEqual(hostTrait, start.HostTraitOptions);
@@ -210,8 +221,114 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             try { sm.ExitAll(clear3DObjects: true); } catch { }
             CareerManager.SlotDirectoryOverride = savedSlotDir;
             ArenaFightScreen.CareerSavePath = savedStaticPath;
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = savedLobbyConfigPath;
             ArenaFightScreen.PendingPlayerDesignName = null;
             try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    [TestMethod]
+    public void ArenaMultiplayerLobbyConfigPersistsConnectionAndSetup_Headless()
+    {
+        LoadAllGameData();
+
+        string dir = Path.Combine(Path.GetTempPath(), $"arena_mp_config_{Guid.NewGuid():N}");
+        string savedConfigPath = ArenaMultiplayerLobbyConfig.ConfigPathOverride;
+        try
+        {
+            Directory.CreateDirectory(dir);
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = Path.Combine(dir, "mp-lobby-config.yaml");
+            var saved = new ArenaMultiplayerLobbyConfig
+            {
+                Host = "26.20.119.64",
+                Port = 47378,
+                Seed = 7654321,
+                GameSpeed = 2f,
+                RacePreference = "United",
+                TraitOptions = "",
+                GalaxySize = GalSize.Small,
+                StarsCount = RaceDesignScreen.StarsAbundance.Abundant,
+                Difficulty = GameDifficulty.Hard,
+                NumOpponents = 2,
+                Pace = 2.5f,
+                TurnTimer = 10,
+                StartingPlanetRichnessBonus = 3f,
+                StartPaused = true,
+            };
+            Assert.IsTrue(ArenaMultiplayerLobbyConfig.Save(saved), "Config should save to the temp override path.");
+
+            var lobby = new ArenaMultiplayerLobbyScreen(ArenaMultiplayerLobbySurface.Authoritative4X);
+            Assert.AreEqual("26.20.119.64", lobby.HostForHeadless);
+            Assert.AreEqual(47378, lobby.PortForHeadless);
+            Assert.AreEqual(7654321, lobby.SeedForHeadless);
+            Assert.AreEqual(2f, lobby.SpeedForHeadless);
+            Assert.AreEqual(GalSize.Small, lobby.Current4XSettingsForHeadless.GalaxySize);
+            Assert.AreEqual(RaceDesignScreen.StarsAbundance.Abundant, lobby.Current4XSettingsForHeadless.StarsCount);
+            Assert.AreEqual(GameDifficulty.Hard, lobby.Current4XSettingsForHeadless.Difficulty);
+            Assert.AreEqual(2, lobby.Current4XSettingsForHeadless.NumOpponents);
+            Assert.AreEqual(2.5f, lobby.Current4XSettingsForHeadless.Pace);
+            Assert.AreEqual(10, lobby.Current4XSettingsForHeadless.TurnTimer);
+            Assert.AreEqual(3f, lobby.Current4XSettingsForHeadless.StartingPlanetRichnessBonus);
+            Assert.IsTrue(lobby.Current4XSettingsForHeadless.StartPaused);
+            Assert.IsFalse(lobby.HasTurnsFieldForHeadless,
+                "Persisted lobby config must not resurrect the removed finite turns field.");
+        }
+        finally
+        {
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = savedConfigPath;
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    [TestMethod]
+    public void TextEntryClipboardShortcutsPasteAndCopy_Headless()
+    {
+        LoadAllGameData();
+
+        Func<string> savedGet = UITextEntry.ClipboardGetText;
+        Action<string> savedSet = UITextEntry.ClipboardSetText;
+        string clipboard = "";
+        try
+        {
+            UITextEntry.ClipboardGetText = () => clipboard;
+            UITextEntry.ClipboardSetText = text => clipboard = text;
+
+            var entry = new UITextEntry(new SDGraphics.Rectangle(0, 0, 220, 28), Fonts.Arial14Bold, "127.0.0.1")
+            {
+                AllowPeriod = true,
+                MaxCharacters = 64,
+                AutoCaptureOnHover = true,
+            };
+            var provider = new MockInputProvider { MousePos = new SDGraphics.Vector2(2, 2) };
+            var input = new InputState { Provider = provider };
+
+            void Step(params Keys[] keys)
+            {
+                provider.KeysDown.Clear();
+                foreach (Keys key in keys)
+                    provider.KeysDown.Add(key);
+                input.Update(new UpdateTimes(0f, 0f));
+                entry.HandleInput(input);
+            }
+
+            Step();
+            Step(Keys.LeftControl, Keys.A);
+            Step(Keys.LeftControl);
+            clipboard = "26.20.119.64";
+            Step(Keys.LeftControl, Keys.V);
+            Step(Keys.LeftControl);
+            Assert.AreEqual("26.20.119.64", entry.Text,
+                "Ctrl+A followed by Ctrl+V should replace the entry text with the pasted IP address.");
+
+            clipboard = "";
+            Step(Keys.LeftControl, Keys.C);
+            Assert.AreEqual("26.20.119.64", clipboard,
+                "Ctrl+C should copy the current text entry value.");
+        }
+        finally
+        {
+            UITextEntry.ClipboardGetText = savedGet;
+            UITextEntry.ClipboardSetText = savedSet;
         }
     }
 

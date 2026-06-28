@@ -32,6 +32,10 @@ namespace Ship_Game
         public bool AutoClearTextOnInputCapture;
         public int MaxCharacters = 40;
         int CursorPos;
+        bool SelectAllText;
+
+        public static Func<string> ClipboardGetText = () => Clipboard.GetText();
+        public static Action<string> ClipboardSetText = text => Clipboard.SetText(text ?? "");
 
         /// <summary>
         /// Time it takes for AutoCapture to lose focus on this text entry
@@ -277,7 +281,9 @@ namespace Ship_Game
 
         bool HandleTextInput(InputState input)
         {
-            AutoDecaptureTimer -= GameBase.Base.Elapsed.RealTime.Seconds;
+            AutoDecaptureTimer -= UiElapsedSeconds();
+            if (HandleClipboardShortcut(input))
+                return true;
             if (HandleCursor(input))
                 return true;
 
@@ -302,7 +308,7 @@ namespace Ship_Game
 
         bool HandleCursor(InputState input)
         {
-            RepeatCooldown -= GameBase.Base.Elapsed.RealTime.Seconds;
+            RepeatCooldown -= UiElapsedSeconds();
 
             bool back   = input.IsKeyDown(Keys.Back);
             bool delete = input.IsKeyDown(Keys.Delete);
@@ -335,6 +341,15 @@ namespace Ship_Game
         bool HandleCursorMove(bool back, bool delete, bool left, bool right)
         {
             CursorPos = CursorPos.Clamped(0, TextValue.Length);
+            if (SelectAllText && (back || delete))
+            {
+                SelectAllText = false;
+                Text = "";
+                CursorPos = 0;
+                return true;
+            }
+            if (left || right)
+                SelectAllText = false;
 
             if (back && TextValue.Length != 0 && CursorPos > 0)
             {
@@ -367,13 +382,69 @@ namespace Ship_Game
             {
                 if (input.IsShiftKeyDown || input.IsCapsLockDown)
                     ch = char.ToUpper(ch);
-                
+
                 CursorPos = CursorPos.Clamped(0, TextValue.Length);
+                if (SelectAllText)
+                {
+                    SelectAllText = false;
+                    Text = "";
+                    CursorPos = 0;
+                }
                 Text = TextValue.Insert(CursorPos, ch.ToString());
                 CursorPos += 1;
                 return true;
             }
             return false;
+        }
+
+        bool HandleClipboardShortcut(InputState input)
+        {
+            if (!input.IsCtrlKeyDown)
+                return false;
+            if (input.KeyPressed(Keys.A))
+            {
+                SelectAllText = true;
+                CursorPos = TextValue.Length;
+                return true;
+            }
+            if (input.KeyPressed(Keys.C))
+            {
+                try { ClipboardSetText?.Invoke(TextValue ?? ""); } catch { }
+                return true;
+            }
+            if (input.KeyPressed(Keys.V))
+            {
+                string paste = "";
+                try { paste = ClipboardGetText?.Invoke() ?? ""; } catch { }
+                if (paste.IsEmpty())
+                    return true;
+                InsertPastedText(paste);
+                return true;
+            }
+            return false;
+        }
+
+        void InsertPastedText(string paste)
+        {
+            CursorPos = CursorPos.Clamped(0, TextValue.Length);
+            if (SelectAllText)
+            {
+                SelectAllText = false;
+                Text = "";
+                CursorPos = 0;
+            }
+
+            foreach (char ch in paste)
+            {
+                if (TextValue.Length >= MaxCharacters)
+                    break;
+                if (char.IsControl(ch))
+                    continue;
+                if (ch == '.' && !AllowPeriod)
+                    continue;
+                Text = TextValue.Insert(CursorPos, ch.ToString());
+                ++CursorPos;
+            }
         }
 
         char GetCharFromKey(Keys key)
@@ -437,5 +508,8 @@ namespace Ship_Game
         bool IsValidKey(Keys key) => GetCharFromKey(key) != '\0' || IsCursorKey(key);
         bool IsCursorKey(Keys key) => key == Keys.Back || key == Keys.Delete || key == Keys.Left || key == Keys.Right;
         bool AnyValidInputKeysDown(InputState input) => input.GetKeysDown().Any(IsValidKey);
+
+        static float UiElapsedSeconds()
+            => GameBase.Base?.Elapsed?.RealTime.Seconds ?? 0f;
     }
 }

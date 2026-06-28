@@ -134,7 +134,7 @@ public partial class UniverseScreen
 
     void RecordAuthoritative4XViewPerfIfNeeded()
     {
-        if (Authoritative4XLive == null || viewState < UnivScreenState.SectorView)
+        if (Authoritative4XLive == null)
             return;
 
         DateTime now = DateTime.UtcNow;
@@ -156,7 +156,12 @@ public partial class UniverseScreen
         string Ms(AggregatePerfTimer timer) => (timer.AvgTime * 1000f).ToString("0.###", CultureInfo.InvariantCulture);
         Authoritative4XLive.RecordViewPerf(
             $"view={viewState} camZ={CamPos.Z.ToString("0", CultureInfo.InvariantCulture)} "
+            + $"paused={UState.Paused} speed={UState.GameSpeed.ToString("0.###", CultureInfo.InvariantCulture)} "
+            + $"simTurn={SimTurnId} currentSim={CurrentSimTime.ToString("0.###", CultureInfo.InvariantCulture)} "
+            + $"targetSim={TargetSimTime.ToString("0.###", CultureInfo.InvariantCulture)} "
+            + $"simFps={ActualSimFPS}/{CurrentSimFPS} "
             + $"drawFps={DrawGroupTotalPerf.MeasuredSamples} drawMs={Ms(DrawGroupTotalPerf)} "
+            + $"simMs={Ms(TurnTimePerf)} processMs={Ms(ProcessSimTurnsPerf)} "
             + $"renderMs={Ms(RenderGroupTotalPerf)} overlaysMs={Ms(OverlaysGroupTotalPerf)} "
             + $"iconsMs={Ms(IconsGroupTotalPerf)} shipsMs={Ms(DrawShips)} iconMs={Ms(DrawIcons)} "
             + $"fogMs={Ms(DrawFogOfWar)} bordersMs={Ms(DrawBorders)} overFogMs={Ms(DrawOverFog)} "

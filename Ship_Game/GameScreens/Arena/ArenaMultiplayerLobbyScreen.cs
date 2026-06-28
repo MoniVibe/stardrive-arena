@@ -27,6 +27,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 {
     public const int DefaultPort = 47377;
     public const int DefaultTurns = 600;
+    public const int LiveAuthoritative4XMaxTurns = 0;
     const int AuthorityPeerId = Authoritative4XLobby.AuthorityPeerId;
     const int HostPlayerPeerId4X = 2;
     const int JoinPlayerPeerId4X = 3;
@@ -60,7 +61,6 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     readonly ArenaMultiplayerLobbySurface Surface;
     UITextEntry HostEntry;
     UITextEntry PortEntry;
-    UITextEntry TurnsEntry;
     UITextEntry SeedEntry;
     UITextEntry SpeedEntry;
     TcpLockstepTransport Transport;
@@ -87,6 +87,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     bool ScreenExiting;
     bool Launching;
     ArenaRegularMultiplayerSettings RegularSettings = new();
+    ArenaMultiplayerLobbyConfig PersistentConfig;
 
     public ArenaMultiplayerLobbyScreen(
         ArenaMultiplayerLobbySurface surface = ArenaMultiplayerLobbySurface.StarGladiator)
@@ -99,6 +100,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         CanEscapeFromScreen = true;
         TransitionOnTime  = 0.2f;
         TransitionOffTime = 0.2f;
+        ApplyPersistentConfig(ArenaMultiplayerLobbyConfig.Load());
     }
 
     public ArenaMultiplayerLobbySurface SurfaceMode => Surface;
@@ -124,6 +126,13 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     public string RemoteRace => RemotePeer.RacePreference;
     public string RemoteLoadoutTrait => RemotePeer.LoadoutTrait;
     public string RemoteTraitOptions => RemotePeer.TraitOptions;
+    public string HostForHeadless => HostEntry?.Text?.Trim().NotEmpty() == true
+        ? HostEntry.Text.Trim()
+        : PersistentConfig?.Host ?? DefaultHost;
+    public int PortForHeadless => ParsePort();
+    public int SeedForHeadless => ParseSeed();
+    public float SpeedForHeadless => ParseSpeed();
+    public bool HasTurnsFieldForHeadless => false;
     public Authoritative4XGameSettings Current4XSettingsForHeadless => Build4XSettings();
     public SessionStartMessage Build4XStartForHeadless() => Build4XStartMessage();
     public Authoritative4XGeneratedGameStart CreateGenerated4XGameForHeadless(SessionStartMessage start)
@@ -159,6 +168,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             SeedEntry.Text = s.GenerationSeed.ToString(CultureInfo.InvariantCulture);
         if (SpeedEntry != null)
             SpeedEntry.Text = s.GameSpeed.ToString(CultureInfo.InvariantCulture);
+        SavePersistentConfig();
     }
 
     public override void LoadContent()
@@ -181,11 +191,10 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         Add(ArenaTheme.ArenaTitle(new Vector2(panel.X + 24, panel.Y + 24), HeaderTitleForHeadless));
         Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 74), HeaderSubtitleForHeadless));
 
-        AddField(panel.X + 24, panel.Y + 108, "HOST", DefaultHost, out HostEntry, allowPeriod: true, maxChars: 64, "arena_mp_host_entry");
-        AddField(panel.X + 24, panel.Y + 164, "PORT", DefaultPort.ToString(), out PortEntry, allowPeriod: false, maxChars: 6, "arena_mp_port_entry");
-        AddField(panel.X + 210, panel.Y + 164, "TURNS", DefaultTurns.ToString(), out TurnsEntry, allowPeriod: false, maxChars: 6, "arena_mp_turns_entry");
-        AddField(panel.X + 396, panel.Y + 164, "SEED", "24237", out SeedEntry, allowPeriod: false, maxChars: 9, "arena_mp_seed_entry");
-        AddField(panel.X + 582, panel.Y + 164, "SPEED", "1", out SpeedEntry, allowPeriod: true, maxChars: 4, "arena_mp_speed_entry");
+        AddField(panel.X + 24, panel.Y + 108, "HOST", HostForHeadless, out HostEntry, allowPeriod: true, maxChars: 64, "arena_mp_host_entry");
+        AddField(panel.X + 24, panel.Y + 164, "PORT", ParsePort().ToString(CultureInfo.InvariantCulture), out PortEntry, allowPeriod: false, maxChars: 6, "arena_mp_port_entry");
+        AddField(panel.X + 210, panel.Y + 164, "SEED", ParseSeed().ToString(CultureInfo.InvariantCulture), out SeedEntry, allowPeriod: false, maxChars: 9, "arena_mp_seed_entry");
+        AddField(panel.X + 396, panel.Y + 164, "SPEED", ParseSpeed().ToString(CultureInfo.InvariantCulture), out SpeedEntry, allowPeriod: true, maxChars: 4, "arena_mp_speed_entry");
 
         AddPeerCard(new RectF(panel.X + 24, panel.Y + 222, 392, 126), "YOU", () => LocalPeer);
         AddPeerCard(new RectF(panel.X + 440, panel.Y + 222, 392, 126), "REMOTE", () => RemotePeer);
@@ -275,6 +284,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             InputColor = ArenaTheme.Cyan,
             Background = bg,
         };
+        entry.OnTextChanged = _ => SavePersistentConfig();
         Add(entry);
     }
 
@@ -328,6 +338,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         LocalRole = ArenaMultiplayerRole.Host;
         LocalPeer.PlayerName = "Host";
         ApplyLocalSelection();
+        SavePersistentConfig();
         LobbyTelemetry?.Dispose();
         LobbyTelemetry = ArenaMultiplayerTelemetry.Start("Host", "lobby", CreateDefaultSettings(ParseTurns()));
         int port = ParsePort();
@@ -361,12 +372,11 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             return;
         }
 
-        string host = HostEntry?.Text?.Trim();
-        if (host.IsEmpty())
-            host = DefaultHost;
+        string host = HostForHeadless;
         LocalRole = ArenaMultiplayerRole.Join;
         LocalPeer.PlayerName = "Join";
         ApplyLocalSelection();
+        SavePersistentConfig();
         LobbyTelemetry?.Dispose();
         LobbyTelemetry = ArenaMultiplayerTelemetry.Start("Join", "lobby", CreateDefaultSettings(ParseTurns()));
         int port = ParsePort();
@@ -514,6 +524,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         SessionStartMessage start;
         try
         {
+            SavePersistentConfig();
             start = Build4XStartMessage();
         }
         catch (Exception e)
@@ -639,7 +650,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             MatchSeed = ParseSeed(),
             RngSeed = (uint)ParseSeed() ^ 0xA12EA000u,
             InputDelay = 3,
-            MaxTurns = ParseTurns(),
+            MaxTurns = LiveAuthoritative4XMaxTurns,
             CommandEveryTurns = 1,
             HostRacePreference = LocalPeer.RacePreference,
             JoinRacePreference = RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference,
@@ -656,7 +667,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         return LobbyFlow.BuildStartMessage(lobby, ArenaMultiplayerSettings.ProtocolVersion,
             ArenaMultiplayerPeerSignature.EnvironmentHash(),
             ArenaMultiplayerPeerSignature.EnvironmentSummary(),
-            maxTurns: ParseTurns());
+            maxTurns: LiveAuthoritative4XMaxTurns);
     }
 
     Authoritative4XGameSettings Build4XSettings()
@@ -723,8 +734,10 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         string settingsHash = start?.SettingsHash ?? settings.SettingsHash;
         string hostRace = start?.HostRacePreference ?? LocalPeer.RacePreference;
         string joinRace = start?.JoinRacePreference ?? (RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference);
+        int turns = start?.MaxTurns ?? LiveAuthoritative4XMaxTurns;
+        string turnText = turns == 0 ? "indefinite" : turns.ToString(CultureInfo.InvariantCulture);
         return $"seed={settings.GenerationSeed} settings={settingsHash} "
-               + $"host='{hostRace}' join='{joinRace}' turns={(start?.MaxTurns ?? ParseTurns())}";
+               + $"host='{hostRace}' join='{joinRace}' turns={turnText}";
     }
 
     public override void Update(float fixedDeltaTime)
@@ -760,6 +773,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         RaceIndex = (RaceIndex + 1) % RaceOptions.Length;
         ApplyLocalSelection();
         LocalPeer.Ready = false;
+        SavePersistentConfig();
         SendLocalLobby();
     }
 
@@ -785,6 +799,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         LocalPeer.TraitOptions = updated;
         ApplyLocalSelection();
         LocalPeer.Ready = false;
+        SavePersistentConfig();
         SendLocalLobby();
     }
 
@@ -795,6 +810,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         GalaxyIndex = (GalaxyIndex + 1) % GalaxyOptions.Length;
         RegularSettings.GalaxySize = GalaxyOptions[GalaxyIndex];
         LocalPeer.Ready = false;
+        SavePersistentConfig();
         SendLocalLobby();
     }
 
@@ -805,6 +821,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         StarsIndex = (StarsIndex + 1) % StarOptions.Length;
         RegularSettings.StarsCount = StarOptions[StarsIndex];
         LocalPeer.Ready = false;
+        SavePersistentConfig();
         SendLocalLobby();
     }
 
@@ -815,6 +832,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         DifficultyIndex = (DifficultyIndex + 1) % DifficultyOptions.Length;
         RegularSettings.Difficulty = DifficultyOptions[DifficultyIndex];
         LocalPeer.Ready = false;
+        SavePersistentConfig();
         SendLocalLobby();
     }
 
@@ -825,6 +843,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         int max = Math.Max(1, ResourceManager.MajorRaces.Count - 1);
         RegularSettings.NumOpponents = RegularSettings.NumOpponents >= max ? 1 : RegularSettings.NumOpponents + 1;
         LocalPeer.Ready = false;
+        SavePersistentConfig();
         SendLocalLobby();
     }
 
@@ -835,6 +854,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         RichnessIndex = (RichnessIndex + 1) % RichnessOptions.Length;
         RegularSettings.StartingPlanetRichnessBonus = RichnessOptions[RichnessIndex];
         LocalPeer.Ready = false;
+        SavePersistentConfig();
         SendLocalLobby();
     }
 
@@ -845,6 +865,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         TurnTimerIndex = (TurnTimerIndex + 1) % TurnTimerOptions.Length;
         RegularSettings.TurnTimer = TurnTimerOptions[TurnTimerIndex];
         LocalPeer.Ready = false;
+        SavePersistentConfig();
         SendLocalLobby();
     }
 
@@ -856,6 +877,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         if (RegularSettings.Pace > 4f)
             RegularSettings.Pace = 1f;
         LocalPeer.Ready = false;
+        SavePersistentConfig();
         SendLocalLobby();
     }
 
@@ -865,6 +887,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             return;
         StartPaused = !StartPaused;
         RegularSettings.StartPaused = StartPaused;
+        SavePersistentConfig();
         SendLocalLobby();
     }
 
@@ -887,20 +910,48 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     }
 
     int ParsePort()
-        => int.TryParse(PortEntry?.Text, out int port) ? port.Clamped(1, 65535) : DefaultPort;
+    {
+        if (int.TryParse(PortEntry?.Text, out int port))
+            return port.Clamped(1, 65535);
+        return (PersistentConfig?.Port ?? DefaultPort).Clamped(1, 65535);
+    }
 
     int ParseTurns()
-        => int.TryParse(TurnsEntry?.Text, out int turns) ? turns.Clamped(30, 2000) : DefaultTurns;
+        => DefaultTurns;
 
     int ParseSeed()
         => int.TryParse(SeedEntry?.Text, out int seed)
             ? seed
-            : RegularSettings.GenerationSeed != 0 ? RegularSettings.GenerationSeed : 0x5EED;
+            : RegularSettings.GenerationSeed != 0 ? RegularSettings.GenerationSeed
+            : PersistentConfig?.Seed ?? 0x5EED;
 
     float ParseSpeed()
         => float.TryParse(SpeedEntry?.Text, out float speed)
             ? ArenaMultiplayerSettings.ClampGameSpeed(speed)
             : ArenaMultiplayerSettings.ClampGameSpeed(RegularSettings.GameSpeed);
+
+    void ApplyPersistentConfig(ArenaMultiplayerLobbyConfig config)
+    {
+        PersistentConfig = (config ?? new ArenaMultiplayerLobbyConfig()).Normalized();
+        RegularSettings = PersistentConfig.ToRegularSettings();
+        LocalPeer.RacePreference = PersistentConfig.RacePreference;
+        try
+        {
+            LocalPeer.TraitOptions = NormalizeTraitSelection(PersistentConfig.TraitOptions);
+        }
+        catch
+        {
+            LocalPeer.TraitOptions = PersistentConfig.TraitOptions ?? "";
+        }
+        LocalPeer.LoadoutTrait = ArenaStartArchetype.Wingmates.ToString();
+        StartPaused = PersistentConfig.StartPaused;
+    }
+
+    void SavePersistentConfig()
+    {
+        PersistentConfig = ArenaMultiplayerLobbyConfig.FromScreen(this);
+        ArenaMultiplayerLobbyConfig.Save(PersistentConfig);
+    }
 
     void SetStatus(string text)
     {

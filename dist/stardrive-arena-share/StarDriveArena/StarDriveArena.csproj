@@ -45,6 +45,7 @@
 
   <ItemGroup>
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaBalanceMetaWatch.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaBattleCodes.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaBetting.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaBossChallengeScreen.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaBossRewardScreen.cs" />
@@ -70,6 +71,7 @@
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaModuleShopScreen.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaMonteCarloTelemetry.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaMultiplayerLobbyScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaMultiplayerLobbyConfig.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaMultiplayerSession.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaMultiplayerTelemetry.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaPerks.cs" />
