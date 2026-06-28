@@ -8,6 +8,7 @@ using SDLockstep;
 using SDUtils;
 using SDUtils.Deterministic;
 using Ship_Game.AI;
+using Ship_Game.AI.StrategyAI.WarGoals;
 using Ship_Game.Commands.Goals;
 using Ship_Game.Determinism;
 using Ship_Game.Fleets;
@@ -66,6 +67,21 @@ public sealed class AuthoritativeStateSnapshot
                 ApplyPlayerDesignLine(universe, line);
             else if (line.StartsWith("Q|", StringComparison.Ordinal))
                 ApplyConstructionQueueRuntimeLine(universe, line);
+            else if (line.StartsWith("R|", StringComparison.Ordinal))
+                ApplyRelationshipLine(universe, line);
+        }
+    }
+
+    public void ApplyRelationshipPayload(UniverseState universe)
+    {
+        if (universe == null || string.IsNullOrEmpty(Payload))
+            return;
+
+        foreach (string rawLine in Payload.Split('\n'))
+        {
+            string line = rawLine.TrimEnd('\r');
+            if (line.StartsWith("R|", StringComparison.Ordinal))
+                ApplyRelationshipLine(universe, line);
         }
     }
 
@@ -225,6 +241,58 @@ public sealed class AuthoritativeStateSnapshot
                && string.Equals(item.Building?.Name ?? "", p[8] ?? "", StringComparison.Ordinal)
                && string.Equals(item.TroopType ?? "", p[9] ?? "", StringComparison.Ordinal);
     }
+
+    static void ApplyRelationshipLine(UniverseState universe, string line)
+    {
+        string[] p = line.Split('|');
+        if (p.Length < 10
+            || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int empireId)
+            || !int.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int targetEmpireId)
+            || empireId <= 0
+            || targetEmpireId <= 0
+            || empireId > universe.Empires.Count
+            || targetEmpireId > universe.Empires.Count)
+        {
+            return;
+        }
+
+        Empire empire = universe.GetEmpireById(empireId);
+        Empire target = universe.GetEmpireById(targetEmpireId);
+        if (empire == null || target == null || empire == target)
+            return;
+
+        Relationship rel = empire.GetRelations(target);
+        rel.Known = ParseFlag(p[3]);
+        rel.AtWar = ParseFlag(p[4]);
+        rel.Treaty_NAPact = ParseFlag(p[5]);
+        rel.Treaty_Trade = ParseFlag(p[6]);
+        rel.Treaty_OpenBorders = ParseFlag(p[7]);
+        rel.Treaty_Alliance = ParseFlag(p[8]);
+        rel.Treaty_Peace = ParseFlag(p[9]);
+
+        if (rel.AtWar)
+        {
+            rel.CanAttack = true;
+            rel.IsHostile = true;
+            if (rel.ActiveWar == null)
+                rel.ActiveWar = War.CreateInstance(empire, target, WarType.ImperialistWar);
+        }
+        else
+        {
+            rel.CanAttack = false;
+            rel.IsHostile = false;
+            rel.CancelPrepareForWar();
+            if (rel.ActiveWar != null)
+            {
+                rel.ActiveWar.EndStarDate = empire.Universe.StarDate;
+                rel.WarHistory.Add(rel.ActiveWar);
+                rel.ActiveWar = null;
+            }
+        }
+    }
+
+    static bool ParseFlag(string value)
+        => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int flag) && flag != 0;
 
     public static AuthoritativeStateSnapshot Capture(UniverseScreen universe, uint tick,
         DeterminismProfile profile = DeterminismProfile.ReplayWinX64Float)
@@ -896,6 +964,8 @@ public sealed class Authoritative4XClientReplica
     readonly FixedSimTime Step;
     readonly Authoritative4XCommandApplicator Applicator;
     readonly AuthoritativeDiplomacyManager Diplomacy;
+    bool AuthoritativePaused;
+    float AuthoritativeGameSpeed = 1f;
 
     public uint Tick { get; private set; }
     public AuthoritativeStateSnapshot LastSnapshot { get; private set; }
@@ -905,6 +975,8 @@ public sealed class Authoritative4XClientReplica
     {
         Universe = universe;
         Step = new FixedSimTime(dt);
+        AuthoritativePaused = universe?.UState?.Paused ?? false;
+        AuthoritativeGameSpeed = ClampGameSpeed(universe?.UState?.GameSpeed ?? 1f);
         if (humanEmpireIds != null)
             AuthoritativeHumanPlayers.SetHumanControlledEmpires(universe.UState, humanEmpireIds);
         Diplomacy = new AuthoritativeDiplomacyManager(universe.UState);
@@ -914,6 +986,9 @@ public sealed class Authoritative4XClientReplica
     public void ApplyAuthoritativeResult(AuthoritativePlayerCommand command, AuthoritativeCommandResult result,
         AuthoritativeStateSnapshot authoritySnapshot)
     {
+        authoritySnapshot.ApplyRelationshipPayload(Universe.UState);
+        Universe.UState.Paused = AuthoritativePaused;
+        Universe.UState.GameSpeed = AuthoritativeGameSpeed;
         if (result.Accepted)
         {
             AuthoritativeCommandResult local = Applicator.Apply(command, result.Tick);
@@ -938,9 +1013,14 @@ public sealed class Authoritative4XClientReplica
 
     public void ApplySessionControl(bool paused, float gameSpeed)
     {
-        Universe.UState.Paused = paused;
-        Universe.UState.GameSpeed = float.IsFinite(gameSpeed) ? Math.Clamp(gameSpeed, 0.25f, 8f) : 1f;
+        AuthoritativePaused = paused;
+        AuthoritativeGameSpeed = ClampGameSpeed(gameSpeed);
+        Universe.UState.Paused = AuthoritativePaused;
+        Universe.UState.GameSpeed = AuthoritativeGameSpeed;
     }
+
+    static float ClampGameSpeed(float speed)
+        => float.IsFinite(speed) ? Math.Clamp(speed, 0.25f, 8f) : 1f;
 }
 
 public sealed class Authoritative4XRawHashDrift

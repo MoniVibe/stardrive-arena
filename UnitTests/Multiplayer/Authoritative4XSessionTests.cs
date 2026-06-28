@@ -7270,6 +7270,39 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XClientReplica_IgnoresLocalPauseDriftDuringReplay_Headless()
+    {
+        const ulong Seed = 0xA17DABUL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            int[] humans = { authority.Player.Id, authority.Enemy.Id };
+            var authorityRuntime = new Authoritative4XAuthority(authority.Screen, humanEmpireIds: humans);
+            var replica = new Authoritative4XClientReplica(client.Screen, humanEmpireIds: humans);
+            var command = AuthoritativePlayerCommand.NoOp(771, authority.Player.Id);
+            (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) =
+                authorityRuntime.Process(command);
+            result.OriginPeer = 2;
+            Assert.IsTrue(result.Accepted, result.Reason);
+
+            client.UState.Paused = true; // simulates a stale local/focus pause outside host control
+            replica.ApplyAuthoritativeResult(command, result, snapshot);
+
+            Assert.IsFalse(client.UState.Paused,
+                "Passive replicas must use the host-owned pause state while replaying accepted commands.");
+            Assert.AreEqual(snapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                "A local pause drift must not make the passive client skip the authority's replay step.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XSnapshot_IgnoresVolatileShipMovementScratchButTracksDurableOrders_Headless()
     {
         LoadAllGameData();
@@ -8201,11 +8234,13 @@ public class Authoritative4XSessionTests : StarDriveTest
         try
         {
             int port = FreeTcpPort();
-            TcpLockstepTransport hostTransport = TcpLockstepTransport.Host(port, RemotePeer);
-            TcpLockstepTransport clientTransport = TcpLockstepTransport.Join("127.0.0.1", port,
-                Authoritative4XNetworkHost.HostPeerId);
-            Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(3)),
+            TcpLockstepTransport hostTransport = TcpLockstepTransport.HostMulti(port);
+            TcpLockstepTransport clientTransport = TcpLockstepTransport.JoinAsPeer("127.0.0.1", port,
+                RemotePeer, Authoritative4XNetworkHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnections(1, TimeSpan.FromSeconds(3)),
                 "Authoritative diplomacy live proof did not connect to the loopback host.");
+            Assert.IsTrue(WaitForMappedPeers(hostTransport, RemotePeer),
+                "Authoritative diplomacy live proof did not map the remote peer id.");
 
             using var networkClient = new Authoritative4XNetworkClient(client.Screen, clientTransport, RemotePeer,
                 new[] { client.Player.Id, client.Enemy.Id });
@@ -8217,8 +8252,10 @@ public class Authoritative4XSessionTests : StarDriveTest
                 },
                 new[] { authority.Player.Id, authority.Enemy.Id });
             authority.Screen.AttachAuthoritative4XMultiplayer(liveHost);
-            authority.UState.Paused = true; // keep the proof focused on diplomacy, not live heartbeat churn
-            client.UState.Paused = true;
+            Assert.IsTrue(liveHost.TryApplyHostControl(paused: true, speed: 1f),
+                "The host should pause through authoritative session control.");
+            PumpLiveTcpUntil(() => authority.UState.Paused && client.UState.Paused,
+                liveHost, networkClient);
 
             networkClient.Submit(AuthoritativePlayerCommand.DiplomacyProposal(400,
                 authority.Enemy.Id, authority.Player.Id, AuthoritativeDiplomacyProposalType.TradeDeal,
@@ -8231,8 +8268,10 @@ public class Authoritative4XSessionTests : StarDriveTest
                     return true;
                 return liveHost.TryDequeueDiplomacyPopup(out popup);
             }
-            PumpLiveTcpUntil(CapturePopup,
+            PumpLiveTcpUntil(() => CapturePopup() && NetworkClientCaughtUp(networkClient, RemotePeer, 400),
                 liveHost, networkClient);
+            Assert.IsFalse(networkClient.IsWaitingForResync,
+                networkClient.LastSyncMismatch?.Message ?? "The remote proposal should not force resync.");
             Assert.IsNotNull(popup);
             Assert.AreEqual(authority.Enemy.Id, popup.ProposerEmpireId);
             Assert.AreEqual(authority.Player.Id, popup.TargetEmpireId);
@@ -8492,6 +8531,189 @@ public class Authoritative4XSessionTests : StarDriveTest
             authority.Screen.Dispose();
             clientA.Screen.Dispose();
             clientB.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XNetworkTcpHostAttack_AutoDeclaresWarBeforeRemoteReplay_Headless()
+    {
+        const ulong Seed = 0xA77A4B1EUL;
+        const int HostPeer = 2;
+        const int JoinPeer = 3;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld joiner = BuildWorld(Seed);
+
+        try
+        {
+            int hostEmpire = authority.Player.Id;
+            int joinEmpire = authority.Enemy.Id;
+            MakePeace(authority.Player, authority.Enemy);
+            MakePeace(joiner.Player, joiner.Enemy);
+
+            int port = FreeTcpPort();
+            TcpLockstepTransport hostTransport = TcpLockstepTransport.Host(port, JoinPeer);
+            TcpLockstepTransport joinTransport = TcpLockstepTransport.Join("127.0.0.1", port,
+                Authoritative4XNetworkHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(3)),
+                "Authoritative TCP host did not accept the loopback joiner.");
+
+            using var host = new Authoritative4XNetworkHost(authority.Screen, hostTransport,
+                new Dictionary<int, int> { [HostPeer] = hostEmpire, [JoinPeer] = joinEmpire },
+                new[] { hostEmpire, joinEmpire }, localPeerId: HostPeer);
+            using var joinClient = new Authoritative4XNetworkClient(joiner.Screen, joinTransport, JoinPeer,
+                new[] { hostEmpire, joinEmpire });
+
+            host.SubmitLocal(HostPeer, AuthoritativePlayerCommand.AttackShip(1, hostEmpire,
+                authority.Ship.Id, authority.EnemyShip.Id, queue: false));
+
+            PumpTcpUntil(() => NetworkClientCaughtUp(joinClient, HostPeer, 1)
+                               && joinClient.PopupsForClient().Any(p =>
+                                   p.ProposalType == AuthoritativeDiplomacyProposalType.DeclareWar),
+                host, joinClient);
+
+            Assert.IsTrue(host.LastResult.Accepted, host.LastResult.Reason);
+            Assert.IsTrue(joinClient.LastResult.Accepted, joinClient.LastResult.Reason);
+            Assert.IsTrue(authority.Player.IsAtWarWith(authority.Enemy),
+                "The authority should auto-declare war for a hostile human-vs-human attack.");
+            Assert.IsTrue(joiner.Player.IsAtWarWith(joiner.Enemy),
+                "The passive replica must apply the authoritative war row before replaying the accepted attack.");
+            Assert.AreEqual(joiner.EnemyShip, joiner.Ship.AI.Target);
+            AuthoritativeDiplomacyPopup popup = joinClient.PopupsForClient()
+                .Single(p => p.ProposalType == AuthoritativeDiplomacyProposalType.DeclareWar);
+            Assert.AreEqual(hostEmpire, popup.ProposerEmpireId);
+            Assert.AreEqual(joinEmpire, popup.TargetEmpireId);
+            StringAssert.Contains(popup.Terms, "attack ship");
+            AssertNetworkSynced(joinClient);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            joiner.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XNetworkTcpJoinerAttack_AutoDeclaresWarBeforeLocalReplay_Headless()
+    {
+        const ulong Seed = 0xA77A4B2EUL;
+        const int HostPeer = 2;
+        const int JoinPeer = 3;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld joiner = BuildWorld(Seed);
+
+        try
+        {
+            int hostEmpire = authority.Player.Id;
+            int joinEmpire = authority.Enemy.Id;
+            MakePeace(authority.Player, authority.Enemy);
+            MakePeace(joiner.Player, joiner.Enemy);
+
+            int port = FreeTcpPort();
+            TcpLockstepTransport hostTransport = TcpLockstepTransport.Host(port, JoinPeer);
+            TcpLockstepTransport joinTransport = TcpLockstepTransport.Join("127.0.0.1", port,
+                Authoritative4XNetworkHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(3)),
+                "Authoritative TCP host did not accept the loopback joiner.");
+
+            using var host = new Authoritative4XNetworkHost(authority.Screen, hostTransport,
+                new Dictionary<int, int> { [HostPeer] = hostEmpire, [JoinPeer] = joinEmpire },
+                new[] { hostEmpire, joinEmpire }, localPeerId: HostPeer);
+            using var joinClient = new Authoritative4XNetworkClient(joiner.Screen, joinTransport, JoinPeer,
+                new[] { hostEmpire, joinEmpire });
+
+            joinClient.Submit(AuthoritativePlayerCommand.AttackShip(1, joinEmpire,
+                authority.EnemyShip.Id, authority.Ship.Id, queue: false));
+
+            AuthoritativeDiplomacyPopup[] hostPopups = Array.Empty<AuthoritativeDiplomacyPopup>();
+            bool HostReceivedWarPopup()
+            {
+                if (hostPopups.Any(p => p.ProposalType == AuthoritativeDiplomacyProposalType.DeclareWar))
+                    return true;
+                hostPopups = host.DrainLocalPopups();
+                return hostPopups.Any(p => p.ProposalType == AuthoritativeDiplomacyProposalType.DeclareWar);
+            }
+
+            PumpTcpUntil(() => NetworkClientCaughtUp(joinClient, JoinPeer, 1) && HostReceivedWarPopup(),
+                host, joinClient);
+
+            Assert.IsTrue(host.LastResult.Accepted, host.LastResult.Reason);
+            Assert.IsTrue(joinClient.LastResult.Accepted, joinClient.LastResult.Reason);
+            Assert.IsTrue(authority.Enemy.IsAtWarWith(authority.Player),
+                "The authority should auto-declare war for the joiner's hostile human-vs-human attack.");
+            Assert.IsTrue(joiner.Enemy.IsAtWarWith(joiner.Player),
+                "The joiner replica must apply the authoritative war row before replaying its accepted attack.");
+            Assert.AreEqual(joiner.Ship, joiner.EnemyShip.AI.Target);
+            Assert.AreEqual(hostEmpire, hostPopups.Single(p =>
+                p.ProposalType == AuthoritativeDiplomacyProposalType.DeclareWar).TargetEmpireId);
+            AssertNetworkSynced(joinClient);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            joiner.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XLiveJoinerDiplomacyButton_SubmitsOverTcpAndSyncs_Headless()
+    {
+        const ulong Seed = 0xD1A1062UL;
+        const int HostPeer = 2;
+        const int JoinPeer = 3;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld joiner = BuildWorld(Seed);
+
+        try
+        {
+            int hostEmpire = authority.Player.Id;
+            int joinEmpire = authority.Enemy.Id;
+            MakePeace(authority.Player, authority.Enemy);
+            MakePeace(joiner.Player, joiner.Enemy);
+
+            int port = FreeTcpPort();
+            TcpLockstepTransport hostTransport = TcpLockstepTransport.Host(port, JoinPeer);
+            TcpLockstepTransport joinTransport = TcpLockstepTransport.Join("127.0.0.1", port,
+                Authoritative4XNetworkHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(3)),
+                "Authoritative diplomacy TCP proof did not connect to the loopback host.");
+
+            using var host = new Authoritative4XNetworkHost(authority.Screen, hostTransport,
+                new Dictionary<int, int> { [HostPeer] = hostEmpire, [JoinPeer] = joinEmpire },
+                new[] { hostEmpire, joinEmpire }, localPeerId: HostPeer);
+            using var joinClient = new Authoritative4XNetworkClient(joiner.Screen, joinTransport, JoinPeer,
+                new[] { hostEmpire, joinEmpire });
+            using var ui = Authoritative4XClientContext.Begin(JoinPeer, joinEmpire, joinClient.Submit);
+
+            var screen = new AuthoritativeDiplomacyProposalScreen(joiner.Screen, joiner.Screen, joiner.Player);
+            screen.LoadContent();
+            Assert.IsTrue(screen.Find(AuthoritativeDiplomacyProposalScreen.DeclareWarButtonName,
+                out UIButton declareWar));
+            declareWar.OnClick(declareWar);
+
+            AuthoritativeDiplomacyPopup[] hostPopups = Array.Empty<AuthoritativeDiplomacyPopup>();
+            bool HostReceivedWarPopup()
+            {
+                if (hostPopups.Any(p => p.ProposalType == AuthoritativeDiplomacyProposalType.DeclareWar))
+                    return true;
+                hostPopups = host.DrainLocalPopups();
+                return hostPopups.Any(p => p.ProposalType == AuthoritativeDiplomacyProposalType.DeclareWar);
+            }
+
+            PumpTcpUntil(() => NetworkClientCaughtUp(joinClient, JoinPeer, 1) && HostReceivedWarPopup(),
+                host, joinClient);
+
+            Assert.IsTrue(host.LastResult.Accepted, host.LastResult.Reason);
+            Assert.IsTrue(joinClient.LastResult.Accepted, joinClient.LastResult.Reason);
+            Assert.IsTrue(authority.Enemy.IsAtWarWith(authority.Player));
+            Assert.IsTrue(joiner.Enemy.IsAtWarWith(joiner.Player));
+            Assert.AreEqual(hostEmpire, hostPopups.Single(p =>
+                p.ProposalType == AuthoritativeDiplomacyProposalType.DeclareWar).TargetEmpireId);
+            AssertNetworkSynced(joinClient);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            joiner.Screen.Dispose();
         }
     }
 
@@ -9923,7 +10145,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             System.Threading.Thread.Sleep(5);
         }
         Assert.IsTrue(done(),
-            $"Timed out waiting for live authoritative host. host='{host.LastError}' client='{client.LastError}'");
+            $"Timed out waiting for live authoritative host. host='{host.LastError}' client='{client.LastError}' "
+            + $"hostResult='{ResultSummary(host.LastResult)}' clientResult='{ResultSummary(client.LastResult)}'");
     }
 
     static void PumpLiveTcpUntil(Func<bool> done, Authoritative4XNetworkHost host,
@@ -9937,7 +10160,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             System.Threading.Thread.Sleep(5);
         }
         Assert.IsTrue(done(),
-            $"Timed out waiting for live authoritative client. host='{host.LastError}' client='{client.LastError}'");
+            $"Timed out waiting for live authoritative client. host='{host.LastError}' client='{client.LastError}' "
+            + $"hostResult='{ResultSummary(host.LastResult)}' clientResult='{ResultSummary(client.LastResult)}'");
     }
 
     static void PumpLiveTcpUntil(Func<bool> done, Authoritative4XLiveSession host,
@@ -9951,8 +10175,14 @@ public class Authoritative4XSessionTests : StarDriveTest
             System.Threading.Thread.Sleep(5);
         }
         Assert.IsTrue(done(),
-            $"Timed out waiting for live authoritative sessions. host='{host.LastError}' client='{client.LastError}'");
+            $"Timed out waiting for live authoritative sessions. host='{host.LastError}' client='{client.LastError}' "
+            + $"hostResult='{ResultSummary(host.LastResult)}' clientResult='{ResultSummary(client.LastResult)}'");
     }
+
+    static string ResultSummary(AuthoritativeCommandResult result)
+        => result == null
+            ? "<none>"
+            : $"origin={result.OriginPeer} seq={result.Sequence} accepted={result.Accepted} reason='{result.Reason}'";
 
     static bool NetworkClientCaughtUp(Authoritative4XNetworkClient client, int sequence)
     {
