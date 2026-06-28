@@ -96,7 +96,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
         Telemetry = Authoritative4XLiveTelemetry.Start(role, localPeerId, localEmpireId,
             empireByPeer, humanEmpireIds, LiveSessionId, LiveStartFingerprint, startSummary);
         TcpLockstepTransport transport = Host?.SharedTransport ?? Client?.SharedTransport;
-        if (Telemetry != null && transport != null)
+        if (Telemetry != null && transport != null && Authoritative4XLiveTelemetry.IsWireTraceEnabled())
             transport.AuthoritativeFrameTrace = Telemetry.WireFrame;
         UiContext = Authoritative4XClientContext.Begin(localPeerId, localEmpireId, SubmitFromUi,
             Math.Max(1, firstUiSequence));

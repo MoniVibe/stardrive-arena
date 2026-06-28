@@ -14,6 +14,7 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
 
     public static string OutputDirectoryOverride;
     public static bool? EnabledOverride;
+    public static bool? WireTraceOverride;
 
     readonly object Sync = new();
     readonly StreamWriter SessionWriter;
@@ -185,6 +186,17 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
 
     public void WireFrame(string details)
         => Write("WIRE", details ?? "", retainRecent: true);
+
+    public static bool IsWireTraceEnabled()
+    {
+        if (WireTraceOverride.HasValue)
+            return WireTraceOverride.Value;
+
+        string value = Environment.GetEnvironmentVariable("SD_AUTH4X_WIRE_TRACE");
+        return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+    }
 
     public void Dispose()
     {

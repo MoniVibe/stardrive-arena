@@ -64,6 +64,8 @@ public sealed class AuthoritativeStateSnapshot
                 ApplyUnlockedTechLine(universe, line);
             else if (line.StartsWith("D|", StringComparison.Ordinal))
                 ApplyPlayerDesignLine(universe, line);
+            else if (line.StartsWith("Q|", StringComparison.Ordinal))
+                ApplyConstructionQueueRuntimeLine(universe, line);
         }
     }
 
@@ -171,6 +173,57 @@ public sealed class AuthoritativeStateSnapshot
 
         if (ResourceManager.Ships.GetDesign(design.Name, out IShipDesign registered) && registered.IsPlayerDesign)
             empire.AddBuildableShip(registered);
+    }
+
+    static void ApplyConstructionQueueRuntimeLine(UniverseState universe, string line)
+    {
+        string[] p = line.Split('|');
+        if (p.Length < 16
+            || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int planetId)
+            || !int.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int queueIndex)
+            || queueIndex < 0)
+        {
+            return;
+        }
+
+        Planet planet = universe.GetPlanet(planetId);
+        if (planet == null || queueIndex >= planet.ConstructionQueue.Count)
+            return;
+
+        QueueItem item = planet.ConstructionQueue[queueIndex];
+        if (!QueueItemMatches(item, p))
+            return;
+
+        if (TryParseFloatBits(p[12], out float cost))
+            item.Cost = cost;
+        if (TryParseFloatBits(p[13], out float productionSpent))
+            item.ProductionSpent = productionSpent;
+        if (int.TryParse(p[14], NumberStyles.Integer, CultureInfo.InvariantCulture, out int rush))
+            item.Rush = rush != 0;
+        if (int.TryParse(p[15], NumberStyles.Integer, CultureInfo.InvariantCulture, out int cancelled))
+            item.SetCanceled(cancelled != 0);
+    }
+
+    static bool QueueItemMatches(QueueItem item, string[] p)
+    {
+        if (item == null || p.Length < 10)
+            return false;
+
+        if (!int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int isShip)
+            || !int.TryParse(p[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int isBuilding)
+            || !int.TryParse(p[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out int isTroop)
+            || !int.TryParse(p[6], NumberStyles.Integer, CultureInfo.InvariantCulture, out int qType))
+        {
+            return false;
+        }
+
+        return item.isShip == (isShip != 0)
+               && item.isBuilding == (isBuilding != 0)
+               && item.isTroop == (isTroop != 0)
+               && (int)item.QType == qType
+               && string.Equals(item.ShipData?.Name ?? "", p[7] ?? "", StringComparison.Ordinal)
+               && string.Equals(item.Building?.Name ?? "", p[8] ?? "", StringComparison.Ordinal)
+               && string.Equals(item.TroopType ?? "", p[9] ?? "", StringComparison.Ordinal);
     }
 
     public static AuthoritativeStateSnapshot Capture(UniverseScreen universe, uint tick,

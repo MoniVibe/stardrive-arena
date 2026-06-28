@@ -259,6 +259,7 @@ sealed class GameContentBootstrap : IDisposable
         if (string.IsNullOrWhiteSpace(options.OutputDir))
             options.OutputDir = Path.Combine(AppContext.BaseDirectory, "sim-output", "authoritative4x-probe");
         Directory.CreateDirectory(options.OutputDir);
+        InstallPrivateUserConfigRoot(options);
         Directory.SetCurrentDirectory(root);
 
         GlobalStats.LoadConfig();
@@ -288,6 +289,20 @@ sealed class GameContentBootstrap : IDisposable
 
         options.GameRoot = root;
         return new GameContentBootstrap(game, previous);
+    }
+
+    static void InstallPrivateUserConfigRoot(AuthoritativeProbeOptions options)
+    {
+        string role = options.Role == AuthoritativeProbeRole.None
+            ? "self-test"
+            : options.Role.ToString().ToLowerInvariant();
+        string root = Path.Combine(options.OutputDir, "user-config", role);
+        string roaming = Path.Combine(root, "Roaming");
+        string local = Path.Combine(root, "Local");
+        Directory.CreateDirectory(roaming);
+        Directory.CreateDirectory(local);
+        Environment.SetEnvironmentVariable("APPDATA", roaming);
+        Environment.SetEnvironmentVariable("LOCALAPPDATA", local);
     }
 
     public void Dispose()

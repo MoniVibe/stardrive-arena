@@ -1392,6 +1392,11 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsNotNull(clientItem.pgs, "Client replica should reserve the same deterministic planet tile.");
             Assert.AreEqual(authorityItem.pgs.X, clientItem.pgs.X);
             Assert.AreEqual(authorityItem.pgs.Y, clientItem.pgs.Y);
+            clientItem.ProductionSpent = authorityItem.ProductionSpent + 12.5f;
+            session.SubmitFromClient(AuthoritativePlayerCommand.NoOp(35, authority.Player.Id));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(authorityItem.ProductionSpent, clientItem.ProductionSpent, 0.0001f,
+                "The client replica must mirror authority queue progress before canonical digest comparison.");
             Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
                 "The canonical sync digest must cover real building queue mutations.");
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
@@ -7453,11 +7458,13 @@ public class Authoritative4XSessionTests : StarDriveTest
         BuiltWorld client = BuildWorld(Seed);
         string oldOutput = Authoritative4XLiveTelemetry.OutputDirectoryOverride;
         bool? oldEnabled = Authoritative4XLiveTelemetry.EnabledOverride;
+        bool? oldWireTrace = Authoritative4XLiveTelemetry.WireTraceOverride;
 
         try
         {
             Authoritative4XLiveTelemetry.OutputDirectoryOverride = dir;
             Authoritative4XLiveTelemetry.EnabledOverride = true;
+            Authoritative4XLiveTelemetry.WireTraceOverride = false;
             int port = FreeTcpPort();
             TcpLockstepTransport hostTransport = TcpLockstepTransport.Host(port, RemotePeer);
             TcpLockstepTransport clientTransport = TcpLockstepTransport.Join("127.0.0.1", port,
@@ -7527,15 +7534,52 @@ public class Authoritative4XSessionTests : StarDriveTest
             StringAssert.Contains(text, "P:");
             StringAssert.Contains(text, "S:");
             StringAssert.Contains(text, "CONTROL source=host");
+            Assert.IsFalse(text.Contains(" WIRE ", StringComparison.Ordinal),
+                "Per-frame wire tracing is opt-in because it can flood live logs and tank the host.");
             StringAssert.Contains(text, "END utc=");
         }
         finally
         {
             Authoritative4XLiveTelemetry.OutputDirectoryOverride = oldOutput;
             Authoritative4XLiveTelemetry.EnabledOverride = oldEnabled;
+            Authoritative4XLiveTelemetry.WireTraceOverride = oldWireTrace;
             authority.Screen.Dispose();
             client.Screen.Dispose();
             try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XLiveTelemetry_WireTraceIsExplicitOptIn_Headless()
+    {
+        bool? oldWireTrace = Authoritative4XLiveTelemetry.WireTraceOverride;
+        string oldEnv = Environment.GetEnvironmentVariable("SD_AUTH4X_WIRE_TRACE");
+
+        try
+        {
+            Authoritative4XLiveTelemetry.WireTraceOverride = null;
+            Environment.SetEnvironmentVariable("SD_AUTH4X_WIRE_TRACE", null);
+            Assert.IsFalse(Authoritative4XLiveTelemetry.IsWireTraceEnabled(),
+                "Live wire tracing must be off by default; mismatch/resync telemetry remains enabled separately.");
+
+            Environment.SetEnvironmentVariable("SD_AUTH4X_WIRE_TRACE", "1");
+            Assert.IsTrue(Authoritative4XLiveTelemetry.IsWireTraceEnabled());
+            Environment.SetEnvironmentVariable("SD_AUTH4X_WIRE_TRACE", "true");
+            Assert.IsTrue(Authoritative4XLiveTelemetry.IsWireTraceEnabled());
+            Environment.SetEnvironmentVariable("SD_AUTH4X_WIRE_TRACE", "yes");
+            Assert.IsTrue(Authoritative4XLiveTelemetry.IsWireTraceEnabled());
+            Environment.SetEnvironmentVariable("SD_AUTH4X_WIRE_TRACE", "0");
+            Assert.IsFalse(Authoritative4XLiveTelemetry.IsWireTraceEnabled());
+
+            Authoritative4XLiveTelemetry.WireTraceOverride = true;
+            Assert.IsTrue(Authoritative4XLiveTelemetry.IsWireTraceEnabled());
+            Authoritative4XLiveTelemetry.WireTraceOverride = false;
+            Assert.IsFalse(Authoritative4XLiveTelemetry.IsWireTraceEnabled());
+        }
+        finally
+        {
+            Authoritative4XLiveTelemetry.WireTraceOverride = oldWireTrace;
+            Environment.SetEnvironmentVariable("SD_AUTH4X_WIRE_TRACE", oldEnv);
         }
     }
 
