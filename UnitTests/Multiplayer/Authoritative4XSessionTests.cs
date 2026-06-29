@@ -9943,6 +9943,123 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XSnapshot_AppliesShipRuntimeRowsBeforeDigestCompare_Headless()
+    {
+        LoadAllGameData();
+
+        IEmpireData[] races = ResourceManager.MajorRaces
+            .Where(r => !r.IsFactionOrMinorRace)
+            .OrderBy(r => RacePreference(r), StringComparer.Ordinal)
+            .Take(2)
+            .ToArray();
+        Assert.IsTrue(races.Length >= 2, "The ship runtime resync proof needs two playable races.");
+
+        var settings = new Authoritative4XGameSettings
+        {
+            GenerationSeed = 0x51490A1,
+            GalaxySize = GalSize.Tiny,
+            StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+            Mode = RaceDesignScreen.GameMode.Sandbox,
+            Difficulty = GameDifficulty.Normal,
+            NumOpponents = 1,
+            Pace = 1f,
+            TurnTimer = 10,
+            ExtraPlanets = 0,
+            StartingPlanetRichnessBonus = 0f,
+            GameSpeed = 1f,
+            StartPaused = false,
+        };
+
+        var flow = new Authoritative4XLobbyNetworkFlow(2, 3);
+        var lobby = new Authoritative4XLobby(2, "Host");
+        lobby.Join(3, "Join");
+        Assert.IsTrue(lobby.SetSettings(2, settings).Valid);
+        Assert.IsTrue(lobby.SetPlayerSelection(2, RacePreference(races[0]), Array.Empty<string>()).Valid);
+        Assert.IsTrue(lobby.SetPlayerSelection(3, RacePreference(races[1]), Array.Empty<string>()).Valid);
+        Assert.IsTrue(lobby.SetReady(2, true).Valid);
+        Assert.IsTrue(lobby.SetReady(3, true).Valid);
+        SessionStartMessage start = flow.BuildStartMessage(lobby, ArenaMultiplayerSettings.ProtocolVersion,
+            "0xUNITTEST", "unit-test", maxTurns: 600);
+        Authoritative4XGeneratedGameStart authority = flow.CreateGeneratedGame(start);
+        Authoritative4XGeneratedGameStart client = flow.CreateGeneratedGame(start);
+
+        try
+        {
+            Empire authorityOwner = authority.AuthorityUniverse.UState.Empires
+                .OrderBy(e => e.Id)
+                .First(e => e.Capital != null && e.data.PrototypeShip.NotEmpty());
+            Empire clientOwner = client.AuthorityUniverse.UState.GetEmpireById(authorityOwner.Id);
+            Ship authorityShip = Ship.CreateShipAt(authority.AuthorityUniverse.UState,
+                authorityOwner.data.PrototypeShip, authorityOwner, authorityOwner.Capital,
+                authorityOwner.Capital.Position + new Vector2(2_000f, 0f), doOrbit: false);
+            Ship clientShip = Ship.CreateShipAt(client.AuthorityUniverse.UState,
+                clientOwner.data.PrototypeShip, clientOwner, clientOwner.Capital,
+                clientOwner.Capital.Position + new Vector2(2_000f, 0f), doOrbit: false);
+            Assert.IsNotNull(authorityShip);
+            Assert.IsNotNull(clientShip);
+            Assert.AreEqual(authorityShip.Id, clientShip.Id,
+                "The generated authority/client pair must create the same ship id for canonical S| row repair.");
+            authority.AuthorityUniverse.UState.Objects.UpdateLists();
+            client.AuthorityUniverse.UState.Objects.UpdateLists();
+
+            Ship authorityTarget = authorityShip;
+            Ship clientTarget = client.AuthorityUniverse.UState.Ships.First(s => s.Id == authorityTarget.Id);
+
+            authorityShip.AI.State = AIState.Combat;
+            authorityShip.AI.CombatState = CombatState.AttackRuns;
+            authorityShip.AI.Target = authorityTarget;
+            authorityShip.AI.HasPriorityTarget = true;
+            authorityShip.AI.TargetQueue.Clear();
+            authorityShip.AI.TargetQueue.Add(authorityTarget);
+            authorityShip.AI.OrderQueue.SetRange(new[]
+            {
+                new ShipAI.ShipGoal(ShipAI.Plan.DoCombat, AIState.Combat),
+                new ShipAI.ShipGoal(ShipAI.Plan.AwaitOrders, AIState.AwaitingOrders),
+            });
+
+            clientShip.AI.ClearOrders();
+            clientShip.AI.Target = null;
+            clientShip.AI.TargetQueue.Clear();
+            clientShip.AI.HasPriorityTarget = false;
+            clientShip.AI.CombatState = CombatState.HoldPosition;
+            Assert.AreEqual(AIState.AwaitingOrders, clientShip.AI.State);
+            Assert.IsNull(clientShip.AI.Target);
+
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.AuthorityUniverse, 48);
+            AuthoritativeStateSnapshot staleClient = AuthoritativeStateSnapshot.Capture(client.AuthorityUniverse, 48);
+            string authorityRow = ShipPayloadRowForTest(authoritySnapshot.Payload, authorityShip.Id);
+            string staleClientRow = ShipPayloadRowForTest(staleClient.Payload, clientShip.Id);
+            Assert.AreNotEqual(authoritySnapshot.SyncDigest, staleClient.SyncDigest,
+                "The test must start with the S| ship AI/order-row mismatch seen in live resync logs. authority='"
+                + authorityRow + "' client='" + staleClientRow + "'");
+
+            StringAssert.Contains(authorityRow,
+                $"|{(int)AIState.Combat}|{(int)CombatState.AttackRuns}|");
+            StringAssert.Contains(authorityRow, $"|{authorityTarget.Id}|1|{authorityTarget.Id}|");
+
+            authoritySnapshot.ApplyEmpireRuntimePayload(client.AuthorityUniverse.UState);
+
+            Assert.AreEqual(authorityShip.AI.State, clientShip.AI.State);
+            Assert.AreEqual(authorityShip.AI.CombatState, clientShip.AI.CombatState);
+            Assert.AreEqual(clientTarget, clientShip.AI.Target);
+            Assert.IsTrue(clientShip.AI.HasPriorityTarget);
+            Assert.IsTrue(clientShip.AI.TargetQueue.Contains(clientTarget));
+            Assert.AreEqual(AuthoritativeStateSnapshot.ShipOrderQueueSignatureForTest(authorityShip),
+                AuthoritativeStateSnapshot.ShipOrderQueueSignatureForTest(clientShip),
+                "Applying S| rows must restore the durable order queue before digest comparison.");
+
+            AuthoritativeStateSnapshot repairedClient = AuthoritativeStateSnapshot.Capture(client.AuthorityUniverse, 48);
+            Assert.AreEqual(authoritySnapshot.SyncDigest, repairedClient.SyncDigest,
+                "Applying authoritative S| rows should repair the ship AI/order drift from live post-resync loops.");
+        }
+        finally
+        {
+            authority.Dispose();
+            client.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XSaveTransfer_CarriesHostSaveToClientCacheAndResumes_Headless()
     {
         LoadAllGameData();

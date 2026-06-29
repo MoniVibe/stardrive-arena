@@ -63,6 +63,12 @@ namespace Ship_Game
 
         public void AddNotification(Notification notify, params string[] soundCueStrings)
         {
+            if (notify.LocalEmpireOnly && Screen.IsAuthoritative4XMultiplayer
+                && notify.RelevantEmpire != null && notify.RelevantEmpire != Screen.Player)
+            {
+                return;
+            }
+
             notify.ClickRect = DefaultClickRect;
             notify.DestinationRect = DefaultNotificationRect;
 
@@ -891,6 +897,8 @@ namespace Ship_Game
             AddNotification(new Notification
             {
                 Tech            = true,
+                RelevantEmpire  = emp,
+                LocalEmpireOnly = true,
                 Message         = tech.Name.Text + Localizer.Token(GameText.Unlocked),
                 ReferencedItem1 = unlocked,
                 IconPath        = hasTechIcon ? techIcon : "TechIcons/" + unlocked,

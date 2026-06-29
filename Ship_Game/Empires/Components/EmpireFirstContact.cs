@@ -65,7 +65,12 @@ namespace Ship_Game.Empires.Components
                 return;
             }
 
-            if (owner.isPlayer)
+            UniverseScreen screen = owner.Universe.Screen;
+            bool isLocalPlayer = screen?.IsAuthoritative4XMultiplayer == true
+                ? owner == screen.Player
+                : owner.isPlayer;
+
+            if (isLocalPlayer)
             {
                 if (them.IsFaction)
                     DoFactionFirstContact(them);

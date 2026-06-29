@@ -70,6 +70,8 @@ public sealed class AuthoritativeStateSnapshot
                 ApplyPlanetRuntimeLine(universe, line);
             else if (line.StartsWith("R|", StringComparison.Ordinal))
                 ApplyRelationshipLine(universe, line);
+            else if (line.StartsWith("S|", StringComparison.Ordinal))
+                ApplyShipRuntimeLine(universe, line);
         }
 
         ApplyConstructionQueuePayload(universe, lines);
@@ -1134,8 +1136,15 @@ public sealed class AuthoritativeStateSnapshot
         return string.Join(";", goals
             .Where(g => g != null && !IsVolatileMovementSolverPlan(g.Plan))
             .Select(g =>
-            $"{(int)g.Plan},{g.TargetPlanet?.Id ?? 0},{g.TargetShip?.Id ?? 0}," +
-            $"{FloatBits(g.MovePosition.X):X8},{FloatBits(g.MovePosition.Y):X8},{(int)g.MoveOrder}"));
+            {
+                // Targeted goals are durable by target ID; their MovePosition is derived from
+                // local planet/ship state and can drift during replay/resync.
+                Vector2 movePosition = (g.TargetPlanet != null || g.TargetShip != null)
+                    ? Vector2.Zero
+                    : g.MovePosition;
+                return $"{(int)g.Plan},{g.TargetPlanet?.Id ?? 0},{g.TargetShip?.Id ?? 0}," +
+                       $"{FloatBits(movePosition.X):X8},{FloatBits(movePosition.Y):X8},{(int)g.MoveOrder}";
+            }));
     }
 
     internal static string ShipOrderQueueSignatureForTest(Ship ship) => ShipOrderQueueSignature(ship);
@@ -1146,6 +1155,127 @@ public sealed class AuthoritativeStateSnapshot
             or ShipAI.Plan.MoveToWithin1000
             or ShipAI.Plan.MakeFinalApproach
             or ShipAI.Plan.RotateInlineWithVelocity;
+
+    static void ApplyShipRuntimeLine(UniverseState universe, string line)
+    {
+        string[] p = line.Split('|');
+        if (p.Length < 32
+            || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int shipId))
+        {
+            return;
+        }
+
+        Ship ship = universe.Objects.FindShip(shipId);
+        if (ship?.AI == null)
+            return;
+
+        if (int.TryParse(p[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out int aiState)
+            && Enum.IsDefined(typeof(AIState), aiState))
+        {
+            ship.AI.State = (AIState)aiState;
+        }
+
+        if (int.TryParse(p[6], NumberStyles.Integer, CultureInfo.InvariantCulture, out int combatState)
+            && Enum.IsDefined(typeof(CombatState), combatState))
+        {
+            ship.AI.CombatState = (CombatState)combatState;
+        }
+
+        if (TryParseFloatBits(p[11], out float scuttleTimer))
+            ship.ScuttleTimer = scuttleTimer;
+
+        ship.AI.Target = int.TryParse(p[12], NumberStyles.Integer, CultureInfo.InvariantCulture, out int targetId)
+            && targetId > 0
+                ? universe.Objects.FindShip(targetId)
+                : null;
+        ship.AI.HasPriorityTarget = ParseFlag(p[13]);
+        ApplyTargetQueueSignature(universe, ship, p[14]);
+        ship.AI.EscortTarget = int.TryParse(p[15], NumberStyles.Integer, CultureInfo.InvariantCulture, out int escortId)
+            && escortId > 0
+                ? universe.Objects.FindShip(escortId)
+                : null;
+        ApplyShipOrderQueueSignature(universe, ship, p[16]);
+    }
+
+    static void ApplyTargetQueueSignature(UniverseState universe, Ship ship, string signature)
+    {
+        ship.AI.TargetQueue.Clear();
+        if (string.IsNullOrWhiteSpace(signature))
+            return;
+
+        foreach (string token in signature.Split(','))
+        {
+            if (int.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out int id)
+                && id > 0)
+            {
+                Ship target = universe.Objects.FindShip(id);
+                if (target != null)
+                    ship.AI.TargetQueue.Add(target);
+            }
+        }
+    }
+
+    static void ApplyShipOrderQueueSignature(UniverseState universe, Ship ship, string signature)
+    {
+        if (string.IsNullOrWhiteSpace(signature))
+        {
+            ship.AI.OrderQueue.Clear();
+            return;
+        }
+
+        var goals = new List<ShipAI.ShipGoal>();
+        foreach (string part in signature.Split(';'))
+        {
+            if (TryParseShipGoalSignature(universe, ship, part, out ShipAI.ShipGoal goal))
+                goals.Add(goal);
+        }
+        ship.AI.OrderQueue.SetRange(goals);
+    }
+
+    static bool TryParseShipGoalSignature(UniverseState universe, Ship ship, string signature,
+        out ShipAI.ShipGoal goal)
+    {
+        goal = null;
+        string[] p = (signature ?? "").Split(',');
+        if (p.Length < 6
+            || !int.TryParse(p[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int planValue)
+            || !Enum.IsDefined(typeof(ShipAI.Plan), planValue)
+            || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int planetId)
+            || !int.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int targetShipId)
+            || !TryParseFloatHexBits(p[3], out float x)
+            || !TryParseFloatHexBits(p[4], out float y)
+            || !int.TryParse(p[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out int moveOrderValue))
+        {
+            return false;
+        }
+
+        var plan = (ShipAI.Plan)planValue;
+        var moveOrder = (MoveOrder)moveOrderValue;
+        Planet targetPlanet = planetId > 0 ? universe.GetPlanet(planetId) : null;
+        Ship targetShip = targetShipId > 0 ? universe.Objects.FindShip(targetShipId) : null;
+        var movePosition = new Vector2(x, y);
+        AIState wantedState = ship.AI.State;
+
+        if (targetPlanet != null || targetShip != null || moveOrder == MoveOrder.Regular)
+        {
+            goal = new ShipAI.ShipGoal(plan, movePosition, Vectors.Up, targetPlanet, null,
+                0f, "", 0f, wantedState, targetShip);
+        }
+        else
+        {
+            goal = new ShipAI.ShipGoal(plan, movePosition, Vectors.Up, wantedState, moveOrder, 0f, null);
+        }
+        return true;
+    }
+
+    static bool TryParseFloatHexBits(string text, out float value)
+    {
+        value = 0f;
+        if (!uint.TryParse(text, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint bits))
+            return false;
+        value = BitConverter.UInt32BitsToSingle(bits);
+        return true;
+    }
 
     static uint FloatBits(float value) => System.BitConverter.SingleToUInt32Bits(value);
     static bool TryParseByte(string text, out byte value)

@@ -28,6 +28,7 @@ public sealed class Notification
     public bool Tech;
     public bool ShowMessage;
     public bool Pause = true;
+    public bool LocalEmpireOnly;
 
     /** @return TRUE if input was captured */
     public bool HandleInput(InputState input, NotificationManager m)
@@ -57,7 +58,8 @@ public sealed class Notification
                     ((ExplorationEvent)ReferencedItem1)?.TriggerExplorationEvent(m.Screen);
                     break;
                 case "ResearchScreen":
-                    m.ScreenManager.AddScreen(new ResearchPopup(m.Screen, ReferencedItem1 as string));
+                    m.ScreenManager.AddScreen(new ResearchPopup(m.Screen, ReferencedItem1 as string,
+                        RelevantEmpire));
                     break;
                 case "SnapToExpandSystem":
                     m.SnapToExpandedSystem(ReferencedItem2 as Planet, ReferencedItem1 as SolarSystem);

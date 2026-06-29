@@ -16,17 +16,19 @@ public sealed class ResearchPopup : PopupWindow
     public string TechUID;
     ScrollList<UnlockListItem> UnlockSL;
     readonly Technology Technology;
-        
-    public ResearchPopup(UniverseScreen us, string uid) : base(us, 600, 600)
+    readonly Empire PopupPlayer;
+
+    public ResearchPopup(UniverseScreen us, string uid, Empire player = null) : base(us, 600, 600)
     {
         Universe = us;
         TechUID = uid;
+        PopupPlayer = player ?? us.Player;
         fade = true;
         IsPopup = true;
         FromGame = true;
         TransitionOnTime = 0.25f;
         TransitionOffTime = 0f;
-        TechEntry techEntry = us.Player.GetTechEntry(uid);
+        TechEntry techEntry = PopupPlayer.GetTechEntry(uid);
         if (techEntry != null)
         {
             Technology = techEntry.Tech;
@@ -51,8 +53,8 @@ public sealed class ResearchPopup : PopupWindow
             Rect.Height - MidContainer.Height - TitleRect.Height - 20);
         UnlockSL = Add(new ScrollList<UnlockListItem>(rect, 100));
 
-        Array<UnlockItem> unlocks = UnlockItem.CreateUnlocksList(Technology, Universe.Player);
-        UnlockSL.SetItems(unlocks.Select(u => new UnlockListItem(u, Universe.Player)));
+        Array<UnlockItem> unlocks = UnlockItem.CreateUnlocksList(Technology, PopupPlayer);
+        UnlockSL.SetItems(unlocks.Select(u => new UnlockListItem(u, PopupPlayer)));
     }
 
     class UnlockListItem : ScrollListItem<UnlockListItem>
