@@ -10267,12 +10267,39 @@ public class Authoritative4XSessionTests : StarDriveTest
 
     [TestMethod]
     public void Authoritative4XLobby_FourHumansFourAiAutomationStressStaysSynced_Headless()
+        => RunFourHumanFourAiAutomationStress(new FourHumanFourAiStressScenario(
+            name: "baseline-spiral",
+            generationSeed: 0x4A14A1,
+            mode: RaceDesignScreen.GameMode.SpiralFourArm,
+            extraPlanets: 2,
+            customMineralDecay: 1.15f,
+            volcanicActivity: 0.75f,
+            startingPlanetRichnessBonus: 0.75f,
+            stressTicks: 1600));
+
+    [TestMethod]
+    public void Authoritative4XLobby_FourHumansFourAiAutomationMatrixStaysSynced_Headless()
+    {
+        var scenarios = new[]
+        {
+            new FourHumanFourAiStressScenario("ring-scarce", 0x4A14A2,
+                RaceDesignScreen.GameMode.Ring, 1, 1.0f, 1.0f, 0.5f, 1200),
+            new FourHumanFourAiStressScenario("small-clusters-rich", 0x4A14A3,
+                RaceDesignScreen.GameMode.SmallClusters, 3, 1.4f, 0.25f, 1.0f, 1200),
+            new FourHumanFourAiStressScenario("barred-volatile", 0x4A14A4,
+                RaceDesignScreen.GameMode.SpiralBarred, 2, 0.65f, 1.5f, 1.25f, 1200),
+        };
+
+        foreach (FourHumanFourAiStressScenario scenario in scenarios)
+            RunFourHumanFourAiAutomationStress(scenario);
+    }
+
+    void RunFourHumanFourAiAutomationStress(FourHumanFourAiStressScenario scenario)
     {
         LoadAllGameData();
 
         const int HumanCount = 4;
         const int TotalMajorEmpires = 8;
-        const int StressTicks = 1600;
         int[] peers = Enumerable.Range(2, HumanCount).ToArray();
         IEmpireData[] races = ResourceManager.MajorRaces
             .Where(r => !r.IsFactionOrMinorRace)
@@ -10284,18 +10311,18 @@ public class Authoritative4XSessionTests : StarDriveTest
 
         var settings = new Authoritative4XGameSettings
         {
-            GenerationSeed = 0x4A14A1,
+            GenerationSeed = scenario.GenerationSeed,
             GalaxySize = GalSize.Tiny,
             StarsCount = RaceDesignScreen.StarsAbundance.Rare,
-            Mode = RaceDesignScreen.GameMode.SpiralFourArm,
+            Mode = scenario.Mode,
             Difficulty = GameDifficulty.Normal,
             NumOpponents = TotalMajorEmpires - 1,
             Pace = 1f,
             TurnTimer = 5,
-            ExtraPlanets = 2,
-            CustomMineralDecay = 1.15f,
-            VolcanicActivity = 0.75f,
-            StartingPlanetRichnessBonus = 0.75f,
+            ExtraPlanets = scenario.ExtraPlanets,
+            CustomMineralDecay = scenario.CustomMineralDecay,
+            VolcanicActivity = scenario.VolcanicActivity,
+            StartingPlanetRichnessBonus = scenario.StartingPlanetRichnessBonus,
             GameSpeed = 1f,
             StartPaused = false,
             AIUsesPlayerDesigns = false,
@@ -10366,20 +10393,22 @@ public class Authoritative4XSessionTests : StarDriveTest
 
         try
         {
-            for (int step = 0; step < StressTicks; ++step)
+            for (int step = 0; step < scenario.StressTicks; ++step)
             {
                 int peer = peers[step % peers.Length];
                 int empireId = started.EmpireIdForPeer(peer);
                 started.Session.SubmitFromClient(peer,
                     AuthoritativePlayerCommand.NoOp(3_000 + step, empireId));
                 AssertAccepted(started.Session, peer);
-                if (step % 25 == 0 || step == StressTicks - 1)
+                if (step % 25 == 0 || step == scenario.StressTicks - 1)
                     AssertAllCanonicallySynced(started.Session, peers);
             }
         }
         catch (Authoritative4XSyncMismatchException e)
         {
-            Assert.Fail("4-human/4-AI automation stress diverged after applying full human automation: "
+            Assert.Fail($"4-human/4-AI automation stress '{scenario.Name}' diverged "
+                        + $"seed=0x{scenario.GenerationSeed:X} mode={scenario.Mode} "
+                        + $"ticks={scenario.StressTicks}: "
                         + FirstPayloadDifferenceForTest(e.AuthoritySnapshot?.Payload, e.ClientSnapshot?.Payload));
         }
 
@@ -10389,7 +10418,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             var automation = expected[empireId];
             Empire authorityEmpire = started.AuthorityUniverse.UState.GetEmpireById(empireId);
             Assert.IsTrue(AuthoritativeHumanPlayers.IsHumanControlled(authorityEmpire),
-                $"Peer {peer}'s empire should still be human-controlled after {StressTicks} ticks.");
+                $"Peer {peer}'s empire should still be human-controlled after {scenario.StressTicks} ticks.");
             AssertEmpireAutomation(authorityEmpire, automation.Flags, automation.Freighter,
                 automation.Colony, automation.Scout, automation.Constructor,
                 automation.ResearchStation, automation.MiningStation,
@@ -10406,6 +10435,32 @@ public class Authoritative4XSessionTests : StarDriveTest
         }
 
         AssertAllCanonicallySynced(started.Session, peers);
+    }
+
+    readonly struct FourHumanFourAiStressScenario
+    {
+        public readonly string Name;
+        public readonly int GenerationSeed;
+        public readonly RaceDesignScreen.GameMode Mode;
+        public readonly int ExtraPlanets;
+        public readonly float CustomMineralDecay;
+        public readonly float VolcanicActivity;
+        public readonly float StartingPlanetRichnessBonus;
+        public readonly int StressTicks;
+
+        public FourHumanFourAiStressScenario(string name, int generationSeed, RaceDesignScreen.GameMode mode,
+            int extraPlanets, float customMineralDecay, float volcanicActivity,
+            float startingPlanetRichnessBonus, int stressTicks)
+        {
+            Name = name;
+            GenerationSeed = generationSeed;
+            Mode = mode;
+            ExtraPlanets = extraPlanets;
+            CustomMineralDecay = customMineralDecay;
+            VolcanicActivity = volcanicActivity;
+            StartingPlanetRichnessBonus = startingPlanetRichnessBonus;
+            StressTicks = stressTicks;
+        }
     }
 
     static void AcceptProposal(Authoritative4XInProcessMultiClientSession session, int proposerPeer, int targetPeer,
