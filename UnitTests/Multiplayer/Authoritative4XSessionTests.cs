@@ -10266,6 +10266,227 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XLobby_FourHumansFourAiClientInteractionGauntletStaysSynced_Headless()
+    {
+        LoadAllGameData();
+
+        const int HumanCount = 4;
+        const int TotalMajorEmpires = 8;
+        int[] peers = Enumerable.Range(2, HumanCount).ToArray();
+        IEmpireData[] races = ResourceManager.MajorRaces
+            .Where(r => !r.IsFactionOrMinorRace)
+            .OrderBy(r => RacePreference(r), StringComparer.Ordinal)
+            .Take(TotalMajorEmpires)
+            .ToArray();
+        Assert.IsTrue(races.Length >= TotalMajorEmpires,
+            "The client gauntlet needs at least eight playable major races.");
+
+        var settings = new Authoritative4XGameSettings
+        {
+            GenerationSeed = 0xC11E47A,
+            GalaxySize = GalSize.Tiny,
+            StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+            Mode = RaceDesignScreen.GameMode.SmallClusters,
+            Difficulty = GameDifficulty.Normal,
+            NumOpponents = TotalMajorEmpires - 1,
+            Pace = 1f,
+            TurnTimer = 5,
+            ExtraPlanets = 2,
+            CustomMineralDecay = 1.05f,
+            VolcanicActivity = 0.5f,
+            StartingPlanetRichnessBonus = 0.75f,
+            GameSpeed = 1f,
+            StartPaused = false,
+            AIUsesPlayerDesigns = false,
+            DisablePirates = true,
+            DisableResearchStations = true,
+            DisableMiningOps = true,
+        };
+
+        var lobby = new Authoritative4XLobby(hostPlayerPeerId: peers[0], hostName: "Host");
+        for (int i = 1; i < peers.Length; ++i)
+            lobby.Join(peers[i], "Human " + i.ToString());
+
+        Assert.IsTrue(lobby.SetSettings(peers[0], settings).Valid);
+        for (int i = 0; i < peers.Length; ++i)
+        {
+            Assert.IsTrue(lobby.SetPlayerSelection(peers[i], RacePreference(races[i]), Array.Empty<string>()).Valid);
+            Assert.IsTrue(lobby.SetReady(peers[i], true).Valid);
+        }
+        Assert.IsTrue(lobby.CanStart().Valid, lobby.CanStart().Reason);
+
+        using Authoritative4XLobbyStartResult started = lobby.StartInProcess();
+        Assert.AreEqual(HumanCount, started.HumanEmpireIds.Length);
+        Assert.AreEqual(TotalMajorEmpires, started.AuthorityUniverse.UState.MajorEmpires.Length);
+
+        var homePlanetByEmpire = new Dictionary<int, int>();
+        var initialQueuedShipsByEmpire = new Dictionary<int, int>();
+        int sequence = 5_000;
+
+        try
+        {
+            for (int i = 0; i < peers.Length; ++i)
+            {
+                int peer = peers[i];
+                int empireId = started.EmpireIdForPeer(peer);
+                Empire empire = started.AuthorityUniverse.UState.GetEmpireById(empireId);
+                Planet planet = empire.GetPlanets().OrderBy(p => p.Id).First();
+                homePlanetByEmpire[empireId] = planet.Id;
+                initialQueuedShipsByEmpire[empireId] = CountQueuedShips(planet);
+
+                started.Session.SubmitFromClient(peer,
+                    AuthoritativePlayerCommand.SetEmpireAutomation(sequence++, empireId,
+                        AuthoritativeEmpireAutomationFlags.None, "", "", "", "", "", ""));
+                AssertAccepted(started.Session, peer);
+                AssertAllCanonicallySynced(started.Session, peers);
+
+                string[] techs = ResearchCandidates(empire, 4);
+                for (int t = 0; t < 3; ++t)
+                {
+                    started.Session.SubmitFromClient(peer,
+                        AuthoritativePlayerCommand.QueueResearch(sequence++, empireId, techs[t]));
+                    AssertAccepted(started.Session, peer);
+                }
+                (string movableUp, int _) = FindQueuedResearch(empire, idx => empire.Research.CanMoveUp(idx));
+                started.Session.SubmitFromClient(peer,
+                    AuthoritativePlayerCommand.MoveResearchQueueItem(sequence++, empireId, movableUp,
+                        AuthoritativeResearchQueueMove.Up));
+                AssertAccepted(started.Session, peer);
+
+                string removeCandidate = empire.data.ResearchQueue.ToArray().Last();
+                started.Session.SubmitFromClient(peer,
+                    AuthoritativePlayerCommand.RemoveResearchQueueItem(sequence++, empireId, removeCandidate));
+                AssertAccepted(started.Session, peer);
+
+                Building buildable = PickBuildableBuilding(planet);
+                started.Session.SubmitFromClient(peer,
+                    AuthoritativePlayerCommand.QueueBuilding(sequence++, empireId, planet.Id, buildable.Name));
+                AssertAccepted(started.Session, peer);
+
+                Troop troop = PickBuildableTroop(empire);
+                started.Session.SubmitFromClient(peer,
+                    AuthoritativePlayerCommand.QueueTroop(sequence++, empireId, planet.Id, troop.Name));
+                AssertAccepted(started.Session, peer);
+
+                int troopQueueIndex = planet.ConstructionQueue.Count - 1;
+                started.Session.SubmitFromClient(peer,
+                    AuthoritativePlayerCommand.ReorderConstructionQueueItem(sequence++, empireId,
+                        planet.Id, currentIndex: troopQueueIndex, moveToIndex: 0));
+                AssertAccepted(started.Session, peer);
+                Assert.IsTrue(planet.ConstructionQueue[0].isTroop,
+                    "Production queue reorder from a client should move the troop request to the front on the authority.");
+
+                var governorOptions = AuthoritativePlanetGovernorOptions.GovOrbitals
+                                      | AuthoritativePlanetGovernorOptions.SpecializedTradeHub;
+                started.Session.SubmitFromClient(peer,
+                    AuthoritativePlayerCommand.SetPlanetGovernorOptions(sequence++, empireId, planet.Id,
+                        governorOptions));
+                AssertAccepted(started.Session, peer);
+
+                started.Session.SubmitFromClient(peer,
+                    AuthoritativePlayerCommand.SetPlanetManualTradeSlots(sequence++, empireId, planet.Id,
+                        foodImport: 1 + i, prodImport: 2 + i, coloImport: 3 + i,
+                        foodExport: 4 + i, prodExport: 5 + i, coloExport: 6 + i));
+                AssertAccepted(started.Session, peer);
+
+                started.Session.SubmitFromClient(peer,
+                    AuthoritativePlayerCommand.SetEmpireBudget(sequence++, empireId,
+                        taxRate: 0.12f + i * 0.02f, treasuryGoal: 0.35f + i * 0.03f, autoTaxes: false));
+                AssertAccepted(started.Session, peer);
+
+                if (i == 0)
+                {
+                    IShipDesign platform = PickBuildableSubspaceProjectorOrDeepSpacePlatform(empire);
+                    Vector2 buildPos = planet.Position + new Vector2(90_000f, -45_000f);
+                    started.Session.SubmitFromClient(peer,
+                        AuthoritativePlayerCommand.QueueDeepSpaceBuild(sequence++, empireId,
+                            platform.Name, buildPos));
+                    AssertAccepted(started.Session, peer);
+                }
+
+                AssertAllCanonicallySynced(started.Session, peers);
+                AssertReplicasMatchClientGauntletState(started, peers, empireId, planet.Id,
+                    expectedFoodImport: 1 + i, expectedProdImport: 2 + i, expectedColoImport: 3 + i,
+                    expectedFoodExport: 4 + i, expectedProdExport: 5 + i, expectedColoExport: 6 + i);
+            }
+
+            int proposerPeer = peers[0];
+            int targetPeer = peers[1];
+            int proposerEmpire = started.EmpireIdForPeer(proposerPeer);
+            int targetEmpire = started.EmpireIdForPeer(targetPeer);
+            AcceptProposal(started.Session, proposerPeer, targetPeer, proposerEmpire, targetEmpire,
+                sequence, AuthoritativeDiplomacyProposalType.TradeDeal);
+            sequence += 2;
+            AssertAllCanonicallySynced(started.Session, peers);
+
+            string tradeTech = PrepareTechnologyTrade(started, proposerEmpire, targetEmpire);
+            started.Session.SubmitFromClient(proposerPeer,
+                AuthoritativePlayerCommand.DiplomacyProposal(sequence++, proposerEmpire, targetEmpire,
+                    AuthoritativeDiplomacyProposalType.TechnologyTrade, tradeTech));
+            AssertAccepted(started.Session, proposerPeer);
+            AuthoritativeDiplomacyPopup techOffer = LastPopup(started.Session, targetPeer,
+                AuthoritativeDiplomacyProposalType.TechnologyTrade, requiresResponse: true);
+            started.Session.SubmitFromClient(targetPeer,
+                AuthoritativePlayerCommand.DiplomacyResponse(sequence++, targetEmpire, techOffer.ProposalId,
+                    AuthoritativeDiplomacyResponseKind.Accept));
+            AssertAccepted(started.Session, targetPeer);
+            Assert.IsTrue(started.AuthorityUniverse.UState.GetEmpireById(targetEmpire).HasUnlocked(tradeTech),
+                "Technology trade accepted by a joiner should unlock on the authority.");
+            AssertAllCanonicallySynced(started.Session, peers);
+
+            for (int step = 0; step < 240; ++step)
+            {
+                int peer = peers[step % peers.Length];
+                int empireId = started.EmpireIdForPeer(peer);
+                started.Session.SubmitFromClient(peer,
+                    AuthoritativePlayerCommand.NoOp(sequence++, empireId));
+                AssertAccepted(started.Session, peer);
+                if (step % 30 == 0 || step == 239)
+                    AssertAllCanonicallySynced(started.Session, peers);
+            }
+        }
+        catch (Authoritative4XSyncMismatchException e)
+        {
+            Assert.Fail("4-human/4-AI client interaction gauntlet diverged "
+                        + $"seed=0x{settings.GenerationSeed:X}: "
+                        + FirstPayloadDifferenceForTest(e.AuthoritySnapshot?.Payload, e.ClientSnapshot?.Payload));
+        }
+
+        foreach (int peer in peers)
+        {
+            int empireId = started.EmpireIdForPeer(peer);
+            Empire authorityEmpire = started.AuthorityUniverse.UState.GetEmpireById(empireId);
+            Assert.IsTrue(AuthoritativeHumanPlayers.IsHumanControlled(authorityEmpire),
+                $"Peer {peer}'s empire should still be registered human-controlled after the client gauntlet.");
+            Assert.IsFalse(authorityEmpire.IsAIControlled,
+                $"Peer {peer}'s empire should not be treated as AI-controlled after the client gauntlet.");
+            AssertEmpireAutomation(authorityEmpire, AuthoritativeEmpireAutomationFlags.None,
+                "", "", "", "", "", "", $"Authority automation drifted for peer {peer}.");
+
+            Planet home = started.AuthorityUniverse.UState.GetPlanet(homePlanetByEmpire[empireId]);
+            if (peer != peers[0])
+            {
+                Assert.AreEqual(initialQueuedShipsByEmpire[empireId], CountQueuedShips(home),
+                    $"Remote human peer {peer} should not have AI ship construction injected while automation is off.");
+            }
+
+            foreach (Authoritative4XClientSpec client in started.Clients)
+            {
+                Empire replicaEmpire = client.Universe.UState.GetEmpireById(empireId);
+                Assert.IsTrue(AuthoritativeHumanPlayers.IsHumanControlled(replicaEmpire),
+                    $"Replica peer {client.PeerId} lost human-control registration for peer {peer}.");
+                Assert.IsFalse(replicaEmpire.IsAIControlled,
+                    $"Replica peer {client.PeerId} treats peer {peer}'s empire as AI-controlled.");
+                AssertEmpireAutomation(replicaEmpire, AuthoritativeEmpireAutomationFlags.None,
+                    "", "", "", "", "", "",
+                    $"Client peer {client.PeerId} automation drifted for human peer {peer}.");
+            }
+        }
+
+        AssertAllCanonicallySynced(started.Session, peers);
+    }
+
+    [TestMethod]
     public void Authoritative4XLobby_FourHumansFourAiAutomationStressStaysSynced_Headless()
         => RunFourHumanFourAiAutomationStress(new FourHumanFourAiStressScenario(
             name: "baseline-spiral",
@@ -10933,6 +11154,73 @@ public class Authoritative4XSessionTests : StarDriveTest
             .FirstOrDefault() ?? "";
     }
 
+    static void AssertReplicasMatchClientGauntletState(Authoritative4XLobbyStartResult started, int[] peers,
+        int empireId, int planetId, int expectedFoodImport, int expectedProdImport, int expectedColoImport,
+        int expectedFoodExport, int expectedProdExport, int expectedColoExport)
+    {
+        Empire authorityEmpire = started.AuthorityUniverse.UState.GetEmpireById(empireId);
+        Planet authorityPlanet = started.AuthorityUniverse.UState.GetPlanet(planetId);
+        Assert.IsTrue(AuthoritativeHumanPlayers.IsHumanControlled(authorityEmpire),
+            $"Authority lost human-control registration for empire {empireId}.");
+        Assert.IsFalse(authorityEmpire.IsAIControlled,
+            $"Authority treats human empire {empireId} as AI-controlled.");
+        Assert.IsTrue(authorityEmpire.data.ResearchQueue.Count > 0,
+            $"Authority empire {empireId} should keep its client-submitted research queue.");
+        AssertPlanetManualTradeSlots(authorityPlanet, expectedFoodImport, expectedProdImport,
+            expectedColoImport, expectedFoodExport, expectedProdExport, expectedColoExport);
+        Assert.IsTrue(authorityPlanet.GovOrbitals,
+            $"Authority planet {planetId} should have authoritative orbital governor enabled.");
+        Assert.IsTrue(authorityPlanet.SpecializedTradeHub,
+            $"Authority planet {planetId} should have authoritative specialized trade hub enabled.");
+
+        foreach (Authoritative4XClientSpec client in started.Clients)
+        {
+            Empire replicaEmpire = client.Universe.UState.GetEmpireById(empireId);
+            Planet replicaPlanet = client.Universe.UState.GetPlanet(planetId);
+            Assert.IsTrue(AuthoritativeHumanPlayers.IsHumanControlled(replicaEmpire),
+                $"Client peer {client.PeerId} lost human-control registration for empire {empireId}.");
+            Assert.IsFalse(replicaEmpire.IsAIControlled,
+                $"Client peer {client.PeerId} treats human empire {empireId} as AI-controlled.");
+            AssertResearchQueuesEqual(authorityEmpire, replicaEmpire);
+            AssertPlanetManualTradeSlots(replicaPlanet, expectedFoodImport, expectedProdImport,
+                expectedColoImport, expectedFoodExport, expectedProdExport, expectedColoExport);
+            Assert.AreEqual(authorityPlanet.GovOrbitals, replicaPlanet.GovOrbitals,
+                $"Client peer {client.PeerId} orbital governor drifted for planet {planetId}.");
+            Assert.AreEqual(authorityPlanet.SpecializedTradeHub, replicaPlanet.SpecializedTradeHub,
+                $"Client peer {client.PeerId} specialized trade hub drifted for planet {planetId}.");
+        }
+
+        AssertAllCanonicallySynced(started.Session, peers);
+    }
+
+    static int CountQueuedShips(Planet planet)
+        => planet.ConstructionQueue.Count(q => q.isShip);
+
+    static string PrepareTechnologyTrade(Authoritative4XLobbyStartResult started,
+        int proposerEmpireId, int targetEmpireId)
+    {
+        Empire authorityProposer = started.AuthorityUniverse.UState.GetEmpireById(proposerEmpireId);
+        Empire authorityTarget = started.AuthorityUniverse.UState.GetEmpireById(targetEmpireId);
+        string techUid = authorityProposer.TechEntries
+                             .Where(t => t.Discovered && t.CanBeResearched && !t.IsMultiLevel)
+                             .Where(t => authorityTarget.TryGetTechEntry(t.UID, out TechEntry targetTech)
+                                         && !targetTech.Unlocked
+                                         && t.TheyCanUseThis(authorityProposer, authorityTarget))
+                             .OrderBy(t => t.TechCost)
+                             .ThenBy(t => t.UID, StringComparer.Ordinal)
+                             .Select(t => t.UID)
+                             .FirstOrDefault()
+                         ?? throw new AssertFailedException("Need a deterministic unlocked-by-proposer/locked-by-target tech for generated-game tech trade proof.");
+
+        UnlockForTrade(authorityProposer, authorityTarget, techUid);
+        foreach (Authoritative4XClientSpec client in started.Clients)
+        {
+            UnlockForTrade(client.Universe.UState.GetEmpireById(proposerEmpireId),
+                client.Universe.UState.GetEmpireById(targetEmpireId), techUid);
+        }
+        return techUid;
+    }
+
     static void ClearEmpireAutomation(Empire empire)
     {
         empire.AutoPickConstructors = false;
@@ -11002,6 +11290,16 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(constructor, empire.data.CurrentConstructor ?? "", message);
         Assert.AreEqual(researchStation, empire.data.CurrentResearchStation ?? "", message);
         Assert.AreEqual(miningStation, empire.data.CurrentMiningStation ?? "", message);
+    }
+
+    static IShipDesign PickBuildableSubspaceProjectorOrDeepSpacePlatform(Empire empire)
+    {
+        IShipDesign projector = empire.SpaceStationsWeCanBuildSnapshot
+            .Where(s => s.IsSubspaceProjector)
+            .OrderBy(s => s.BaseCost)
+            .ThenBy(s => s.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        return projector ?? PickBuildableDeepSpacePlatform(empire);
     }
 
     static IShipDesign PickBuildableDeepSpacePlatform(Empire empire)
