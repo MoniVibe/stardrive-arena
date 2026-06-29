@@ -164,7 +164,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
     public ArenaMultiplayerLobbySurface SurfaceMode => Surface;
     public string HeaderTitleForHeadless => Surface == ArenaMultiplayerLobbySurface.Authoritative4X
-        ? "STARDIVE MULTIPLAYER"
+        ? "STARDRIVE MULTIPLAYER"
         : "STAR GLADIATOR";
     public string HeaderSubtitleForHeadless => Surface == ArenaMultiplayerLobbySurface.Authoritative4X
         ? "AUTHORITATIVE 4X LOBBY"

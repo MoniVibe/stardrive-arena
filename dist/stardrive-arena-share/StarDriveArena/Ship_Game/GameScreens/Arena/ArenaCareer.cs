@@ -835,7 +835,7 @@ public sealed class ArenaCareer
     /// <see cref="FleetVesselIds"/> entry that still maps to an owned vessel (stale ids dropped),
     /// clamped to <see cref="ArenaMaxFleetSize"/>. Empty <see cref="FleetVesselIds"/> (a fresh
     /// career) yields EXACTLY the flagship — one ship, today's default. Never null; the run
-    /// SPAWNS exactly these vessels (flagship first), so this is the single source of truth for
+    /// SPAWNS exactly these vessels (flagship first), so this is the authoritative roster for
     /// "who fights".
     /// </summary>
     public OwnedVessel[] FieldedFleetVessels()

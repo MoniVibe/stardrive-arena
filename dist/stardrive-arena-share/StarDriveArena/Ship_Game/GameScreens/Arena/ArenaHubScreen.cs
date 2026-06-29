@@ -73,7 +73,7 @@ public sealed class ArenaHubScreen : GameScreen
         v0.TextAlign = TextAlign.Center;
 
         Add(ArenaTheme.Label(new Vector2(panel.X + 68, panel.Y + 25),
-            "UI GOD PAGE · SOURCE OF TRUTH"));
+            "ARENA CONTROL DECK"));
 
         Add(ArenaTheme.ArenaTitle(new Vector2(panel.X + 24, panel.Y + 58),
             "STAR GLADIATOR"));

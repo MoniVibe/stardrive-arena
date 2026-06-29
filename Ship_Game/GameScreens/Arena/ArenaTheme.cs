@@ -8,7 +8,7 @@ using Color = Microsoft.Xna.Framework.Color;
 namespace Ship_Game.GameScreens.Arena;
 
 /// <summary>
-/// Shared Star Gladiator visual tokens, copied from the Figma "UI God Page" token board.
+/// Shared Star Gladiator visual tokens, mapped onto StarDrive's existing UI assets.
 /// Font mappings use StarDrive's existing content fonts: Orbitron -> Pirulen,
 /// Rajdhani -> Arial, JetBrains Mono -> Visitor/Consolas.
 /// </summary>

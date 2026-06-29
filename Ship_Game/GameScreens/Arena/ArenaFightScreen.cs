@@ -945,7 +945,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
             Career.CareerLevel += 1;
 
         // PHASE B — PRESERVE THE FINITE OWNED ROSTER, MERGE EARNED VETERANCY. The owned roster
-        // (with its stable VesselIds + the garage/dealership selection) is the source of truth
+        // (with its stable VesselIds + the garage/dealership selection) is authoritative
         // and MUST survive the fight — we do NOT rebuild it from the live ships (that would wipe
         // owned vessels the player didn't field + lose ActiveVesselId). Instead we MERGE each
         // FIELDED fleet vessel's earned Experience/Level/Kills back onto ITS owned vessel,

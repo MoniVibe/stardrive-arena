@@ -136,7 +136,7 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
                 "The plugin's 4X multiplayer menu action must launch the authoritative lobby screen.");
             var multiplayer4XLobby = (ArenaMultiplayerLobbyScreen)multiplayer4X;
             Assert.AreEqual(ArenaMultiplayerLobbySurface.Authoritative4X, multiplayer4XLobby.SurfaceMode);
-            Assert.AreEqual("STARDIVE MULTIPLAYER", multiplayer4XLobby.HeaderTitleForHeadless);
+            Assert.AreEqual("STARDRIVE MULTIPLAYER", multiplayer4XLobby.HeaderTitleForHeadless);
             Assert.AreEqual("AUTHORITATIVE 4X LOBBY", multiplayer4XLobby.HeaderSubtitleForHeadless);
             AssertMainMenuLayoutContains4XButton("game/Content/UI/MMenu.Jupiter.yaml");
             AssertMainMenuLayoutContains4XButton("game/Content/UI/MMenu.Mars.yaml");
