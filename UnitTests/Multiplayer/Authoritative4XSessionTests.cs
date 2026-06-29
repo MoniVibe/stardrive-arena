@@ -10383,6 +10383,193 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XLobby_EightPlayerHundredShipCombatStaysSynced_Headless()
+    {
+        LoadAllGameData();
+
+        const int PlayerCount = 8;
+        const int ShipsPerPlayer = 100;
+        const int HostPeer = 2;
+        const int Rounds = 20; // one no-op from each peer per round => 160 authoritative combat ticks
+        int[] peers = Enumerable.Range(HostPeer, PlayerCount).ToArray();
+        IEmpireData[] races = ResourceManager.MajorRaces
+            .Where(r => !r.IsFactionOrMinorRace)
+            .OrderBy(r => RacePreference(r), StringComparer.Ordinal)
+            .Take(PlayerCount)
+            .ToArray();
+        Assert.IsTrue(races.Length >= PlayerCount,
+            "The 8-player combat stress needs at least eight playable major races.");
+
+        var settings = new Authoritative4XGameSettings
+        {
+            GenerationSeed = 0x8A11C0B,
+            GalaxySize = GalSize.Tiny,
+            StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+            Mode = RaceDesignScreen.GameMode.Sandbox,
+            Difficulty = GameDifficulty.Normal,
+            NumOpponents = PlayerCount - 1,
+            Pace = 1f,
+            TurnTimer = 5,
+            GameSpeed = 1f,
+            StartPaused = false,
+            DisablePirates = true,
+            DisableResearchStations = true,
+            DisableMiningOps = true,
+        };
+
+        var lobby = new Authoritative4XLobby(hostPlayerPeerId: peers[0], hostName: "Host");
+        for (int i = 1; i < peers.Length; ++i)
+            lobby.Join(peers[i], "Combatant " + i.ToString());
+
+        Assert.IsTrue(lobby.SetSettings(peers[0], settings).Valid);
+        for (int i = 0; i < peers.Length; ++i)
+        {
+            Assert.IsTrue(lobby.SetPlayerSelection(peers[i], RacePreference(races[i]), Array.Empty<string>()).Valid);
+            Assert.IsTrue(lobby.SetReady(peers[i], true).Valid);
+        }
+        Assert.IsTrue(lobby.CanStart().Valid, lobby.CanStart().Reason);
+
+        using Authoritative4XLobbyStartResult started = lobby.StartInProcess();
+        UniverseScreen[] universes = started.Clients.Select(c => c.Universe)
+            .Prepend(started.AuthorityUniverse)
+            .ToArray();
+
+        try
+        {
+            foreach (UniverseScreen universe in universes)
+            {
+                universe.UState.Events.Disabled = true;
+                universe.UState.Objects.EnableParallelUpdate = false;
+            }
+
+            int[] empireIds = peers.Select(started.EmpireIdForPeer).ToArray();
+            for (int i = 0; i < empireIds.Length; ++i)
+            {
+                for (int j = i + 1; j < empireIds.Length; ++j)
+                {
+                    foreach (UniverseScreen universe in universes)
+                        MakeAtWar(universe.UState.GetEmpireById(empireIds[i]),
+                            universe.UState.GetEmpireById(empireIds[j]));
+                }
+            }
+
+            string combatDesign = "Fang Strafer";
+            if (!ResourceManager.ShipTemplateExists(combatDesign))
+            {
+                combatDesign = ResourceManager.ShipTemplateExists("Vulcan Scout")
+                    ? "Vulcan Scout"
+                    : ResourceManager.Ships.Designs
+                        .Where(d => d?.Role is RoleName.scout or RoleName.fighter or RoleName.corvette)
+                        .OrderBy(d => d.Name, StringComparer.Ordinal)
+                        .Select(d => d.Name)
+                        .First();
+            }
+
+            var shipIdsByEmpire = new Dictionary<int, int[]>();
+            float battleRadius = 9_000f;
+            float spacing = 220f;
+            for (int empireIndex = 0; empireIndex < empireIds.Length; ++empireIndex)
+            {
+                int empireId = empireIds[empireIndex];
+                float angle = MathF.Tau * empireIndex / empireIds.Length;
+                var anchor = new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * battleRadius;
+                var tangent = new Vector2(-MathF.Sin(angle), MathF.Cos(angle));
+                var inward = -anchor.Normalized();
+                var authorityShips = new int[ShipsPerPlayer];
+
+                for (int shipIndex = 0; shipIndex < ShipsPerPlayer; ++shipIndex)
+                {
+                    int row = shipIndex / 10;
+                    int col = shipIndex % 10;
+                    Vector2 offset = tangent * ((col - 4.5f) * spacing) + inward * (row * spacing);
+                    int expectedId = 0;
+
+                    foreach (UniverseScreen universe in universes)
+                    {
+                        Empire empire = universe.UState.GetEmpireById(empireId);
+                        Ship ship = Ship.CreateShipAtPoint(universe.UState, combatDesign, empire, anchor + offset);
+                        Assert.IsNotNull(ship, $"Failed to spawn combat ship '{combatDesign}' for empire {empireId}.");
+                        ship.Rotation = inward.ToRadians();
+                        if (expectedId == 0)
+                            expectedId = ship.Id;
+                        else
+                            Assert.AreEqual(expectedId, ship.Id,
+                                "The authority and replicas must spawn the stress fleets with identical ship ids.");
+                    }
+
+                    authorityShips[shipIndex] = expectedId;
+                }
+                shipIdsByEmpire[empireId] = authorityShips;
+            }
+
+            foreach (UniverseScreen universe in universes)
+                universe.UState.Objects.UpdateLists(removeInactiveObjects: false);
+
+            for (int empireIndex = 0; empireIndex < empireIds.Length; ++empireIndex)
+            {
+                int empireId = empireIds[empireIndex];
+                int targetEmpireId = empireIds[(empireIndex + 1) % empireIds.Length];
+                int[] ourShipIds = shipIdsByEmpire[empireId];
+                int[] targetShipIds = shipIdsByEmpire[targetEmpireId];
+
+                for (int shipIndex = 0; shipIndex < ourShipIds.Length; ++shipIndex)
+                {
+                    int shipId = ourShipIds[shipIndex];
+                    int targetId = targetShipIds[shipIndex % targetShipIds.Length];
+                    foreach (UniverseScreen universe in universes)
+                    {
+                        Ship ship = universe.UState.Objects.FindShip(shipId);
+                        Ship target = universe.UState.Objects.FindShip(targetId);
+                        Assert.IsNotNull(ship);
+                        Assert.IsNotNull(target);
+                        ship.AI.OrderAttackSpecificTarget(target);
+                    }
+                }
+            }
+
+            AuthoritativeStateSnapshot initial = AuthoritativeStateSnapshot.Capture(started.AuthorityUniverse, 0);
+            foreach (Authoritative4XClientSpec client in started.Clients)
+            {
+                AuthoritativeStateSnapshot replica = AuthoritativeStateSnapshot.Capture(client.Universe, 0);
+                Assert.AreEqual(initial.SyncDigest, replica.SyncDigest,
+                    "The 8x100 combat setup must start canonically synchronized. "
+                    + FirstPayloadDifferenceForTest(initial.Payload, replica.Payload));
+            }
+
+            int sequence = 20_000;
+            for (int round = 0; round < Rounds; ++round)
+            {
+                foreach (int peer in peers)
+                {
+                    int empireId = started.EmpireIdForPeer(peer);
+                    started.Session.SubmitFromClient(peer,
+                        AuthoritativePlayerCommand.NoOp(sequence++, empireId));
+                    AssertAccepted(started.Session, peer);
+                    AssertAllCanonicallySynced(started.Session, peers);
+                }
+            }
+
+            int remainingAuthorityShips = empireIds
+                .SelectMany(id => shipIdsByEmpire[id])
+                .Count(id => started.AuthorityUniverse.UState.Objects.FindShip(id)?.Active == true);
+            bool anyCombat = empireIds.SelectMany(id => shipIdsByEmpire[id])
+                .Select(id => started.AuthorityUniverse.UState.Objects.FindShip(id))
+                .Any(s => s is { Active: true, InCombat: true });
+            bool anyDamage = empireIds.SelectMany(id => shipIdsByEmpire[id])
+                .Select(id => started.AuthorityUniverse.UState.Objects.FindShip(id))
+                .Any(s => s == null || !s.Active || s.HealthPercent < 0.999f || s.InternalSlotsHealthPercent < 0.999f);
+            Assert.IsTrue(anyCombat || started.AuthorityUniverse.UState.Objects.NumProjectiles > 0 || anyDamage,
+                $"The stress should exercise real combat, not merely idle synchronized fleets. " +
+                $"design={combatDesign} remaining={remainingAuthorityShips}/{PlayerCount * ShipsPerPlayer} " +
+                $"projectiles={started.AuthorityUniverse.UState.Objects.NumProjectiles}");
+        }
+        catch (Authoritative4XSyncMismatchException ex)
+        {
+            Assert.Fail("8-player 100-ship combat desynced: " + ex.Message);
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XLobby_FourHumansFourAiClientInteractionGauntletStaysSynced_Headless()
     {
         LoadAllGameData();
