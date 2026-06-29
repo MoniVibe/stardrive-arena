@@ -25,18 +25,45 @@ namespace Ship_Game
         DropOptions<int> ConstructorDropDown;
         DropOptions<int> ResearchStationDropDown;
         DropOptions<int> MiningStationDropDown;
+        UIList AutomationList;
+        UIList ShipPickerList;
+        bool DraggingWindow;
+        Vector2 DragOffset;
         bool ResearchStationsEnabled;
         bool MiningOpsEnabled;
+        const int WindowWidth = 220;
+        const int WindowMaxHeight = 710;
+        const int WindowMinHeight = 420;
+        const int ScreenMargin = 15;
+        const int RightOverlayReserve = 345;
+        const int HeaderDragHeight = 28;
 
         public AutomationWindow(UniverseScreen screen) : base(screen, toPause: null)
         {
             Screen = screen;
-            const int windowWidth = 220;
-            const int rightOverlayReserve = 345;
-            int x = Math.Max(15, ScreenWidth - rightOverlayReserve - 15 - windowWidth);
-            int height = Math.Min(710, Math.Max(420, ScreenHeight - 110));
-            Rect = new Rectangle(x, 89, windowWidth, height);
+            Rect = DefaultWindowRect(ScreenWidth, ScreenHeight);
             CanEscapeFromScreen = false;
+        }
+
+        public static Rectangle DefaultWindowRect(int screenWidth, int screenHeight)
+        {
+            int maxHeight = Math.Max(260, screenHeight - ScreenMargin * 2);
+            int height = Math.Min(WindowMaxHeight, Math.Max(WindowMinHeight, screenHeight - 110));
+            height = Math.Min(height, maxHeight);
+
+            int playfieldWidth = Math.Max(WindowWidth, screenWidth - RightOverlayReserve);
+            int x = (playfieldWidth - WindowWidth) / 2;
+            int y = Math.Max(40, (screenHeight - height) / 2);
+            return ClampWindowRect(new Rectangle(x, y, WindowWidth, height), screenWidth, screenHeight);
+        }
+
+        public static Rectangle ClampWindowRect(Rectangle rect, int screenWidth, int screenHeight)
+        {
+            int maxX = Math.Max(ScreenMargin, screenWidth - rect.Width - ScreenMargin);
+            int maxY = Math.Max(ScreenMargin, screenHeight - rect.Height - ScreenMargin);
+            int x = Math.Min(maxX, Math.Max(ScreenMargin, rect.X));
+            int y = Math.Min(maxY, Math.Max(ScreenMargin, rect.Y));
+            return new Rectangle(x, y, rect.Width, rect.Height);
         }
 
         class CheckedDropdown : UIElementV2
@@ -79,58 +106,101 @@ namespace Ship_Game
             RectF win = new(Rect);
             ConstructionSubMenu = new(win, GameText.Automation);
 
-            UIList rest = AddList(new(win.X + 10f, win.Y + 290));
-            rest.Padding = new(2f, 10f);
-            rest.AddCheckbox(() => Screen.Player.AutoPickConstructors,  title: GameText.AutoPickConstructorsName, tooltip: GameText.AutoPickConstructorsTip);
-            rest.AddCheckbox(() => Screen.Player.AutoPickBestColonizer, title: GameText.AutoPickColonyShip, tooltip: GameText.TheBestColonyShipWill);
-            rest.AddCheckbox(() => Screen.Player.AutoPickBestFreighter, title: GameText.AutoPickFreighter, tooltip: GameText.IfAutoTradeIsChecked);
-            rest.AddCheckbox(() => Screen.Player.AutoResearch,          title: GameText.AutoResearch, tooltip: GameText.YourEmpireWillAutomaticallySelect);
-            rest.AddCheckbox(() => Screen.Player.AutoBuildTerraformers, title: GameText.AutoBuildTerraformers, tooltip: GameText.AutoBuildTerraformersTip);
-            rest.AddCheckbox(() => Screen.Player.AutoTaxes,             title: GameText.AutoTaxes, tooltip: GameText.YourEmpireWillAutomaticallyManage3);
-            rest.AddCheckbox(() => Screen.Player.AutoMilitary,          title: "Auto Military", tooltip: "Let the AI manage military shipbuilding and fleet defense.");
+            AutomationList = AddList(new(win.X + 10f, win.Y + 290));
+            AutomationList.Padding = new(2f, 10f);
+            AutomationList.AddCheckbox(() => Screen.Player.AutoPickConstructors,  title: GameText.AutoPickConstructorsName, tooltip: GameText.AutoPickConstructorsTip);
+            AutomationList.AddCheckbox(() => Screen.Player.AutoPickBestColonizer, title: GameText.AutoPickColonyShip, tooltip: GameText.TheBestColonyShipWill);
+            AutomationList.AddCheckbox(() => Screen.Player.AutoPickBestFreighter, title: GameText.AutoPickFreighter, tooltip: GameText.IfAutoTradeIsChecked);
+            AutomationList.AddCheckbox(() => Screen.Player.AutoResearch,          title: GameText.AutoResearch, tooltip: GameText.YourEmpireWillAutomaticallySelect);
+            AutomationList.AddCheckbox(() => Screen.Player.AutoBuildTerraformers, title: GameText.AutoBuildTerraformers, tooltip: GameText.AutoBuildTerraformersTip);
+            AutomationList.AddCheckbox(() => Screen.Player.AutoTaxes,             title: GameText.AutoTaxes, tooltip: GameText.YourEmpireWillAutomaticallyManage3);
+            AutomationList.AddCheckbox(() => Screen.Player.AutoMilitary,          title: "Auto Military", tooltip: "Let the AI manage military shipbuilding and fleet defense.");
 
             if (ResearchStationsEnabled && Screen.Player.CanBuildResearchStations)
-                rest.AddCheckbox(() => Screen.Player.AutoPickBestResearchStation, title: GameText.AutoPickResearchStation, tooltip: GameText.AutoPickResearchStationTip);
+                AutomationList.AddCheckbox(() => Screen.Player.AutoPickBestResearchStation, title: GameText.AutoPickResearchStation, tooltip: GameText.AutoPickResearchStationTip);
 
             if (MiningOpsEnabled && Screen.Player.CanBuildMiningStations)
-                rest.AddCheckbox(() => Screen.Player.AutoPickBestMiningStation, title: GameText.AutoPickMiningStation, tooltip: GameText.AutoPickMiningStationTip);
+                AutomationList.AddCheckbox(() => Screen.Player.AutoPickBestMiningStation, title: GameText.AutoPickMiningStation, tooltip: GameText.AutoPickMiningStationTip);
 
-            rest.AddCheckbox(() => RushConstruction,                      title: GameText.RushAllConstruction, tooltip: GameText.RushAllConstructionTip);
-            rest.AddCheckbox(() => UState.P.AllowPlayerInterTrade,        title: GameText.AllowPlayerInterTradeTitle, tooltip: GameText.AllowPlayerInterTradeTip);
-            rest.AddCheckbox(() => UState.P.SuppressOnBuildNotifications, title: GameText.DisableBuildingAlerts, tooltip: GameText.NormallyWhenYouManuallyAdd);
-            rest.AddCheckbox(() => UState.P.DisableInhibitionWarning,     title: GameText.DisableInhibitionAlerts, tooltip: GameText.InhibitionAlertsAreDisplayedWhen);
-            rest.AddCheckbox(() => UState.P.DisableVolcanoWarning,        title: GameText.DisableVolcanoAlerts, tooltip: GameText.DisableVolcanoActivationOrDeactivation);
-            rest.AddCheckbox(() => UState.P.DisableCrashSiteWarning,      title: GameText.DisableCrashSiteAlerts, tooltip: GameText.DisableCrashSiteAlertsTip);
-            rest.AddCheckbox(() => UState.P.EnableStarvationWarning,      title: GameText.EnableStarvationWarning, tooltip: GameText.EnableStarvationWarningTip);
-            rest.AddCheckbox(() => UState.P.PrioitizeProjectors,          title: GameText.PrioritizeProjector, tooltip: GameText.PrioritizeProjectorTip);
+            AutomationList.AddCheckbox(() => RushConstruction,                      title: GameText.RushAllConstruction, tooltip: GameText.RushAllConstructionTip);
+            AutomationList.AddCheckbox(() => UState.P.AllowPlayerInterTrade,        title: GameText.AllowPlayerInterTradeTitle, tooltip: GameText.AllowPlayerInterTradeTip);
+            AutomationList.AddCheckbox(() => UState.P.SuppressOnBuildNotifications, title: GameText.DisableBuildingAlerts, tooltip: GameText.NormallyWhenYouManuallyAdd);
+            AutomationList.AddCheckbox(() => UState.P.DisableInhibitionWarning,     title: GameText.DisableInhibitionAlerts, tooltip: GameText.InhibitionAlertsAreDisplayedWhen);
+            AutomationList.AddCheckbox(() => UState.P.DisableVolcanoWarning,        title: GameText.DisableVolcanoAlerts, tooltip: GameText.DisableVolcanoActivationOrDeactivation);
+            AutomationList.AddCheckbox(() => UState.P.DisableCrashSiteWarning,      title: GameText.DisableCrashSiteAlerts, tooltip: GameText.DisableCrashSiteAlertsTip);
+            AutomationList.AddCheckbox(() => UState.P.EnableStarvationWarning,      title: GameText.EnableStarvationWarning, tooltip: GameText.EnableStarvationWarningTip);
+            AutomationList.AddCheckbox(() => UState.P.PrioitizeProjectors,          title: GameText.PrioritizeProjector, tooltip: GameText.PrioritizeProjectorTip);
 
-            UIList ticks = AddList(new Vector2(win.X + 10f, win.Y + 26f));
-            ticks.Padding = new Vector2(2f, 10f);
+            ShipPickerList = AddList(new Vector2(win.X + 10f, win.Y + 26f));
+            ShipPickerList.Padding = new Vector2(2f, 10f);
 
-            ScoutDropDown = ticks.Add(new CheckedDropdown())
+            ScoutDropDown = ShipPickerList.Add(new CheckedDropdown())
                 .Create(() => Screen.Player.AutoExplore, title:GameText.Autoexplore, tooltip:GameText.YourEmpireWillAutomaticallyManage);
 
-            ColonyShipDropDown = ticks.Add(new CheckedDropdown())
+            ColonyShipDropDown = ShipPickerList.Add(new CheckedDropdown())
                 .Create(() => Screen.Player.AutoColonize, title:GameText.Autocolonize, tooltip:GameText.YourEmpireWillAutomaticallyCreate);
 
-            ConstructorDropDown = ticks.Add(new CheckedDropdown())
+            ConstructorDropDown = ShipPickerList.Add(new CheckedDropdown())
                 .Create(() => Screen.Player.AutoBuildSpaceRoads, Localizer.Token(GameText.Autobuild) + " Projectors", GameText.YourEmpireWillAutomaticallyCreate2);
 
-            FreighterDropDown = ticks.Add(new CheckedDropdown())
+            FreighterDropDown = ShipPickerList.Add(new CheckedDropdown())
                 .Create(() => Screen.Player.AutoFreighters, title: GameText.AutomaticTrade, tooltip: GameText.YourEmpireWillAutomaticallyManage2);
 
             if (ResearchStationsEnabled)
-                ResearchStationDropDown = ticks.Add(new CheckedDropdown())
+                ResearchStationDropDown = ShipPickerList.Add(new CheckedDropdown())
                     .Create(() => Screen.Player.AutoBuildResearchStations, title: GameText.AutoBuildResearchStation, tooltip: GameText.AutoBuildResearchStationTip);
 
             if (MiningOpsEnabled)
-                MiningStationDropDown = ticks.Add(new CheckedDropdown())
+                MiningStationDropDown = ShipPickerList.Add(new CheckedDropdown())
                     .Create(() => Screen.Player.AutoBuildMiningStations, title: GameText.AutoBuildMiningStation, tooltip: GameText.AutoBuildMiningStationTip);
 
 
             // draw ordering is still imperfect, this is a hack
-            ticks.ReverseZOrder();
+            ShipPickerList.ReverseZOrder();
             UpdateDropDowns();
+        }
+
+        Rectangle HeaderDragRect => new(Rect.X, Rect.Y, Rect.Width, HeaderDragHeight);
+
+        void MoveWindowTo(Vector2 topLeft)
+        {
+            Rectangle next = ClampWindowRect(new Rectangle((int)topLeft.X, (int)topLeft.Y, Rect.Width, Rect.Height),
+                ScreenWidth, ScreenHeight);
+            if (next.X == Rect.X && next.Y == Rect.Y)
+                return;
+
+            Rect = next;
+            RectF win = new(Rect);
+            ConstructionSubMenu.RectF = win;
+            ConstructionSubMenu.PerformLayout();
+            AutomationList?.SetAbsPos(win.X + 10f, win.Y + 290f);
+            AutomationList?.PerformLayout();
+            ShipPickerList?.SetAbsPos(win.X + 10f, win.Y + 26f);
+            ShipPickerList?.PerformLayout();
+        }
+
+        bool HandleDrag(InputState input)
+        {
+            if (DraggingWindow)
+            {
+                if (input.LeftMouseDown)
+                {
+                    MoveWindowTo(input.CursorPosition - DragOffset);
+                    return true;
+                }
+
+                DraggingWindow = false;
+                return input.LeftMouseReleased || input.LeftMouseUp;
+            }
+
+            if (input.LeftMouseClick && HeaderDragRect.HitTest(input.CursorPosition))
+            {
+                DraggingWindow = true;
+                DragOffset = input.CursorPosition - Pos;
+                return true;
+            }
+
+            return false;
         }
 
         public void ToggleVisibility()
@@ -191,6 +261,9 @@ namespace Ship_Game
         {
             if (!IsOpen)
                 return false;
+
+            if (HandleDrag(input))
+                return true;
 
             bool authoritative = Authoritative4XClientContext.ShouldBlockLocalMutation(Screen.Player);
             AutomationSnapshot before = authoritative ? CaptureAutomationSnapshot() : default;
