@@ -731,6 +731,26 @@ namespace Ship_Game.Universe.SolarBodies
                 tile.RemoveQueueItem(); // Clear all planned buildings from tiles
         }
 
+        public void ReplaceQueueForAuthoritativeSync(IEnumerable<QueueItem> items)
+        {
+            foreach (PlanetGridSquare tile in P.TilesList)
+                tile.RemoveQueueItem();
+
+            lock (ConstructionQueue)
+            {
+                ConstructionQueue.Clear();
+                foreach (QueueItem item in items ?? Enumerable.Empty<QueueItem>())
+                {
+                    if (item == null)
+                        continue;
+                    item.Planet = P;
+                    ConstructionQueue.Add(item);
+                    item.pgs?.SetQueueItem(item);
+                }
+                QueueSnapshotDirty = true;
+            }
+        }
+
         public bool FirstItemCanFeedUs()
         {
             lock (ConstructionQueue)

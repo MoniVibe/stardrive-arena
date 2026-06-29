@@ -68,12 +68,11 @@ public sealed class AuthoritativeStateSnapshot
                 ApplyPlayerDesignLine(universe, line);
             else if (line.StartsWith("P|", StringComparison.Ordinal))
                 ApplyPlanetRuntimeLine(universe, line);
-            else if (line.StartsWith("Q|", StringComparison.Ordinal))
-                ApplyConstructionQueueRuntimeLine(universe, line);
             else if (line.StartsWith("R|", StringComparison.Ordinal))
                 ApplyRelationshipLine(universe, line);
         }
 
+        ApplyConstructionQueuePayload(universe, lines);
         ApplyColonizationGoalPayload(universe, lines);
     }
 
@@ -196,56 +195,182 @@ public sealed class AuthoritativeStateSnapshot
             empire.AddBuildableShip(registered);
     }
 
-    static void ApplyConstructionQueueRuntimeLine(UniverseState universe, string line)
+    static void ApplyConstructionQueuePayload(UniverseState universe, string[] lines)
     {
+        var expectedCounts = new Dictionary<int, int>();
+        var desired = new Dictionary<int, List<ConstructionQueueRuntime>>();
+        foreach (string rawLine in lines)
+        {
+            string line = rawLine.TrimEnd('\r');
+            if (line.StartsWith("P|", StringComparison.Ordinal))
+            {
+                string[] p = line.Split('|');
+                if (p.Length >= 34
+                    && int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int planetId)
+                    && int.TryParse(p[33], NumberStyles.Integer, CultureInfo.InvariantCulture, out int queueCount))
+                {
+                    expectedCounts[planetId] = queueCount;
+                }
+            }
+            else if (line.StartsWith("Q|", StringComparison.Ordinal)
+                     && TryParseConstructionQueueRuntime(line, out ConstructionQueueRuntime runtime))
+            {
+                if (!desired.TryGetValue(runtime.PlanetId, out List<ConstructionQueueRuntime> queue))
+                {
+                    queue = new List<ConstructionQueueRuntime>();
+                    desired[runtime.PlanetId] = queue;
+                }
+                queue.Add(runtime);
+            }
+        }
+
+        foreach ((int planetId, int queueCount) in expectedCounts.OrderBy(kv => kv.Key))
+        {
+            Planet planet = universe.GetPlanet(planetId);
+            if (planet == null)
+                continue;
+
+            if (queueCount == 0 || !desired.TryGetValue(planetId, out List<ConstructionQueueRuntime> queueRows))
+            {
+                if (planet.ConstructionQueue.Count != 0)
+                    planet.Construction.ReplaceQueueForAuthoritativeSync(Array.Empty<QueueItem>());
+                continue;
+            }
+
+            ConstructionQueueRuntime[] orderedRows = queueRows
+                .OrderBy(q => q.QueueIndex)
+                .ThenBy(q => q.ShipName, StringComparer.Ordinal)
+                .ThenBy(q => q.BuildingName, StringComparer.Ordinal)
+                .ThenBy(q => q.TroopType, StringComparer.Ordinal)
+                .ToArray();
+
+            if (QueueShapeMatches(planet, orderedRows))
+            {
+                for (int i = 0; i < orderedRows.Length; ++i)
+                    ApplyQueueItemRuntime(planet.ConstructionQueue[i], orderedRows[i]);
+                continue;
+            }
+
+            var items = new List<QueueItem>(orderedRows.Length);
+            foreach (ConstructionQueueRuntime row in orderedRows)
+            {
+                if (TryCreateQueueItem(planet, row, out QueueItem item))
+                    items.Add(item);
+            }
+
+            planet.Construction.ReplaceQueueForAuthoritativeSync(items);
+        }
+    }
+
+    static bool QueueShapeMatches(Planet planet, ConstructionQueueRuntime[] rows)
+    {
+        if (planet.ConstructionQueue.Count != rows.Length)
+            return false;
+
+        for (int i = 0; i < rows.Length; ++i)
+        {
+            if (!QueueItemMatches(planet.ConstructionQueue[i], rows[i]))
+                return false;
+        }
+        return true;
+    }
+
+    static bool QueueItemMatches(QueueItem item, ConstructionQueueRuntime row)
+    {
+        return item != null
+               && item.isShip == row.IsShip
+               && item.isBuilding == row.IsBuilding
+               && item.isTroop == row.IsTroop
+               && (int)item.QType == row.QueueType
+               && string.Equals(item.ShipData?.Name ?? "", row.ShipName, StringComparison.Ordinal)
+               && string.Equals(item.Building?.Name ?? "", row.BuildingName, StringComparison.Ordinal)
+               && string.Equals(item.TroopType ?? "", row.TroopType, StringComparison.Ordinal);
+    }
+
+    static void ApplyQueueItemRuntime(QueueItem item, ConstructionQueueRuntime row)
+    {
+        item.Cost = row.Cost;
+        item.ProductionSpent = row.ProductionSpent;
+        item.Rush = row.Rush;
+        item.SetCanceled(row.Canceled);
+    }
+
+    static bool TryParseConstructionQueueRuntime(string line, out ConstructionQueueRuntime runtime)
+    {
+        runtime = default;
         string[] p = line.Split('|');
         if (p.Length < 16
             || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int planetId)
             || !int.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int queueIndex)
-            || queueIndex < 0)
-        {
-            return;
-        }
-
-        Planet planet = universe.GetPlanet(planetId);
-        if (planet == null || queueIndex >= planet.ConstructionQueue.Count)
-            return;
-
-        QueueItem item = planet.ConstructionQueue[queueIndex];
-        if (!QueueItemMatches(item, p))
-            return;
-
-        if (TryParseFloatBits(p[12], out float cost))
-            item.Cost = cost;
-        if (TryParseFloatBits(p[13], out float productionSpent))
-            item.ProductionSpent = productionSpent;
-        if (int.TryParse(p[14], NumberStyles.Integer, CultureInfo.InvariantCulture, out int rush))
-            item.Rush = rush != 0;
-        if (int.TryParse(p[15], NumberStyles.Integer, CultureInfo.InvariantCulture, out int cancelled))
-            item.SetCanceled(cancelled != 0);
-    }
-
-    static bool QueueItemMatches(QueueItem item, string[] p)
-    {
-        if (item == null || p.Length < 10)
-            return false;
-
-        if (!int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int isShip)
+            || queueIndex < 0
+            || !int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int isShip)
             || !int.TryParse(p[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int isBuilding)
             || !int.TryParse(p[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out int isTroop)
-            || !int.TryParse(p[6], NumberStyles.Integer, CultureInfo.InvariantCulture, out int qType))
+            || !int.TryParse(p[6], NumberStyles.Integer, CultureInfo.InvariantCulture, out int queueType)
+            || !int.TryParse(p[10], NumberStyles.Integer, CultureInfo.InvariantCulture, out int tileX)
+            || !int.TryParse(p[11], NumberStyles.Integer, CultureInfo.InvariantCulture, out int tileY)
+            || !TryParseFloatBits(p[12], out float cost)
+            || !TryParseFloatBits(p[13], out float productionSpent))
         {
             return false;
         }
 
-        return item.isShip == (isShip != 0)
-               && item.isBuilding == (isBuilding != 0)
-               && item.isTroop == (isTroop != 0)
-               && (int)item.QType == qType
-               && string.Equals(item.ShipData?.Name ?? "", p[7] ?? "", StringComparison.Ordinal)
-               && string.Equals(item.Building?.Name ?? "", p[8] ?? "", StringComparison.Ordinal)
-               && string.Equals(item.TroopType ?? "", p[9] ?? "", StringComparison.Ordinal);
+        int.TryParse(p[14], NumberStyles.Integer, CultureInfo.InvariantCulture, out int rush);
+        int.TryParse(p[15], NumberStyles.Integer, CultureInfo.InvariantCulture, out int canceled);
+        runtime = new ConstructionQueueRuntime(planetId, queueIndex, isShip != 0, isBuilding != 0,
+            isTroop != 0, queueType, p[7] ?? "", p[8] ?? "", p[9] ?? "", tileX, tileY,
+            cost, productionSpent, rush != 0, canceled != 0);
+        return true;
     }
+
+    static bool TryCreateQueueItem(Planet planet, ConstructionQueueRuntime row, out QueueItem item)
+    {
+        item = new QueueItem(planet)
+        {
+            isShip = row.IsShip,
+            isBuilding = row.IsBuilding,
+            isTroop = row.IsTroop,
+            QType = (QueueItemType)row.QueueType,
+            Cost = row.Cost,
+            ProductionSpent = row.ProductionSpent,
+            Rush = row.Rush,
+            NotifyOnEmpty = false,
+        };
+        item.SetCanceled(row.Canceled);
+
+        if (row.IsShip)
+        {
+            if (!ResourceManager.Ships.GetDesign(row.ShipName, out IShipDesign design))
+                return false;
+            item.ShipData = design;
+            item.isOrbital = design.IsPlatformOrStation;
+        }
+
+        if (row.IsBuilding)
+        {
+            Building building = ResourceManager.CreateBuilding(planet, row.BuildingName);
+            if (building == null)
+                return false;
+            item.Building = building;
+            item.IsMilitary = building.IsMilitary;
+            item.IsTerraformer = building.IsTerraformer;
+            item.pgs = FindQueueTile(planet, row.TileX, row.TileY);
+        }
+
+        if (row.IsTroop)
+        {
+            if (!ResourceManager.GetTroopTemplate(row.TroopType, out _))
+                return false;
+            item.TroopType = row.TroopType;
+        }
+
+        return row.IsShip || row.IsBuilding || row.IsTroop;
+    }
+
+    static PlanetGridSquare FindQueueTile(Planet planet, int x, int y)
+        => x >= 0 && y >= 0
+            ? planet.TilesList.FirstOrDefault(t => t.X == x && t.Y == y)
+            : null;
 
     static void ApplyPlanetRuntimeLine(UniverseState universe, string line)
     {
@@ -1056,6 +1181,46 @@ public sealed class AuthoritativeStateSnapshot
 
         bool rushAll = flags.HasFlag(AuthoritativeEmpireAutomationFlags.RushAllConstruction);
         empire.RushAllConstruction = rushAll;
+    }
+
+    readonly struct ConstructionQueueRuntime
+    {
+        public readonly int PlanetId;
+        public readonly int QueueIndex;
+        public readonly bool IsShip;
+        public readonly bool IsBuilding;
+        public readonly bool IsTroop;
+        public readonly int QueueType;
+        public readonly string ShipName;
+        public readonly string BuildingName;
+        public readonly string TroopType;
+        public readonly int TileX;
+        public readonly int TileY;
+        public readonly float Cost;
+        public readonly float ProductionSpent;
+        public readonly bool Rush;
+        public readonly bool Canceled;
+
+        public ConstructionQueueRuntime(int planetId, int queueIndex, bool isShip, bool isBuilding,
+            bool isTroop, int queueType, string shipName, string buildingName, string troopType,
+            int tileX, int tileY, float cost, float productionSpent, bool rush, bool canceled)
+        {
+            PlanetId = planetId;
+            QueueIndex = queueIndex;
+            IsShip = isShip;
+            IsBuilding = isBuilding;
+            IsTroop = isTroop;
+            QueueType = queueType;
+            ShipName = shipName ?? "";
+            BuildingName = buildingName ?? "";
+            TroopType = troopType ?? "";
+            TileX = tileX;
+            TileY = tileY;
+            Cost = cost;
+            ProductionSpent = productionSpent;
+            Rush = rush;
+            Canceled = canceled;
+        }
     }
 
     readonly struct ColonizationGoalRuntime

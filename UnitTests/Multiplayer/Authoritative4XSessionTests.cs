@@ -10265,6 +10265,149 @@ public class Authoritative4XSessionTests : StarDriveTest
         }
     }
 
+    [TestMethod]
+    public void Authoritative4XLobby_FourHumansFourAiAutomationStressStaysSynced_Headless()
+    {
+        LoadAllGameData();
+
+        const int HumanCount = 4;
+        const int TotalMajorEmpires = 8;
+        const int StressTicks = 1600;
+        int[] peers = Enumerable.Range(2, HumanCount).ToArray();
+        IEmpireData[] races = ResourceManager.MajorRaces
+            .Where(r => !r.IsFactionOrMinorRace)
+            .OrderBy(r => RacePreference(r), StringComparer.Ordinal)
+            .Take(TotalMajorEmpires)
+            .ToArray();
+        Assert.IsTrue(races.Length >= TotalMajorEmpires,
+            "The 4-human/4-AI automation stress needs at least eight playable major races.");
+
+        var settings = new Authoritative4XGameSettings
+        {
+            GenerationSeed = 0x4A14A1,
+            GalaxySize = GalSize.Tiny,
+            StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+            Mode = RaceDesignScreen.GameMode.SpiralFourArm,
+            Difficulty = GameDifficulty.Normal,
+            NumOpponents = TotalMajorEmpires - 1,
+            Pace = 1f,
+            TurnTimer = 5,
+            ExtraPlanets = 2,
+            CustomMineralDecay = 1.15f,
+            VolcanicActivity = 0.75f,
+            StartingPlanetRichnessBonus = 0.75f,
+            GameSpeed = 1f,
+            StartPaused = false,
+            AIUsesPlayerDesigns = false,
+            DisablePirates = true,
+            DisableResearchStations = true,
+            DisableMiningOps = true,
+        };
+
+        var lobby = new Authoritative4XLobby(hostPlayerPeerId: peers[0], hostName: "Host");
+        for (int i = 1; i < peers.Length; ++i)
+            lobby.Join(peers[i], "Human " + i.ToString());
+
+        Assert.IsTrue(lobby.SetSettings(peers[0], settings).Valid);
+        for (int i = 0; i < peers.Length; ++i)
+        {
+            Assert.IsTrue(lobby.SetPlayerSelection(peers[i], RacePreference(races[i]), Array.Empty<string>()).Valid);
+            Assert.IsTrue(lobby.SetReady(peers[i], true).Valid);
+        }
+        Assert.IsTrue(lobby.CanStart().Valid, lobby.CanStart().Reason);
+
+        using Authoritative4XLobbyStartResult started = lobby.StartInProcess();
+        Assert.AreEqual(HumanCount, started.HumanEmpireIds.Length);
+        Assert.AreEqual(TotalMajorEmpires, started.AuthorityUniverse.UState.MajorEmpires.Length,
+            "The generated game should contain exactly four human-controlled empires plus four AI empires.");
+
+        int[] aiEmpireIds = started.AuthorityUniverse.UState.MajorEmpires
+            .Select(e => e.Id)
+            .Except(started.HumanEmpireIds)
+            .OrderBy(id => id)
+            .ToArray();
+        Assert.AreEqual(TotalMajorEmpires - HumanCount, aiEmpireIds.Length,
+            "The stress scenario must keep four non-human AI major empires.");
+        foreach (int aiEmpireId in aiEmpireIds)
+        {
+            Empire ai = started.AuthorityUniverse.UState.GetEmpireById(aiEmpireId);
+            Assert.IsFalse(AuthoritativeHumanPlayers.IsHumanControlled(ai),
+                $"AI empire {aiEmpireId} should not be registered as human-controlled.");
+        }
+
+        var expected = new Dictionary<int, (AuthoritativeEmpireAutomationFlags Flags, string Freighter,
+            string Colony, string Scout, string Constructor, string ResearchStation, string MiningStation)>();
+        const AuthoritativeEmpireAutomationFlags FullAutomation = AuthoritativeEmpireAutomationFlags.All;
+
+        for (int i = 0; i < peers.Length; ++i)
+        {
+            int peer = peers[i];
+            int empireId = started.EmpireIdForPeer(peer);
+            Empire empire = started.AuthorityUniverse.UState.GetEmpireById(empireId);
+
+            string freighter = PickBuildableAutomationDesign(empire, s => s.IsFreighter, "freighter").Name;
+            string colony = PickBuildableColonyShip(empire).Name;
+            string scout = PickBuildableAutomationDesign(empire,
+                s => s.Role == RoleName.scout || s.Role == RoleName.fighter || s.ShipCategory == ShipCategory.Recon,
+                "scout").Name;
+            string constructor = PickOptionalAutomationDesign(empire, s => s.IsConstructor);
+            string researchStation = PickOptionalAutomationDesign(empire, s => s.IsResearchStation);
+            string miningStation = PickOptionalAutomationDesign(empire, s => s.IsMiningStation);
+
+            started.Session.SubmitFromClient(peer,
+                AuthoritativePlayerCommand.SetEmpireAutomation(2_000 + i, empireId,
+                    FullAutomation, freighter, colony, scout, constructor, researchStation, miningStation));
+            AssertAccepted(started.Session, peer);
+            AssertAllCanonicallySynced(started.Session, peers);
+
+            expected[empireId] = (FullAutomation, freighter, colony, scout,
+                constructor, researchStation, miningStation);
+        }
+
+        try
+        {
+            for (int step = 0; step < StressTicks; ++step)
+            {
+                int peer = peers[step % peers.Length];
+                int empireId = started.EmpireIdForPeer(peer);
+                started.Session.SubmitFromClient(peer,
+                    AuthoritativePlayerCommand.NoOp(3_000 + step, empireId));
+                AssertAccepted(started.Session, peer);
+                if (step % 25 == 0 || step == StressTicks - 1)
+                    AssertAllCanonicallySynced(started.Session, peers);
+            }
+        }
+        catch (Authoritative4XSyncMismatchException e)
+        {
+            Assert.Fail("4-human/4-AI automation stress diverged after applying full human automation: "
+                        + FirstPayloadDifferenceForTest(e.AuthoritySnapshot?.Payload, e.ClientSnapshot?.Payload));
+        }
+
+        foreach (int peer in peers)
+        {
+            int empireId = started.EmpireIdForPeer(peer);
+            var automation = expected[empireId];
+            Empire authorityEmpire = started.AuthorityUniverse.UState.GetEmpireById(empireId);
+            Assert.IsTrue(AuthoritativeHumanPlayers.IsHumanControlled(authorityEmpire),
+                $"Peer {peer}'s empire should still be human-controlled after {StressTicks} ticks.");
+            AssertEmpireAutomation(authorityEmpire, automation.Flags, automation.Freighter,
+                automation.Colony, automation.Scout, automation.Constructor,
+                automation.ResearchStation, automation.MiningStation,
+                $"Authority automation drifted for peer {peer}.");
+
+            foreach (Authoritative4XClientSpec client in started.Clients)
+            {
+                Empire replicaEmpire = client.Universe.UState.GetEmpireById(empireId);
+                AssertEmpireAutomation(replicaEmpire, automation.Flags, automation.Freighter,
+                    automation.Colony, automation.Scout, automation.Constructor,
+                    automation.ResearchStation, automation.MiningStation,
+                    $"Client peer {client.PeerId} automation drifted for human peer {peer}.");
+            }
+        }
+
+        AssertAllCanonicallySynced(started.Session, peers);
+    }
+
     static void AcceptProposal(Authoritative4XInProcessMultiClientSession session, int proposerPeer, int targetPeer,
         int proposerEmpire, int targetEmpire, int sequence, AuthoritativeDiplomacyProposalType type)
     {
@@ -10338,6 +10481,16 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(session.LastAuthoritySnapshot.HashLo, session.LastClientSnapshotFor(peer).HashLo);
             Assert.AreEqual(session.LastAuthoritySnapshot.HashHi, session.LastClientSnapshotFor(peer).HashHi);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshotFor(peer).SyncDigest);
+        }
+    }
+
+    static void AssertAllCanonicallySynced(Authoritative4XInProcessMultiClientSession session, params int[] peers)
+    {
+        foreach (int peer in peers)
+        {
+            AuthoritativeStateSnapshot client = session.LastClientSnapshotFor(peer);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, client.SyncDigest,
+                FirstPayloadDifferenceForTest(session.LastAuthoritySnapshot.Payload, client.Payload));
         }
     }
 
