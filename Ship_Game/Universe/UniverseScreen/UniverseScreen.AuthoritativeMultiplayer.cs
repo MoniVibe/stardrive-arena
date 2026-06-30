@@ -182,6 +182,29 @@ public partial class UniverseScreen
         return true;
     }
 
+    public void RecordAuthoritative4XUiOrderBlocked(string action, string reason, Ship ship = null,
+        Ship targetShip = null, Planet planet = null, ShipGroup group = null)
+    {
+        Authoritative4XLiveSession live = Authoritative4XLive;
+        if (live == null)
+            return;
+
+        string ShipInfo(string label, Ship s)
+            => s == null ? $"{label}=none" : $"{label}={s.Id}/{s.Loyalty?.Id ?? 0}/{s.Name}";
+        string groupInfo = group == null
+            ? "group=none"
+            : $"group={group.Owner?.Id ?? 0}/ships={group.Ships?.Count ?? 0}";
+        live.RecordUiOrderBlocked(
+            $"action={action ?? ""} reason='{reason ?? ""}' localPeer={live.LocalPeerId} "
+            + $"localEmpire={live.LocalEmpireId} uiPlayer={Player?.Id ?? 0} "
+            + $"uStatePlayer={UState.Player?.Id ?? 0} authLocal={Authoritative4XLocalPlayer?.Id ?? 0} "
+            + $"{ShipInfo("ship", ship)} {ShipInfo("targetShip", targetShip)} "
+            + $"planet={planet?.Id ?? 0}/{planet?.Owner?.Id ?? 0} {groupInfo} "
+            + $"selectedShip={SelectedShip?.Id ?? 0}/{SelectedShip?.Loyalty?.Id ?? 0} "
+            + $"selectedFleet={SelectedFleet?.Owner?.Id ?? 0}/ships={SelectedFleet?.Ships?.Count ?? 0} "
+            + $"selectedList={SelectedShipList?.Count ?? 0}");
+    }
+
     bool TryHandleAuthoritative4XPauseInput()
     {
         if (Authoritative4XLive == null)

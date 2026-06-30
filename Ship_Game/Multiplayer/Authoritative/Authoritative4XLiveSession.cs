@@ -74,6 +74,9 @@ public sealed class Authoritative4XLiveSession : IDisposable
     public void RecordViewPerf(string details)
         => Telemetry?.Event("VIEW_PERF", details ?? "");
 
+    public void RecordUiOrderBlocked(string details)
+        => Telemetry?.Event("UI_ORDER_BLOCKED", details ?? "");
+
     public void ActivateUiCommandContext()
         => UiContext?.Activate();
 

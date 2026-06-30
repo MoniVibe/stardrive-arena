@@ -129,6 +129,11 @@ namespace Ship_Game
                 SelectedSomethingTimer = 3f;
                 MoveFleetToMouse(SelectedFleet, planetClicked, shipClicked, wasProjecting: false);
             }
+            else if (SelectedFleet != null && IsAuthoritative4XMultiplayer)
+            {
+                RecordAuthoritative4XUiOrderBlocked("right-click-fleet", "selected-fleet-not-local-for-ui",
+                    targetShip: shipClicked, planet: planetClicked, group: SelectedFleet);
+            }
             else if (SelectedShip != null && IsLocalShipForUi(SelectedShip))
             {
                 SelectedSomethingTimer = 3f;
@@ -156,12 +161,25 @@ namespace Ship_Game
                 }
                 return;
             }
+            else if (SelectedShip != null && IsAuthoritative4XMultiplayer)
+            {
+                RecordAuthoritative4XUiOrderBlocked("right-click-ship", "selected-ship-not-local-for-ui",
+                    ship: SelectedShip, targetShip: shipClicked, planet: planetClicked);
+                return;
+            }
             else if (SelectedShipList.Count > 0)
             {
                 SelectedSomethingTimer = 3f;
                 foreach (Ship ship in SelectedShipList)
+                {
                     if (UnselectableShip(ship) || !IsLocalShipForUi(ship))
+                    {
+                        RecordAuthoritative4XUiOrderBlocked("right-click-ship-list",
+                            UnselectableShip(ship) ? "selected-list-ship-unselectable" : "selected-list-ship-not-local-for-ui",
+                            ship: ship, targetShip: shipClicked, planet: planetClicked);
                         return;
+                    }
+                }
 
                 GameAudio.AffirmativeClick();
 

@@ -414,12 +414,16 @@ namespace Ship_Game.Universe
                     GameAudio.AffirmativeClick();
                     return;
                 case Authoritative4XUiCommandResult.Blocked:
+                    Universe.RecordAuthoritative4XUiOrderBlocked("move-fleet", "submit-blocked",
+                        targetShip: shipClicked, planet: planetClicked, group: fleet);
                     GameAudio.NegativeClick();
                     return;
             }
 
             if (Authoritative4XClientContext.ShouldBlockLocalMutation(fleet))
             {
+                Universe.RecordAuthoritative4XUiOrderBlocked("move-fleet", "passive-client-local-mutation-blocked",
+                    targetShip: shipClicked, planet: planetClicked, group: fleet);
                 GameAudio.NegativeClick();
                 return;
             }
@@ -444,8 +448,16 @@ namespace Ship_Game.Universe
 
         public void MoveShipToLocation(Ship[] enemyShips, Vector2 pos, Vector2 direction, Ship ship)
         {
-            if (ship.IsPlatformOrStation || !HelperFunctions.CanExitWarpForChangingDirectionByCommand([ship], enemyShips))
+            if (ship.IsPlatformOrStation)
             {
+                Universe.RecordAuthoritative4XUiOrderBlocked("move-ship", "platform-or-station", ship: ship);
+                GameAudio.NegativeClick();
+                return;
+            }
+
+            if (!HelperFunctions.CanExitWarpForChangingDirectionByCommand([ship], enemyShips))
+            {
+                Universe.RecordAuthoritative4XUiOrderBlocked("move-ship", "cannot-exit-warp-for-command", ship: ship);
                 GameAudio.NegativeClick();
                 return;
             }
@@ -457,12 +469,15 @@ namespace Ship_Game.Universe
                 case Authoritative4XUiCommandResult.Submitted:
                     return;
                 case Authoritative4XUiCommandResult.Blocked:
+                    Universe.RecordAuthoritative4XUiOrderBlocked("move-ship", "submit-blocked", ship: ship);
                     GameAudio.NegativeClick();
                     return;
             }
 
             if (Authoritative4XClientContext.ShouldBlockLocalMutation(ship))
             {
+                Universe.RecordAuthoritative4XUiOrderBlocked("move-ship", "passive-client-local-mutation-blocked",
+                    ship: ship);
                 GameAudio.NegativeClick();
                 return;
             }
