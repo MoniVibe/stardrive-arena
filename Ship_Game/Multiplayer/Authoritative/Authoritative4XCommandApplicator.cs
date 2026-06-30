@@ -51,6 +51,7 @@ public sealed class Authoritative4XCommandApplicator
                 AuthoritativePlayerCommandKind.MoveResearchQueueItem => ApplyMoveResearchQueueItem(command, empire, result),
                 AuthoritativePlayerCommandKind.SetEmpireBudget => ApplyEmpireBudget(command, empire, result),
                 AuthoritativePlayerCommandKind.SetEmpireAutomation => ApplyEmpireAutomation(command, empire, result),
+                AuthoritativePlayerCommandKind.SetUniversePreferences => ApplyUniversePreferences(command, empire, result),
                 AuthoritativePlayerCommandKind.DiplomacyProposal => ApplyDiplomacy(command, empire, result),
                 AuthoritativePlayerCommandKind.DiplomacyResponse => ApplyDiplomacy(command, empire, result),
                 AuthoritativePlayerCommandKind.DesignShip => ApplyDesignShip(command, empire, result),
@@ -134,6 +135,20 @@ public sealed class Authoritative4XCommandApplicator
         return Accept(result);
     }
 
+    AuthoritativeCommandResult ApplyUniversePreferences(AuthoritativePlayerCommand command, Empire empire,
+        AuthoritativeCommandResult result)
+    {
+        var flags = (AuthoritativeUniversePreferenceFlags)command.TargetId;
+        if ((flags & ~AuthoritativeUniversePreferenceFlags.All) != 0)
+            return Reject(result, $"Unsupported universe preference flags {command.TargetId}.");
+
+        UState.P.AllowPlayerInterTrade =
+            flags.HasFlag(AuthoritativeUniversePreferenceFlags.AllowPlayerInterTrade);
+        UState.P.PrioitizeProjectors =
+            flags.HasFlag(AuthoritativeUniversePreferenceFlags.PrioritizeProjectors);
+        return Accept(result);
+    }
+
     AuthoritativeCommandResult ApplyEmpireAutomation(AuthoritativePlayerCommand command, Empire empire,
         AuthoritativeCommandResult result)
     {
@@ -148,14 +163,32 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, $"Invalid empire automation payload '{command.Text}'.");
         }
 
-        if (!IsAutomationDesignValid(empire, freighter, d => d.IsFreighter, "freighter", out string reason)
-            || !IsAutomationDesignValid(empire, colony, d => d.IsColonyShip, "colony ship", out reason)
-            || !IsAutomationDesignValid(empire, scout,
+        if (!TryNormalizeAutomationDesign(empire, freighter, d => d.IsFreighter, "freighter",
+                RequiresDesign(flags, AuthoritativeEmpireAutomationFlags.AutoFreighters,
+                    AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter),
+                out string normalizedFreighter, out string reason)
+            || !TryNormalizeAutomationDesign(empire, colony, d => d.IsColonyShip, "colony ship",
+                RequiresDesign(flags, AuthoritativeEmpireAutomationFlags.AutoColonize,
+                    AuthoritativeEmpireAutomationFlags.AutoPickBestColonizer),
+                out string normalizedColony, out reason)
+            || !TryNormalizeAutomationDesign(empire, scout,
                 d => d.Role == RoleName.scout || d.Role == RoleName.fighter || d.ShipCategory == ShipCategory.Recon,
-                "scout", out reason)
-            || !IsAutomationDesignValid(empire, constructor, d => d.IsConstructor, "constructor", out reason)
-            || !IsAutomationDesignValid(empire, researchStation, d => d.IsResearchStation, "research station", out reason)
-            || !IsAutomationDesignValid(empire, miningStation, d => d.IsMiningStation, "mining station", out reason))
+                "scout", flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoExplore),
+                out string normalizedScout, out reason)
+            || !TryNormalizeAutomationDesign(empire, constructor, d => d.IsConstructor, "constructor",
+                RequiresDesign(flags, AuthoritativeEmpireAutomationFlags.AutoBuildSpaceRoads,
+                    AuthoritativeEmpireAutomationFlags.AutoPickConstructors),
+                out string normalizedConstructor, out reason)
+            || !TryNormalizeAutomationDesign(empire, researchStation, d => d.IsResearchStation,
+                "research station",
+                RequiresDesign(flags, AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations,
+                    AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation),
+                out string normalizedResearchStation, out reason)
+            || !TryNormalizeAutomationDesign(empire, miningStation, d => d.IsMiningStation,
+                "mining station",
+                RequiresDesign(flags, AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations,
+                    AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation),
+                out string normalizedMiningStation, out reason))
         {
             return Reject(result, reason);
         }
@@ -180,12 +213,12 @@ public sealed class Authoritative4XCommandApplicator
         empire.RushAllConstruction = rushAll;
         empire.SwitchRushAllConstruction(rushAll);
 
-        empire.data.CurrentAutoFreighter = freighter;
-        empire.data.CurrentAutoColony = colony;
-        empire.data.CurrentAutoScout = scout;
-        empire.data.CurrentConstructor = constructor;
-        empire.data.CurrentResearchStation = researchStation;
-        empire.data.CurrentMiningStation = miningStation;
+        empire.data.CurrentAutoFreighter = normalizedFreighter;
+        empire.data.CurrentAutoColony = normalizedColony;
+        empire.data.CurrentAutoScout = normalizedScout;
+        empire.data.CurrentConstructor = normalizedConstructor;
+        empire.data.CurrentResearchStation = normalizedResearchStation;
+        empire.data.CurrentMiningStation = normalizedMiningStation;
         return Accept(result);
     }
 
@@ -2632,12 +2665,30 @@ public sealed class Authoritative4XCommandApplicator
         return true;
     }
 
-    static bool IsAutomationDesignValid(Empire empire, string designName, Func<IShipDesign, bool> predicate,
-        string label, out string reason)
+    static bool RequiresDesign(AuthoritativeEmpireAutomationFlags flags,
+        AuthoritativeEmpireAutomationFlags automationFlag,
+        AuthoritativeEmpireAutomationFlags autoPickFlag)
     {
+        return flags.HasFlag(automationFlag) && !flags.HasFlag(autoPickFlag);
+    }
+
+    static bool TryNormalizeAutomationDesign(Empire empire, string designName, Func<IShipDesign, bool> predicate,
+        string label, bool required, out string normalizedName, out string reason)
+    {
+        normalizedName = "";
         reason = "";
         if (string.IsNullOrWhiteSpace(designName))
+        {
+            if (!required)
+                return true;
+
+            reason = $"Automation {label} design is required.";
+            return false;
+        }
+
+        if (!required)
             return true;
+
         if (!ResourceManager.Ships.GetDesign(designName, out IShipDesign design))
         {
             reason = $"Automation {label} design '{designName}' was not found.";
@@ -2648,6 +2699,7 @@ public sealed class Authoritative4XCommandApplicator
             reason = $"Automation {label} design '{designName}' is not buildable by empire {empire.Id}.";
             return false;
         }
+        normalizedName = design.Name;
         return true;
     }
 

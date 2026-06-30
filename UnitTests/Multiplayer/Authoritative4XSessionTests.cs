@@ -6018,16 +6018,29 @@ public class Authoritative4XSessionTests : StarDriveTest
             session.SubmitFromClient(AuthoritativePlayerCommand.SetEmpireAutomation(63, authority.Player.Id,
                 flags, freighter, colony, scout, constructor, researchStation, miningStation));
             Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
-            AssertEmpireAutomation(authority.Player, flags, freighter, colony, scout, constructor,
-                researchStation, miningStation);
-            AssertEmpireAutomation(client.Player, flags, freighter, colony, scout, constructor,
-                researchStation, miningStation);
+            AssertEmpireAutomation(authority.Player, flags, "", colony, scout, "", "", "");
+            AssertEmpireAutomation(client.Player, flags, "", colony, scout, "", "", "");
             Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
                 "The sync digest must cover empire automation flags and selected automation designs.");
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
             string acceptedDigest = session.LastAuthoritySnapshot.SyncDigest;
             session.SubmitFromClient(AuthoritativePlayerCommand.SetEmpireAutomation(64, authority.Player.Id,
+                AuthoritativeEmpireAutomationFlags.AutoResearch | AuthoritativeEmpireAutomationFlags.AutoTaxes,
+                "Missing Inactive Freighter", "Missing Inactive Colony", "Missing Inactive Scout",
+                "Missing Inactive Constructor", "Missing Inactive Research Station", "Missing Inactive Mining Station"));
+            Assert.IsTrue(session.LastResult.Accepted,
+                "Inactive hidden automation design names should be sanitized instead of rejecting local preference clicks.");
+            AssertEmpireAutomation(authority.Player,
+                AuthoritativeEmpireAutomationFlags.AutoResearch | AuthoritativeEmpireAutomationFlags.AutoTaxes,
+                "", "", "", "", "", "");
+            AssertEmpireAutomation(client.Player,
+                AuthoritativeEmpireAutomationFlags.AutoResearch | AuthoritativeEmpireAutomationFlags.AutoTaxes,
+                "", "", "", "", "", "");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            acceptedDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetEmpireAutomation(65, authority.Player.Id,
                 flags, freighter, colony, "Missing Authoritative Scout", constructor, researchStation, miningStation));
             Assert.IsFalse(session.LastResult.Accepted, "Missing automation designs must be rejected by the host.");
             StringAssert.Contains(session.LastResult.Reason, "scout");
@@ -6035,9 +6048,53 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
             var illegalFlags = flags | (AuthoritativeEmpireAutomationFlags)(1 << 20);
-            session.SubmitFromClient(AuthoritativePlayerCommand.SetEmpireAutomation(65, authority.Player.Id,
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetEmpireAutomation(66, authority.Player.Id,
                 illegalFlags, freighter, colony, scout, constructor, researchStation, miningStation));
             Assert.IsFalse(session.LastResult.Accepted, "Unsupported automation flag bits must be rejected.");
+            Assert.AreEqual(acceptedDigest, session.LastAuthoritySnapshot.SyncDigest);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XUniversePreferences_SyncAndRejectInvalidFlags_Headless()
+    {
+        const ulong Seed = 0xA470A15UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            authority.UState.P.AllowPlayerInterTrade = false;
+            authority.UState.P.PrioitizeProjectors = false;
+            client.UState.P.AllowPlayerInterTrade = false;
+            client.UState.P.PrioitizeProjectors = false;
+
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            string initialDigest = AuthoritativeStateSnapshot.Capture(authority.Screen, 0).SyncDigest;
+            var flags = AuthoritativeUniversePreferenceFlags.AllowPlayerInterTrade
+                        | AuthoritativeUniversePreferenceFlags.PrioritizeProjectors;
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetUniversePreferences(67,
+                authority.Player.Id, flags));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.IsTrue(authority.UState.P.AllowPlayerInterTrade);
+            Assert.IsTrue(authority.UState.P.PrioitizeProjectors);
+            Assert.IsTrue(client.UState.P.AllowPlayerInterTrade);
+            Assert.IsTrue(client.UState.P.PrioitizeProjectors);
+            Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "Universe preferences that can affect sim behavior must be covered by the canonical payload.");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            string acceptedDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetUniversePreferences(68,
+                authority.Player.Id, flags | (AuthoritativeUniversePreferenceFlags)(1 << 9)));
+            Assert.IsFalse(session.LastResult.Accepted, "Unsupported universe preference bits must be rejected.");
             Assert.AreEqual(acceptedDigest, session.LastAuthoritySnapshot.SyncDigest);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
         }
@@ -6250,6 +6307,46 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitEmpireAutomation(world.Enemy, flags,
                         freighter, colony, scout, constructor, "", ""));
+                Assert.AreEqual(1, submitted.Count);
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientContext_SubmitsUniversePreferencesWithoutLocalMutation_Headless()
+    {
+        const ulong Seed = 0xA470A16UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            world.UState.P.AllowPlayerInterTrade = false;
+            world.UState.P.PrioitizeProjectors = false;
+            var submitted = new List<AuthoritativePlayerCommand>();
+            var flags = AuthoritativeUniversePreferenceFlags.AllowPlayerInterTrade
+                        | AuthoritativeUniversePreferenceFlags.PrioritizeProjectors;
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 1860))
+            {
+                Assert.AreEqual(Authoritative4XUiCommandResult.Submitted,
+                    Authoritative4XClientContext.TrySubmitUniversePreferences(world.Player, flags));
+                Assert.AreEqual(1, submitted.Count);
+                Assert.AreEqual(1860, submitted[0].Sequence);
+                Assert.AreEqual(AuthoritativePlayerCommandKind.SetUniversePreferences, submitted[0].Kind);
+                Assert.AreEqual(world.Player.Id, submitted[0].EmpireId);
+                Assert.AreEqual((int)flags, submitted[0].TargetId);
+                Assert.IsFalse(world.UState.P.AllowPlayerInterTrade,
+                    "Passive MP clients must not locally change sim-affecting universe preferences before host acceptance.");
+                Assert.IsFalse(world.UState.P.PrioitizeProjectors,
+                    "Passive MP clients must not locally change projector priority before host acceptance.");
+
+                Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
+                    Authoritative4XClientContext.TrySubmitUniversePreferences(world.Enemy, flags));
                 Assert.AreEqual(1, submitted.Count);
             }
         }
@@ -7296,6 +7393,48 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "The host snapshot should repair client treasury-goal drift exactly.");
             Assert.AreEqual(authority.Player.AutoTaxes, client.Player.AutoTaxes,
                 "The host snapshot should repair client tax automation state.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientReplica_PrunesClientOnlyShipsBeforeDigest_Headless()
+    {
+        const ulong Seed = 0x4E58545241534849UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var replica = new Authoritative4XClientReplica(client.Screen, humanEmpireIds: new[] { client.Player.Id });
+            var command = AuthoritativePlayerCommand.NoOp(242, authority.Player.Id);
+            var result = new AuthoritativeCommandResult
+            {
+                Sequence = 242,
+                OriginPeer = 2,
+                Accepted = false,
+                Tick = 1,
+                Reason = "",
+            };
+
+            authority.Screen.SingleSimulationStep(new FixedSimTime(1f / 60f));
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 1);
+
+            Ship extra = Ship.CreateShipAtPoint(client.UState, client.Ship.ShipData.Name, client.Player,
+                client.Ship.Position + new Vector2(30_000f, 0f));
+            Assert.IsNotNull(extra, "The regression needs a real client-only ship to reproduce the live payload drift.");
+            Assert.IsNotNull(client.UState.Objects.FindShip(extra.Id));
+
+            replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
+
+            Assert.IsNull(client.UState.Objects.FindShip(extra.Id),
+                "Passive replicas must prune client-only ships that are absent from the host snapshot before hashing.");
+            Assert.AreEqual(authoritySnapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                "The host snapshot should repair a client-only ship row instead of desyncing.");
         }
         finally
         {
@@ -11116,8 +11255,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             AssertAccepted(started.Session, peer);
             AssertAllCanonicallySynced(started.Session, peers);
 
-            expected[empireId] = (FullAutomation, freighter, colony, scout,
-                constructor, researchStation, miningStation);
+            expected[empireId] = (FullAutomation, "", "", scout, "", "", "");
         }
 
         try

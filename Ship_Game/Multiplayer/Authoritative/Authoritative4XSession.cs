@@ -60,7 +60,9 @@ public sealed class AuthoritativeStateSnapshot
         foreach (string rawLine in lines)
         {
             string line = rawLine.TrimEnd('\r');
-            if (line.StartsWith("E|", StringComparison.Ordinal))
+            if (line.StartsWith("V|", StringComparison.Ordinal))
+                ApplyUniversePreferenceLine(universe, line);
+            else if (line.StartsWith("E|", StringComparison.Ordinal))
                 ApplyEmpireRuntimeLine(universe, line);
             else if (line.StartsWith("U|", StringComparison.Ordinal))
                 ApplyUnlockedTechLine(universe, line);
@@ -74,8 +76,17 @@ public sealed class AuthoritativeStateSnapshot
                 ApplyShipRuntimeLine(universe, line);
         }
 
+        ApplyShipPresencePayload(universe, lines);
         ApplyConstructionQueuePayload(universe, lines);
         ApplyColonizationGoalPayload(universe, lines);
+    }
+
+    public void ApplyShipPresencePayload(UniverseState universe)
+    {
+        if (universe == null || string.IsNullOrEmpty(Payload))
+            return;
+
+        ApplyShipPresencePayload(universe, Payload.Split('\n'));
     }
 
     public void ApplyRelationshipPayload(UniverseState universe)
@@ -89,6 +100,22 @@ public sealed class AuthoritativeStateSnapshot
             if (line.StartsWith("R|", StringComparison.Ordinal))
                 ApplyRelationshipLine(universe, line);
         }
+    }
+
+    static void ApplyUniversePreferenceLine(UniverseState universe, string line)
+    {
+        string[] p = line.Split('|');
+        if (p.Length < 2
+            || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int flags))
+        {
+            return;
+        }
+
+        var preferences = (AuthoritativeUniversePreferenceFlags)flags;
+        universe.P.AllowPlayerInterTrade =
+            preferences.HasFlag(AuthoritativeUniversePreferenceFlags.AllowPlayerInterTrade);
+        universe.P.PrioitizeProjectors =
+            preferences.HasFlag(AuthoritativeUniversePreferenceFlags.PrioritizeProjectors);
     }
 
     static void ApplyEmpireRuntimeLine(UniverseState universe, string line)
@@ -454,6 +481,39 @@ public sealed class AuthoritativeStateSnapshot
             planet.SetManualSpaceDefBudget(spaceBudget);
     }
 
+    static void ApplyShipPresencePayload(UniverseState universe, string[] lines)
+    {
+        var expectedShipIds = new HashSet<int>();
+        foreach (string rawLine in lines)
+        {
+            string line = rawLine.TrimEnd('\r');
+            if (!line.StartsWith("S|", StringComparison.Ordinal))
+                continue;
+
+            string[] p = line.Split('|');
+            if (p.Length >= 2
+                && int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int shipId))
+            {
+                expectedShipIds.Add(shipId);
+            }
+        }
+
+        bool removedAny = false;
+        Ship[] ships = universe.Objects.GetShips();
+        for (int i = 0; i < ships.Length; ++i)
+        {
+            Ship ship = ships[i];
+            if (ship?.Active == true && !expectedShipIds.Contains(ship.Id))
+            {
+                ship.QueueTotalRemoval();
+                removedAny = true;
+            }
+        }
+
+        if (removedAny)
+            universe.Objects.UpdateLists(removeInactiveObjects: true);
+    }
+
     static void ApplyColonizationGoalPayload(UniverseState universe, string[] lines)
     {
         var desired = new Dictionary<int, List<ColonizationGoalRuntime>>();
@@ -585,6 +645,8 @@ public sealed class AuthoritativeStateSnapshot
     static string BuildPayload(UniverseState us)
     {
         var sb = new StringBuilder(4096);
+        sb.Append("V|").Append((int)UniversePreferenceFlags(us)).AppendLine();
+
         foreach (Empire e in us.Empires.OrderBy(e => e.Id))
             sb.Append("E|").Append(e.Id)
               .Append('|').Append(e.Research.Topic ?? "")
@@ -1055,6 +1117,14 @@ public sealed class AuthoritativeStateSnapshot
         return flags;
     }
 
+    static AuthoritativeUniversePreferenceFlags UniversePreferenceFlags(UniverseState us)
+    {
+        var flags = AuthoritativeUniversePreferenceFlags.None;
+        if (us.P.AllowPlayerInterTrade) flags |= AuthoritativeUniversePreferenceFlags.AllowPlayerInterTrade;
+        if (us.P.PrioitizeProjectors) flags |= AuthoritativeUniversePreferenceFlags.PrioritizeProjectors;
+        return flags;
+    }
+
     static bool IsDeepSpaceBuildStateGoal(Goal goal)
         => goal is DeepSpaceBuildGoal or ProcessResearchStation or MiningOps;
 
@@ -1454,6 +1524,7 @@ public sealed class Authoritative4XClientReplica
                 throw new System.InvalidOperationException($"Client replica rejected accepted command {command.Sequence}: {local.Reason}");
         }
 
+        authoritySnapshot.ApplyShipPresencePayload(Universe.UState);
         Universe.SingleSimulationStep(Step);
         Tick++;
         authoritySnapshot.ApplyEmpireRuntimePayload(Universe.UState);

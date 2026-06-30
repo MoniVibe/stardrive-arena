@@ -73,6 +73,7 @@ public enum AuthoritativePlayerCommandKind : byte
     RenameShip = 57,
     RenamePlanet = 58,
     GroundTroopOrder = 59,
+    SetUniversePreferences = 60,
 }
 
 public enum AuthoritativeShipPlanetOrderType : byte
@@ -186,6 +187,15 @@ public enum AuthoritativePlanetGovernorOptions
     SpecializedTradeHub = 1 << 6,
     All = GovOrbitals | AutoBuildTroops | DontScrapBuildings | Quarantine
         | ManualOrbitals | GovGroundDefense | SpecializedTradeHub,
+}
+
+[Flags]
+public enum AuthoritativeUniversePreferenceFlags
+{
+    None = 0,
+    AllowPlayerInterTrade = 1 << 0,
+    PrioritizeProjectors = 1 << 1,
+    All = AllowPlayerInterTrade | PrioritizeProjectors,
 }
 
 public enum AuthoritativeFleetAssignmentMode : byte
@@ -489,6 +499,16 @@ public sealed class AuthoritativePlayerCommand
             TargetId = (int)flags,
             Text = EncodeEmpireAutomationPayload(freighter, colony, scout, constructor,
                 researchStation, miningStation),
+        };
+
+    public static AuthoritativePlayerCommand SetUniversePreferences(int sequence, int empireId,
+        AuthoritativeUniversePreferenceFlags flags)
+        => new()
+        {
+            Sequence = sequence,
+            EmpireId = empireId,
+            Kind = AuthoritativePlayerCommandKind.SetUniversePreferences,
+            TargetId = (int)flags,
         };
 
     public static AuthoritativePlayerCommand DiplomacyProposal(int sequence, int proposerEmpireId, int targetEmpireId,

@@ -282,6 +282,11 @@ namespace Ship_Game
                             after.Freighter, after.Colony, after.Scout, after.Constructor,
                             after.ResearchStation, after.MiningStation);
                     }
+                    if (after.UniversePreferences != before.UniversePreferences)
+                    {
+                        Authoritative4XClientContext.TrySubmitUniversePreferences(Screen.Player,
+                            after.UniversePreferences);
+                    }
                 }
 
                 return true;
@@ -320,11 +325,6 @@ namespace Ship_Game
                 ResearchStation = data.CurrentResearchStation ?? "",
                 MiningStation = data.CurrentMiningStation ?? "",
                 AllowPlayerInterTrade = UState.P.AllowPlayerInterTrade,
-                SuppressOnBuildNotifications = UState.P.SuppressOnBuildNotifications,
-                DisableInhibitionWarning = UState.P.DisableInhibitionWarning,
-                DisableVolcanoWarning = UState.P.DisableVolcanoWarning,
-                DisableCrashSiteWarning = UState.P.DisableCrashSiteWarning,
-                EnableStarvationWarning = UState.P.EnableStarvationWarning,
                 PrioitizeProjectors = UState.P.PrioitizeProjectors,
             };
         }
@@ -340,13 +340,7 @@ namespace Ship_Game
             data.CurrentConstructor = snapshot.Constructor;
             data.CurrentResearchStation = snapshot.ResearchStation;
             data.CurrentMiningStation = snapshot.MiningStation;
-
             UState.P.AllowPlayerInterTrade = snapshot.AllowPlayerInterTrade;
-            UState.P.SuppressOnBuildNotifications = snapshot.SuppressOnBuildNotifications;
-            UState.P.DisableInhibitionWarning = snapshot.DisableInhibitionWarning;
-            UState.P.DisableVolcanoWarning = snapshot.DisableVolcanoWarning;
-            UState.P.DisableCrashSiteWarning = snapshot.DisableCrashSiteWarning;
-            UState.P.EnableStarvationWarning = snapshot.EnableStarvationWarning;
             UState.P.PrioitizeProjectors = snapshot.PrioitizeProjectors;
         }
 
@@ -420,21 +414,46 @@ namespace Ship_Game
             public string ResearchStation;
             public string MiningStation;
             public bool AllowPlayerInterTrade;
-            public bool SuppressOnBuildNotifications;
-            public bool DisableInhibitionWarning;
-            public bool DisableVolcanoWarning;
-            public bool DisableCrashSiteWarning;
-            public bool EnableStarvationWarning;
             public bool PrioitizeProjectors;
+
+            public AuthoritativeUniversePreferenceFlags UniversePreferences
+            {
+                get
+                {
+                    var flags = AuthoritativeUniversePreferenceFlags.None;
+                    if (AllowPlayerInterTrade) flags |= AuthoritativeUniversePreferenceFlags.AllowPlayerInterTrade;
+                    if (PrioitizeProjectors) flags |= AuthoritativeUniversePreferenceFlags.PrioritizeProjectors;
+                    return flags;
+                }
+            }
 
             public bool DiffersFrom(AutomationSnapshot other)
                 => Flags != other.Flags
-                   || Freighter != other.Freighter
-                   || Colony != other.Colony
-                   || Scout != other.Scout
-                   || Constructor != other.Constructor
-                   || ResearchStation != other.ResearchStation
-                   || MiningStation != other.MiningStation;
+                   || EffectiveFreighter != other.EffectiveFreighter
+                   || EffectiveColony != other.EffectiveColony
+                   || EffectiveScout != other.EffectiveScout
+                   || EffectiveConstructor != other.EffectiveConstructor
+                   || EffectiveResearchStation != other.EffectiveResearchStation
+                   || EffectiveMiningStation != other.EffectiveMiningStation;
+
+            string EffectiveFreighter => Uses(AuthoritativeEmpireAutomationFlags.AutoFreighters)
+                                         && !Uses(AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter)
+                ? Freighter ?? "" : "";
+            string EffectiveColony => Uses(AuthoritativeEmpireAutomationFlags.AutoColonize)
+                                      && !Uses(AuthoritativeEmpireAutomationFlags.AutoPickBestColonizer)
+                ? Colony ?? "" : "";
+            string EffectiveScout => Uses(AuthoritativeEmpireAutomationFlags.AutoExplore) ? Scout ?? "" : "";
+            string EffectiveConstructor => Uses(AuthoritativeEmpireAutomationFlags.AutoBuildSpaceRoads)
+                                           && !Uses(AuthoritativeEmpireAutomationFlags.AutoPickConstructors)
+                ? Constructor ?? "" : "";
+            string EffectiveResearchStation => Uses(AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations)
+                                               && !Uses(AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation)
+                ? ResearchStation ?? "" : "";
+            string EffectiveMiningStation => Uses(AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations)
+                                             && !Uses(AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation)
+                ? MiningStation ?? "" : "";
+
+            bool Uses(AuthoritativeEmpireAutomationFlags flag) => Flags.HasFlag(flag);
         }
 
         void WarnBuildableShips()

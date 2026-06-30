@@ -988,6 +988,19 @@ public sealed class Authoritative4XClientContext : IDisposable
         return Authoritative4XUiCommandResult.Submitted;
     }
 
+    public static Authoritative4XUiCommandResult TrySubmitUniversePreferences(Empire empire,
+        AuthoritativeUniversePreferenceFlags flags)
+    {
+        if (!TryGetFor(empire, out Authoritative4XClientContext context))
+            return Active != null ? Authoritative4XUiCommandResult.Blocked : Authoritative4XUiCommandResult.NotActive;
+        if ((flags & ~AuthoritativeUniversePreferenceFlags.All) != 0)
+            return Authoritative4XUiCommandResult.Blocked;
+
+        context.Submit(AuthoritativePlayerCommand.SetUniversePreferences(context.Next(),
+            context.EmpireId, flags));
+        return Authoritative4XUiCommandResult.Submitted;
+    }
+
     public static Authoritative4XUiCommandResult TrySubmitDesignShip(Empire empire, ShipDesign design)
     {
         if (!TryGetFor(empire, out Authoritative4XClientContext context))
