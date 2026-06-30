@@ -130,7 +130,7 @@ public sealed class Authoritative4XCommandApplicator
         if ((order & ~Allowed) != 0)
             return Reject(result, $"Move order {order} is not supported by authoritative MP.");
 
-        ship.AI.OrderMoveTo(command.Position, dir, AIState.AwaitingOrders, order);
+        ship.AI.OrderMoveTo(command.Position, dir, order);
         return Accept(result);
     }
 

@@ -963,9 +963,14 @@ public class Authoritative4XSessionTests : StarDriveTest
                 MoveOrder.Aggressive | MoveOrder.AddWayPoint);
             session.SubmitFromClient(move);
             Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
-            Assert.AreEqual(AIState.AwaitingOrders, authority.Ship.AI.State);
+            Assert.AreEqual(AIState.MoveTo, authority.Ship.AI.State,
+                "Authoritative single-ship moves must enter the normal moving state; AwaitingOrders makes live joiner ships appear to stop after an accepted order.");
             Assert.AreEqual(move.Position, authority.Ship.AI.MovePosition);
             Assert.IsTrue(authority.Ship.AI.OrderQueue.PeekFirst.MoveOrder.IsSet(MoveOrder.Aggressive));
+            Assert.AreEqual(AIState.MoveTo, client.Ship.AI.State);
+            Assert.AreEqual(move.Position, client.Ship.AI.MovePosition);
+            Assert.AreEqual(AuthoritativeStateSnapshot.ShipOrderQueueSignatureForTest(authority.Ship),
+                AuthoritativeStateSnapshot.ShipOrderQueueSignatureForTest(client.Ship));
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
             var colony = AuthoritativePlayerCommand.SetColonyType(2, authority.Player.Id, authority.Planet.Id,
