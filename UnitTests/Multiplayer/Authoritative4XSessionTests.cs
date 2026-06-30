@@ -11208,6 +11208,7 @@ public class Authoritative4XSessionTests : StarDriveTest
 
         var homePlanetByEmpire = new Dictionary<int, int>();
         var initialQueuedShipsByEmpire = new Dictionary<int, int>();
+        var moveProofsByPeer = new Dictionary<int, (int EmpireId, int ShipId, Vector2 Start, Vector2 Destination)>();
         UniverseScreen[] universes = new[] { started.AuthorityUniverse }
             .Concat(started.Clients.Select(c => c.Universe))
             .ToArray();
@@ -11233,6 +11234,7 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Ship moveShip = SpawnMatchingMovableOwnedShip(universes, empireId,
                     planet.Position + new Vector2(12_000f, 6_000f + i * 4_000f));
                 Vector2 moveDestination = moveShip.Position + new Vector2(18_000f + i * 2_000f, -11_000f - i * 1_500f);
+                moveProofsByPeer[peer] = (empireId, moveShip.Id, moveShip.Position, moveDestination);
                 started.Session.SubmitFromClient(peer,
                     AuthoritativePlayerCommand.MoveShip(sequence++, empireId, moveShip.Id, moveDestination,
                         MoveOrder.Aggressive));
@@ -11343,6 +11345,12 @@ public class Authoritative4XSessionTests : StarDriveTest
                 AssertAccepted(started.Session, peer);
                 if (step % 30 == 0 || step == 239)
                     AssertAllCanonicallySynced(started.Session, peers);
+            }
+
+            foreach ((int peer, (int empireId, int shipId, Vector2 start, Vector2 destination)) in moveProofsByPeer)
+            {
+                AssertShipAdvancedTowardDestination(universes, shipId, start, destination,
+                    $"peer {peer} empire {empireId}");
             }
         }
         catch (Authoritative4XSyncMismatchException e)
@@ -11695,6 +11703,23 @@ public class Authoritative4XSessionTests : StarDriveTest
                 $"Ship {shipId} did not keep authoritative move destination.");
             Assert.IsTrue(ship.AI.OrderQueue.PeekFirst.MoveOrder.IsSet(order),
                 $"Ship {shipId} did not keep authoritative move order {order}.");
+        }
+    }
+
+    static void AssertShipAdvancedTowardDestination(UniverseScreen[] universes, int shipId, Vector2 start,
+        Vector2 destination, string label)
+    {
+        float initialDistance = start.Distance(destination);
+        foreach (UniverseScreen universe in universes)
+        {
+            Ship ship = universe.UState.Objects.FindShip(shipId);
+            Assert.IsNotNull(ship, $"{label}: ship {shipId} was missing before movement proof.");
+            float moved = ship.Position.Distance(start);
+            float remaining = ship.Position.Distance(destination);
+            Assert.IsTrue(moved > 10f,
+                $"{label}: ship {shipId} did not physically move after accepted move orders on universe '{universe.Name}'. start={start} now={ship.Position} destination={destination}");
+            Assert.IsTrue(remaining < initialDistance,
+                $"{label}: ship {shipId} did not advance toward its accepted destination on universe '{universe.Name}'. start={start} now={ship.Position} destination={destination}");
         }
     }
 
