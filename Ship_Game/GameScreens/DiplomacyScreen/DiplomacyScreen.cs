@@ -199,13 +199,18 @@ namespace Ship_Game.GameScreens.DiplomacyScreen
         static bool CanShowStockDiplomacy(Empire them, Empire us)
         {
             return them?.Universe?.Screen?.CanShowDiplomacyScreen == true
+                   && us != null
+                   && them != us
                    && !AuthoritativeHumanPlayers.IsHumanVsHuman(them, us);
         }
 
+        static Empire LocalPlayerFor(Empire them) => them?.Universe?.Screen?.Player ?? them?.Universe?.Player;
+
         public static void Show(Empire them, string which, GameScreen parent)
         {
-            if (CanShowStockDiplomacy(them, them?.Universe?.Player))
-                AddScreen(new DiplomacyScreen(them, them.Universe.Player, which, parent));
+            Empire us = LocalPlayerFor(them);
+            if (CanShowStockDiplomacy(them, us))
+                AddScreen(new DiplomacyScreen(them, us, which, parent));
         }
 
         public static void Show(Empire them, Empire us, string which)
@@ -216,8 +221,9 @@ namespace Ship_Game.GameScreens.DiplomacyScreen
 
         public static void Show(Empire them, string which)
         {
-            if (CanShowStockDiplomacy(them, them?.Universe?.Player))
-                AddScreen(new DiplomacyScreen(them, them.Universe.Player, which, them.Universe.Screen));
+            Empire us = LocalPlayerFor(them);
+            if (CanShowStockDiplomacy(them, us))
+                AddScreen(new DiplomacyScreen(them, us, which, them.Universe.Screen));
         }
 
         public static void ShowEndOnly(Empire them, Empire us, string which)
@@ -234,14 +240,16 @@ namespace Ship_Game.GameScreens.DiplomacyScreen
 
         public static void Show(Empire them, string which, Offer ourOffer, Offer theirOffer)
         {
-            if (CanShowStockDiplomacy(them, them?.Universe?.Player))
-                AddScreen(new DiplomacyScreen(them, them.Universe.Player, which, ourOffer, theirOffer, null));
+            Empire us = LocalPlayerFor(them);
+            if (CanShowStockDiplomacy(them, us))
+                AddScreen(new DiplomacyScreen(them, us, which, ourOffer, theirOffer, null));
         }
 
         public static void Show(Empire them, string which, Offer ourOffer, Offer theirOffer, Empire empireToDiscuss)
         {
-            if (CanShowStockDiplomacy(them, them?.Universe?.Player))
-                AddScreen(new DiplomacyScreen(them, them.Universe.Player, which, ourOffer, theirOffer, empireToDiscuss));
+            Empire us = LocalPlayerFor(them);
+            if (CanShowStockDiplomacy(them, us))
+                AddScreen(new DiplomacyScreen(them, us, which, ourOffer, theirOffer, empireToDiscuss));
         }
 
         public static void Show(Empire them, Empire us, string which, Planet planet)
@@ -258,8 +266,9 @@ namespace Ship_Game.GameScreens.DiplomacyScreen
 
         public static void Show(Empire them, string which, SolarSystem s)
         {
-            if (CanShowStockDiplomacy(them, them?.Universe?.Player))
-                AddScreen(new DiplomacyScreen(them, them.Universe.Player, which, s));
+            Empire us = LocalPlayerFor(them);
+            if (CanShowStockDiplomacy(them, us))
+                AddScreen(new DiplomacyScreen(them, us, which, s));
         }
 
         public static void Stole1stColonyClaim(Planet claimedPlanet, Empire victim) => StoleColonyClaim(claimedPlanet, victim, "Stole Claim");
@@ -268,14 +277,16 @@ namespace Ship_Game.GameScreens.DiplomacyScreen
 
         static void StoleColonyClaim(Planet claimedPlanet, Empire victim, string dialog)
         {
-            if (CanShowStockDiplomacy(victim, victim?.Universe?.Player))
-                ScreenManager.Instance.AddScreen(new DiplomacyScreen(victim, victim.Universe.Player, dialog, claimedPlanet.System));
+            Empire us = LocalPlayerFor(victim);
+            if (CanShowStockDiplomacy(victim, us))
+                ScreenManager.Instance.AddScreen(new DiplomacyScreen(victim, us, dialog, claimedPlanet.System));
         }
 
         public static void ContactPlayerFromDiplomacyQueue(Empire responder, string dialog)
         {
-            if (CanShowStockDiplomacy(responder, responder?.Universe?.Player))
-                ScreenManager.Instance.AddScreen(new DiplomacyScreen(responder, responder.Universe.Player, dialog, null, endOnly: true));
+            Empire us = LocalPlayerFor(responder);
+            if (CanShowStockDiplomacy(responder, us))
+                ScreenManager.Instance.AddScreen(new DiplomacyScreen(responder, us, dialog, null, endOnly: true));
         }
         
         public override void LoadContent()

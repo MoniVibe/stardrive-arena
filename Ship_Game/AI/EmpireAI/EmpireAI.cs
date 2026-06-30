@@ -154,7 +154,10 @@ namespace Ship_Game.AI
                 return;
 
             if (IsAuthoritativeHumanControlled)
+            {
+                RunResearchPlanner();
                 return;
+            }
 
             if (!OwnerEmpire.IsFaction)
             {

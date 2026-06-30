@@ -45,6 +45,9 @@ namespace Ship_Game.Empires.Components
 
         void DoFirstContact(Empire owner, Empire them)
         {
+            if (owner == null || them == null || owner == them)
+                return;
+
             Relationship usToThem = owner.GetRelations(them);
             usToThem.SetInitialStrength(them.data.Traits.DiplomacyMod * 100f);
 
@@ -75,7 +78,7 @@ namespace Ship_Game.Empires.Components
                 if (them.IsFaction)
                     DoFactionFirstContact(them);
                 else
-                    DiplomacyScreen.Show(them, "First Contact");
+                    DiplomacyScreen.Show(them, owner, "First Contact");
             }
         }
 

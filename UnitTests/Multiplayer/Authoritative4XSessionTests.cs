@@ -9420,6 +9420,56 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void AuthoritativeHumanFirstContact_UsesScreenLocalPlayerOnClientReplica_Headless()
+    {
+        const ulong Seed = 0xF1A57C04UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld clientA = BuildWorld(Seed);
+        BuiltWorld clientB = BuildWorld(Seed);
+        const int PeerA = 2;
+        const int PeerB = 3;
+
+        try
+        {
+            int empireA = authority.Player.Id;
+            int empireB = authority.Enemy.Id;
+            var empireByPeer = new Dictionary<int, int> { [PeerA] = empireA, [PeerB] = empireB };
+            using var passiveTransport = TcpLockstepTransport.Host(FreeTcpPort(), PeerB);
+            using var liveClient = Authoritative4XLiveSession.ClientGame(clientB.Screen, passiveTransport,
+                PeerB, empireB, new[] { empireA, empireB }, empireByPeerForTelemetry: empireByPeer);
+            clientB.Screen.AttachAuthoritative4XMultiplayer(liveClient);
+
+            Assert.AreSame(clientB.Enemy, clientB.Screen.Player,
+                "The replica fixture must make the second human empire the screen-local player.");
+            clientB.UState.CanShowDiplomacyScreen = true;
+            clientB.Enemy.GetRelations(clientB.Player).Known = false;
+            clientB.Player.GetRelations(clientB.Enemy).Known = false;
+            DiplomacyScreen.DebugResetScreensShown();
+
+            clientB.Enemy.FirstContact.SetReadyForContact(clientB.Player);
+            clientB.Enemy.FirstContact.CheckForFirstContacts(clientB.Enemy);
+
+            Assert.IsTrue(clientB.Enemy.IsKnown(clientB.Player));
+            Assert.IsTrue(clientB.Player.IsKnown(clientB.Enemy));
+            Assert.AreEqual(0, DiplomacyScreen.DebugScreensShown,
+                "Replica first contact between humans must not open stock diplomacy.");
+
+            DiplomacyScreen.Show(clientB.Screen.Player, "First Contact");
+            Assert.AreEqual(0, DiplomacyScreen.DebugScreensShown,
+                "Stock diplomacy must reject self-dialogues caused by replica-local player resolution.");
+        }
+        finally
+        {
+            AuthoritativeHumanPlayers.Clear(authority.UState);
+            AuthoritativeHumanPlayers.Clear(clientA.UState);
+            AuthoritativeHumanPlayers.Clear(clientB.UState);
+            authority.Screen.Dispose();
+            clientA.Screen.Dispose();
+            clientB.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void AuthoritativeHumanDiplomacy_ProposalsRouteApplyAndSync_Headless()
     {
         const ulong Seed = 0xA11A2CEUL;
@@ -9616,10 +9666,15 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsFalse(clientEmpire.ShipsWeCanBuildSnapshot.Any(d => d.IsPlayerDesign),
                 "Generated join human must not inherit machine-local saved player designs.");
 
-            clientEmpire.AutoResearch = true;
+            ResearchCandidates(clientEmpire, 1);
+            clientEmpire.AutoResearch = false;
             clientEmpire.AI.Update();
             Assert.IsTrue(clientEmpire.Research.NoTopic,
-                "Authoritative human empires must not run the stock AI research planner even if a stale auto flag is toggled.");
+                "Generated join human should remain manual while AutoResearch is off.");
+            clientEmpire.AutoResearch = true;
+            clientEmpire.AI.Update();
+            Assert.IsTrue(clientEmpire.Research.HasTopic,
+                "A remote human should run only the research planner after explicitly enabling AutoResearch.");
             Assert.IsTrue(hostEmpire.GetPlanets().Count > 0);
             Assert.IsTrue(clientEmpire.GetPlanets().Count > 0);
         }

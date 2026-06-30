@@ -11,7 +11,7 @@ namespace Ship_Game.AI
         {
             if (OwnerEmpire.isPlayer && !OwnerEmpire.AutoResearch)
                 return;
-            if (IsAuthoritativeHumanControlled)
+            if (IsAuthoritativeHumanControlled && !OwnerEmpire.AutoResearch)
                 return;
             if (OwnerEmpire.Research.HasTopic)
                 return;
