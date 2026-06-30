@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -91,6 +92,7 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
             ProtocolVersion = 1,
             PlayerName = $"Peer {localPeerId}",
         });
+        transport.WaitForOutboundIdle(TimeSpan.FromSeconds(1));
         return transport;
     }
 
@@ -189,6 +191,26 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
             Deliver(delivery.PeerId, delivery.Message);
     }
 
+    public bool WaitForOutboundIdle(TimeSpan timeout)
+    {
+        DateTime deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            FlushPendingRemote();
+            lock (Gate)
+            {
+                if (PendingRemote.Count == 0
+                    && Connections.All(c => !c.Connected || (c.Outbound.Count == 0 && c.ActiveWrites == 0)))
+                    return true;
+            }
+            Thread.Sleep(1);
+        }
+
+        lock (Gate)
+            return PendingRemote.Count == 0
+                   && Connections.All(c => !c.Connected || (c.Outbound.Count == 0 && c.ActiveWrites == 0));
+    }
+
     public void Dispose()
     {
         if (Disposed)
@@ -199,6 +221,7 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
             connections = Connections.ToArray();
         foreach (RemoteConnection connection in connections)
         {
+            try { connection.Outbound.CompleteAdding(); } catch { }
             try { connection.Stream?.Dispose(); } catch { }
             try { connection.Client?.Close(); } catch { }
         }
@@ -238,6 +261,7 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
             LastError = "";
         }
         ConnectedEvent.Set();
+        connection.WriteTask = Task.Run(() => WriteLoop(connection));
         FlushPendingRemote();
         connection.ReadTask = Task.Run(() => ReadLoop(connection));
     }
@@ -323,7 +347,7 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
             TraceAuthoritativeFrame("send-remote-pending", envelope.ToPeer, envelope.Message);
             return;
         }
-        WriteRemote(envelope, connection);
+        QueueRemoteWrite(envelope, connection);
     }
 
     void FlushPendingRemote()
@@ -357,11 +381,62 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
                     TraceAuthoritativeFrame("flush-pending-wait", envelope.ToPeer, envelope.Message);
                     continue;
                 }
-                WriteRemote(envelope, connection);
+                QueueRemoteWrite(envelope, connection);
                 wroteAny = true;
             }
             if (!wroteAny)
                 return;
+        }
+    }
+
+    void QueueRemoteWrite(RemoteEnvelope envelope, RemoteConnection connection)
+    {
+        if (connection == null || !connection.Connected || connection.Outbound.IsAddingCompleted)
+        {
+            lock (Gate)
+                PendingRemote.Enqueue(envelope);
+            TraceAuthoritativeFrame("send-remote-pending", envelope.ToPeer, envelope.Message,
+                connection?.PeerId ?? 0);
+            return;
+        }
+
+        try
+        {
+            connection.Outbound.Add(envelope);
+            TraceAuthoritativeFrame("queue-remote", envelope.ToPeer, envelope.Message, connection.PeerId);
+        }
+        catch (InvalidOperationException)
+        {
+            lock (Gate)
+                PendingRemote.Enqueue(envelope);
+        }
+    }
+
+    void WriteLoop(RemoteConnection connection)
+    {
+        try
+        {
+            foreach (RemoteEnvelope envelope in connection.Outbound.GetConsumingEnumerable())
+            {
+                Interlocked.Increment(ref connection.ActiveWrites);
+                try
+                {
+                    WriteRemote(envelope, connection);
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref connection.ActiveWrites);
+                }
+            }
+        }
+        catch (ObjectDisposedException) { }
+        catch (IOException ex)
+        {
+            lock (Gate) LastError = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            lock (Gate) LastError = ex.Message;
         }
     }
 
@@ -553,10 +628,13 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
     {
         public readonly TcpClient Client;
         public readonly NetworkStream Stream;
+        public readonly BlockingCollection<RemoteEnvelope> Outbound = new();
         public readonly object WriteGate = new();
         public Task ReadTask;
+        public Task WriteTask;
         public int PeerId;
         public bool Connected = true;
+        public int ActiveWrites;
 
         public RemoteConnection(TcpClient client, int peerId)
         {

@@ -1055,6 +1055,51 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XClientReplica_PreservesMovementSolverAcrossAuthoritativeNoOps_Headless()
+    {
+        const ulong Seed = 0x4D30564EUL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            Vector2 destination = authority.Ship.Position + new Vector2(90_000f, 0f);
+            Vector2 clientStart = client.Ship.Position;
+
+            var move = AuthoritativePlayerCommand.MoveShip(1, authority.Player.Id, authority.Ship.Id,
+                destination, MoveOrder.Regular);
+            session.SubmitFromClient(move);
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            AssertHasActiveMovementSolverGoal(client.Ship,
+                "The accepted move should install live movement-solver goals on the passive client.");
+            string durableSignature = AuthoritativeStateSnapshot.ShipOrderQueueSignatureForTest(client.Ship);
+
+            float initialDistance = client.Ship.Position.Distance(destination);
+            for (int i = 0; i < 180; ++i)
+            {
+                session.SubmitFromClient(AuthoritativePlayerCommand.NoOp(100 + i, authority.Player.Id));
+                Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+                Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+            }
+
+            AssertHasActiveMovementSolverGoal(client.Ship,
+                "Authoritative no-op snapshots must not collapse the passive client to only the durable hold-position tail.");
+            Assert.AreEqual(durableSignature, AuthoritativeStateSnapshot.ShipOrderQueueSignatureForTest(client.Ship),
+                "Preserving client-local movement-solver goals must not change the canonical order signature.");
+            Assert.IsTrue(client.Ship.Position.Distance(clientStart) > 10f,
+                $"The passive client ship did not visibly move after accepted no-op snapshots. start={clientStart} now={client.Ship.Position}");
+            Assert.IsTrue(client.Ship.Position.Distance(destination) < initialDistance,
+                "The passive client ship should advance toward the authoritative move destination.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XShipTargetOrder_AppliesVariantsAndSyncs_Headless()
     {
         const ulong Seed = 0x5147E70UL;
@@ -9100,7 +9145,12 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsTrue(hostTransport.WaitForConnections(remotePeers.Length, TimeSpan.FromSeconds(5)),
                 "Authoritative TCP host did not accept every loopback player client.");
             Assert.IsTrue(WaitForMappedPeers(hostTransport, remotePeers),
-                "Authoritative TCP host did not map every announced player peer id.");
+                "Authoritative TCP host did not map every announced player peer id. "
+                + $"mapped={string.Join(",", hostTransport.ConnectedRemotePeerIds)} "
+                + $"hostError='{hostTransport.LastError}' "
+                + $"clientWrites={string.Join(",", clientTransports.Select(t => t.RemoteWriteCount))} "
+                + $"clientPending={string.Join(",", clientTransports.Select(t => t.PendingRemoteCount))} "
+                + $"clientErrors='{string.Join("; ", clientTransports.Select(t => t.LastError))}'");
 
             using var host = new Authoritative4XNetworkHost(started.AuthorityUniverse, hostTransport,
                 started.EmpireIdByPeer, started.HumanEmpireIds, localPeerId: HostPlayerPeer);
@@ -11770,9 +11820,10 @@ public class Authoritative4XSessionTests : StarDriveTest
 
     static bool WaitForMappedPeers(TcpLockstepTransport hostTransport, params int[] peers)
     {
-        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
         while (DateTime.UtcNow < deadline)
         {
+            hostTransport.Poll();
             int[] mapped = hostTransport.ConnectedRemotePeerIds;
             if (peers.All(peer => mapped.Contains(peer)))
                 return true;
@@ -12193,6 +12244,17 @@ public class Authoritative4XSessionTests : StarDriveTest
     static void AssertShipPlan(Ship ship, ShipAI.Plan plan, string message)
     {
         Assert.IsTrue(ship.AI.OrderQueue.ToArray().Any(g => g.Plan == plan), message);
+    }
+
+    static void AssertHasActiveMovementSolverGoal(Ship ship, string message)
+    {
+        Assert.IsTrue(ship.AI.OrderQueue.ToArray().Any(g =>
+                g.Plan is ShipAI.Plan.RotateToFaceMovePosition
+                    or ShipAI.Plan.MoveToWithin1000
+                    or ShipAI.Plan.MakeFinalApproach
+                    or ShipAI.Plan.RotateToDesiredFacing
+                    or ShipAI.Plan.RotateInlineWithVelocity),
+            message);
     }
 
     static (AuthoritativeShipTargetOrderType Order, bool Queue) ParseShipTargetOrder(

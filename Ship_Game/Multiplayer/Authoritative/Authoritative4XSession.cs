@@ -1300,6 +1300,9 @@ public sealed class AuthoritativeStateSnapshot
 
     static void ApplyShipOrderQueueSignature(UniverseState universe, Ship ship, string signature)
     {
+        if (ShouldPreserveLocalMovementSolverQueue(ship, signature))
+            return;
+
         if (string.IsNullOrWhiteSpace(signature))
         {
             ship.AI.OrderQueue.Clear();
@@ -1314,6 +1317,22 @@ public sealed class AuthoritativeStateSnapshot
         }
         ship.AI.OrderQueue.SetRange(goals);
     }
+
+    static bool ShouldPreserveLocalMovementSolverQueue(Ship ship, string authoritativeSignature)
+    {
+        if (ship?.AI == null || !IsActiveMovementState(ship.AI.State))
+            return false;
+
+        ShipAI.ShipGoal[] localGoals = ship.AI.OrderQueue.ToArray();
+        if (!localGoals.Any(g => g != null && IsVolatileMovementSolverPlan(g.Plan)))
+            return false;
+
+        return string.Equals(ShipOrderQueueSignature(ship), authoritativeSignature ?? "",
+            StringComparison.Ordinal);
+    }
+
+    static bool IsActiveMovementState(AIState state)
+        => state is AIState.MoveTo or AIState.FormationMoveTo or AIState.Pursue or AIState.Flee;
 
     static bool TryParseShipGoalSignature(UniverseState universe, Ship ship, string signature,
         out ShipAI.ShipGoal goal)
