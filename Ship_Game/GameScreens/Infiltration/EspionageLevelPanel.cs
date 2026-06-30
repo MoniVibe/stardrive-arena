@@ -93,7 +93,7 @@ namespace Ship_Game.GameScreens.EspionageNew
 
         public void RefreshEmpire()
         {
-            if (Screen.SelectedEmpire.isPlayer)
+            if (Screen.SelectedEmpire == Player || Screen.SelectedEmpire?.Id == Player.Id)
                 return;
 
             Ship_Game.Espionage espionage = Player.GetEspionage(Screen.SelectedEmpire);

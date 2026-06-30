@@ -489,8 +489,11 @@ namespace Ship_Game
                     options.AddOption(defaultShip, 0);
                 }
 
-                // always set to default ship
-                automationShip = defaultShip;
+                // In authoritative multiplayer, opening/repopulating the window must be
+                // replica-read-only. The displayed default becomes authoritative only if
+                // the player changes a checkbox/dropdown and submits the automation command.
+                if (!Authoritative4XClientContext.ShouldBlockLocalMutation(Screen.Player))
+                    automationShip = defaultShip;
             }
         }
 

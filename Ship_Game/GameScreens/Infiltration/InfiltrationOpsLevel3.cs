@@ -59,7 +59,7 @@ namespace Ship_Game.GameScreens.EspionageNew
             UpriseTurnsRemaining.Pos  = new Vector2(Rect.Right - 80, ActiveTitle.Y);
             CounterTurnsRemaining.Pos = new Vector2(Rect.Right - 80, CounterBox.Y);
 
-            if (!Screen.SelectedEmpire.isPlayer)
+            if (!Screen.IsSelectedPlayer)
             {
                 Espionage     = Player.GetEspionage(Screen.SelectedEmpire);
                 Passive.Color = Espionage.Level >= Level && Espionage.LimitLevel >= Level ? Color.LightGreen : Color.Gray;

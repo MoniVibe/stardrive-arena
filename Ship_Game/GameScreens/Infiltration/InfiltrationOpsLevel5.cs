@@ -62,7 +62,7 @@ namespace Ship_Game.GameScreens.EspionageNew
             ProjectionTurnsRemaining.Pos = new Vector2(Rect.Right - 80, ProjectionBox.Y);
 
 
-            if (!Screen.SelectedEmpire.isPlayer)
+            if (!Screen.IsSelectedPlayer)
             {
                 Espionage = Player.GetEspionage(Screen.SelectedEmpire);
                 Passive.Color = Espionage.Level >= Level && Espionage.LimitLevel >= Level ? Color.LightGreen : Color.Gray;

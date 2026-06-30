@@ -6377,6 +6377,64 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XClientContext_AutomationWindowLoadIsReadOnly_Headless()
+    {
+        const ulong Seed = 0xA470A18UL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            ClearEmpireAutomation(world.Player);
+            string beforePayload = AuthoritativeStateSnapshot.Capture(world.Screen, 0).Payload;
+            var submitted = new List<AuthoritativePlayerCommand>();
+
+            using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
+                       submitted.Add, firstSequence: 1870))
+            {
+                var window = new AutomationWindow(world.Screen);
+                window.LoadContent();
+
+                AssertEmpireAutomation(world.Player, AuthoritativeEmpireAutomationFlags.None,
+                    "", "", "", "", "", "",
+                    "Opening the automation window on a passive authoritative client must not write default ship picks into empire data.");
+                Assert.AreEqual(beforePayload, AuthoritativeStateSnapshot.Capture(world.Screen, 0).Payload,
+                    "Passive client UI refresh must not mutate the authoritative sync payload before host acceptance.");
+                Assert.AreEqual(0, submitted.Count,
+                    "Opening a read-only client automation window must not submit a command.");
+
+                window.Dispose();
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void InfiltrationScreen_TreatsUniversePlayerAsSelfWhenIsPlayerFalse_Headless()
+    {
+        const ulong Seed = 0xE5F10A6EUL;
+        BuiltWorld world = BuildWorld(Seed);
+        Ship_Game.GameScreens.InfiltrationScreen screen = null;
+
+        try
+        {
+            world.Player.isPlayer = false;
+            screen = new Ship_Game.GameScreens.InfiltrationScreen(world.Screen);
+
+            screen.LoadContent();
+            screen.PerformLayout();
+            screen.RefreshSelectedEmpire(world.Player);
+        }
+        finally
+        {
+            screen?.Dispose();
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientContext_SubmitsUniversePreferencesWithoutLocalMutation_Headless()
     {
         const ulong Seed = 0xA470A16UL;

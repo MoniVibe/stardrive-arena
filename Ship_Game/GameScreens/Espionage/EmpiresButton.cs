@@ -26,8 +26,8 @@ namespace Ship_Game.GameScreens
         UILabel CostPerTurn, LimitLevel;
         UICheckBox EspionageDisableMessages;
 
-
         bool UsingLegacyEspionage => Screen != null;
+        bool IsLocalPlayer => Empire == Player || Empire?.Id == Player.Id;
 
         public EmpireButton(EspionageScreen screen, Empire e, in Rectangle rect, Action<EmpireButton> onClick)
             : base(rect)
@@ -45,7 +45,7 @@ namespace Ship_Game.GameScreens
             InfiltrationScreen = screen;
             OnClick = onClick;
             Player = Empire.Universe.Player;
-            if (!Empire.isPlayer)
+            if (!IsLocalPlayer)
             {
                 Espionage = Player.GetRelations(Empire).Espionage;
             }
@@ -72,7 +72,7 @@ namespace Ship_Game.GameScreens
                 EspionageDisableMessages = InfiltrationScreen.Add(new UICheckBox(weightRect.X, weightRect.Y + 42, () => Player.data.SpyMute, Fonts.Arial12, "Disable Messages", 
                     "Disable all Espionage notifications."));
 
-                if (Player.Universe.MajorEmpires.Any(e => !e.isPlayer && Player.IsKnown(e)))
+                if (Player.Universe.MajorEmpires.Any(e => e != Player && e.Id != Player.Id && Player.IsKnown(e)))
                 {
                     var budgetRect = new Rectangle(Rect.Left, Rect.Y + 180, 140, 40);
                     EspionageBudgetMultiplier = new FloatSlider(SliderStyle.Decimal1, budgetRect, GameText.EspioangeBudgetMuliplier, 1f, 5f, value: Player.EspionageBudgetMultiplier);
@@ -170,7 +170,7 @@ namespace Ship_Game.GameScreens
                 else
                 {
                     DrawInfiltration();
-                    if (Empire.isPlayer || Player.IsKnown(Empire))
+                    if (IsLocalPlayer || Player.IsKnown(Empire))
                         DrawDefenseSlider();
                 }
             }
@@ -221,7 +221,7 @@ namespace Ship_Game.GameScreens
                 SubTexture shield = ResourceManager.Texture("UI/icon_shield");
                 var defenseIcon = new Rectangle(Rect.Center.X - shield.Width, Rect.Y - Fonts.Arial12.LineSpacing -10, shield.Width, shield.Height);
                 batch.Draw(shield, defenseIcon, Color.White);
-                string espionageDefense = Empire.isPlayer || Espionage.CanViewDefenseRatio
+                string espionageDefense = IsLocalPlayer || Espionage.CanViewDefenseRatio
                     ? $"{((int)(Empire.EspionageDefenseRatio * 100)).String()}%"
                     : "?";
 
@@ -233,7 +233,7 @@ namespace Ship_Game.GameScreens
 
             void DrawInfiltration()
             {
-                if (Empire.isPlayer)
+                if (IsLocalPlayer)
                     return;
 
                 SubTexture spy = ResourceManager.Texture("UI/icon_spy");
@@ -263,7 +263,7 @@ namespace Ship_Game.GameScreens
             {
                 InfiltrationDefense?.Draw(batch, elapsed);
                 LimitLevel?.Draw(batch, elapsed);
-                if (Empire.isPlayer)
+                if (IsLocalPlayer)
                 {
                     EspionageBudgetMultiplier?.Draw(batch, elapsed);
                     CostPerTurn?.Draw(batch, elapsed);

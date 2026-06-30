@@ -39,7 +39,7 @@ namespace Ship_Game.GameScreens.EspionageNew
             Passive.Pos           = new Vector2(Rect.X + 60, PassiveTitle.Pos.Y);
             Passive.Color         = Screen.SelectedEmpire.CanBeScannedByPlayer ? Color.LightGreen : Color.Gray;
 
-            if (!Screen.SelectedEmpire.isPlayer)
+            if (!Screen.IsSelectedPlayer)
                 LevelDescription.Color = Player.GetEspionage(Screen.SelectedEmpire).Level >= Level ? Player.EmpireColor : Color.Gray;
         }
 

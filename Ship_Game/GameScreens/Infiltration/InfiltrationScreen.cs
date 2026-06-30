@@ -82,7 +82,7 @@ namespace Ship_Game.GameScreens
             ScreenManager.FadeBackBufferToBlack(TransitionAlpha * 2 / 3);
             batch.SafeBegin();
             base.Draw(batch, elapsed);
-            if (!SelectedEmpire.isPlayer)
+            if (!IsSelectedPlayer)
             {
                 batch.DrawLine(new Vector2(Level1.X, Level1.Y - 20), new Vector2(Level1.X + 80 + Level1.Width * 5, Level1.Y - 20), SeperatorColor, 2);
                 batch.DrawLine(new Vector2(Level1.X, Level1.Y - 50), new Vector2(Level1.X + 80 + Level1.Width * 5, Level1.Y - 50), SeperatorColor, 2);
@@ -105,11 +105,13 @@ namespace Ship_Game.GameScreens
                 return true;
             }
 
-            if (Player.Universe.Debug && !SelectedEmpire.isPlayer && HandleDebugInput(input))
+            if (Player.Universe.Debug && !IsSelectedPlayer && HandleDebugInput(input))
                 return true;
 
             return base.HandleInput(input);
         }
+
+        public bool IsSelectedPlayer => SelectedEmpire == Player || SelectedEmpire?.Id == Player.Id;
 
         bool HandleDebugInput(InputState input)
         {
@@ -130,15 +132,15 @@ namespace Ship_Game.GameScreens
         public void RefreshSelectedEmpire(Empire selectedEmpire)
         {
             SelectedEmpire = selectedEmpire;
-            SeperatorColor = SelectedEmpire.isPlayer || !Player.IsKnown(SelectedEmpire) ? Player.EmpireColor : SelectedEmpire.EmpireColor;
+            SeperatorColor = IsSelectedPlayer || !Player.IsKnown(SelectedEmpire) ? Player.EmpireColor : SelectedEmpire.EmpireColor;
             InfiltrationTitle.Color = SeperatorColor;
 
-            Level1.Visible = !SelectedEmpire.isPlayer;
-            Level2.Visible = !SelectedEmpire.isPlayer;
-            Level3.Visible = !SelectedEmpire.isPlayer;
-            Level4.Visible = !SelectedEmpire.isPlayer;
-            Level5.Visible = !SelectedEmpire.isPlayer;
-            InfiltrationTitle.Visible = !SelectedEmpire.isPlayer;
+            Level1.Visible = !IsSelectedPlayer;
+            Level2.Visible = !IsSelectedPlayer;
+            Level3.Visible = !IsSelectedPlayer;
+            Level4.Visible = !IsSelectedPlayer;
+            Level5.Visible = !IsSelectedPlayer;
+            InfiltrationTitle.Visible = !IsSelectedPlayer;
 
             if (Level1.Visible) Level1.RefreshEmpire();
             if (Level2.Visible) Level2.RefreshEmpire();

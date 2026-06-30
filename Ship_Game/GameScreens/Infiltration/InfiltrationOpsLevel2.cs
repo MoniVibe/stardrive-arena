@@ -53,7 +53,7 @@ namespace Ship_Game.GameScreens.EspionageNew
             Passive.Pos           = new Vector2(Rect.X + 60, PassiveTitle.Pos.Y);
             PlantMoleTurnsRemaning.Pos = new Vector2(Rect.Right -80, ActiveTitle.Y);
 
-            if (!Screen.SelectedEmpire.isPlayer)
+            if (!Screen.IsSelectedPlayer)
             {
                 Espionage     = Player.GetEspionage(Screen.SelectedEmpire);
                 Passive.Color = Espionage.Level >= Level && Espionage.LimitLevel >= Level ? Color.LightGreen : Color.Gray;
