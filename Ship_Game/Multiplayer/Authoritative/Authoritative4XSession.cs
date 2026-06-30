@@ -133,6 +133,7 @@ public sealed class AuthoritativeStateSnapshot
         if (empire == null)
             return;
 
+        ApplyResearchRuntime(empire, p[2] ?? "", p[3] ?? "");
         if (TryParseFloatBits(p[4], out float money))
             empire.Money = money;
         if (TryParseFloatBits(p[5], out float taxRate))
@@ -148,6 +149,18 @@ public sealed class AuthoritativeStateSnapshot
         empire.data.CurrentConstructor = p[12] ?? "";
         empire.data.CurrentResearchStation = p[13] ?? "";
         empire.data.CurrentMiningStation = p[14] ?? "";
+    }
+
+    static void ApplyResearchRuntime(Empire empire, string topic, string queueSignature)
+    {
+        empire.data.ResearchQueue.Clear();
+        empire.data.ShipModulesInResearchQueues.Clear();
+
+        foreach (string techUid in queueSignature.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+            empire.Research.AddTechToQueue(techUid);
+
+        if (topic.NotEmpty() && empire.Research.Topic != topic)
+            empire.Research.SetTopic(topic);
     }
 
     static void ApplyUnlockedTechLine(UniverseState universe, string line)

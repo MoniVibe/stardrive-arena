@@ -163,6 +163,7 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, $"Invalid empire automation payload '{command.Text}'.");
         }
 
+        flags = AddBlankDesignAutoPickFallbacks(flags, freighter, colony, constructor, researchStation, miningStation);
         if (!TryNormalizeAutomationDesign(empire, freighter, d => d.IsFreighter, "freighter",
                 RequiresDesign(flags, AuthoritativeEmpireAutomationFlags.AutoFreighters,
                     AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter),
@@ -220,6 +221,33 @@ public sealed class Authoritative4XCommandApplicator
         empire.data.CurrentResearchStation = normalizedResearchStation;
         empire.data.CurrentMiningStation = normalizedMiningStation;
         return Accept(result);
+    }
+
+    static AuthoritativeEmpireAutomationFlags AddBlankDesignAutoPickFallbacks(
+        AuthoritativeEmpireAutomationFlags flags, string freighter, string colony, string constructor,
+        string researchStation, string miningStation)
+    {
+        flags = AddBlankDesignAutoPickFallback(flags, AuthoritativeEmpireAutomationFlags.AutoFreighters,
+            AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter, freighter);
+        flags = AddBlankDesignAutoPickFallback(flags, AuthoritativeEmpireAutomationFlags.AutoColonize,
+            AuthoritativeEmpireAutomationFlags.AutoPickBestColonizer, colony);
+        flags = AddBlankDesignAutoPickFallback(flags, AuthoritativeEmpireAutomationFlags.AutoBuildSpaceRoads,
+            AuthoritativeEmpireAutomationFlags.AutoPickConstructors, constructor);
+        flags = AddBlankDesignAutoPickFallback(flags, AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations,
+            AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation, researchStation);
+        return AddBlankDesignAutoPickFallback(flags, AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations,
+            AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation, miningStation);
+    }
+
+    static AuthoritativeEmpireAutomationFlags AddBlankDesignAutoPickFallback(
+        AuthoritativeEmpireAutomationFlags flags, AuthoritativeEmpireAutomationFlags automationFlag,
+        AuthoritativeEmpireAutomationFlags autoPickFlag, string designName)
+    {
+        return flags.HasFlag(automationFlag)
+               && !flags.HasFlag(autoPickFlag)
+               && string.IsNullOrWhiteSpace(designName)
+            ? flags | autoPickFlag
+            : flags;
     }
 
     AuthoritativeCommandResult ApplyMoveFleet(AuthoritativePlayerCommand command, Empire empire,

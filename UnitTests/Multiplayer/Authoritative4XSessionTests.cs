@@ -6040,7 +6040,22 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
             acceptedDigest = session.LastAuthoritySnapshot.SyncDigest;
+            var blankStationFlags = flags
+                                    | AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations
+                                    | AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations;
+            var expectedBlankStationFlags = blankStationFlags
+                                            | AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation
+                                            | AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation;
             session.SubmitFromClient(AuthoritativePlayerCommand.SetEmpireAutomation(65, authority.Player.Id,
+                blankStationFlags, freighter, colony, scout, constructor, "", ""));
+            Assert.IsTrue(session.LastResult.Accepted,
+                "Blank research/mining station picks should fall back to auto-pick so the live checkbox is tickable.");
+            AssertEmpireAutomation(authority.Player, expectedBlankStationFlags, "", colony, scout, "", "", "");
+            AssertEmpireAutomation(client.Player, expectedBlankStationFlags, "", colony, scout, "", "", "");
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            acceptedDigest = session.LastAuthoritySnapshot.SyncDigest;
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetEmpireAutomation(66, authority.Player.Id,
                 flags, freighter, colony, "Missing Authoritative Scout", constructor, researchStation, miningStation));
             Assert.IsFalse(session.LastResult.Accepted, "Missing automation designs must be rejected by the host.");
             StringAssert.Contains(session.LastResult.Reason, "scout");
@@ -6048,7 +6063,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
             var illegalFlags = flags | (AuthoritativeEmpireAutomationFlags)(1 << 20);
-            session.SubmitFromClient(AuthoritativePlayerCommand.SetEmpireAutomation(66, authority.Player.Id,
+            session.SubmitFromClient(AuthoritativePlayerCommand.SetEmpireAutomation(67, authority.Player.Id,
                 illegalFlags, freighter, colony, scout, constructor, researchStation, miningStation));
             Assert.IsFalse(session.LastResult.Accepted, "Unsupported automation flag bits must be rejected.");
             Assert.AreEqual(acceptedDigest, session.LastAuthoritySnapshot.SyncDigest);
@@ -7393,6 +7408,50 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "The host snapshot should repair client treasury-goal drift exactly.");
             Assert.AreEqual(authority.Player.AutoTaxes, client.Player.AutoTaxes,
                 "The host snapshot should repair client tax automation state.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientReplica_ReconcilesResearchRuntimeRowBeforeDigest_Headless()
+    {
+        const ulong Seed = 0x5245534541524348UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var replica = new Authoritative4XClientReplica(client.Screen, humanEmpireIds: new[] { client.Player.Id });
+            var command = AuthoritativePlayerCommand.NoOp(243, authority.Player.Id);
+            var result = new AuthoritativeCommandResult
+            {
+                Sequence = 243,
+                OriginPeer = 2,
+                Accepted = false,
+                Tick = 1,
+                Reason = "",
+            };
+
+            string[] techs = ResearchCandidates(authority.Player, 2);
+            authority.Player.Research.SetTopic(techs[0]);
+            authority.Player.Research.AddTechToQueue(techs[1]);
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 1);
+
+            client.Player.Research.Reset();
+            client.Player.Research.SetTopic(techs[1]);
+            client.Player.Research.AddTechToQueue(techs[0]);
+
+            replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
+
+            Assert.AreEqual(authoritySnapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                "Passive replicas must apply the host research topic and queue row before digest comparison.");
+            Assert.AreEqual(authority.Player.Research.Topic, client.Player.Research.Topic,
+                "The host snapshot should repair the active research topic.");
+            AssertResearchQueuesEqual(authority.Player, client.Player);
         }
         finally
         {
@@ -10968,6 +11027,9 @@ public class Authoritative4XSessionTests : StarDriveTest
 
         var homePlanetByEmpire = new Dictionary<int, int>();
         var initialQueuedShipsByEmpire = new Dictionary<int, int>();
+        UniverseScreen[] universes = new[] { started.AuthorityUniverse }
+            .Concat(started.Clients.Select(c => c.Universe))
+            .ToArray();
         int sequence = 5_000;
 
         try
@@ -10985,6 +11047,16 @@ public class Authoritative4XSessionTests : StarDriveTest
                     AuthoritativePlayerCommand.SetEmpireAutomation(sequence++, empireId,
                         AuthoritativeEmpireAutomationFlags.None, "", "", "", "", "", ""));
                 AssertAccepted(started.Session, peer);
+                AssertAllCanonicallySynced(started.Session, peers);
+
+                Ship moveShip = SpawnMatchingMovableOwnedShip(universes, empireId,
+                    planet.Position + new Vector2(12_000f, 6_000f + i * 4_000f));
+                Vector2 moveDestination = moveShip.Position + new Vector2(18_000f + i * 2_000f, -11_000f - i * 1_500f);
+                started.Session.SubmitFromClient(peer,
+                    AuthoritativePlayerCommand.MoveShip(sequence++, empireId, moveShip.Id, moveDestination,
+                        MoveOrder.Aggressive));
+                AssertAccepted(started.Session, peer);
+                AssertAuthoritativeMoveOrderReplicated(universes, moveShip.Id, moveDestination, MoveOrder.Aggressive);
                 AssertAllCanonicallySynced(started.Session, peers);
 
                 string[] techs = ResearchCandidates(empire, 4);
@@ -11429,6 +11501,22 @@ public class Authoritative4XSessionTests : StarDriveTest
         }
     }
 
+    static void AssertAuthoritativeMoveOrderReplicated(UniverseScreen[] universes, int shipId, Vector2 destination,
+        MoveOrder order)
+    {
+        foreach (UniverseScreen universe in universes)
+        {
+            Ship ship = universe.UState.Objects.FindShip(shipId);
+            Assert.IsNotNull(ship, $"Ordered ship {shipId} was missing after accepted move command.");
+            Assert.AreEqual(AIState.MoveTo, ship.AI.State,
+                $"Ship {shipId} should enter MoveTo after an authoritative move command.");
+            Assert.AreEqual(destination, ship.AI.MovePosition,
+                $"Ship {shipId} did not keep authoritative move destination.");
+            Assert.IsTrue(ship.AI.OrderQueue.PeekFirst.MoveOrder.IsSet(order),
+                $"Ship {shipId} did not keep authoritative move order {order}.");
+        }
+    }
+
     static void AssertPlanetManualTradeSlots(Planet planet, int expectedFoodImport, int expectedProdImport,
         int expectedColoImport, int expectedFoodExport, int expectedProdExport, int expectedColoExport)
         => AssertManualTradeSlots(planet.ManualFoodImportSlots, planet.ManualProdImportSlots,
@@ -11811,6 +11899,31 @@ public class Authoritative4XSessionTests : StarDriveTest
             .ThenBy(s => s.Name, StringComparer.Ordinal)
             .Select(s => s.Name)
             .FirstOrDefault() ?? "";
+    }
+
+    static Ship SpawnMatchingMovableOwnedShip(UniverseScreen[] universes, int empireId, Vector2 position)
+    {
+        Ship authorityShip = null;
+        foreach (UniverseScreen universe in universes)
+        {
+            Empire empire = universe.UState.GetEmpireById(empireId);
+            Assert.IsNotNull(empire, $"Universe '{universe.Name}' is missing empire {empireId}.");
+            Ship ship = Ship.CreateShipAtPoint(universe.UState, "Vulcan Scout", empire, position);
+            universe.UState.Objects.UpdateLists(removeInactiveObjects: false);
+            Assert.IsFalse(ship.IsPlatformOrStation, "The generated move-order QA ship must be mobile.");
+            Assert.IsNotNull(ship.AI, "The generated move-order QA ship must have ship AI.");
+            if (authorityShip == null)
+            {
+                authorityShip = ship;
+            }
+            else
+            {
+                Assert.AreEqual(authorityShip.Id, ship.Id,
+                    "The authority and replicas must spawn the move-order QA ship with identical ids.");
+            }
+        }
+
+        return authorityShip;
     }
 
     static void AssertReplicasMatchClientGauntletState(Authoritative4XLobbyStartResult started, int[] peers,
