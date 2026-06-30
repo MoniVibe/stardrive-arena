@@ -283,6 +283,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
                 loaded.Metadata.SessionId, loaded.Metadata.StartFingerprint, startSummary, empireByPeer,
                 nextSequence);
             loaded.Universe.AttachAuthoritative4XMultiplayer(recovered);
+            AssertRecoveredLocalBinding(loaded.Universe, recovered, localEmpireId, "client");
             AuthoritativeStateSnapshot loadedSnapshot = AuthoritativeStateSnapshot.Capture(loaded.Universe,
                 checked((uint)Math.Max(0, loaded.Metadata.LastProcessedTick)));
             Client.SendResyncAck(loadedSnapshot.Tick, loadedSnapshot.SyncDigest, received.Sha256);
@@ -337,6 +338,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
                 LocalPeerId, empireByPeer, loaded.HumanEmpireIds, loaded.Metadata.SessionId,
                 loaded.Metadata.StartFingerprint, startSummary);
             loaded.Universe.AttachAuthoritative4XMultiplayer(recovered);
+            AssertRecoveredLocalBinding(loaded.Universe, recovered, localEmpireId, "host");
             Telemetry?.Event("RESYNC_HOST_RECOVERED",
                 $"file='{save.FullName}' reason='{reason}'");
             DisposeRetainingTransportForRecovery();
@@ -390,6 +392,32 @@ public sealed class Authoritative4XLiveSession : IDisposable
         => Role == Authoritative4XLiveRole.Client
             ? Client.DrainReceivedSaves()
             : Array.Empty<Authoritative4XReceivedSave>();
+
+    static void AssertRecoveredLocalBinding(UniverseScreen universe, Authoritative4XLiveSession session,
+        int localEmpireId, string role)
+    {
+        if (universe == null)
+            throw new InvalidDataException($"Recovered authoritative {role} universe is missing.");
+        if (session == null)
+            throw new InvalidDataException($"Recovered authoritative {role} session is missing.");
+        if (session.LocalEmpireId != localEmpireId)
+            throw new InvalidDataException(
+                $"Recovered authoritative {role} session maps local empire {session.LocalEmpireId}, expected {localEmpireId}.");
+
+        Empire local = universe.UState.GetEmpire(localEmpireId);
+        if (local == null)
+            throw new InvalidDataException(
+                $"Recovered authoritative {role} universe does not contain local empire {localEmpireId}.");
+        if (!ReferenceEquals(universe.Authoritative4XLocalPlayerForUi, local))
+            throw new InvalidDataException(
+                $"Recovered authoritative {role} UI binding points at empire {universe.Authoritative4XLocalPlayerForUi?.Id ?? 0}, expected {localEmpireId}.");
+        if (!ReferenceEquals(universe.Player, local))
+            throw new InvalidDataException(
+                $"Recovered authoritative {role} UniverseScreen.Player points at empire {universe.Player?.Id ?? 0}, expected {localEmpireId}.");
+        if (!AuthoritativeHumanPlayers.IsHumanControlled(local))
+            throw new InvalidDataException(
+                $"Recovered authoritative {role} local empire {localEmpireId} is not registered as human-controlled.");
+    }
 
     public AuthoritativeResyncRequestMessage[] DrainResyncRequests()
         => Role == Authoritative4XLiveRole.Host

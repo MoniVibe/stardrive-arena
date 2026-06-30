@@ -765,6 +765,7 @@
     <Compile Include="Ship_Game\Multiplayer\Authoritative\AuthoritativeDiplomacyPopupScreen.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XCommandApplicator.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XClientContext.cs" />
+    <Compile Include="Ship_Game\Multiplayer\Authoritative\AuthoritativeReplicationManifest.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XSession.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XSessionSave.cs" />
     <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XSaveTransfer.cs" />

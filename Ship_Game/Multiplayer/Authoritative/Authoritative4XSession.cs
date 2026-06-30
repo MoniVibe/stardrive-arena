@@ -1505,6 +1505,7 @@ public sealed class Authoritative4XClientReplica
     readonly FixedSimTime Step;
     readonly Authoritative4XCommandApplicator Applicator;
     readonly AuthoritativeDiplomacyManager Diplomacy;
+    readonly bool DetectLocalMutation;
     bool AuthoritativePaused;
     float AuthoritativeGameSpeed = 1f;
 
@@ -1512,10 +1513,12 @@ public sealed class Authoritative4XClientReplica
     public AuthoritativeStateSnapshot LastSnapshot { get; private set; }
     public Authoritative4XRawHashDrift LastRawHashDrift { get; private set; }
 
-    public Authoritative4XClientReplica(UniverseScreen universe, float dt = 1f / 60f, int[] humanEmpireIds = null)
+    public Authoritative4XClientReplica(UniverseScreen universe, float dt = 1f / 60f,
+        int[] humanEmpireIds = null, bool detectLocalMutation = false)
     {
         Universe = universe;
         Step = new FixedSimTime(dt);
+        DetectLocalMutation = detectLocalMutation;
         AuthoritativePaused = universe?.UState?.Paused ?? false;
         AuthoritativeGameSpeed = ClampGameSpeed(universe?.UState?.GameSpeed ?? 1f);
         if (humanEmpireIds != null)
@@ -1527,6 +1530,7 @@ public sealed class Authoritative4XClientReplica
     public void ApplyAuthoritativeResult(AuthoritativePlayerCommand command, AuthoritativeCommandResult result,
         AuthoritativeStateSnapshot authoritySnapshot)
     {
+        AssertReplicaUnchangedSinceLastSnapshot(command, result);
         authoritySnapshot.ApplyRelationshipPayload(Universe.UState);
         Universe.UState.Paused = AuthoritativePaused;
         Universe.UState.GameSpeed = AuthoritativeGameSpeed;
@@ -1551,6 +1555,20 @@ public sealed class Authoritative4XClientReplica
         LastRawHashDrift = rawHashMismatch
             ? new Authoritative4XRawHashDrift(command, result, authoritySnapshot, LastSnapshot)
             : null;
+    }
+
+    void AssertReplicaUnchangedSinceLastSnapshot(AuthoritativePlayerCommand command,
+        AuthoritativeCommandResult result)
+    {
+        if (!DetectLocalMutation || LastSnapshot == null)
+            return;
+
+        AuthoritativeStateSnapshot current = AuthoritativeStateSnapshot.Capture(Universe, Tick);
+        if (string.Equals(current.SyncDigest, LastSnapshot.SyncDigest, StringComparison.Ordinal))
+            return;
+
+        throw new Authoritative4XSyncMismatchException(command, result, LastSnapshot, current,
+            "Client replica mutated before authoritative apply");
     }
 
     public void ApplySessionControl(bool paused, float gameSpeed)
@@ -1592,8 +1610,8 @@ public sealed class Authoritative4XSyncMismatchException : InvalidOperationExcep
 
     public Authoritative4XSyncMismatchException(AuthoritativePlayerCommand command,
         AuthoritativeCommandResult result, AuthoritativeStateSnapshot authoritySnapshot,
-        AuthoritativeStateSnapshot clientSnapshot)
-        : base(BuildMessage(result, authoritySnapshot, clientSnapshot))
+        AuthoritativeStateSnapshot clientSnapshot, string label = "Authoritative sync mismatch")
+        : base(BuildMessage(label, result, authoritySnapshot, clientSnapshot))
     {
         Command = command;
         Result = result;
@@ -1601,16 +1619,16 @@ public sealed class Authoritative4XSyncMismatchException : InvalidOperationExcep
         ClientSnapshot = clientSnapshot;
     }
 
-    static string BuildMessage(AuthoritativeCommandResult result,
+    static string BuildMessage(string label, AuthoritativeCommandResult result,
         AuthoritativeStateSnapshot authoritySnapshot, AuthoritativeStateSnapshot clientSnapshot)
-        => $"Authoritative sync mismatch at tick {clientSnapshot?.Tick ?? 0}: " +
+        => $"{label} at tick {clientSnapshot?.Tick ?? 0}: " +
            $"origin={result?.OriginPeer ?? 0} seq={result?.Sequence ?? 0} " +
            $"authority 0x{authoritySnapshot?.HashLo ?? 0UL:X16}:0x{authoritySnapshot?.HashHi ?? 0UL:X16}/" +
            $"{authoritySnapshot?.SyncDigest ?? ""}, client " +
            $"0x{clientSnapshot?.HashLo ?? 0UL:X16}:0x{clientSnapshot?.HashHi ?? 0UL:X16}/" +
-           $"{clientSnapshot?.SyncDigest ?? ""}; {FirstPayloadDifference(authoritySnapshot?.Payload, clientSnapshot?.Payload)}";
+           $"{clientSnapshot?.SyncDigest ?? ""}; {FirstPayloadDifferenceForLog(authoritySnapshot?.Payload, clientSnapshot?.Payload)}";
 
-    static string FirstPayloadDifference(string authorityPayload, string clientPayload)
+    internal static string FirstPayloadDifferenceForLog(string authorityPayload, string clientPayload)
     {
         string[] authority = (authorityPayload ?? "").Split('\n');
         string[] client = (clientPayload ?? "").Split('\n');
@@ -1620,7 +1638,7 @@ public sealed class Authoritative4XSyncMismatchException : InvalidOperationExcep
             string a = i < authority.Length ? authority[i].TrimEnd('\r') : "<missing>";
             string c = i < client.Length ? client[i].TrimEnd('\r') : "<missing>";
             if (!string.Equals(a, c, StringComparison.Ordinal))
-                return $"firstDiff line={i + 1} authority='{a}' client='{c}'";
+                return $"firstDiff line={i + 1} {AuthoritativeReplicationManifest.DescribeDiff(a, c)} authority='{a}' client='{c}'";
         }
         return "payloads matched";
     }
@@ -2112,7 +2130,8 @@ public sealed class Authoritative4XNetworkClient : IDisposable
         Transport = transport;
         if (humanEmpireIds != null)
             AuthoritativeHumanPlayers.SetHumanControlledEmpires(clientUniverse.UState, humanEmpireIds);
-        Replica = new Authoritative4XClientReplica(clientUniverse, humanEmpireIds: humanEmpireIds);
+        Replica = new Authoritative4XClientReplica(clientUniverse, humanEmpireIds: humanEmpireIds,
+            detectLocalMutation: true);
         Transport.Register(peerId, OnClientMessage);
     }
 

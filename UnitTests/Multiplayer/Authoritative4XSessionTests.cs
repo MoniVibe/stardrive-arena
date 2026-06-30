@@ -7366,6 +7366,75 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XReplicationManifest_CoversCanonicalSnapshotRows_Headless()
+    {
+        const ulong Seed = 0x4D4E1F357UL;
+        BuiltWorld world = BuildWorld(Seed, includePlatform: true, includeTroopShips: true,
+            includeFreighter: true, includeCarrierPolicyShips: true);
+
+        try
+        {
+            AuthoritativeStateSnapshot snapshot = AuthoritativeStateSnapshot.Capture(world.Screen, 0);
+            string[] unknownPrefixes = AuthoritativeReplicationManifest.UnknownPrefixesForPayload(snapshot.Payload);
+            Assert.AreEqual(0, unknownPrefixes.Length,
+                "Every canonical payload row prefix must be documented in the replication manifest: "
+                + string.Join(",", unknownPrefixes));
+
+            Assert.IsTrue(AuthoritativeReplicationManifest.TryGetRow("E", out AuthoritativeReplicationRow empireRow));
+            Assert.AreEqual("EmpireRuntime", empireRow.Owner);
+            Assert.AreEqual(AuthoritativeReplicationApplyMode.DirectReplay, empireRow.ApplyMode);
+            Assert.IsTrue(AuthoritativeReplicationManifest.TryGetRow("Q", out AuthoritativeReplicationRow queueRow));
+            Assert.AreEqual(AuthoritativeReplicationApplyMode.BatchReplay, queueRow.ApplyMode);
+            Assert.IsTrue(AuthoritativeReplicationManifest.TryGetRow("FP", out AuthoritativeReplicationRow patrolRow));
+            Assert.AreEqual(AuthoritativeReplicationApplyMode.DigestOnly, patrolRow.ApplyMode);
+            StringAssert.Contains(AuthoritativeReplicationManifest.DescribeDiff("S|1|", "S|2|"), "owner=ShipRuntime");
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientReplica_DetectsLocalMutationAfterAcceptedSnapshot_Headless()
+    {
+        const ulong Seed = 0xC11E47D21F7UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var authorityRuntime = new Authoritative4XAuthority(authority.Screen);
+            var replica = new Authoritative4XClientReplica(client.Screen, detectLocalMutation: true);
+            AuthoritativePlayerCommand first = AuthoritativePlayerCommand.NoOp(990, authority.Player.Id);
+            (AuthoritativeCommandResult firstResult, AuthoritativeStateSnapshot firstSnapshot) =
+                authorityRuntime.Process(first);
+            firstResult.OriginPeer = 2;
+            replica.ApplyAuthoritativeResult(first, firstResult, firstSnapshot);
+            Assert.AreEqual(firstSnapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                "The guard proof starts from a clean accepted authoritative snapshot.");
+
+            client.Player.Money += 123.5f;
+            AuthoritativePlayerCommand second = AuthoritativePlayerCommand.NoOp(991, authority.Player.Id);
+            (AuthoritativeCommandResult secondResult, AuthoritativeStateSnapshot secondSnapshot) =
+                authorityRuntime.Process(second);
+            secondResult.OriginPeer = 2;
+            Authoritative4XSyncMismatchException e =
+                Assert.ThrowsExactly<Authoritative4XSyncMismatchException>(() =>
+                    replica.ApplyAuthoritativeResult(second, secondResult, secondSnapshot));
+
+            StringAssert.Contains(e.Message, "Client replica mutated before authoritative apply");
+            StringAssert.Contains(e.Message, "owner=EmpireRuntime");
+            StringAssert.Contains(e.Message, "apply=DirectReplay");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientReplica_ReconcilesEmpireRuntimeRowBeforeDigest_Headless()
     {
         const ulong Seed = 0x4E4D50495245UL;
@@ -8306,6 +8375,10 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreSame(recoveredUniverse.UState.GetEmpire(authority.Enemy.Id),
                 recoveredUniverse.Authoritative4XLocalPlayerForUi,
                 "The recovered client should keep the join peer's local empire assignment.");
+            Assert.AreSame(recoveredUniverse.Authoritative4XLocalPlayerForUi, recoveredUniverse.Player,
+                "UniverseScreen.Player must resolve to the recovered joiner empire after resync.");
+            Assert.IsTrue(AuthoritativeHumanPlayers.IsHumanControlled(recoveredUniverse.Player),
+                "The recovered joiner empire must remain registered as human-controlled.");
             Assert.IsNull(recoveredUniverse.UState.FogMapBytes,
                 "A passive client must not import the host's saved fog texture during resync recovery.");
 
