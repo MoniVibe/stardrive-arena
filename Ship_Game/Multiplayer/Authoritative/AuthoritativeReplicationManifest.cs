@@ -45,7 +45,7 @@ public static class AuthoritativeReplicationManifest
         new("P", "PlanetRuntime", AuthoritativeReplicationApplyMode.DirectReplay,
             "Colony type, labor, import/export, governor, budgets, and queue count."),
         new("S", "ShipRuntime", AuthoritativeReplicationApplyMode.DirectReplay,
-            "Ship AI state, targets, durable orders, trade policy, carrier flags, and operation area."),
+            "Ship AI state, targets, durable orders, trade policy, carrier flags, and operation area. Freight pickup/dropoff goals are authority-only volatile AI plans and are not replayed."),
         new("Q", "ConstructionQueue", AuthoritativeReplicationApplyMode.BatchReplay,
             "Planet construction queue shape and runtime progress."),
         new("G", "EmpireGoal", AuthoritativeReplicationApplyMode.BatchReplay,

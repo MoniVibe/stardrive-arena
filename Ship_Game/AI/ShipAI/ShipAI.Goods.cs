@@ -12,9 +12,15 @@ namespace Ship_Game.AI
 
         public override void Execute(FixedSimTime timeStep, ShipAI.ShipGoal g)
         {
+            if (g?.Trade == null || g.Trade.ExportFrom == null || g.Trade.ImportTo == null)
+            {
+                AI.CancelTradePlan();
+                return;
+            }
+
             Planet exportPlanet = g.Trade.ExportFrom;
             Planet importPlanet = g.Trade.ImportTo;
-            if (exportPlanet.Owner == null 
+            if (exportPlanet.Owner == null
                 || exportPlanet.Quarantine
                 || importPlanet.Quarantine
                 || importPlanet.Owner == null // colony was wiped out
@@ -113,6 +119,12 @@ namespace Ship_Game.AI
 
         public override void Execute(FixedSimTime timeStep, ShipAI.ShipGoal g)
         {
+            if (g?.Trade == null || g.Trade.ExportFrom == null || g.Trade.ImportTo == null)
+            {
+                AI.CancelTradePlan();
+                return;
+            }
+
             Planet importPlanet = g.Trade.ImportTo;
             Planet exportPlanet = g.Trade.ExportFrom;
 

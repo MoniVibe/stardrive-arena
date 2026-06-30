@@ -4801,6 +4801,57 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XClientReplica_DoesNotReplayFreightTradeGoals_Headless()
+    {
+        const ulong Seed = 0x71ADE222UL;
+        BuiltWorld authority = BuildWorld(Seed, extraPlayerPlanet: true, includeFreighter: true);
+        BuiltWorld client = BuildWorld(Seed, extraPlayerPlanet: true, includeFreighter: true);
+
+        try
+        {
+            Planet exportPlanet = authority.Planet;
+            Planet importPlanet = authority.Player.GetPlanets()
+                .Where(p => p != exportPlanet)
+                .OrderBy(p => p.Id)
+                .FirstOrDefault();
+            Assert.IsNotNull(importPlanet, "The freight replay regression needs two player planets.");
+            Assert.IsTrue(authority.FreighterShip.IsFreighter,
+                "The freight replay regression must operate on a real freighter.");
+
+            authority.FreighterShip.AI.SetupFreighterPlan(exportPlanet, importPlanet, Goods.Food);
+            Assert.IsTrue(authority.FreighterShip.AI.OrderQueue.ToArray()
+                    .Any(g => g.Plan == ShipAI.Plan.PickupGoods && g.Trade != null),
+                "The authority must start with a real freight trade goal.");
+
+            string authoritySignature = AuthoritativeStateSnapshot.ShipOrderQueueSignatureForTest(authority.FreighterShip);
+            Assert.IsFalse(authoritySignature.Split(';')
+                    .Any(part => part.StartsWith($"{(int)ShipAI.Plan.PickupGoods},", StringComparison.Ordinal)),
+                $"Freight pickup/dropoff plans are not replayable from the compact S| row and must stay out of the canonical order signature. signature='{authoritySignature}'");
+
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            for (int i = 0; i < 3; ++i)
+            {
+                session.SubmitFromClient(AuthoritativePlayerCommand.NoOp(220 + i, authority.Player.Id));
+                Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+                Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest,
+                    "Passive replicas must not execute reconstructed freight goals with a null TradePlan.");
+            }
+
+            Assert.IsFalse(client.FreighterShip.AI.OrderQueue.ToArray()
+                    .Any(g => g.Plan is ShipAI.Plan.PickupGoods
+                            or ShipAI.Plan.DropOffGoods
+                            or ShipAI.Plan.PickupGoodsForStation
+                            or ShipAI.Plan.DropOffGoodsForStation),
+                "The passive replica should not retain authority-only freight goals after replay.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XShipRefit_SyncsAndRejectsInvalidRequests_Headless()
     {
         const ulong Seed = 0x4EF17001UL;

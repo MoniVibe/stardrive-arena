@@ -8,6 +8,12 @@ namespace Ship_Game.AI
     {
         public void DoPickupGoodsForStation(FixedSimTime timeStep, ShipGoal g)
         {
+            if (g?.Trade == null || g.Trade.ExportFrom == null)
+            {
+                CancelTradePlan();
+                return;
+            }
+
             Planet exportPlanet = g.Trade.ExportFrom;
             Ship targetStation = g.Trade.TargetStation;
             if (exportPlanet.Owner == null 
@@ -61,6 +67,12 @@ namespace Ship_Game.AI
 
         public void DoDropOffGoodsForStation(FixedSimTime timeStep, ShipGoal g)
         {
+            if (g?.Trade == null || g.Trade.ExportFrom == null)
+            {
+                CancelTradePlan();
+                return;
+            }
+
             Planet exportPlanet = g.Trade.ExportFrom;
             Ship targetStation  = g.Trade.TargetStation;
 

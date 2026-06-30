@@ -1217,7 +1217,7 @@ public sealed class AuthoritativeStateSnapshot
     {
         ShipAI.ShipGoal[] goals = ship.AI.OrderQueue.ToArray();
         return string.Join(";", goals
-            .Where(g => g != null && !IsVolatileMovementSolverPlan(g.Plan))
+            .Where(g => g != null && !IsVolatileReplayOnlyPlan(g.Plan))
             .Select(g =>
             {
                 // Targeted goals are durable by target ID; their MovePosition is derived from
@@ -1232,12 +1232,21 @@ public sealed class AuthoritativeStateSnapshot
 
     internal static string ShipOrderQueueSignatureForTest(Ship ship) => ShipOrderQueueSignature(ship);
 
+    static bool IsVolatileReplayOnlyPlan(ShipAI.Plan plan)
+        => IsVolatileMovementSolverPlan(plan) || IsUnreplayableFreightPlan(plan);
+
     static bool IsVolatileMovementSolverPlan(ShipAI.Plan plan)
         => plan is ShipAI.Plan.RotateToFaceMovePosition
             or ShipAI.Plan.RotateToDesiredFacing
             or ShipAI.Plan.MoveToWithin1000
             or ShipAI.Plan.MakeFinalApproach
             or ShipAI.Plan.RotateInlineWithVelocity;
+
+    static bool IsUnreplayableFreightPlan(ShipAI.Plan plan)
+        => plan is ShipAI.Plan.PickupGoods
+            or ShipAI.Plan.DropOffGoods
+            or ShipAI.Plan.PickupGoodsForStation
+            or ShipAI.Plan.DropOffGoodsForStation;
 
     static void ApplyShipRuntimeLine(UniverseState universe, string line)
     {
@@ -1352,6 +1361,9 @@ public sealed class AuthoritativeStateSnapshot
         }
 
         var plan = (ShipAI.Plan)planValue;
+        if (IsUnreplayableFreightPlan(plan))
+            return false;
+
         var moveOrder = (MoveOrder)moveOrderValue;
         Planet targetPlanet = planetId > 0 ? universe.GetPlanet(planetId) : null;
         Ship targetShip = targetShipId > 0 ? universe.Objects.FindShip(targetShipId) : null;

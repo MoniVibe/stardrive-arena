@@ -544,9 +544,9 @@ namespace Ship_Game.AI
 
             public void UnRegisterTrade(Ship freighter)
             {
-                ExportFrom.RemoveFromOutgoingFreighterList(freighter);
+                ExportFrom?.RemoveFromOutgoingFreighterList(freighter);
                 if (SupplyingPlanet)
-                    ImportTo.RemoveFromIncomingFreighterList(freighter);
+                    ImportTo?.RemoveFromIncomingFreighterList(freighter);
             }
         }
 
