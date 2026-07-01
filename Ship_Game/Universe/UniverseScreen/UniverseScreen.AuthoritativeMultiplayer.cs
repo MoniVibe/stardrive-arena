@@ -5,6 +5,7 @@ using System.Linq;
 using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Color = Microsoft.Xna.Framework.Color;
+using Vector3d = SDGraphics.Vector3d;
 
 namespace Ship_Game;
 
@@ -26,6 +27,25 @@ public partial class UniverseScreen
         Authoritative4XLive?.ActivateUiCommandContext();
         EnsureAuthoritative4XLocalBinding(forceVisibilityRefresh: true);
     }
+
+    public void RestoreAuthoritative4XClientViewFrom(UniverseScreen previous)
+    {
+        if (previous == null || previous == this)
+            return;
+
+        if (IsFinite(previous.CamPos))
+            CamPos = previous.CamPos;
+        if (IsFinite(previous.CamDestination))
+            CamDestination = previous.CamDestination;
+        else
+            CamDestination = CamPos;
+
+        ClearSelectedItems();
+        PrevSelectedShip = null;
+    }
+
+    static bool IsFinite(Vector3d value)
+        => double.IsFinite(value.X) && double.IsFinite(value.Y) && double.IsFinite(value.Z);
 
     void EnsureAuthoritative4XLocalBinding(bool forceVisibilityRefresh = false)
     {

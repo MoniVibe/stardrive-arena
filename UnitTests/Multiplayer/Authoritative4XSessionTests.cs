@@ -8465,6 +8465,20 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsNotNull(clientJoinPlanet);
             Assert.IsNotNull(authorityJoinPlanet);
 
+            Vector3d hostSaveCamera = new(authority.Planet.Position.X + 10_000f,
+                authority.Planet.Position.Y + 20_000f, 88_000.0);
+            Vector3d preservedClientCamera = new(clientJoinPlanet.Position.X - 33_000f,
+                clientJoinPlanet.Position.Y + 44_000f, 123_000.0);
+            Vector3d preservedClientDestination = new(clientJoinPlanet.Position.X - 22_000f,
+                clientJoinPlanet.Position.Y + 55_000f, 111_000.0);
+            authority.Screen.CamPos = hostSaveCamera;
+            authority.Screen.CamDestination = hostSaveCamera;
+            client.Screen.CamPos = preservedClientCamera;
+            client.Screen.CamDestination = preservedClientDestination;
+            client.Screen.SelectedPlanet = clientJoinPlanet;
+            Assert.AreSame(clientJoinPlanet, client.Screen.SelectedPlanet,
+                "The test should start with local client view state that must not be replaced by the host save.");
+
             Planet.ColonyType firstType = clientJoinPlanet.CType == Planet.ColonyType.Research
                 ? Planet.ColonyType.Military
                 : Planet.ColonyType.Research;
@@ -8535,6 +8549,14 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "The recovered joiner empire must remain registered as human-controlled.");
             Assert.IsNull(recoveredUniverse.UState.FogMapBytes,
                 "A passive client must not import the host's saved fog texture during resync recovery.");
+            Assert.AreEqual(preservedClientCamera.X, recoveredUniverse.CamPos.X);
+            Assert.AreEqual(preservedClientCamera.Y, recoveredUniverse.CamPos.Y);
+            Assert.AreEqual(preservedClientCamera.Z, recoveredUniverse.CamPos.Z);
+            Assert.AreEqual(preservedClientDestination.X, recoveredUniverse.CamDestination.X);
+            Assert.AreEqual(preservedClientDestination.Y, recoveredUniverse.CamDestination.Y);
+            Assert.AreEqual(preservedClientDestination.Z, recoveredUniverse.CamDestination.Z);
+            Assert.IsFalse(recoveredUniverse.HasSelectedItem,
+                "Resync recovery must not keep the host-selected planet or ship from the host-authored save.");
 
             AuthoritativeStateSnapshot recoveredHostSnapshot =
                 AuthoritativeStateSnapshot.Capture(recoveredHostUniverse, 0);
@@ -10527,7 +10549,17 @@ public class Authoritative4XSessionTests : StarDriveTest
                 $"|{(int)AIState.Combat}|{(int)CombatState.AttackRuns}|");
             StringAssert.Contains(authorityRow, $"|{authorityTarget.Id}|1|{authorityTarget.Id}|");
 
-            authoritySnapshot.ApplyEmpireRuntimePayload(client.AuthorityUniverse.UState);
+            var replica = new Authoritative4XClientReplica(client.AuthorityUniverse,
+                humanEmpireIds: client.AuthorityUniverse.UState.Empires.Select(e => e.Id).ToArray());
+            var command = AuthoritativePlayerCommand.NoOp(3001, clientOwner.Id);
+            var result = new AuthoritativeCommandResult
+            {
+                Sequence = command.Sequence,
+                OriginPeer = 3,
+                Accepted = true,
+                Tick = 1,
+            };
+            replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
 
             Assert.AreEqual(authorityShip.AI.State, clientShip.AI.State);
             Assert.AreEqual(authorityShip.AI.CombatState, clientShip.AI.CombatState);
@@ -10538,9 +10570,9 @@ public class Authoritative4XSessionTests : StarDriveTest
                 AuthoritativeStateSnapshot.ShipOrderQueueSignatureForTest(clientShip),
                 "Applying S| rows must restore the durable order queue before digest comparison.");
 
-            AuthoritativeStateSnapshot repairedClient = AuthoritativeStateSnapshot.Capture(client.AuthorityUniverse, 48);
-            Assert.AreEqual(authoritySnapshot.SyncDigest, repairedClient.SyncDigest,
-                "Applying authoritative S| rows should repair the ship AI/order drift from live post-resync loops.");
+            Assert.AreEqual(authoritySnapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                "Applying authoritative S| rows through the replica step should repair the ship AI/order drift "
+                + "from live post-resync loops.");
         }
         finally
         {

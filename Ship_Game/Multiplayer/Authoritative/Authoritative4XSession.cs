@@ -1575,6 +1575,10 @@ public sealed class Authoritative4XClientReplica
         authoritySnapshot.ApplyShipPresencePayload(Universe.UState);
         Universe.SingleSimulationStep(Step);
         Tick++;
+        // Host snapshots are captured after the authoritative step. The local replay
+        // step can clear volatile AI targets/orders, so replay ship runtime again
+        // before digesting the replica.
+        authoritySnapshot.ApplyShipPresencePayload(Universe.UState);
         authoritySnapshot.ApplyEmpireRuntimePayload(Universe.UState);
         LastSnapshot = AuthoritativeStateSnapshot.Capture(Universe, Tick);
         bool rawHashMismatch = LastSnapshot.HashLo != authoritySnapshot.HashLo

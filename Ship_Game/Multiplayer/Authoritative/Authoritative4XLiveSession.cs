@@ -286,6 +286,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
                 loaded.Metadata.SessionId, loaded.Metadata.StartFingerprint, startSummary, empireByPeer,
                 nextSequence);
             loaded.Universe.AttachAuthoritative4XMultiplayer(recovered);
+            loaded.Universe.RestoreAuthoritative4XClientViewFrom(Universe);
             AssertRecoveredLocalBinding(loaded.Universe, recovered, localEmpireId, "client");
             AuthoritativeStateSnapshot loadedSnapshot = AuthoritativeStateSnapshot.Capture(loaded.Universe,
                 checked((uint)Math.Max(0, loaded.Metadata.LastProcessedTick)));
