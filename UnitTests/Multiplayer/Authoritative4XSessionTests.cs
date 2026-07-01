@@ -7832,7 +7832,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             client.Screen.SetViewPerspective(Matrices.CreateLookAtDown(client.Screen.CamPos.X,
                 client.Screen.CamPos.Y, -client.Screen.CamPos.Z), maxDistance: 3E+07);
 
-            client.UState.Objects.UpdatePassiveAuthoritativeView();
+            client.Screen.RefreshAuthoritative4XPassiveClientView();
 
             bool visible = client.UState.Objects.VisibleShips.Any(s => s.Id == clientShip.Id);
             if (!visible)

@@ -249,7 +249,7 @@ public partial class UniverseScreen
         return true;
     }
 
-    void RefreshAuthoritative4XLocalVisibility()
+    internal void RefreshAuthoritative4XLocalVisibility()
     {
         if (Authoritative4XLocalPlayer == null)
             return;
@@ -269,6 +269,12 @@ public partial class UniverseScreen
 
             MarkKnownToAuthoritativeLocalPlayer(ship);
         }
+    }
+
+    internal void RefreshAuthoritative4XPassiveClientView()
+    {
+        UState.Objects.UpdatePassiveAuthoritativeView();
+        RefreshAuthoritative4XLocalVisibility();
     }
 
     void MarkKnownToAuthoritativeLocalPlayer(Ship ship)
@@ -297,6 +303,10 @@ public partial class UniverseScreen
         {
             ScreenManager?.GoToScreen(recoveredUniverse, clear3DObjects: true);
             return;
+        }
+        if (Authoritative4XLive != null && !Authoritative4XLive.IsHost)
+        {
+            RefreshAuthoritative4XPassiveClientView();
         }
         ShowAuthoritativeDiplomacyPopupIfNeeded();
     }
