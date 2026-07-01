@@ -131,6 +131,7 @@ namespace Ship_Game.Ships
             NotVisibleToPlayerTimer = 0f;
             ShipSO.World = Matrix.CreateTranslation(new Vector3(ShipData.BaseHull.MeshOffset, 0f))
                          * Matrix.CreateRotationY(YRotation)
+                         * Matrix.CreateRotationX(XRotation)
                          * Matrix.CreateRotationZ(Rotation)
                          * Matrix.CreateTranslation(new Vector3(Position, 0f));
             ShipSO.Visibility = GlobalStats.ShipVisibility;

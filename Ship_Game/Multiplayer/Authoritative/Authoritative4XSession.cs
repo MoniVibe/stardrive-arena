@@ -1370,6 +1370,8 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(s.System?.Id ?? 0)
               .Append('|').Append(s.Active ? 1 : 0)
               .Append('|').Append(s.Dying ? 1 : 0)
+              .Append('|').Append(FloatBits(s.YRotation))
+              .Append('|').Append(FloatBits(s.XRotation))
               .AppendLine();
 
         foreach (Ship s in snapshotShips)
@@ -1966,33 +1968,49 @@ public sealed class AuthoritativeStateSnapshot
     static void ApplyGroundTroopPayload(UniverseState universe, string[] lines)
     {
         var desired = new Dictionary<int, List<string>>();
+        var planetIds = new HashSet<int>();
         foreach (string rawLine in lines)
         {
             string line = rawLine.TrimEnd('\r');
+            if (line.StartsWith("P|", StringComparison.Ordinal))
+            {
+                string[] planetParts = line.Split('|');
+                if (planetParts.Length >= 2
+                    && int.TryParse(planetParts[1], NumberStyles.Integer, CultureInfo.InvariantCulture,
+                        out int planetRowId))
+                {
+                    planetIds.Add(planetRowId);
+                }
+                continue;
+            }
             if (!line.StartsWith("GT|", StringComparison.Ordinal))
                 continue;
 
-            string[] p = line.Split('|');
-            if (p.Length < 12
-                || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int planetId))
+            string[] troopParts = line.Split('|');
+            if (troopParts.Length < 12
+                || !int.TryParse(troopParts[1], NumberStyles.Integer, CultureInfo.InvariantCulture,
+                    out int troopPlanetId))
             {
                 continue;
             }
 
-            if (!desired.TryGetValue(planetId, out List<string> planetRows))
+            if (!desired.TryGetValue(troopPlanetId, out List<string> planetRows))
             {
                 planetRows = new List<string>();
-                desired[planetId] = planetRows;
+                desired[troopPlanetId] = planetRows;
             }
+            planetIds.Add(troopPlanetId);
             planetRows.Add(line);
         }
 
-        foreach ((int planetId, List<string> rows) in desired.OrderBy(kv => kv.Key))
+        foreach (int planetId in planetIds.OrderBy(id => id))
         {
             Planet planet = universe.GetPlanet(planetId);
             if (planet == null)
                 continue;
 
+            desired.TryGetValue(planetId, out List<string> rows);
+            rows ??= new List<string>();
             var existing = planet.TilesList
                 .SelectMany(tile => tile.TroopsHere)
                 .Distinct()
@@ -2015,7 +2033,10 @@ public sealed class AuthoritativeStateSnapshot
                 }
 
                 PlanetGridSquare tile = planet.GetTileByCoordinates(x, y);
-                Troop troop = tile != null ? FindMatchingGroundTroop(existing, used, p) : null;
+                Troop troop = tile != null
+                    ? FindMatchingGroundTroop(existing, used, p)
+                      ?? CreateGroundTroopForAuthoritativeReplay(universe, p)
+                    : null;
                 if (troop == null)
                     continue;
 
@@ -2031,6 +2052,22 @@ public sealed class AuthoritativeStateSnapshot
                     tile.AddTroop(troop);
             }
         }
+    }
+
+    static Troop CreateGroundTroopForAuthoritativeReplay(UniverseState universe, string[] p)
+    {
+        int.TryParse(p[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out int loyaltyId);
+        string name = p[6] ?? "";
+        if (!ResourceManager.GetTroopTemplate(name, out Troop template))
+            return null;
+
+        Troop troop = template.Clone();
+        if (troop.StrengthMax <= 0)
+            troop.StrengthMax = troop.Strength;
+        Empire loyalty = universe.Empires.FirstOrDefault(e => e.Id == loyaltyId);
+        if (loyalty != null)
+            troop.SetOwner(loyalty);
+        return troop;
     }
 
     static Troop FindMatchingGroundTroop(List<Troop> existing, HashSet<Troop> used, string[] p)
@@ -2224,6 +2261,10 @@ public sealed class AuthoritativeStateSnapshot
             ship.System = systemId > 0 ? universe.Systems.FirstOrDefault(s => s.Id == systemId) : null;
         ship.Active = ParseFlag(p[9]);
         ship.Dying = ParseFlag(p[10]);
+        if (p.Length > 11 && TryParseFloatBits(p[11], out float yRotation))
+            ship.YRotation = yRotation;
+        if (p.Length > 12 && TryParseFloatBits(p[12], out float xRotation))
+            ship.XRotation = xRotation;
     }
 
     static void ApplyShipVisibilityLine(UniverseState universe, string line)

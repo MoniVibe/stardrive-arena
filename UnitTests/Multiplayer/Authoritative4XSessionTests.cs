@@ -5926,6 +5926,44 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XGroundTroopReplay_MaterializesMissingAndClearsStaleTroops_Headless()
+    {
+        const ulong Seed = 0x6700D10AUL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var session = new Authoritative4XInProcessSession(authority.Screen, client.Screen);
+            PlanetGridSquare[] authorityTiles = PrepareGroundTroopTiles(authority.Planet, columns: 2, rows: 1);
+            PlanetGridSquare[] clientTiles = PrepareGroundTroopTiles(client.Planet, columns: 2, rows: 1);
+
+            Troop authorityTroop = PlaceGroundTroop(authority.Planet, authority.Player, authorityTiles[0]);
+            Troop staleClientTroop = PlaceGroundTroop(client.Planet, client.Player, clientTiles[1]);
+            staleClientTroop.Name = "ClientOnlyStaleTroop";
+            Assert.AreEqual(0, clientTiles[0].TroopsHere.Count,
+                "The client starts without the host-owned troop, matching the live resync gap this test covers.");
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.NoOp(904, authority.Player.Id));
+
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest,
+                "Ground troop batch replay must repair missing/client-only troop rows before digest comparison.");
+            Assert.AreEqual(1, clientTiles[0].TroopsHere.Count,
+                "The passive replica should materialize the host-owned ground troop that was absent locally.");
+            Assert.AreEqual(authorityTroop.Name, clientTiles[0].TroopsHere[0].Name);
+            Assert.AreSame(client.Player, clientTiles[0].TroopsHere[0].Loyalty);
+            Assert.IsFalse(clientTiles[1].TroopsHere.ContainsRef(staleClientTroop),
+                "A client-only troop absent from the host payload must be cleared during exact batch replay.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XGroundTroopOrders_AttacksAndSync_Headless()
     {
         const ulong Seed = 0x6700D102UL;
@@ -7902,12 +7940,16 @@ public class Authoritative4XSessionTests : StarDriveTest
             authorityShip.Position = new Vector2(authorityShip.Position.X + 12_345.5f, authorityShip.Position.Y - 678.25f);
             authorityShip.Velocity = new Vector2(42.25f, -19.75f);
             authorityShip.Rotation = 1.2345f;
+            authorityShip.YRotation = 0.375f;
+            authorityShip.XRotation = -0.1875f;
             authorityShip.ReinsertSpatial = true;
             AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 7);
 
             clientShip.Position = authorityShip.Position + new Vector2(99_999f, 88_888f);
             clientShip.Velocity = Vector2.Zero;
             clientShip.Rotation = 0f;
+            clientShip.YRotation = 0f;
+            clientShip.XRotation = 0f;
 
             replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
 
@@ -7927,6 +7969,28 @@ public class Authoritative4XSessionTests : StarDriveTest
                 BitConverter.SingleToUInt32Bits(clientShip.Velocity.Y));
             Assert.AreEqual(BitConverter.SingleToUInt32Bits(authorityShip.Rotation),
                 BitConverter.SingleToUInt32Bits(clientShip.Rotation));
+            Assert.AreEqual(BitConverter.SingleToUInt32Bits(authorityShip.YRotation),
+                BitConverter.SingleToUInt32Bits(clientShip.YRotation),
+                "Passive replicas must replay host-authored bank/yaw presentation, not only 2D facing.");
+            Assert.AreEqual(BitConverter.SingleToUInt32Bits(authorityShip.XRotation),
+                BitConverter.SingleToUInt32Bits(clientShip.XRotation),
+                "Passive replicas must replay host-authored pitch presentation for scene-object rendering.");
+
+            var sceneObject = new SynapseGaming.LightingSystem.Rendering.SceneObject("passive-transform-proof");
+            typeof(Ship).GetField("ShipSO",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                ?.SetValue(clientShip, sceneObject);
+            clientShip.InFrustum = true;
+            clientShip.KnownByEmpires.SetSeen(client.Player);
+            client.UState.ViewState = UniverseScreen.UnivScreenState.SystemView;
+            clientShip.SyncSceneObjectForPassiveAuthoritativeView();
+            Matrix expectedWorld = Matrix.CreateTranslation(new Vector3(clientShip.ShipData.BaseHull.MeshOffset, 0f))
+                                 * Matrix.CreateRotationY(clientShip.YRotation)
+                                 * Matrix.CreateRotationX(clientShip.XRotation)
+                                 * Matrix.CreateRotationZ(clientShip.Rotation)
+                                 * Matrix.CreateTranslation(new Vector3(clientShip.Position, 0f));
+            Assert.AreEqual(expectedWorld, sceneObject.World,
+                "The passive scene object must render the full host-authored orientation tuple.");
         }
         finally
         {
