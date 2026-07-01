@@ -31,6 +31,7 @@ public sealed class AuthoritativeStateSnapshotMessage : LockstepMessage
     public ulong HashLo;
     public ulong HashHi;
     public string SyncDigest = "";
+    public string TransformDigest = "";
     public string Payload = "";
 }
 

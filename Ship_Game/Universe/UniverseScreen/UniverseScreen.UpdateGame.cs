@@ -110,8 +110,16 @@ namespace Ship_Game
 
         void ProcessSimulationTurns()
         {
-            // process pending saves before entering the main loop 
+            // process pending saves before entering the main loop
             CheckForPendingSaves();
+
+            if (Authoritative4XLive != null && !Authoritative4XLive.IsHost)
+            {
+                InvokePendingSimThreadActions();
+                ++SimTurnId;
+                UState.Objects.Update(FixedSimTime.Zero);
+                return;
+            }
 
             if (UState.Paused || IsSaving)
             {

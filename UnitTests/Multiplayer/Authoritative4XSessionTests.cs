@@ -694,6 +694,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             HashLo = 0x1111,
             HashHi = 0x2222,
             SyncDigest = "0x3333",
+            TransformDigest = "0x4444",
             Payload = "payload"
         };
         decoded = LockstepMessageCodec.Decode(LockstepMessageCodec.Encode(snapshot, toPeer: 2));
@@ -702,6 +703,7 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.AreEqual(snapshot.HashLo, snapshotCopy.HashLo);
         Assert.AreEqual(snapshot.HashHi, snapshotCopy.HashHi);
         Assert.AreEqual(snapshot.SyncDigest, snapshotCopy.SyncDigest);
+        Assert.AreEqual(snapshot.TransformDigest, snapshotCopy.TransformDigest);
         Assert.AreEqual(snapshot.Payload, snapshotCopy.Payload);
 
         var start = new SessionStartMessage
@@ -7541,6 +7543,9 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(AuthoritativeReplicationApplyMode.BatchReplay, queueRow.ApplyMode);
             Assert.IsTrue(AuthoritativeReplicationManifest.TryGetRow("FP", out AuthoritativeReplicationRow patrolRow));
             Assert.AreEqual(AuthoritativeReplicationApplyMode.DigestOnly, patrolRow.ApplyMode);
+            Assert.IsTrue(AuthoritativeReplicationManifest.TryGetRow("SX", out AuthoritativeReplicationRow transformRow));
+            Assert.AreEqual("ShipTransform", transformRow.Owner);
+            Assert.AreEqual(AuthoritativeReplicationApplyMode.DirectReplay, transformRow.ApplyMode);
             StringAssert.Contains(AuthoritativeReplicationManifest.DescribeDiff("S|1|", "S|2|"), "owner=ShipRuntime");
         }
         finally
@@ -7726,6 +7731,70 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XClientReplica_ReplaysHostShipTransformWithoutLocalSimulation_Headless()
+    {
+        const ulong Seed = 0x5452414E53464F52UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var replica = new Authoritative4XClientReplica(client.Screen, humanEmpireIds: new[] { client.Player.Id });
+            var command = AuthoritativePlayerCommand.NoOp(244, authority.Player.Id);
+            var result = new AuthoritativeCommandResult
+            {
+                Sequence = 244,
+                OriginPeer = 2,
+                Accepted = false,
+                Tick = 7,
+                Reason = "",
+            };
+
+            authority.UState.Objects.UpdateLists(removeInactiveObjects: false);
+            client.UState.Objects.UpdateLists(removeInactiveObjects: false);
+            Ship authorityShip = authority.UState.Objects.GetShips()
+                .OrderBy(s => s.Id)
+                .First(s => client.UState.Objects.GetShips().Any(c => c.Id == s.Id));
+            Ship clientShip = client.UState.Objects.FindShip(authorityShip.Id);
+            Assert.IsNotNull(clientShip, "The transform replay proof needs a submitted ship id present on host and client.");
+
+            authorityShip.Position = new Vector2(authorityShip.Position.X + 12_345.5f, authorityShip.Position.Y - 678.25f);
+            authorityShip.Velocity = new Vector2(42.25f, -19.75f);
+            authorityShip.Rotation = 1.2345f;
+            authorityShip.ReinsertSpatial = true;
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 7);
+
+            clientShip.Position = authorityShip.Position + new Vector2(99_999f, 88_888f);
+            clientShip.Velocity = Vector2.Zero;
+            clientShip.Rotation = 0f;
+
+            replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
+
+            Assert.AreEqual(authoritySnapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                "Durable rows should still match after transform-only repair.");
+            Assert.AreEqual(authoritySnapshot.TransformDigest, replica.LastSnapshot.TransformDigest,
+                "The passive replica must match the host transform digest after applying SX rows.");
+            clientShip = client.UState.Objects.FindShip(authorityShip.Id);
+            Assert.IsNotNull(clientShip, "The transformed ship must remain present after applying the host snapshot.");
+            Assert.AreEqual(BitConverter.SingleToUInt32Bits(authorityShip.Position.X),
+                BitConverter.SingleToUInt32Bits(clientShip.Position.X));
+            Assert.AreEqual(BitConverter.SingleToUInt32Bits(authorityShip.Position.Y),
+                BitConverter.SingleToUInt32Bits(clientShip.Position.Y));
+            Assert.AreEqual(BitConverter.SingleToUInt32Bits(authorityShip.Velocity.X),
+                BitConverter.SingleToUInt32Bits(clientShip.Velocity.X));
+            Assert.AreEqual(BitConverter.SingleToUInt32Bits(authorityShip.Velocity.Y),
+                BitConverter.SingleToUInt32Bits(clientShip.Velocity.Y));
+            Assert.AreEqual(BitConverter.SingleToUInt32Bits(authorityShip.Rotation),
+                BitConverter.SingleToUInt32Bits(clientShip.Rotation));
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientReplica_IgnoresLocalPauseDriftDuringReplay_Headless()
     {
         const ulong Seed = 0xA17DABUL;
@@ -7824,6 +7893,8 @@ public class Authoritative4XSessionTests : StarDriveTest
 
             Assert.AreEqual(authoritySnapshot.SyncDigest, clientSnapshot.SyncDigest,
                 "Physical ship-position drift must not be treated as an authoritative gameplay-state mismatch.");
+            Assert.AreNotEqual(authoritySnapshot.TransformDigest, clientSnapshot.TransformDigest,
+                "Physical ship-position drift must be visible to the transform health digest.");
 
             clientShip.Position = new Vector2(authorityX + 128f, 25_000f);
             AuthoritativeStateSnapshot materialDrift = AuthoritativeStateSnapshot.Capture(client.AuthorityUniverse, 0);
@@ -7831,7 +7902,12 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "Live-integrated ship coordinates are raw-hash telemetry, not canonical command state. authority='"
                 + ShipPayloadRowForTest(authoritySnapshot.Payload, authorityShip.Id) + "' client='"
                 + ShipPayloadRowForTest(materialDrift.Payload, clientShip.Id) + "'");
+            Assert.AreNotEqual(authoritySnapshot.TransformDigest, materialDrift.TransformDigest,
+                "Material ship-coordinate drift must be caught by the transform digest.");
 
+            clientShip.Position = authorityShip.Position;
+            clientShip.Velocity = authorityShip.Velocity;
+            clientShip.Rotation = authorityShip.Rotation;
             clientShip.AI.MovePosition = new Vector2(authorityShip.AI.MovePosition.X + 128f,
                 authorityShip.AI.MovePosition.Y);
             AuthoritativeStateSnapshot moveScratchDrift = AuthoritativeStateSnapshot.Capture(client.AuthorityUniverse, 0);
@@ -7839,6 +7915,8 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "Current ship movement-solver scratch targets are raw-hash telemetry, not canonical command state. authority='"
                 + ShipPayloadRowForTest(authoritySnapshot.Payload, authorityShip.Id) + "' client='"
                 + ShipPayloadRowForTest(moveScratchDrift.Payload, clientShip.Id) + "'");
+            Assert.AreEqual(authoritySnapshot.TransformDigest, moveScratchDrift.TransformDigest,
+                "Ship AI scratch-target drift must not masquerade as physical transform drift.");
 
             clientShip.AI.OrderMoveTo(authorityShip.Position + new Vector2(128f, 0f),
                 Vectors.Right, MoveOrder.Aggressive | MoveOrder.AddWayPoint);
@@ -10160,15 +10238,7 @@ public class Authoritative4XSessionTests : StarDriveTest
                 started.Session.LastResultFor(2).Reason);
             Assert.AreEqual(Planet.ColonyType.Research, hostPlanet.CType);
 
-            foreach (int peer in new[] { 2, 3, 4 })
-            {
-                Assert.AreEqual(started.Session.LastAuthoritySnapshot.HashLo,
-                    started.Session.LastClientSnapshotFor(peer).HashLo);
-                Assert.AreEqual(started.Session.LastAuthoritySnapshot.HashHi,
-                    started.Session.LastClientSnapshotFor(peer).HashHi);
-                Assert.AreEqual(started.Session.LastAuthoritySnapshot.SyncDigest,
-                    started.Session.LastClientSnapshotFor(peer).SyncDigest);
-            }
+            AssertAllSynced(started.Session, 2, 3, 4);
         }
         finally
         {
@@ -10424,12 +10494,15 @@ public class Authoritative4XSessionTests : StarDriveTest
 
             AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 0);
             StringAssert.Contains(authoritySnapshot.Payload,
-                $"F|{authority.Player.Id}|{authorityFleet.Id}|4|Control Group Four|12|{authority.Ship.Id}|");
+                $"F|{authority.Player.Id}|4|4|Control Group Four|12|{authority.Ship.Id}|");
 
             authoritySnapshot.ApplyEmpireRuntimePayload(client.UState);
 
             Assert.AreEqual(client.Ship.Id, clientFleet.CommandShip?.Id,
-                "Authoritative F| fleet rows must restore the client command ship selected by control groups.");
+                $"Authoritative F| fleet rows must restore the client command ship selected by control groups. " +
+                $"authorityFleet={authorityFleet.Id}/{authorityFleet.Key} clientFleet={clientFleet.Id}/{clientFleet.Key} " +
+                $"clientShip={client.Ship.Id} objectShip={(client.UState.Objects.FindShip(client.Ship.Id)?.Id.ToString() ?? "<missing>")} " +
+                $"row='{authoritySnapshot.Payload.Split('\n').FirstOrDefault(line => line.StartsWith($"F|{authority.Player.Id}|{authorityFleet.Id}|", StringComparison.Ordinal))}'");
             Assert.AreEqual(authorityFleet.FleetIconIndex, clientFleet.FleetIconIndex);
             Assert.AreEqual(authorityFleet.FinalPosition, clientFleet.FinalPosition);
             Assert.AreEqual(authorityFleet.FinalDirection, clientFleet.FinalDirection);
@@ -12014,9 +12087,12 @@ public class Authoritative4XSessionTests : StarDriveTest
     {
         foreach (int peer in peers)
         {
-            Assert.AreEqual(session.LastAuthoritySnapshot.HashLo, session.LastClientSnapshotFor(peer).HashLo);
-            Assert.AreEqual(session.LastAuthoritySnapshot.HashHi, session.LastClientSnapshotFor(peer).HashHi);
-            Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshotFor(peer).SyncDigest);
+            AuthoritativeStateSnapshot authority = session.LastAuthoritySnapshot;
+            AuthoritativeStateSnapshot client = session.LastClientSnapshotFor(peer);
+            Assert.AreEqual(authority.SyncDigest, client.SyncDigest,
+                FirstPayloadDifferenceForTest(authority.Payload, client.Payload));
+            Assert.AreEqual(authority.TransformDigest, client.TransformDigest,
+                FirstPayloadDifferenceForTest(authority.Payload, client.Payload));
         }
     }
 
@@ -12284,9 +12360,10 @@ public class Authoritative4XSessionTests : StarDriveTest
     {
         foreach (Authoritative4XNetworkClient client in clients)
         {
-            Assert.AreEqual(client.LastAuthoritySnapshot.HashLo, client.LastClientSnapshot.HashLo);
-            Assert.AreEqual(client.LastAuthoritySnapshot.HashHi, client.LastClientSnapshot.HashHi);
-            Assert.AreEqual(client.LastAuthoritySnapshot.SyncDigest, client.LastClientSnapshot.SyncDigest);
+            Assert.AreEqual(client.LastAuthoritySnapshot.SyncDigest, client.LastClientSnapshot.SyncDigest,
+                FirstPayloadDifferenceForTest(client.LastAuthoritySnapshot.Payload, client.LastClientSnapshot.Payload));
+            Assert.AreEqual(client.LastAuthoritySnapshot.TransformDigest, client.LastClientSnapshot.TransformDigest,
+                FirstPayloadDifferenceForTest(client.LastAuthoritySnapshot.Payload, client.LastClientSnapshot.Payload));
         }
     }
 
@@ -12475,24 +12552,26 @@ public class Authoritative4XSessionTests : StarDriveTest
 
     static Ship SpawnMatchingMovableOwnedShip(UniverseScreen[] universes, int empireId, Vector2 position)
     {
-        Ship authorityShip = null;
-        foreach (UniverseScreen universe in universes)
+        UniverseScreen authority = universes[0];
+        Empire authorityEmpire = authority.UState.GetEmpireById(empireId);
+        Assert.IsNotNull(authorityEmpire, $"Authority universe '{authority.Name}' is missing empire {empireId}.");
+        Ship authorityShip = Ship.CreateShipAtPoint(authority.UState, "Vulcan Scout", authorityEmpire, position);
+        authority.UState.Objects.UpdateLists(removeInactiveObjects: false);
+        Assert.IsFalse(authorityShip.IsPlatformOrStation, "The generated move-order QA ship must be mobile.");
+        Assert.IsNotNull(authorityShip.AI, "The generated move-order QA ship must have ship AI.");
+
+        AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority, 0);
+        for (int i = 1; i < universes.Length; ++i)
         {
-            Empire empire = universe.UState.GetEmpireById(empireId);
-            Assert.IsNotNull(empire, $"Universe '{universe.Name}' is missing empire {empireId}.");
-            Ship ship = Ship.CreateShipAtPoint(universe.UState, "Vulcan Scout", empire, position);
-            universe.UState.Objects.UpdateLists(removeInactiveObjects: false);
+            UniverseScreen universe = universes[i];
+            Assert.IsNotNull(universe.UState.GetEmpireById(empireId),
+                $"Replica universe '{universe.Name}' is missing empire {empireId}.");
+            authoritySnapshot.ApplyEmpireRuntimePayload(universe.UState);
+            Ship ship = universe.UState.Objects.FindShip(authorityShip.Id);
+            Assert.IsNotNull(ship,
+                $"Replica universe '{universe.Name}' did not materialize authority QA ship {authorityShip.Id}.");
             Assert.IsFalse(ship.IsPlatformOrStation, "The generated move-order QA ship must be mobile.");
             Assert.IsNotNull(ship.AI, "The generated move-order QA ship must have ship AI.");
-            if (authorityShip == null)
-            {
-                authorityShip = ship;
-            }
-            else
-            {
-                Assert.AreEqual(authorityShip.Id, ship.Id,
-                    "The authority and replicas must spawn the move-order QA ship with identical ids.");
-            }
         }
 
         return authorityShip;

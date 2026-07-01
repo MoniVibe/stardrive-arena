@@ -108,7 +108,7 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
         Write("RESULT",
             $"origin={result.OriginPeer} seq={result.Sequence} tick={result.Tick} "
             + $"accepted={result.Accepted} reason='{result.Reason ?? ""}' hash={hash} "
-            + $"digest='{snapshot?.SyncDigest ?? ""}'",
+            + $"digest='{snapshot?.SyncDigest ?? ""}' transformDigest='{snapshot?.TransformDigest ?? ""}'",
             retainRecent: true);
         Snapshot(snapshot);
     }
@@ -121,7 +121,8 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
         var payloadHash = DetHash.New();
         payloadHash.AddString(snapshot.Payload);
         Write("SNAPSHOT",
-            $"tick={snapshot.Tick} digest='{snapshot.SyncDigest}' payloadHash=0x{payloadHash.Value:X16} "
+            $"tick={snapshot.Tick} digest='{snapshot.SyncDigest}' transformDigest='{snapshot.TransformDigest}' "
+            + $"payloadHash=0x{payloadHash.Value:X16} "
             + $"payloadChars={snapshot.Payload.Length} rows='{PayloadRowCounts(snapshot.Payload)}'");
     }
 
@@ -143,6 +144,8 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
             + $"authorityHash={SnapshotHash(mismatch.AuthoritySnapshot)} clientHash={SnapshotHash(mismatch.ClientSnapshot)} "
             + $"authorityDigest='{mismatch.AuthoritySnapshot?.SyncDigest ?? ""}' "
             + $"clientDigest='{mismatch.ClientSnapshot?.SyncDigest ?? ""}' "
+            + $"authorityTransformDigest='{mismatch.AuthoritySnapshot?.TransformDigest ?? ""}' "
+            + $"clientTransformDigest='{mismatch.ClientSnapshot?.TransformDigest ?? ""}' "
             + $"authorityRows='{PayloadRowCounts(mismatch.AuthoritySnapshot?.Payload)}' "
             + $"clientRows='{PayloadRowCounts(mismatch.ClientSnapshot?.Payload)}' "
             + $"firstDiff='{OneLine(FirstPayloadDifference(mismatch.AuthoritySnapshot?.Payload, mismatch.ClientSnapshot?.Payload))}' "
@@ -163,6 +166,7 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
             + $"tick={drift.ClientSnapshot?.Tick ?? 0} accepted={result?.Accepted ?? false} "
             + $"authorityHash={SnapshotHash(drift.AuthoritySnapshot)} clientHash={SnapshotHash(drift.ClientSnapshot)} "
             + $"digest='{drift.AuthoritySnapshot?.SyncDigest ?? ""}' "
+            + $"transformDigest='{drift.AuthoritySnapshot?.TransformDigest ?? ""}' "
             + "note='canonical digest matched; continuing'");
     }
 

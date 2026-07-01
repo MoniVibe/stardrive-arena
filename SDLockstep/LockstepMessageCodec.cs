@@ -175,6 +175,7 @@ public static class LockstepMessageCodec
                     w.Write(snapshot.HashHi);
                     WriteString(w, snapshot.SyncDigest);
                     WriteString(w, snapshot.Payload);
+                    WriteString(w, snapshot.TransformDigest);
                     break;
                 case AuthoritativeDiplomacyPopupMessage popup:
                     w.Write(AuthoritativeDiplomacyPopup);
@@ -442,6 +443,8 @@ public static class LockstepMessageCodec
                     SyncDigest = ReadString(r),
                     Payload = ReadString(r),
                 };
+                ((AuthoritativeStateSnapshotMessage)message).TransformDigest =
+                    r.BaseStream.Position < r.BaseStream.Length ? ReadString(r) : "";
                 break;
             case AuthoritativeDiplomacyPopup:
                 message = new AuthoritativeDiplomacyPopupMessage
