@@ -10583,13 +10583,14 @@ public class Authoritative4XSessionTests : StarDriveTest
     public void Authoritative4XSnapshot_AppliesPlanetRuntimeRowsBeforeDigestCompare_Headless()
     {
         const ulong Seed = 0xA47A9E7UL;
-        BuiltWorld authority = BuildWorld(Seed);
-        BuiltWorld client = BuildWorld(Seed);
+        BuiltWorld authority = BuildWorld(Seed, includeNeutralPlanet: true);
+        BuiltWorld client = BuildWorld(Seed, includeNeutralPlanet: true);
 
         try
         {
-            Planet authorityPlanet = authority.EnemyPlanet;
+            Planet authorityPlanet = authority.NeutralPlanet;
             Planet clientPlanet = client.UState.GetPlanet(authorityPlanet.Id);
+            authorityPlanet.SetOwner(authority.Player);
             authorityPlanet.CType = Planet.ColonyType.TradeHub;
             authorityPlanet.GarrisonSize = 7;
             authorityPlanet.SetWantedPlatforms(3);
@@ -10622,6 +10623,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             authorityPlanet.SetManualSpaceDefBudget(0.5f);
 
             clientPlanet.CType = Planet.ColonyType.Colony;
+            Assert.IsNull(clientPlanet.Owner,
+                "The test must start with the live mismatch shape: host-owned planet, passive client still unowned.");
             clientPlanet.GarrisonSize = 0;
             clientPlanet.Food.Percent = 0.8f;
             clientPlanet.Prod.Percent = 0.1f;
@@ -10636,6 +10639,10 @@ public class Authoritative4XSessionTests : StarDriveTest
 
             authoritySnapshot.ApplyEmpireRuntimePayload(client.UState);
 
+            Assert.AreEqual(authorityPlanet.Owner.Id, clientPlanet.Owner?.Id,
+                "P| replay must apply planet ownership before digest comparison.");
+            Assert.IsTrue(client.Player.GetPlanets().Contains(clientPlanet),
+                "SetOwner replay must rebuild the owning empire's planet list, not just set a raw field.");
             Assert.AreEqual(authorityPlanet.CType, clientPlanet.CType);
             Assert.AreEqual(authorityPlanet.GarrisonSize, clientPlanet.GarrisonSize);
             Assert.AreEqual(authorityPlanet.Food.Percent, clientPlanet.Food.Percent, 0.0001f);

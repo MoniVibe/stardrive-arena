@@ -549,6 +549,13 @@ public sealed class AuthoritativeStateSnapshot
         if (planet == null)
             return;
 
+        if (int.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int ownerId))
+        {
+            Empire owner = ownerId > 0 ? universe.GetEmpireById(ownerId) : null;
+            if (planet.Owner != owner)
+                planet.SetOwner(owner);
+        }
+
         if (int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int colonyType)
             && Enum.IsDefined(typeof(Planet.ColonyType), colonyType))
         {
