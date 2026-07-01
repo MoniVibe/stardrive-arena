@@ -19,6 +19,7 @@ public partial class UniverseScreen
     public Authoritative4XLiveSession Authoritative4XMultiplayer => Authoritative4XLive;
     public bool IsAuthoritative4XMultiplayer => Authoritative4XLive != null;
     public Empire Authoritative4XLocalPlayerForUi => Authoritative4XLocalPlayer;
+    public override bool KeepActiveWhenGameUnfocused => IsAuthoritative4XMultiplayer;
 
     public void AttachAuthoritative4XMultiplayer(Authoritative4XLiveSession session)
     {
@@ -279,6 +280,27 @@ public partial class UniverseScreen
         RefreshAuthoritative4XLocalVisibility();
     }
 
+    internal int SyncAuthoritative4XPassiveShipSceneObjectsForHeadless()
+        => SyncAuthoritative4XPassiveShipSceneObjects();
+
+    int SyncAuthoritative4XPassiveShipSceneObjects()
+    {
+        if (Authoritative4XLive == null || Authoritative4XLive.IsHost)
+            return 0;
+
+        Ship[] visible = UState.Objects?.VisibleShips ?? Array.Empty<Ship>();
+        int synced = 0;
+        for (int i = 0; i < visible.Length; ++i)
+        {
+            Ship ship = visible[i];
+            if (!IsVisibleToLocalPlayerForUi(ship))
+                continue;
+            ship.SyncSceneObjectForPassiveAuthoritativeView();
+            ++synced;
+        }
+        return synced;
+    }
+
     void MarkKnownToAuthoritativeLocalPlayer(Ship ship)
     {
         if (ship?.Active != true)
@@ -309,6 +331,7 @@ public partial class UniverseScreen
         if (Authoritative4XLive != null && !Authoritative4XLive.IsHost)
         {
             RefreshAuthoritative4XPassiveClientView();
+            SyncAuthoritative4XPassiveShipSceneObjects();
         }
         ShowAuthoritativeDiplomacyPopupIfNeeded();
     }

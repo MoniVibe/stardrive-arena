@@ -42,8 +42,10 @@ namespace Ship_Game
         /// </summary>
         public bool IsScreenActive { get; private set; }
 
-        public bool IsActive => Enabled && !IsExiting && (!OtherScreenHasFocus || (GlobalStats.RestrictAIPlayerInteraction || System.Diagnostics.Debugger.IsAttached )) && 
+        public bool IsActive => Enabled && !IsExiting && (!OtherScreenHasFocus || (GlobalStats.RestrictAIPlayerInteraction || System.Diagnostics.Debugger.IsAttached )) &&
             (ScreenState == ScreenState.TransitionOn || ScreenState == ScreenState.Active);
+
+        public virtual bool KeepActiveWhenGameUnfocused => false;
 
         public bool IsExiting { get; protected set; }
 

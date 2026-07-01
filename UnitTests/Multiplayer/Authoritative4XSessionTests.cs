@@ -9135,7 +9135,11 @@ public class Authoritative4XSessionTests : StarDriveTest
             client.Screen.CamDestination = client.Screen.CamPos;
             client.Screen.SetViewPerspective(Matrices.CreateLookAtDown(client.Screen.CamPos.X,
                 client.Screen.CamPos.Y, -client.Screen.CamPos.Z), maxDistance: 3E+07);
+            Assert.IsFalse(client.Screen.KeepActiveWhenGameUnfocused,
+                "Stock universe screens should retain the base game's inactive-window behavior.");
             client.Screen.AttachAuthoritative4XMultiplayer(liveClient);
+            Assert.IsTrue(client.Screen.KeepActiveWhenGameUnfocused,
+                "Authoritative 4X sessions must keep polling/render-state updates active while the game window is unfocused.");
             Assert.IsNull(client.UState.FogMapBytes,
                 "Remote authoritative clients must discard host-side saved fog and rebuild from their assigned empire.");
             Planet clientRemotePlanet = client.UState.GetPlanet(authority.EnemyPlanet.Id);
@@ -9185,6 +9189,8 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "Ship-level visibility should also use the assigned local empire so icons and scene objects can render.");
             Assert.IsTrue(client.UState.Objects.VisibleShips.Any(s => s.Id == client.EnemyShip.Id),
                 "Passive clients should refresh their visible object cache immediately on attach so joined ships do not start invisible until a later resync.");
+            Assert.IsTrue(client.Screen.SyncAuthoritative4XPassiveShipSceneObjectsForHeadless() > 0,
+                "A visible joined-client ship must be queued/synced for 3D scene-object rendering, not only icon rendering.");
             Assert.AreNotEqual(client.EnemyShip.InPlayerSensorRange,
                 client.Screen.IsKnownToLocalPlayerForUi(client.EnemyShip),
                 "The local-view visibility proof must not be just a wrapper around UState.Player visibility.");

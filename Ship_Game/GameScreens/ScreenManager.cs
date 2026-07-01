@@ -757,7 +757,8 @@ namespace Ship_Game
             input.Update(elapsed); // analyze input state for this frame
             AddPendingScreens();
 
-            bool otherScreenHasFocus = !StarDriveGame.Instance?.IsActive ?? false;
+            bool gameWindowInactive = StarDriveGame.Instance != null && !StarDriveGame.Instance.IsActive;
+            bool otherScreenHasFocus = gameWindowInactive;
             bool coveredByOtherScreen = false;
             bool inputCaptured = false;
             
@@ -774,7 +775,7 @@ namespace Ship_Game
                     continue; // this screen was removed while we were processing HandleInput events
 
                 // 1. Handle Input
-                if (!otherScreenHasFocus && !screen.IsExiting && !inputCaptured)
+                if (!gameWindowInactive && !otherScreenHasFocus && !screen.IsExiting && !inputCaptured)
                 {
                     inputCaptured = screen.HandleInput(input);
                     if (screen.IsDisposed)
@@ -782,7 +783,9 @@ namespace Ship_Game
                 }
 
                 // 2. Add the screen to Update list
-                if (screen.PreUpdate(elapsed, otherScreenHasFocus, coveredByOtherScreen))
+                bool focusBlockedForScreen = otherScreenHasFocus
+                                           && !(gameWindowInactive && screen.KeepActiveWhenGameUnfocused);
+                if (screen.PreUpdate(elapsed, focusBlockedForScreen, coveredByOtherScreen))
                 {
                     frontToBack.Add(screen);
                     backToFront.Insert(0, screen);

@@ -115,6 +115,27 @@ namespace Ship_Game.Ships
             }
         }
 
+        public void SyncSceneObjectForPassiveAuthoritativeView()
+        {
+            if (!Active || Dying)
+                return;
+            if (!IsVisibleToPlayer)
+                return;
+
+            if (ShipSO == null)
+            {
+                Universe.Screen?.QueueSceneObjectCreation(this);
+                return;
+            }
+
+            NotVisibleToPlayerTimer = 0f;
+            ShipSO.World = Matrix.CreateTranslation(new Vector3(ShipData.BaseHull.MeshOffset, 0f))
+                         * Matrix.CreateRotationY(YRotation)
+                         * Matrix.CreateRotationZ(Rotation)
+                         * Matrix.CreateTranslation(new Vector3(Position, 0f));
+            ShipSO.Visibility = GlobalStats.ShipVisibility;
+        }
+
         public override void Update(FixedSimTime timeStep)
         {
             if (Active && Health <= 0)
