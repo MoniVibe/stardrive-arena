@@ -117,7 +117,8 @@ namespace Ship_Game
             {
                 InvokePendingSimThreadActions();
                 ++SimTurnId;
-                UState.Objects.Update(FixedSimTime.Zero);
+                UState.Objects.UpdatePassiveAuthoritativeView();
+                RefreshAuthoritative4XLocalVisibility();
                 return;
             }
 

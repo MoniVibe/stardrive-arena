@@ -230,6 +230,29 @@ namespace Ship_Game
         }
 
         /// <summary>
+        /// Passive authoritative clients consume host-authored ship transforms but
+        /// must not advance gameplay simulation locally. This refreshes only the
+        /// render/spatial side needed for picking and drawing those host transforms.
+        /// </summary>
+        public void UpdatePassiveAuthoritativeView()
+        {
+            if (UState.GameOver || Universe.IsExiting)
+                return;
+
+            TotalTime.Start();
+
+            FixedSimTime zero = FixedSimTime.Zero;
+            UpdateLists(removeInactiveObjects: false);
+            UpdateAllSystems(zero);
+            UpdateAllShips(zero);
+            UpdateAllProjectiles(zero);
+            Spatial.Update(Objects.GetItems());
+            UpdateVisibleObjects();
+
+            TotalTime.Stop();
+        }
+
+        /// <summary>
         /// Run once after save is loaded to restore object visibility
         /// </summary>
         public void InitializeFromSave()

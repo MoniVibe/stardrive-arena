@@ -7795,6 +7795,67 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XPassiveClientViewRefresh_ReindexesHostTransforms_Headless()
+    {
+        const ulong Seed = 0x56495349424C4555UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var replica = new Authoritative4XClientReplica(client.Screen, humanEmpireIds: new[] { client.Player.Id });
+            var command = AuthoritativePlayerCommand.NoOp(245, authority.Player.Id);
+            var result = new AuthoritativeCommandResult
+            {
+                Sequence = 245,
+                OriginPeer = 2,
+                Accepted = false,
+                Tick = 8,
+                Reason = "",
+            };
+
+            Ship authorityShip = SpawnMatchingMovableOwnedShip(new[] { authority.Screen, client.Screen },
+                authority.Player.Id, authority.Planet.Position + new Vector2(4_000f, -3_000f));
+            Ship clientShip = client.UState.Objects.FindShip(authorityShip.Id);
+            Assert.IsNotNull(clientShip, "The passive visibility proof needs the local ship present on host and client.");
+
+            authorityShip.Position += new Vector2(500f, -250f);
+            authorityShip.Velocity = Vector2.Zero;
+            authorityShip.ReinsertSpatial = true;
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 8);
+            replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
+
+            clientShip = client.UState.Objects.FindShip(authorityShip.Id);
+            Assert.IsNotNull(clientShip, "The local ship must still exist after host transform replay.");
+            client.Screen.CamPos = new Vector3d(clientShip.Position.X, clientShip.Position.Y, 4_000);
+            client.Screen.CamDestination = client.Screen.CamPos;
+            client.Screen.SetViewPerspective(Matrices.CreateLookAtDown(client.Screen.CamPos.X,
+                client.Screen.CamPos.Y, -client.Screen.CamPos.Z), maxDistance: 3E+07);
+
+            client.UState.Objects.UpdatePassiveAuthoritativeView();
+
+            bool visible = client.UState.Objects.VisibleShips.Any(s => s.Id == clientShip.Id);
+            if (!visible)
+            {
+                var nearby = client.UState.Spatial.FindNearby(GameObjectType.Ship,
+                    clientShip.Position, 10_000f, 32);
+                Assert.Fail("A passive client must refresh spatial visibility after host-authored transforms; " +
+                    $"otherwise owned ships vanish after resync. visibleCount={client.UState.Objects.VisibleShips.Length} " +
+                    $"nearbyCount={nearby.Length} shipSpatial={clientShip.SpatialIndex} " +
+                    $"reinsert={clientShip.ReinsertSpatial} active={clientShip.Active} " +
+                    $"pos={clientShip.Position} cam={client.Screen.CamPos} rect={client.Screen.VisibleWorldRect}");
+            }
+            Assert.IsTrue(clientShip.InFrustum,
+                "The host-transformed local ship should be marked in-frustum after the passive view refresh.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientReplica_IgnoresLocalPauseDriftDuringReplay_Headless()
     {
         const ulong Seed = 0xA17DABUL;
