@@ -84,7 +84,8 @@ public class IncomingThreatDetector
     // only for player
     public void AssessHostilePresenceForPlayerWarnings(Empire owner)
     {
-        if (!owner.isPlayer)
+        Empire localPlayer = owner.Universe?.Screen?.Player ?? owner.Universe?.Player;
+        if (owner != localPlayer && owner.Id != localPlayer?.Id)
             return;
 
         if (Notified.Values == null)
@@ -118,7 +119,7 @@ public class IncomingThreatDetector
                 Empire loyalty = ship.Loyalty;
                 if (owner.GetRelations(loyalty, out var r) && r.IsHostile && IsShipAThreat(ship))
                 {
-                    owner.Universe.Notifications?.AddBeingInvadedNotification(sys, loyalty, StrRatio(sys, owner, loyalty));
+                    owner.Universe.Notifications?.AddBeingInvadedNotification(sys, owner, loyalty, StrRatio(sys, owner, loyalty));
                     Notified.Set(i);
                     break;
                 }
@@ -133,7 +134,8 @@ public class IncomingThreatDetector
 
     bool IsHostilesPresent(Empire owner, SolarSystem s)
     {
-        if (s.HasPlanetsOwnedBy(owner.Universe.Player))
+        Empire localPlayer = owner.Universe?.Screen?.Player ?? owner.Universe?.Player;
+        if ((owner == localPlayer || owner.Id == localPlayer?.Id) && s.HasPlanetsOwnedBy(owner))
         {
             for (int j = 0; j < s.ShipList.Count; j++)
             {

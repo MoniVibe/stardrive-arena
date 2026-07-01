@@ -1075,6 +1075,7 @@ public sealed class AuthoritativeStateSnapshot
             }
         }
 
+        var activeShipIds = new HashSet<int>(us.Ships.Select(s => s.Id));
         foreach (Ship s in us.Ships.OrderBy(s => s.Id))
             sb.Append("S|").Append(s.Id)
               .Append('|').Append(s.Loyalty?.Id ?? 0)
@@ -1087,11 +1088,11 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(VolatileShipPositionDigest)
               .Append('|').Append(VolatileShipPositionDigest)
               .Append('|').Append(FloatBits(s.ScuttleTimer))
-              .Append('|').Append(s.AI.Target?.Id ?? 0)
+              .Append('|').Append(SnapshotShipId(s.AI.Target, activeShipIds))
               .Append('|').Append(s.AI.HasPriorityTarget ? 1 : 0)
-              .Append('|').Append(TargetQueueSignature(s))
-              .Append('|').Append(s.AI.EscortTarget?.Id ?? 0)
-              .Append('|').Append(ShipOrderQueueSignature(s))
+              .Append('|').Append(TargetQueueSignature(s, activeShipIds))
+              .Append('|').Append(SnapshotShipId(s.AI.EscortTarget, activeShipIds))
+              .Append('|').Append(ShipOrderQueueSignature(s, activeShipIds))
               .Append('|').Append(s.IsFreighter ? 1 : 0)
               .Append('|').Append(s.TransportingFood ? 1 : 0)
               .Append('|').Append(s.TransportingProduction ? 1 : 0)
@@ -1236,8 +1237,16 @@ public sealed class AuthoritativeStateSnapshot
         return sb.ToString();
     }
 
+    static int SnapshotShipId(Ship ship, HashSet<int> activeShipIds)
+        => ship != null && (activeShipIds == null || activeShipIds.Contains(ship.Id)) ? ship.Id : 0;
+
     static string TargetQueueSignature(Ship ship)
-        => string.Join(",", ship.AI.TargetQueue.Select(s => s?.Id ?? 0));
+        => TargetQueueSignature(ship, activeShipIds: null);
+
+    static string TargetQueueSignature(Ship ship, HashSet<int> activeShipIds)
+        => string.Join(",", ship.AI.TargetQueue
+            .Select(s => SnapshotShipId(s, activeShipIds))
+            .Where(id => id > 0));
 
     static string ResearchQueueSignature(Empire empire)
         => string.Join(",", empire.data.ResearchQueue);
@@ -1348,20 +1357,28 @@ public sealed class AuthoritativeStateSnapshot
     }
 
     static string ShipOrderQueueSignature(Ship ship)
+        => ShipOrderQueueSignature(ship, activeShipIds: null);
+
+    static string ShipOrderQueueSignature(Ship ship, HashSet<int> activeShipIds)
     {
         ShipAI.ShipGoal[] goals = ship.AI.OrderQueue.ToArray();
         return string.Join(";", goals
             .Where(g => g != null && !IsVolatileReplayOnlyPlan(g.Plan))
             .Select(g =>
             {
+                int targetShipId = SnapshotShipId(g.TargetShip, activeShipIds);
+                if (g.TargetShip != null && targetShipId == 0)
+                    return null;
+
                 // Targeted goals are durable by target ID; their MovePosition is derived from
                 // local planet/ship state and can drift during replay/resync.
                 Vector2 movePosition = (g.TargetPlanet != null || g.TargetShip != null)
                     ? Vector2.Zero
                     : g.MovePosition;
-                return $"{(int)g.Plan},{g.TargetPlanet?.Id ?? 0},{g.TargetShip?.Id ?? 0}," +
+                return $"{(int)g.Plan},{g.TargetPlanet?.Id ?? 0},{targetShipId}," +
                        $"{FloatBits(movePosition.X):X8},{FloatBits(movePosition.Y):X8},{(int)g.MoveOrder}";
-            }));
+            })
+            .Where(signature => signature != null));
     }
 
     internal static string ShipOrderQueueSignatureForTest(Ship ship) => ShipOrderQueueSignature(ship);

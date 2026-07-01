@@ -94,7 +94,7 @@ namespace Ship_Game
             }, good ? "sd_ui_spy_win_02" : "sd_ui_spy_fail_02"); 
         }
 
-        public void AddBeingInvadedNotification(SolarSystem beingInvaded, Empire invader, float strRatio)
+        public void AddBeingInvadedNotification(SolarSystem beingInvaded, Empire owner, Empire invader, float strRatio)
         {
             string threatLevel = Localizer.Token(GameText.NthreatLevelVsOurForcesnthere);
             if      (strRatio < 0.1f)  threatLevel = $"{threatLevel} {Localizer.Token(GameText.Negligible)}"; // negligible
@@ -112,7 +112,8 @@ namespace Ship_Game
 
             AddNotification(new Notification
             {
-                RelevantEmpire  = invader,
+                RelevantEmpire  = owner,
+                LocalEmpireOnly = true,
                 Message         = message,
                 ReferencedItem1 = beingInvaded,
                 IconPath        = "NewUI/icon_planet_terran_01_mid",

@@ -10707,6 +10707,87 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XSnapshot_DropsStaleShipTargetsOutsideActivePayload_Headless()
+    {
+        LoadAllGameData();
+
+        IEmpireData[] races = ResourceManager.MajorRaces
+            .Where(r => !r.IsFactionOrMinorRace)
+            .OrderBy(r => RacePreference(r), StringComparer.Ordinal)
+            .Take(2)
+            .ToArray();
+        Assert.IsTrue(races.Length >= 2, "The stale target proof needs two playable races.");
+
+        var settings = new Authoritative4XGameSettings
+        {
+            GenerationSeed = 0x5157411,
+            GalaxySize = GalSize.Tiny,
+            StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+            Mode = RaceDesignScreen.GameMode.Sandbox,
+            Difficulty = GameDifficulty.Normal,
+            NumOpponents = 1,
+            Pace = 1f,
+            TurnTimer = 10,
+            ExtraPlanets = 0,
+            StartingPlanetRichnessBonus = 0f,
+            GameSpeed = 1f,
+            StartPaused = false,
+        };
+
+        var flow = new Authoritative4XLobbyNetworkFlow(2, 3);
+        var lobby = new Authoritative4XLobby(2, "Host");
+        lobby.Join(3, "Join");
+        Assert.IsTrue(lobby.SetSettings(2, settings).Valid);
+        Assert.IsTrue(lobby.SetPlayerSelection(2, RacePreference(races[0]), Array.Empty<string>()).Valid);
+        Assert.IsTrue(lobby.SetPlayerSelection(3, RacePreference(races[1]), Array.Empty<string>()).Valid);
+        Assert.IsTrue(lobby.SetReady(2, true).Valid);
+        Assert.IsTrue(lobby.SetReady(3, true).Valid);
+        SessionStartMessage start = flow.BuildStartMessage(lobby, ArenaMultiplayerSettings.ProtocolVersion,
+            "0xUNITTEST", "unit-test", maxTurns: 600);
+        using Authoritative4XGeneratedGameStart authority = flow.CreateGeneratedGame(start);
+
+        Empire owner = authority.AuthorityUniverse.UState.Empires
+            .OrderBy(e => e.Id)
+            .First(e => e.Capital != null && e.data.PrototypeShip.NotEmpty());
+        Ship actor = Ship.CreateShipAt(authority.AuthorityUniverse.UState, owner.data.PrototypeShip, owner,
+            owner.Capital, owner.Capital.Position + new Vector2(2_000f, 0f), doOrbit: false);
+        Ship staleTarget = Ship.CreateShipAt(authority.AuthorityUniverse.UState, owner.data.PrototypeShip, owner,
+            owner.Capital, owner.Capital.Position + new Vector2(4_000f, 0f), doOrbit: false);
+        Assert.IsNotNull(actor);
+        Assert.IsNotNull(staleTarget);
+        authority.AuthorityUniverse.UState.Objects.UpdateLists();
+
+        int staleTargetId = staleTarget.Id;
+        staleTarget.QueueTotalRemoval();
+        authority.AuthorityUniverse.UState.Objects.UpdateLists(removeInactiveObjects: true);
+        Assert.IsNull(authority.AuthorityUniverse.UState.Objects.FindShip(staleTargetId),
+            "The removed target must be absent from the active ship snapshot, matching the live S|3127 target drift.");
+
+        actor.AI.Target = staleTarget;
+        actor.AI.HasPriorityTarget = true;
+        actor.AI.TargetQueue.Clear();
+        actor.AI.TargetQueue.Add(staleTarget);
+        actor.AI.OrderQueue.SetRange(new[]
+        {
+            new ShipAI.ShipGoal(ShipAI.Plan.DoCombat, null, AIState.Combat, staleTarget),
+        });
+
+        AuthoritativeStateSnapshot snapshot = AuthoritativeStateSnapshot.Capture(authority.AuthorityUniverse, 52);
+        string row = ShipPayloadRowForTest(snapshot.Payload, actor.Id);
+        string[] parts = row.Split('|');
+        Assert.AreEqual("0", parts[12],
+            "Canonical S| rows must not emit stale AI target ids that are not present as active S| rows.");
+        Assert.AreEqual("1", parts[13],
+            "Priority-target intent can remain true, but the stale target id itself must be scrubbed.");
+        Assert.AreEqual("", parts[14],
+            "TargetQueue must drop stale target ids that cannot be replayed on a passive replica.");
+        Assert.AreEqual("", parts[16],
+            "OrderQueue must drop targeted goals whose target ship is outside the active snapshot.");
+        Assert.IsFalse(snapshot.Payload.Contains($"S|{staleTargetId}|"),
+            "The removed target should not be present as an active S| row in the same payload.");
+    }
+
+    [TestMethod]
     public void Authoritative4XSaveTransfer_CarriesHostSaveToClientCacheAndResumes_Headless()
     {
         LoadAllGameData();
