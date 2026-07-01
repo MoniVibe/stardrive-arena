@@ -821,6 +821,14 @@ namespace Ship_Game
             }
         }
 
+        public void RebuildUnlockCachesForAuthoritativeSync()
+        {
+            ResetUnlocks();
+            InitEmpireUnlocks();
+            ResetTechsAndUnlocks();
+            UpdateShipsWeCanBuild();
+        }
+
         void CreateEmpireTechTree()
         {
             foreach (Technology tech in ResourceManager.TechsList)

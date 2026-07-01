@@ -64,7 +64,7 @@ namespace Ship_Game
         public void AddNotification(Notification notify, params string[] soundCueStrings)
         {
             if (notify.LocalEmpireOnly && Screen.IsAuthoritative4XMultiplayer
-                && notify.RelevantEmpire != null && notify.RelevantEmpire != Screen.Player)
+                && notify.RelevantEmpire != null && notify.RelevantEmpire.Id != Screen.Player?.Id)
             {
                 return;
             }

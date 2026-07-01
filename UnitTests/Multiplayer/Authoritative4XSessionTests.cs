@@ -10321,6 +10321,131 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XSnapshot_RemovesStaleClientOnlyTechRowsBeforeDigestCompare_Headless()
+    {
+        LoadAllGameData();
+
+        IEmpireData[] races = ResourceManager.MajorRaces
+            .Where(r => !r.IsFactionOrMinorRace)
+            .OrderBy(r => RacePreference(r), StringComparer.Ordinal)
+            .Take(2)
+            .ToArray();
+        Assert.AreEqual(2, races.Length, "The stale-tech replay proof needs two playable races.");
+
+        var settings = new Authoritative4XGameSettings
+        {
+            GenerationSeed = 0x7EC4A12,
+            GalaxySize = GalSize.Tiny,
+            StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+            Mode = RaceDesignScreen.GameMode.Corners,
+            Difficulty = GameDifficulty.Normal,
+            NumOpponents = 1,
+            Pace = 1f,
+            GameSpeed = 1f,
+            StartPaused = true,
+            DisablePirates = true,
+            DisableResearchStations = true,
+            DisableMiningOps = true,
+        };
+
+        var lobby = new Authoritative4XLobby(hostPlayerPeerId: 2, hostName: "Host");
+        lobby.Join(3, "Joiner");
+        Assert.IsTrue(lobby.SetSettings(2, settings).Valid);
+        Assert.IsTrue(lobby.SetPlayerSelection(2, RacePreference(races[0]), Array.Empty<string>()).Valid);
+        Assert.IsTrue(lobby.SetPlayerSelection(3, RacePreference(races[1]), Array.Empty<string>()).Valid);
+        Assert.IsTrue(lobby.SetReady(2, true).Valid);
+        Assert.IsTrue(lobby.SetReady(3, true).Valid);
+
+        using Authoritative4XLobbyStartResult started = lobby.StartInProcess();
+        int empireId = started.EmpireIdForPeer(3);
+        Empire authorityEmpire = started.AuthorityUniverse.UState.GetEmpireById(empireId);
+        Empire clientEmpire = started.Clients[0].Universe.UState.GetEmpireById(empireId);
+        TechEntry authorityLocked = authorityEmpire.TechEntries
+            .Where(t => t != null
+                        && t != TechEntry.None
+                        && !t.IsRoot
+                        && !t.Unlocked
+                        && t.CanBeResearched)
+            .OrderBy(t => t.UID, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(authorityLocked,
+            "Generated MP empires should have at least one normal locked tech for stale-client replay proof.");
+
+        TechEntry staleClientTech = clientEmpire.GetTechEntry(authorityLocked.UID);
+        staleClientTech.ForceFullyResearched();
+        clientEmpire.RebuildUnlockCachesForAuthoritativeSync();
+        Assert.IsTrue(clientEmpire.HasUnlocked(authorityLocked.UID),
+            "The client must start with a stale unlocked tech row.");
+        Assert.IsFalse(authorityEmpire.HasUnlocked(authorityLocked.UID),
+            "The authority must not have the stale client-only tech row.");
+
+        AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(started.AuthorityUniverse, 0);
+        Assert.IsFalse(authoritySnapshot.Payload.Contains($"U|{empireId}|{authorityLocked.UID}|"),
+            "The authority snapshot must not include the stale client-only tech row.");
+
+        authoritySnapshot.ApplyEmpireRuntimePayload(started.Clients[0].Universe.UState);
+
+        Assert.IsFalse(clientEmpire.HasUnlocked(authorityLocked.UID),
+            "Authoritative U| tech replay must remove stale client-only tech rows before digest comparison.");
+        AuthoritativeStateSnapshot repairedClient = AuthoritativeStateSnapshot.Capture(started.Clients[0].Universe, 0);
+        Assert.AreEqual(authoritySnapshot.SyncDigest, repairedClient.SyncDigest,
+            "Removing stale client-only tech rows should repair the canonical payload mismatch.");
+    }
+
+    [TestMethod]
+    public void Authoritative4XSnapshot_AppliesFleetRuntimeRowsBeforeDigestCompare_Headless()
+    {
+        const ulong Seed = 0xF1EE7C44UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            Fleet authorityFleet = authority.Player.CreateFleet(4, null);
+            authorityFleet.AddShips(new[] { authority.Ship, authority.WingShip });
+            authorityFleet.SetCommandShip(authority.Ship);
+            authorityFleet.FleetIconIndex = 12;
+            authorityFleet.FinalPosition = new Vector2(22_000f, -15_500f);
+            authorityFleet.FinalDirection = new Vector2(0.6f, -0.8f);
+            authorityFleet.Name = "Control Group Four";
+            authorityFleet.Update(FixedSimTime.Zero);
+
+            Fleet clientFleet = client.Player.CreateFleet(4, null);
+            clientFleet.AddShips(new[] { client.Ship, client.WingShip });
+            clientFleet.SetCommandShip(null);
+            clientFleet.FleetIconIndex = 1;
+            clientFleet.FinalPosition = Vector2.Zero;
+            clientFleet.FinalDirection = new Vector2(0f, 1f);
+            clientFleet.Name = "Stale Fleet";
+            clientFleet.Update(FixedSimTime.Zero);
+            clientFleet.SetCommandShip(null);
+            Assert.IsNull(clientFleet.CommandShip,
+                "The test must start with the client missing the authoritative control-group command ship.");
+
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 0);
+            StringAssert.Contains(authoritySnapshot.Payload,
+                $"F|{authority.Player.Id}|{authorityFleet.Id}|4|Control Group Four|12|{authority.Ship.Id}|");
+
+            authoritySnapshot.ApplyEmpireRuntimePayload(client.UState);
+
+            Assert.AreEqual(client.Ship.Id, clientFleet.CommandShip?.Id,
+                "Authoritative F| fleet rows must restore the client command ship selected by control groups.");
+            Assert.AreEqual(authorityFleet.FleetIconIndex, clientFleet.FleetIconIndex);
+            Assert.AreEqual(authorityFleet.FinalPosition, clientFleet.FinalPosition);
+            Assert.AreEqual(authorityFleet.FinalDirection, clientFleet.FinalDirection);
+            Assert.AreEqual(authorityFleet.Name, clientFleet.Name);
+            AuthoritativeStateSnapshot repairedClient = AuthoritativeStateSnapshot.Capture(client.Screen, 0);
+            Assert.AreEqual(authoritySnapshot.SyncDigest, repairedClient.SyncDigest,
+                "Applying authoritative fleet rows should repair the canonical payload mismatch seen after control groups.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XSnapshot_AppliesPlanetRuntimeRowsBeforeDigestCompare_Headless()
     {
         const ulong Seed = 0xA47A9E7UL;
@@ -11371,6 +11496,15 @@ public class Authoritative4XSessionTests : StarDriveTest
 
                 Ship moveShip = SpawnMatchingMovableOwnedShip(universes, empireId,
                     planet.Position + new Vector2(12_000f, 6_000f + i * 4_000f));
+                int fleetKey = 1 + i;
+                started.Session.SubmitFromClient(peer,
+                    AuthoritativePlayerCommand.SetFleetAssignment(sequence++, empireId, fleetKey,
+                        AuthoritativeFleetAssignmentMode.Replace, new[] { moveShip.Id }));
+                AssertAccepted(started.Session, peer);
+                AssertFleetCommandShipReplicated(universes, empireId, fleetKey, moveShip.Id,
+                    $"peer {peer} control-group assignment");
+                AssertAllCanonicallySynced(started.Session, peers);
+
                 Vector2 moveDestination = moveShip.Position + new Vector2(18_000f + i * 2_000f, -11_000f - i * 1_500f);
                 moveProofsByPeer[peer] = (empireId, moveShip.Id, moveShip.Position, moveDestination);
                 started.Session.SubmitFromClient(peer,
@@ -11841,6 +11975,18 @@ public class Authoritative4XSessionTests : StarDriveTest
                 $"Ship {shipId} did not keep authoritative move destination.");
             Assert.IsTrue(ship.AI.OrderQueue.PeekFirst.MoveOrder.IsSet(order),
                 $"Ship {shipId} did not keep authoritative move order {order}.");
+        }
+    }
+
+    static void AssertFleetCommandShipReplicated(UniverseScreen[] universes, int empireId, int fleetKey,
+        int expectedCommandShipId, string label)
+    {
+        foreach (UniverseScreen universe in universes)
+        {
+            Fleet fleet = universe.UState.GetEmpireById(empireId)?.GetFleetOrNull(fleetKey);
+            Assert.IsNotNull(fleet, $"{label}: universe '{universe.Name}' should have fleet key {fleetKey}.");
+            Assert.AreEqual(expectedCommandShipId, fleet.CommandShip?.Id,
+                $"{label}: universe '{universe.Name}' should replay the authoritative fleet command ship.");
         }
     }
 

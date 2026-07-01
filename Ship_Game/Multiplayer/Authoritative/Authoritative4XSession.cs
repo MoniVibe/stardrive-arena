@@ -64,10 +64,6 @@ public sealed class AuthoritativeStateSnapshot
                 ApplyUniversePreferenceLine(universe, line);
             else if (line.StartsWith("E|", StringComparison.Ordinal))
                 ApplyEmpireRuntimeLine(universe, line);
-            else if (line.StartsWith("U|", StringComparison.Ordinal))
-                ApplyUnlockedTechLine(universe, line);
-            else if (line.StartsWith("D|", StringComparison.Ordinal))
-                ApplyPlayerDesignLine(universe, line);
             else if (line.StartsWith("P|", StringComparison.Ordinal))
                 ApplyPlanetRuntimeLine(universe, line);
             else if (line.StartsWith("R|", StringComparison.Ordinal))
@@ -76,7 +72,16 @@ public sealed class AuthoritativeStateSnapshot
                 ApplyShipRuntimeLine(universe, line);
         }
 
+        ApplyUnlockedTechPayload(universe, lines);
+        foreach (string rawLine in lines)
+        {
+            string line = rawLine.TrimEnd('\r');
+            if (line.StartsWith("D|", StringComparison.Ordinal))
+                ApplyPlayerDesignLine(universe, line);
+        }
+
         ApplyShipPresencePayload(universe, lines);
+        ApplyFleetRuntimePayload(universe, lines);
         ApplyConstructionQueuePayload(universe, lines);
         ApplyColonizationGoalPayload(universe, lines);
     }
@@ -186,6 +191,82 @@ public sealed class AuthoritativeStateSnapshot
             ? parsedLevel
             : 0;
         Authoritative4XSessionSave.ApplyUnlockedTech(empire, tech, level);
+    }
+
+    static void ApplyUnlockedTechPayload(UniverseState universe, string[] lines)
+    {
+        var desiredByEmpire = new Dictionary<int, Dictionary<string, int>>();
+        foreach (string rawLine in lines)
+        {
+            string line = rawLine.TrimEnd('\r');
+            if (!line.StartsWith("U|", StringComparison.Ordinal))
+                continue;
+
+            string[] p = line.Split('|');
+            if (p.Length < 4
+                || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int empireId)
+                || empireId <= 0
+                || empireId > universe.Empires.Count)
+            {
+                continue;
+            }
+
+            string techUid = p[2] ?? "";
+            if (techUid.IsEmpty())
+                continue;
+
+            int level = int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedLevel)
+                ? parsedLevel
+                : 0;
+            if (!desiredByEmpire.TryGetValue(empireId, out Dictionary<string, int> desired))
+            {
+                desired = new Dictionary<string, int>(StringComparer.Ordinal);
+                desiredByEmpire[empireId] = desired;
+            }
+            desired[techUid] = level;
+        }
+
+        foreach (Empire empire in universe.Empires)
+        {
+            if (empire == null)
+                continue;
+
+            desiredByEmpire.TryGetValue(empire.Id, out Dictionary<string, int> desired);
+            desired ??= new Dictionary<string, int>(StringComparer.Ordinal);
+
+            bool changed = false;
+            foreach (TechEntry tech in empire.TechEntries)
+            {
+                if (tech == null || tech == TechEntry.None || !tech.Unlocked)
+                    continue;
+
+                if (!desired.ContainsKey(tech.UID))
+                {
+                    tech.ResetUnlockedTech();
+                    changed = true;
+                }
+            }
+
+            foreach ((string techUid, int level) in desired.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+            {
+                if (!empire.TryGetTechEntry(techUid, out TechEntry tech) || tech == TechEntry.None)
+                    continue;
+
+                if (tech.Unlocked && tech.Level > level)
+                {
+                    tech.ResetUnlockedTech();
+                    changed = true;
+                }
+
+                bool wasUnlocked = tech.Unlocked;
+                int wasLevel = tech.Level;
+                Authoritative4XSessionSave.ApplyUnlockedTech(empire, tech, level);
+                changed |= wasUnlocked != tech.Unlocked || wasLevel != tech.Level;
+            }
+
+            if (changed)
+                empire.RebuildUnlockCachesForAuthoritativeSync();
+        }
     }
 
     static void ApplyPlayerDesignLine(UniverseState universe, string line)
@@ -525,6 +606,59 @@ public sealed class AuthoritativeStateSnapshot
 
         if (removedAny)
             universe.Objects.UpdateLists(removeInactiveObjects: true);
+    }
+
+    static void ApplyFleetRuntimePayload(UniverseState universe, string[] lines)
+    {
+        foreach (string rawLine in lines)
+        {
+            string line = rawLine.TrimEnd('\r');
+            if (!line.StartsWith("F|", StringComparison.Ordinal))
+                continue;
+
+            string[] p = line.Split('|');
+            if (p.Length < 14
+                || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int empireId)
+                || empireId <= 0
+                || empireId > universe.Empires.Count
+                || !int.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int fleetId)
+                || !int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int fleetKey))
+            {
+                continue;
+            }
+
+            Empire empire = universe.GetEmpireById(empireId);
+            if (empire == null)
+                continue;
+
+            Fleet fleet = empire.AllFleets.FirstOrDefault(f => f != null && f.Id == fleetId)
+                          ?? empire.GetFleetOrNull(fleetKey);
+            if (fleet == null)
+                continue;
+
+            if (int.TryParse(p[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out int icon))
+                fleet.FleetIconIndex = icon;
+            if (int.TryParse(p[6], NumberStyles.Integer, CultureInfo.InvariantCulture, out int commandShipId))
+            {
+                Ship commandShip = commandShipId > 0 ? universe.Objects.FindShip(commandShipId) : null;
+                if (commandShip == null || commandShip.Fleet == fleet || fleet.Ships.ContainsRef(commandShip))
+                    fleet.SetCommandShip(commandShip);
+            }
+            if (TryParseFloatBits(p[7], out float finalX)
+                && TryParseFloatBits(p[8], out float finalY))
+            {
+                fleet.FinalPosition = new Vector2(finalX, finalY);
+            }
+            if (TryParseFloatBits(p[9], out float dirX)
+                && TryParseFloatBits(p[10], out float dirY))
+            {
+                fleet.FinalDirection = new Vector2(dirX, dirY);
+            }
+
+            string authoritativeName = p[4] ?? "";
+            if (authoritativeName.NotEmpty() && !string.Equals(fleet.Name, authoritativeName, StringComparison.Ordinal))
+                fleet.Name = authoritativeName;
+        }
     }
 
     static void ApplyColonizationGoalPayload(UniverseState universe, string[] lines)

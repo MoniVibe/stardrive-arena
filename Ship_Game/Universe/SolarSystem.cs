@@ -640,10 +640,17 @@ namespace Ship_Game
 
         public void AddSystemExploreSuccessMessage(Empire empire)
         {
-            if (!empire.isPlayer)
+            Empire localPlayer = Universe?.Screen?.Player;
+            if (localPlayer != null)
+            {
+                if (empire?.Id != localPlayer.Id)
+                    return;
+            }
+            else if (!empire.isPlayer)
+            {
                 return; // Message only the player
+            }
 
-            //added by gremlin  add shamatts notification here
             var message = new StringBuilder(Name); //@todo create global string builder
             message.Append(" system explored.");
 

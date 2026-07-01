@@ -65,7 +65,7 @@ namespace Ship_Game
             var empires = new HashSet<Empire>();
             foreach(Empire empire in screen.UState.Empires)
             {
-                if (empire.isPlayer || empire.IsFaction)
+                if (IsLocalPlayerEmpire(empire) || empire.IsFaction)
                     continue;
 
                 if (Player.data.MoleList.Any(m => empire.FindPlanet(m.PlanetId) != null))
@@ -87,8 +87,23 @@ namespace Ship_Game
             Moles = empires;
         }
 
+        bool IsLocalPlayerEmpire(Empire empire)
+            => empire != null && Player != null
+               && (ReferenceEquals(empire, Player) || empire.Id == Player.Id);
+
+        bool TryGetPlayerRelations(Empire empire, out Relationship relation)
+        {
+            relation = null;
+            return empire != null
+                   && !IsLocalPlayerEmpire(empire)
+                   && Player?.GetRelations(empire, out relation) == true;
+        }
+
         private int IntelligenceLevel(Empire e)
         {
+            if (IsLocalPlayerEmpire(e))
+                return 3;
+
             if (UsingNewEspioange)
                 return 0;
 
@@ -96,14 +111,15 @@ namespace Ship_Game
             if (Friends.Contains(e) || Moles.Contains(e))
                 return 2;
 
-            if (Traders.Contains(e) && Player.GetRelations(e).Treaty_Trade_TurnsExisted > 30)
+            if (Traders.Contains(e)
+                && TryGetPlayerRelations(e, out Relationship tradeRelation)
+                && tradeRelation.Treaty_Trade_TurnsExisted > 30)
                 return 1;
-
-            if (e.isPlayer)
-                return 3;
 
             foreach(Empire empire in Friends)
             {
+                if (ReferenceEquals(empire, e) || empire.Id == e.Id)
+                    continue;
                 if (!empire.GetRelations(e, out Relationship rel))
                     continue;
 
@@ -118,6 +134,8 @@ namespace Ship_Game
             {
                 foreach (Empire empire in Traders)
                 {
+                    if (ReferenceEquals(empire, e) || empire.Id == e.Id)
+                        continue;
                     if (!empire.GetRelations(e, out Relationship rel))
                         continue;
 
@@ -128,7 +146,7 @@ namespace Ship_Game
                         return 2;
                 }
             }
-            
+
             return intelligence;
         }
 
@@ -212,7 +230,7 @@ namespace Ship_Game
             batch.Draw(ResourceManager.Flag(SelectedEmpire.data.Traits.FlagIndex), flagRect, SelectedEmpire.EmpireColor);
             textCursor.Y += (Fonts.Arial20Bold.LineSpacing + 4);
 
-            if (SelectedEmpire.isPlayer)
+            if (IsLocalPlayerEmpire(SelectedEmpire))
             {
                 batch.DrawString(Fonts.Arial12Bold, Localizer.Token(GameText.You), textCursor, Color.White);
                 textCursor.Y += Fonts.Arial12Bold.LineSpacing + 2;
@@ -231,7 +249,8 @@ namespace Ship_Game
             }
             else if (!SelectedEmpire.IsDefeated)
             {
-                Relationship relation = Player.GetRelations(SelectedEmpire);
+                if (!TryGetPlayerRelations(SelectedEmpire, out Relationship relation))
+                    relation = new Relationship(Player, SelectedEmpire);
                 if (UsingNewEspioange && relation.Espionage.CanViewPersonality || IntelligenceLevel(SelectedEmpire) > 0)
                     DrawDiploLine(batch, Font12Bold, $"{SelectedEmpire.data.DiplomaticPersonality.Name} {SelectedEmpire.data.EconomicPersonality.Name}", Color.White, ref textCursor);
                 else
@@ -261,15 +280,20 @@ namespace Ship_Game
 
             }
 
-            if (!SelectedEmpire.isPlayer && Player.IsKnown(SelectedEmpire))
+            if (!IsLocalPlayerEmpire(SelectedEmpire) && Player.IsKnown(SelectedEmpire))
                 Contact.Draw(ScreenManager);
 
-            if (SelectedEmpire.isPlayer || !UsingNewEspioange || UsingNewEspioange && Player.GetRelations(SelectedEmpire).Espionage.CanViewRanks)
+            if (IsLocalPlayerEmpire(SelectedEmpire)
+                || !UsingNewEspioange
+                || UsingNewEspioange && TryGetPlayerRelations(SelectedEmpire, out Relationship rankRelation)
+                                 && rankRelation.Espionage.CanViewRanks)
             {
 
                 Empire[] empireList = UsingNewEspioange
-                    ? Universe.UState.ActiveMajorEmpires.Filter(e => e.isPlayer || Player.GetRelations(e).Espionage.CanViewRanks)
-                    : Universe.UState.ActiveMajorEmpires.Filter(e => e.isPlayer || Player.IsKnown(e));
+                    ? Universe.UState.ActiveMajorEmpires.Filter(e => IsLocalPlayerEmpire(e)
+                                                                     || TryGetPlayerRelations(e, out Relationship rel)
+                                                                     && rel.Espionage.CanViewRanks)
+                    : Universe.UState.ActiveMajorEmpires.Filter(e => IsLocalPlayerEmpire(e) || Player.IsKnown(e));
 
                 Vector2 columnBCursor = textCursor;
                 columnBCursor.X += 190f;
@@ -300,10 +324,14 @@ namespace Ship_Game
                 batch.DrawString(Fonts.Arial12, $"(out of {empireList.Length} empires)", textCursor, Color.Wheat);
             }
             //Added by McShooterz:  intel report
-            Espionage espionage = SelectedEmpire.isPlayer || !UsingNewEspioange ? null : Player.GetEspionage(SelectedEmpire);
+            Espionage espionage = IsLocalPlayerEmpire(SelectedEmpire) || !UsingNewEspioange
+                ? null
+                : TryGetPlayerRelations(SelectedEmpire, out Relationship espionageRelation)
+                    ? espionageRelation.Espionage
+                    : null;
             textCursor = new Vector2(IntelligenceRect.X + 20, IntelligenceRect.Y + 10);
             string intReport = Localizer.Token(GameText.IntelligenceReport);
-            if (UsingNewEspioange && !SelectedEmpire.isPlayer)
+            if (UsingNewEspioange && !IsLocalPlayerEmpire(SelectedEmpire) && espionage != null)
                 intReport += espionage.EffectiveLevel == 0 ? " (basic)" : $" (level {espionage.EffectiveLevel})";
 
             batch.DrawDropShadowText(intReport, textCursor, Fonts.Arial20Bold, SelectedEmpire.EmpireColor);
@@ -323,14 +351,14 @@ namespace Ship_Game
                     DrawDiploLine(batch, Font12, controlsHomeworld, Color.Wheat, ref textCursor);
                 }
 
-                bool alwaysShow = SelectedEmpire.isPlayer || !UsingNewEspioange;
-                if (alwaysShow || espionage.CanViewNumPlanets)
+                bool alwaysShow = IsLocalPlayerEmpire(SelectedEmpire) || !UsingNewEspioange;
+                if (alwaysShow || espionage?.CanViewNumPlanets == true)
                     DrawDiploLine(batch, Font12, $"{Localizer.Token(GameText.TotalPlanets)} {SelectedEmpire.GetPlanets().Count}", Color.Wheat, ref textCursor);
 
-                if (alwaysShow || espionage.CanViewNumShips)
+                if (alwaysShow || espionage?.CanViewNumShips == true)
                     DrawDiploLine(batch, Font12, $"{Localizer.Token(GameText.TotalStarships)} {SelectedEmpire.OwnedShips.Count}", Color.Wheat, ref textCursor);
 
-                if (alwaysShow || espionage.CanViewMoneyAndMaint)
+                if (alwaysShow || espionage?.CanViewMoneyAndMaint == true)
                 {
                     DrawDiploLine(batch, Font12, $"{Localizer.Token(GameText.Treasury)} {SelectedEmpire.Money.String(2)}", Color.Wheat, ref textCursor);
                     DrawDiploLine(batch, Font12, $"{Localizer.Token(GameText.MaintenanceCosts)} {SelectedEmpire.BuildingAndShipMaint.String(2)}", Color.Wheat, ref textCursor);
@@ -338,9 +366,11 @@ namespace Ship_Game
 
                 if (SelectedEmpire.Research.HasTopic)
                 {
-                    if (SelectedEmpire.isPlayer || UsingNewEspioange && espionage.CanViewResearchTopic || IntelligenceLevel(SelectedEmpire) > 1)
+                    if (IsLocalPlayerEmpire(SelectedEmpire)
+                        || UsingNewEspioange && espionage?.CanViewResearchTopic == true
+                        || IntelligenceLevel(SelectedEmpire) > 1)
                         DrawDiploLine(batch, Font12, $"Researching: {SelectedEmpire.Research.Current.Tech.Name.Text}", Color.Wheat, ref textCursor);
-                    else if (UsingNewEspioange && espionage.CanViewTechType || IntelligenceLevel(SelectedEmpire) > 0)
+                    else if (UsingNewEspioange && espionage?.CanViewTechType == true || IntelligenceLevel(SelectedEmpire) > 0)
                         DrawDiploLine(batch, Font12, $"Researching: {SelectedEmpire.Research.Current.TechnologyType}", Color.Wheat, ref textCursor);
                     else
                         DrawDiploLine(batch, Font12, "Researching: Unknown", Color.Wheat, ref textCursor);
@@ -375,8 +405,8 @@ namespace Ship_Game
                 if (!rel.Known || rel.Them.IsFaction || rel.Them.IsDefeated)
                     continue;
 
-                if (SelectedEmpire.isPlayer 
-                    || UsingNewEspioange && espionage.CanViewTheirTreaties
+                if (IsLocalPlayerEmpire(SelectedEmpire)
+                    || UsingNewEspioange && espionage?.CanViewTheirTreaties == true
                     || IntelligenceLevel(SelectedEmpire) > 0)
                 {
                     Color color = rel.Them.EmpireColor;
@@ -400,11 +430,11 @@ namespace Ship_Game
 
             //End of intel report
             textCursor = new Vector2(OperationsRect.X + 20, OperationsRect.Y + 10);
-            batch.DrawDropShadowText((SelectedEmpire.isPlayer ? Localizer.Token(GameText.YourEmpiresBonuses) : Localizer.Token(GameText.TheirBonuses)), textCursor, Fonts.Arial20Bold, SelectedEmpire.EmpireColor);
+            batch.DrawDropShadowText((IsLocalPlayerEmpire(SelectedEmpire) ? Localizer.Token(GameText.YourEmpiresBonuses) : Localizer.Token(GameText.TheirBonuses)), textCursor, Fonts.Arial20Bold, SelectedEmpire.EmpireColor);
             textCursor.Y += Fonts.Arial20Bold.LineSpacing + 5;
             //Added by McShooterz: Only display modified bonuses
-            if (SelectedEmpire.isPlayer 
-                || UsingNewEspioange && espionage.CanViewBonuses 
+            if (IsLocalPlayerEmpire(SelectedEmpire)
+                || UsingNewEspioange && espionage?.CanViewBonuses == true
                 || IntelligenceLevel(SelectedEmpire) > 0)
             {
                 if (SelectedEmpire.data.Traits.PopGrowthMax > 0f)
@@ -480,7 +510,7 @@ namespace Ship_Game
                 if (SelectedEmpire.data.MissileHPModifier != 1)
                     DrawStat(Localizer.Token(GameText.MissileHitpointsBonus), SelectedEmpire.data.MissileHPModifier - 1f, ref textCursor, false);
                 if (SelectedEmpire.data.MissileDodgeChance != 0)
-                    DrawStat(Localizer.Token(GameText.MissileDodgeChance), SelectedEmpire.data.MissileDodgeChance, ref textCursor, false); 
+                    DrawStat(Localizer.Token(GameText.MissileDodgeChance), SelectedEmpire.data.MissileDodgeChance, ref textCursor, false);
                 if (SelectedEmpire.data.ExoticStorageMultiplier != 1)
                     DrawStat(Localizer.Token(GameText.EmpireExoticStorage), SelectedEmpire.data.ExoticStorageMultiplier-1, ref textCursor, false);
                 if (SelectedEmpire.data.MiningSpeedMultiplier != 1)
@@ -574,7 +604,10 @@ namespace Ship_Game
 
         private float GetPop(Empire e)
         {
-            if (Traders.Contains(e) || e.isPlayer || UsingNewEspioange && Player.GetRelations(e).Espionage.CanViewPop)
+            if (Traders.Contains(e)
+                || IsLocalPlayerEmpire(e)
+                || UsingNewEspioange && TryGetPlayerRelations(e, out Relationship relation)
+                                 && relation.Espionage.CanViewPop)
                 return e.TotalPopBillion;
 
             float pop = GetPopInExploredPlanetsFor(Player, e);
@@ -601,13 +634,15 @@ namespace Ship_Game
 
         float GetScientificStr(Empire e)
         {
-            if (UsingNewEspioange && (e.isPlayer || Player.GetRelations(e).Espionage.CanViewRanks))
+            if (UsingNewEspioange && (IsLocalPlayerEmpire(e)
+                                      || TryGetPlayerRelations(e, out Relationship relation)
+                                      && relation.Espionage.CanViewRanks))
             {
                 var techs = e.UnlockedTechs;
                 return techs.Length == 0 ? 0 : techs.Sum(t => t.Tech.Cost);
             }
 
-            if (Friends.Contains(e) || e.isPlayer || IntelligenceLevel(e) > 2)
+            if (Friends.Contains(e) || IsLocalPlayerEmpire(e) || IntelligenceLevel(e) > 2)
             {
                 var techs = e.UnlockedTechs;
                 return techs.Length == 0 ? 0 : techs.Sum(t => t.Tech.Cost);
@@ -629,7 +664,10 @@ namespace Ship_Game
         {
             SelectedEmpire = empire;
             ArtifactsSL.Reset();
-            if (UsingNewEspioange && SelectedEmpire != Player && !Player.GetRelations(SelectedEmpire).Espionage.CanViewArtifacts)
+            if (UsingNewEspioange
+                && !IsLocalPlayerEmpire(SelectedEmpire)
+                && (!TryGetPlayerRelations(SelectedEmpire, out Relationship relation)
+                    || !relation.Espionage.CanViewArtifacts))
                 return;
 
             var entry = new ArtifactEntry();
@@ -709,10 +747,10 @@ namespace Ship_Game
             SelectedInfoRect = new Rectangle(LeftRect.X + 60, LeftRect.Y + 250, 368, 376);
             IntelligenceRect = new Rectangle(SelectedInfoRect.X + SelectedInfoRect.Width + 30, SelectedInfoRect.Y, 368, 376);
             OperationsRect = new Rectangle(IntelligenceRect.X + IntelligenceRect.Width + 30, SelectedInfoRect.Y, 368, 376);
-            
+
             RectF artifacts = new(SelectedInfoRect.X , SelectedInfoRect.Y + 250, SelectedInfoRect.Width - 40, 130);
             ArtifactsSL = Add(new ScrollList<ArtifactItemListItem>(artifacts));
-            
+
             Contact = new DanButton(new Vector2(SelectedInfoRect.X + SelectedInfoRect.Width / 2 - 91, SelectedInfoRect.Y + SelectedInfoRect.Height - 45), Localizer.Token(GameText.Contact))
             {
                 Toggled = true
@@ -748,9 +786,10 @@ namespace Ship_Game
             Array<EmpireAndIntelLevel> empiresAndIntel = new Array<EmpireAndIntelLevel>();
             foreach (Empire empire in Universe.UState.ActiveMajorEmpires)
             {
-                int intel = empire.isPlayer ? 3 
-                                            :  UsingNewEspioange ? Player.GetRelations(empire).Espionage.Level
-                                                                 : IntelligenceLevel(empire);
+                int intel = IsLocalPlayerEmpire(empire) ? 3
+                          : UsingNewEspioange && TryGetPlayerRelations(empire, out Relationship relation)
+                              ? relation.Espionage.Level
+                              : IntelligenceLevel(empire);
                 empiresAndIntel.Add(new EmpireAndIntelLevel(empire, intel));
             }
 
