@@ -34,6 +34,8 @@ public static class AuthoritativeReplicationManifest
     {
         new("V", "UniversePreferences", AuthoritativeReplicationApplyMode.DirectReplay,
             "Host-owned global multiplayer preference flags."),
+        new("SD", "StarDate", AuthoritativeReplicationApplyMode.DirectReplay,
+            "Host-owned stardate for passive clients, which do not advance simulation time locally."),
         new("E", "EmpireRuntime", AuthoritativeReplicationApplyMode.DirectReplay,
             "Cash, research queue, taxes, automation flags, and auto-design selections."),
         new("U", "UnlockedTech", AuthoritativeReplicationApplyMode.BatchReplay,
@@ -50,6 +52,8 @@ public static class AuthoritativeReplicationManifest
             "Ship AI state, targets, durable orders, trade policy, carrier flags, and operation area. Freight pickup/dropoff goals are authority-only volatile AI plans and are not replayed."),
         new("SX", "ShipTransform", AuthoritativeReplicationApplyMode.DirectReplay,
             "Host-authored ship position, velocity, rotation, active/dying flags, and containing system for passive client presentation."),
+        new("SV", "ShipVisibility", AuthoritativeReplicationApplyMode.DirectReplay,
+            "Host-authored per-empire known-by bitmask for passive clients, which do not run local sensor/contact simulation."),
         new("Q", "ConstructionQueue", AuthoritativeReplicationApplyMode.BatchReplay,
             "Planet construction queue shape and runtime progress."),
         new("G", "EmpireGoal", AuthoritativeReplicationApplyMode.BatchReplay,

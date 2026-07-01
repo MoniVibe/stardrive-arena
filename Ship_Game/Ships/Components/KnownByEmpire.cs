@@ -65,6 +65,13 @@ namespace Ship_Game.Ships.Components
             seenById[empire.Id-1] = timer;
         }
 
+        public void SetKnownMask(UniverseState us, int mask, float timer = EmpireConstants.KnownContactTimer)
+        {
+            float[] seenById = GetSeenByID(us);
+            for (int i = 0; i < seenById.Length; ++i)
+                seenById[i] = i < 30 && (mask & (1 << i)) != 0 ? timer : -100f;
+        }
+
         /// <summary>
         /// TRUE if the empire is marked as seen, including grace time
         /// </summary>

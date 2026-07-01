@@ -10714,6 +10714,90 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XSnapshot_ReplaysStarDateBeforeDigestCompare_Headless()
+    {
+        const ulong Seed = 0x57A4DA7EUL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            authority.UState.StarDate = 1001.4f;
+            client.UState.StarDate = 1000.4f;
+
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 7200);
+            AuthoritativeStateSnapshot staleClient = AuthoritativeStateSnapshot.Capture(client.Screen, 7200);
+            StringAssert.Contains(authoritySnapshot.Payload,
+                $"SD|{BitConverter.SingleToUInt32Bits(authority.UState.StarDate)}");
+            Assert.AreNotEqual(authoritySnapshot.SyncDigest, staleClient.SyncDigest,
+                "The passive client's stale stardate must be covered by the authoritative sync digest.");
+
+            authoritySnapshot.ApplyEmpireRuntimePayload(client.UState);
+
+            Assert.AreEqual(authority.UState.StarDate, client.UState.StarDate,
+                "Passive clients must mirror the host stardate instead of staying on their local sim clock.");
+            AuthoritativeStateSnapshot repairedClient = AuthoritativeStateSnapshot.Capture(client.Screen, 7200);
+            Assert.AreEqual(authoritySnapshot.SyncDigest, repairedClient.SyncDigest,
+                "Applying SD| must repair stardate drift before digest comparison.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XSnapshot_ReplaysShipVisibilityBeforeDigestCompare_Headless()
+    {
+        const ulong Seed = 0x515EEC0UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            authority.UState.Objects.UpdateLists();
+            client.UState.Objects.UpdateLists();
+
+            int ownerOnlyMask = 1 << (authority.Player.Id - 1);
+            authority.Ship.KnownByEmpires.SetKnownMask(authority.UState, ownerOnlyMask);
+            client.Ship.KnownByEmpires.SetSeen(client.Enemy);
+            Assert.IsTrue(client.Ship.KnownByEmpires.KnownBy(client.Enemy),
+                "The test must start with stale client-side hostile visibility.");
+
+            AuthoritativeStateSnapshot hiddenSnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 120);
+            AuthoritativeStateSnapshot staleVisibleClient = AuthoritativeStateSnapshot.Capture(client.Screen, 120);
+            string hiddenVisibilityRow = PayloadRowForTest(hiddenSnapshot.Payload, $"SV|{authority.Ship.Id}|");
+            string staleVisibilityRow = PayloadRowForTest(staleVisibleClient.Payload, $"SV|{client.Ship.Id}|");
+            Assert.AreNotEqual(hiddenVisibilityRow, staleVisibilityRow,
+                $"The fixture must start with different visibility rows. hidden='{hiddenVisibilityRow}' stale='{staleVisibilityRow}'");
+            Assert.AreNotEqual(hiddenSnapshot.SyncDigest, staleVisibleClient.SyncDigest,
+                "Ship known-by visibility must be covered by the authoritative sync digest.");
+
+            hiddenSnapshot.ApplyEmpireRuntimePayload(client.UState);
+            Assert.IsFalse(client.Ship.KnownByEmpires.KnownBy(client.Enemy),
+                "SV| replay must clear stale hostile visibility when the host says the local empire does not know the ship.");
+            AuthoritativeStateSnapshot hiddenClient = AuthoritativeStateSnapshot.Capture(client.Screen, 120);
+            Assert.AreEqual(hiddenSnapshot.SyncDigest, hiddenClient.SyncDigest);
+
+            authority.Ship.KnownByEmpires.SetSeen(authority.Enemy);
+            AuthoritativeStateSnapshot visibleSnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 180);
+            visibleSnapshot.ApplyEmpireRuntimePayload(client.UState);
+
+            Assert.IsTrue(client.Ship.KnownByEmpires.KnownBy(client.Enemy),
+                "SV| replay must grant hostile visibility when the host says the local empire has seen the ship.");
+            AuthoritativeStateSnapshot visibleClient = AuthoritativeStateSnapshot.Capture(client.Screen, 180);
+            Assert.AreEqual(visibleSnapshot.SyncDigest, visibleClient.SyncDigest,
+                "Applying SV| must repair visibility drift before digest comparison.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XSnapshot_AppliesShipRuntimeRowsBeforeDigestCompare_Headless()
     {
         LoadAllGameData();
@@ -12431,6 +12515,11 @@ public class Authoritative4XSessionTests : StarDriveTest
     static string ShipPayloadRowForTest(string payload, int shipId)
     {
         string prefix = $"S|{shipId}|";
+        return PayloadRowForTest(payload, prefix);
+    }
+
+    static string PayloadRowForTest(string payload, string prefix)
+    {
         return (payload ?? "").Split('\n')
             .Select(line => line.TrimEnd('\r'))
             .FirstOrDefault(line => line.StartsWith(prefix, StringComparison.Ordinal)) ?? "<missing>";

@@ -78,6 +78,8 @@ public sealed class AuthoritativeStateSnapshot
             string line = rawLine.TrimEnd('\r');
             if (line.StartsWith("V|", StringComparison.Ordinal))
                 ApplyUniversePreferenceLine(universe, line);
+            else if (line.StartsWith("SD|", StringComparison.Ordinal))
+                ApplyStarDateLine(universe, line);
             else if (line.StartsWith("E|", StringComparison.Ordinal))
                 ApplyEmpireRuntimeLine(universe, line);
             else if (line.StartsWith("P|", StringComparison.Ordinal))
@@ -88,6 +90,8 @@ public sealed class AuthoritativeStateSnapshot
                 ApplyShipRuntimeLine(universe, line);
             else if (line.StartsWith("SX|", StringComparison.Ordinal))
                 ApplyShipTransformLine(universe, line);
+            else if (line.StartsWith("SV|", StringComparison.Ordinal))
+                ApplyShipVisibilityLine(universe, line);
             else if (line.StartsWith("GT|", StringComparison.Ordinal))
                 ApplyGroundTroopLine(universe, line);
             else if (line.StartsWith("ST|", StringComparison.Ordinal))
@@ -147,6 +151,15 @@ public sealed class AuthoritativeStateSnapshot
             preferences.HasFlag(AuthoritativeUniversePreferenceFlags.AllowPlayerInterTrade);
         universe.P.PrioitizeProjectors =
             preferences.HasFlag(AuthoritativeUniversePreferenceFlags.PrioritizeProjectors);
+    }
+
+    static void ApplyStarDateLine(UniverseState universe, string line)
+    {
+        string[] p = line.Split('|');
+        if (p.Length < 2 || !TryParseFloatBits(p[1], out float starDate))
+            return;
+
+        universe.StarDate = starDate;
     }
 
     static void ApplyEmpireRuntimeLine(UniverseState universe, string line)
@@ -1010,6 +1023,7 @@ public sealed class AuthoritativeStateSnapshot
     {
         var sb = new StringBuilder(4096);
         sb.Append("V|").Append((int)UniversePreferenceFlags(us)).AppendLine();
+        sb.Append("SD|").Append(FloatBits(us.StarDate)).AppendLine();
 
         foreach (Empire e in us.Empires.OrderBy(e => e.Id))
             sb.Append("E|").Append(e.Id)
@@ -1351,6 +1365,11 @@ public sealed class AuthoritativeStateSnapshot
               .AppendLine();
 
         foreach (Ship s in snapshotShips)
+            sb.Append("SV|").Append(s.Id)
+              .Append('|').Append(ShipKnownByMask(us, s))
+              .AppendLine();
+
+        foreach (Ship s in snapshotShips)
         {
             IReadOnlyList<Troop> troops = s.GetOurTroops();
             for (int i = 0; i < troops.Count; ++i)
@@ -1381,6 +1400,20 @@ public sealed class AuthoritativeStateSnapshot
             .Distinct()
             .OrderBy(s => s.Id)
             .ToArray();
+
+    static int ShipKnownByMask(UniverseState us, Ship ship)
+    {
+        int mask = 0;
+        foreach (Empire empire in us.Empires)
+        {
+            int bit = empire.Id - 1;
+            if (bit is < 0 or >= 30)
+                continue;
+            if (ship.Loyalty == empire || ship.KnownByEmpires?.KnownBy(empire) == true)
+                mask |= 1 << bit;
+        }
+        return mask;
+    }
 
     static int SnapshotFleetId(Fleet fleet)
         => fleet == null
@@ -1777,6 +1810,8 @@ public sealed class AuthoritativeStateSnapshot
                 ApplyShipRuntimeLine(universe, line);
             else if (line.StartsWith("SX|", StringComparison.Ordinal))
                 ApplyShipTransformLine(universe, line);
+            else if (line.StartsWith("SV|", StringComparison.Ordinal))
+                ApplyShipVisibilityLine(universe, line);
             else if (line.StartsWith("ST|", StringComparison.Ordinal))
                 ApplyShipTroopLine(universe, line);
         }
@@ -2065,6 +2100,20 @@ public sealed class AuthoritativeStateSnapshot
             ship.System = systemId > 0 ? universe.Systems.FirstOrDefault(s => s.Id == systemId) : null;
         ship.Active = ParseFlag(p[9]);
         ship.Dying = ParseFlag(p[10]);
+    }
+
+    static void ApplyShipVisibilityLine(UniverseState universe, string line)
+    {
+        string[] p = line.Split('|');
+        if (p.Length < 3
+            || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int shipId)
+            || !int.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int mask))
+        {
+            return;
+        }
+
+        Ship ship = universe.Objects.FindShip(shipId);
+        ship?.KnownByEmpires?.SetKnownMask(universe, mask);
     }
 
     static void ApplyTargetQueueSignature(UniverseState universe, Ship ship, string signature)
