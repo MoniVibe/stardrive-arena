@@ -107,7 +107,7 @@ namespace Ship_Game
             }
 
             // Cybernetic factions never touch Food trade. Filthy Opteris are disgusted by protein-bugs. Ironic.
-            if (tradeState.HasFreeFreighters && (!isPlayer || Universe.P.AllowPlayerInterTrade))
+            if (tradeState.HasFreeFreighters && (!IsHumanControlled || Universe.P.AllowPlayerInterTrade))
             {
                 Ship[] idleFreighters = tradeState.IdleFreighters.ToArr();
                 tradeState = new(this, true);

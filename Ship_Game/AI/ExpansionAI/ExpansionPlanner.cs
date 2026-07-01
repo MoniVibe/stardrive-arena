@@ -62,7 +62,7 @@ namespace Ship_Game.AI.ExpansionAI
         int DesiredColonyGoals()
         {
             float goals = Owner.DifficultyModifiers.BaseColonyGoals;
-            if (Owner.isPlayer) 
+            if (Owner.IsHumanControlled)
                 return (int)goals; // BaseColonyGoals for player
 
             goals += Owner.GetExpansionRatio();

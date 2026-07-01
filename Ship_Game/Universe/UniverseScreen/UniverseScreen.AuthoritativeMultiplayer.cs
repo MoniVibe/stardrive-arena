@@ -26,6 +26,8 @@ public partial class UniverseScreen
         Authoritative4XLive = session;
         Authoritative4XLive?.ActivateUiCommandContext();
         EnsureAuthoritative4XLocalBinding(forceVisibilityRefresh: true);
+        if (Authoritative4XLive != null && !Authoritative4XLive.IsHost)
+            RefreshAuthoritative4XPassiveClientView();
     }
 
     public void RestoreAuthoritative4XClientViewFrom(UniverseScreen previous)

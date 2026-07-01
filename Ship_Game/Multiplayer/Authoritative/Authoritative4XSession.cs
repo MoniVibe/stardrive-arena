@@ -108,6 +108,7 @@ public sealed class AuthoritativeStateSnapshot
 
         ApplyShipPresencePayload(universe, lines);
         ApplyShipRuntimePayload(universe, lines);
+        ApplyColonyTilePayload(universe, lines);
         ApplyGroundTroopPayload(universe, lines);
         ApplyGroundCombatPayload(universe, lines);
         ApplyFleetRuntimePayload(universe, lines);
@@ -1671,17 +1672,22 @@ public sealed class AuthoritativeStateSnapshot
             .Where(g => g != null && !IsVolatileReplayOnlyPlan(g.Plan))
             .Select(g =>
             {
-                int targetShipId = SnapshotShipId(g.TargetShip, activeShipIds);
-                if (g.TargetShip != null && targetShipId == 0)
+                Ship signatureTarget = g.TargetShip;
+                if (signatureTarget == null && g.Plan == ShipAI.Plan.DoCombat)
+                    signatureTarget = ship.AI.Target;
+
+                int targetShipId = SnapshotShipId(signatureTarget, activeShipIds);
+                if (signatureTarget != null && targetShipId == 0)
                     return null;
 
                 // Targeted goals are durable by target ID; their MovePosition is derived from
                 // local planet/ship state and can drift during replay/resync.
-                Vector2 movePosition = (g.TargetPlanet != null || g.TargetShip != null)
+                Vector2 movePosition = (g.TargetPlanet != null || signatureTarget != null)
                     ? Vector2.Zero
                     : g.MovePosition;
                 return $"{(int)g.Plan},{g.TargetPlanet?.Id ?? 0},{targetShipId}," +
-                       $"{FloatBits(movePosition.X):X8},{FloatBits(movePosition.Y):X8},{(int)g.MoveOrder}";
+                       $"{FloatBits(movePosition.X):X8},{FloatBits(movePosition.Y):X8}," +
+                       $"{(int)g.MoveOrder},{(int)g.WantedState}";
             })
             .Where(signature => signature != null));
     }
@@ -1822,6 +1828,117 @@ public sealed class AuthoritativeStateSnapshot
             else if (line.StartsWith("ST|", StringComparison.Ordinal))
                 ApplyShipTroopLine(universe, line);
         }
+    }
+
+    static void ApplyColonyTilePayload(UniverseState universe, string[] lines)
+    {
+        var desired = new Dictionary<int, Dictionary<(int X, int Y), string[]>>();
+        foreach (string rawLine in lines)
+        {
+            string line = rawLine.TrimEnd('\r');
+            if (!line.StartsWith("T|", StringComparison.Ordinal))
+                continue;
+
+            string[] p = line.Split('|');
+            if (p.Length < 8
+                || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int planetId)
+                || !int.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int x)
+                || !int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int y))
+            {
+                continue;
+            }
+
+            if (!desired.TryGetValue(planetId, out Dictionary<(int X, int Y), string[]> planetTiles))
+            {
+                planetTiles = new Dictionary<(int X, int Y), string[]>();
+                desired[planetId] = planetTiles;
+            }
+            planetTiles[(x, y)] = p;
+        }
+
+        foreach (Planet planet in universe.Planets.OrderBy(p => p.Id))
+        {
+            desired.TryGetValue(planet.Id, out Dictionary<(int X, int Y), string[]> planetTiles);
+            foreach (PlanetGridSquare tile in planet.TilesList
+                         .Where(t => t.BuildingOnTile || t.Biosphere)
+                         .OrderBy(t => t.X)
+                         .ThenBy(t => t.Y))
+            {
+                if (planetTiles == null || !planetTiles.ContainsKey((tile.X, tile.Y)))
+                    ApplyColonyTileState(planet, tile, buildingName: "", biosphere: false,
+                        habitable: tile.Habitable, terraformable: tile.Terraformable);
+            }
+
+            if (planetTiles == null)
+                continue;
+
+            foreach (string[] row in planetTiles.Values
+                         .OrderBy(p => int.Parse(p[2], CultureInfo.InvariantCulture))
+                         .ThenBy(p => int.Parse(p[3], CultureInfo.InvariantCulture)))
+            {
+                ApplyColonyTileRow(universe, row);
+            }
+        }
+    }
+
+    static void ApplyColonyTileLine(UniverseState universe, string line)
+    {
+        string[] p = line.Split('|');
+        ApplyColonyTileRow(universe, p);
+    }
+
+    static void ApplyColonyTileRow(UniverseState universe, string[] p)
+    {
+        if (p.Length < 8
+            || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int planetId)
+            || !int.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int x)
+            || !int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int y))
+        {
+            return;
+        }
+
+        Planet planet = universe.GetPlanet(planetId);
+        PlanetGridSquare tile = planet?.GetTileByCoordinates(x, y);
+        if (tile == null)
+            return;
+
+        ApplyColonyTileState(planet, tile, p[4] ?? "", ParseFlag(p[5]),
+            ParseFlag(p[6]), ParseFlag(p[7]));
+    }
+
+    static void ApplyColonyTileState(Planet planet, PlanetGridSquare tile, string buildingName,
+        bool biosphere, bool habitable, bool terraformable)
+    {
+        buildingName ??= "";
+        if (tile.Building != null && !string.Equals(tile.Building.Name ?? "", buildingName, StringComparison.Ordinal))
+            planet.DestroyBuildingOn(tile);
+
+        if (!string.IsNullOrEmpty(buildingName)
+            && (tile.Building == null || !string.Equals(tile.Building.Name ?? "", buildingName, StringComparison.Ordinal))
+            && ResourceManager.GetBuilding(buildingName, out Building _))
+        {
+            tile.PlaceBuilding(ResourceManager.CreateBuilding(planet, buildingName), planet);
+        }
+
+        if (biosphere && !tile.Biosphere)
+        {
+            if (tile.Habitable)
+                tile.SetHabitable(false);
+            if (ResourceManager.GetBuilding(Building.BiospheresId, out Building _))
+                tile.PlaceBuilding(ResourceManager.CreateBuilding(planet, Building.BiospheresId), planet);
+            tile.Biosphere = true;
+        }
+        else if (!biosphere && tile.Biosphere)
+        {
+            if (planet.FindBuilding(b => b.IsBiospheres) != null)
+                planet.DestroyBioSpheres(tile, destroyBuilding: false);
+            else
+                tile.Biosphere = false;
+        }
+
+        tile.SetHabitable(habitable);
+        tile.Terraformable = terraformable;
+        planet.UpdatePlanetStatsByRecalculation();
     }
 
     static void ApplyGroundTroopLine(UniverseState universe, string line)
@@ -2163,7 +2280,7 @@ public sealed class AuthoritativeStateSnapshot
 
     static bool ShouldPreserveLocalMovementSolverQueue(Ship ship, string authoritativeSignature)
     {
-        if (ship?.AI == null || !IsActiveMovementState(ship.AI.State))
+        if (ship?.AI == null)
             return false;
 
         ShipAI.ShipGoal[] localGoals = ship.AI.OrderQueue.ToArray();
@@ -2173,9 +2290,6 @@ public sealed class AuthoritativeStateSnapshot
         return string.Equals(ShipOrderQueueSignature(ship), authoritativeSignature ?? "",
             StringComparison.Ordinal);
     }
-
-    static bool IsActiveMovementState(AIState state)
-        => state is AIState.MoveTo or AIState.FormationMoveTo or AIState.Pursue or AIState.Flee;
 
     static bool TryParseShipGoalSignature(UniverseState universe, Ship ship, string signature,
         out ShipAI.ShipGoal goal)
@@ -2203,6 +2317,12 @@ public sealed class AuthoritativeStateSnapshot
         Ship targetShip = targetShipId > 0 ? universe.Objects.FindShip(targetShipId) : null;
         var movePosition = new Vector2(x, y);
         AIState wantedState = ship.AI.State;
+        if (p.Length >= 7
+            && int.TryParse(p[6], NumberStyles.Integer, CultureInfo.InvariantCulture, out int wantedStateValue)
+            && Enum.IsDefined(typeof(AIState), wantedStateValue))
+        {
+            wantedState = (AIState)wantedStateValue;
+        }
 
         if (targetPlanet != null || targetShip != null || moveOrder == MoveOrder.Regular)
         {

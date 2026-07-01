@@ -29,7 +29,7 @@ namespace Ship_Game.AI
 
         void RunMilitaryPlanner()
         {
-            if (OwnerEmpire.isPlayer || IsAuthoritativeHumanControlled)
+            if (OwnerEmpire.isPlayer || (IsAuthoritativeHumanControlled && !OwnerEmpire.AutoMilitary))
                 return;
 
             RunGroundPlanner();

@@ -291,8 +291,8 @@ namespace Ship_Game.Commands.Goals
             if (TargetPlanet.Owner == Owner)
                 return false;
 
-            if (!Owner.isPlayer && (PlanetRanker.IsColonizeBlockedByMorals(TargetPlanet.System, Owner)
-                                   || TargetPlanet.Owner?.ParentEmpire != null && !Owner.IsAtWarWith(TargetPlanet.Owner.ParentEmpire)))
+            if (!Owner.IsHumanControlled && (PlanetRanker.IsColonizeBlockedByMorals(TargetPlanet.System, Owner)
+                                             || TargetPlanet.Owner?.ParentEmpire != null && !Owner.IsAtWarWith(TargetPlanet.Owner.ParentEmpire)))
             {
                 return false;
             }

@@ -1078,7 +1078,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             string durableSignature = AuthoritativeStateSnapshot.ShipOrderQueueSignatureForTest(client.Ship);
 
             float initialDistance = client.Ship.Position.Distance(destination);
-            for (int i = 0; i < 180; ++i)
+            for (int i = 0; i < 900; ++i)
             {
                 session.SubmitFromClient(AuthoritativePlayerCommand.NoOp(100 + i, authority.Player.Id));
                 Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
@@ -1098,6 +1098,140 @@ public class Authoritative4XSessionTests : StarDriveTest
         {
             authority.Screen.Dispose();
             client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientReplica_PreservesMovementForEntityOrdersAcrossAuthoritativeNoOps_Headless()
+    {
+        const ulong OrbitSeed = 0x4D305650UL;
+        BuiltWorld orbitAuthority = BuildWorld(OrbitSeed);
+        BuiltWorld orbitClient = BuildWorld(OrbitSeed);
+
+        try
+        {
+            orbitAuthority.Ship.Position = orbitAuthority.Planet.Position + new Vector2(210_000f, 0f);
+            orbitClient.Ship.Position = orbitClient.Planet.Position + new Vector2(210_000f, 0f);
+            var session = new Authoritative4XInProcessSession(orbitAuthority.Screen, orbitClient.Screen);
+            float initialDistance = orbitClient.Ship.Position.Distance(orbitClient.Planet.Position);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.ShipPlanetOrder(1,
+                orbitAuthority.Player.Id, orbitAuthority.Ship.Id, orbitAuthority.Planet.Id,
+                AuthoritativeShipPlanetOrderType.Orbit, clearOrders: true, MoveOrder.Regular));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            AssertShipPlan(orbitClient.Ship, ShipAI.Plan.Orbit,
+                "The accepted orbit order should install the durable semantic planet order on the passive client.");
+            AssertHasActiveMovementSolverGoal(orbitClient.Ship,
+                "The accepted orbit order should also keep live movement-solver goals while the ship is far from the planet.");
+            string durableSignature = AuthoritativeStateSnapshot.ShipOrderQueueSignatureForTest(orbitClient.Ship);
+
+            for (int i = 0; i < 180; ++i)
+            {
+                session.SubmitFromClient(AuthoritativePlayerCommand.NoOp(50 + i, orbitAuthority.Player.Id));
+                Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+                Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+            }
+
+            AssertHasActiveMovementSolverGoal(orbitClient.Ship,
+                "Authoritative no-op snapshots must not collapse a moving orbit order into a stationary durable goal.");
+            Assert.AreEqual(durableSignature, AuthoritativeStateSnapshot.ShipOrderQueueSignatureForTest(orbitClient.Ship),
+                "Preserving local movement-solver goals must not change the canonical orbit signature.");
+            Assert.IsTrue(orbitClient.Ship.Position.Distance(orbitClient.Planet.Position) < initialDistance,
+                "The passive client ship should visibly advance toward the planet after accepted orbit snapshots.");
+        }
+        finally
+        {
+            orbitAuthority.Screen.Dispose();
+            orbitClient.Screen.Dispose();
+        }
+
+        const ulong ColonizeSeed = 0x4D305651UL;
+        BuiltWorld colonizeAuthority = BuildWorld(ColonizeSeed, includeNeutralPlanet: true, includeColonyShip: true);
+        BuiltWorld colonizeClient = BuildWorld(ColonizeSeed, includeNeutralPlanet: true, includeColonyShip: true);
+
+        try
+        {
+            colonizeAuthority.ColonyShip.Position = colonizeAuthority.NeutralPlanet.Position + new Vector2(240_000f, 0f);
+            colonizeClient.ColonyShip.Position = colonizeClient.NeutralPlanet.Position + new Vector2(240_000f, 0f);
+            var session = new Authoritative4XInProcessSession(colonizeAuthority.Screen, colonizeClient.Screen);
+            float initialDistance = colonizeClient.ColonyShip.Position.Distance(colonizeClient.NeutralPlanet.Position);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.ShipPlanetOrder(1,
+                colonizeAuthority.Player.Id, colonizeAuthority.ColonyShip.Id, colonizeAuthority.NeutralPlanet.Id,
+                AuthoritativeShipPlanetOrderType.Colonize, clearOrders: true, MoveOrder.Regular));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            AssertShipPlan(colonizeClient.ColonyShip, ShipAI.Plan.Colonize,
+                "The accepted colonize order should install the durable semantic colonization order on the passive client.");
+            AssertHasActiveMovementSolverGoal(colonizeClient.ColonyShip,
+                "The accepted colonize order should keep live movement-solver goals while the colony ship is en route.");
+            string durableSignature = AuthoritativeStateSnapshot.ShipOrderQueueSignatureForTest(colonizeClient.ColonyShip);
+
+            for (int i = 0; i < 180; ++i)
+            {
+                session.SubmitFromClient(AuthoritativePlayerCommand.NoOp(80 + i, colonizeAuthority.Player.Id));
+                Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+                Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+            }
+
+            AssertHasActiveMovementSolverGoal(colonizeClient.ColonyShip,
+                "Authoritative no-op snapshots must not collapse a moving colonize order into a stationary durable goal.");
+            Assert.AreEqual(durableSignature, AuthoritativeStateSnapshot.ShipOrderQueueSignatureForTest(colonizeClient.ColonyShip),
+                "Preserving local movement-solver goals must not change the canonical colonization signature.");
+            Assert.AreEqual(AIState.Colonize, colonizeClient.ColonyShip.AI.State);
+        }
+        finally
+        {
+            colonizeAuthority.Screen.Dispose();
+            colonizeClient.Screen.Dispose();
+        }
+
+        const ulong AttackSeed = 0x4D305652UL;
+        BuiltWorld attackAuthority = BuildWorld(AttackSeed);
+        BuiltWorld attackClient = BuildWorld(AttackSeed);
+
+        try
+        {
+            MakeAtWar(attackAuthority.Player, attackAuthority.Enemy);
+            MakeAtWar(attackClient.Player, attackClient.Enemy);
+            float attackDistance = Math.Max(2_000_000f, attackAuthority.Ship.DesiredCombatRange + 500_000f);
+            attackAuthority.Ship.Position = attackAuthority.EnemyShip.Position + new Vector2(attackDistance, 0f);
+            attackClient.Ship.Position = attackClient.EnemyShip.Position + new Vector2(attackDistance, 0f);
+            var session = new Authoritative4XInProcessSession(attackAuthority.Screen, attackClient.Screen);
+            float initialDistance = attackClient.Ship.Position.Distance(attackClient.EnemyShip.Position);
+
+            session.SubmitFromClient(AuthoritativePlayerCommand.ShipTargetOrder(1,
+                attackAuthority.Player.Id, attackAuthority.Ship.Id, attackAuthority.EnemyShip.Id,
+                AuthoritativeShipTargetOrderType.Attack));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+            Assert.AreEqual(AIState.AttackTarget, attackClient.Ship.AI.State);
+            Assert.AreEqual(attackClient.EnemyShip, attackClient.Ship.AI.Target);
+
+            float minDistance = initialDistance;
+            for (int i = 0; i < 900; ++i)
+            {
+                session.SubmitFromClient(AuthoritativePlayerCommand.NoOp(120 + i, attackAuthority.Player.Id));
+                Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
+                Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+                minDistance = Math.Min(minDistance,
+                    attackClient.Ship.Position.Distance(attackClient.EnemyShip.Position));
+            }
+
+            float finalDistance = attackClient.Ship.Position.Distance(attackClient.EnemyShip.Position);
+            Assert.IsTrue(minDistance < initialDistance,
+                "The passive client ship should visibly advance toward the host-authored ship attack target. " +
+                $"initial={initialDistance} min={minDistance} final={finalDistance} desired={attackClient.Ship.DesiredCombatRange} " +
+                $"clientState={attackClient.Ship.AI.State} clientCombat={attackClient.Ship.AI.CombatState} " +
+                $"clientInCombat={attackClient.Ship.InCombat} clientTarget={attackClient.Ship.AI.Target?.Id ?? 0} " +
+                $"clientOrders='{AuthoritativeStateSnapshot.ShipOrderQueueSignatureForTest(attackClient.Ship)}' " +
+                $"authorityDistance={attackAuthority.Ship.Position.Distance(attackAuthority.EnemyShip.Position)} " +
+                $"authorityState={attackAuthority.Ship.AI.State} authorityCombat={attackAuthority.Ship.AI.CombatState} " +
+                $"authorityInCombat={attackAuthority.Ship.InCombat} authorityTarget={attackAuthority.Ship.AI.Target?.Id ?? 0} " +
+                $"authorityOrders='{AuthoritativeStateSnapshot.ShipOrderQueueSignatureForTest(attackAuthority.Ship)}'");
+        }
+        finally
+        {
+            attackAuthority.Screen.Dispose();
+            attackClient.Screen.Dispose();
         }
     }
 
@@ -6274,6 +6408,13 @@ public class Authoritative4XSessionTests : StarDriveTest
             world.Enemy.AI.RunEconomicPlanner();
             Assert.AreEqual(0.33f, world.Enemy.data.TaxRate, 0.001f,
                 "Remote-human budget recalculation must honor manual taxes instead of applying AI auto-tax logic.");
+            world.Enemy.AutoTaxes = true;
+            world.Enemy.data.TaxRate = 0f;
+            bool didUpdate = world.Enemy.Update(world.UState, new FixedSimTime(world.UState.P.TurnTimer + 10f));
+            Assert.IsTrue(didUpdate,
+                "The remote-human empire must execute a real empire turn for the automation scheduler proof.");
+            Assert.AreNotEqual(0f, world.Enemy.data.TaxRate,
+                "Remote-human automation must run the opted-in economic/tax manager, not only the research picker.");
 
             IShipDesign[] scouts = world.Enemy.ShipsWeCanBuildSnapshot
                 .Where(s => s.IsShipGoodToBuild(world.Enemy) && s.Role == RoleName.scout)
@@ -8479,8 +8620,9 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsNotNull(host.LastResult, "The host should process the submitted command before the client polls.");
             Assert.AreEqual(1, host.LastResult.Sequence);
 
-            PlanetGridSquare[] clientTiles = PrepareGroundTroopTiles(client.Planet, columns: 1, rows: 1);
-            clientTiles[0].Biosphere = true;
+            Building mismatchBuilding = PickBlueprintBuilding(client.Planet);
+            client.Planet.AddBlueprints(TestBlueprintTemplate("Client Only Mismatch", mismatchBuilding,
+                client.Planet.CType), client.Player);
             Authoritative4XSyncMismatchException mismatch = null;
             DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
             while (mismatch == null && DateTime.UtcNow < deadline)
@@ -8628,8 +8770,9 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(firstType, authorityJoinPlanet.CType);
             Assert.AreEqual(firstType, clientJoinPlanet.CType);
 
-            PlanetGridSquare[] clientTiles = PrepareGroundTroopTiles(clientJoinPlanet, columns: 1, rows: 1);
-            clientTiles[0].Biosphere = true;
+            Building mismatchBuilding = PickBlueprintBuilding(clientJoinPlanet);
+            clientJoinPlanet.AddBlueprints(TestBlueprintTemplate("Client Only Resync", mismatchBuilding,
+                clientJoinPlanet.CType), client.Enemy);
             Planet.ColonyType mismatchCommandType = firstType == Planet.ColonyType.Core
                 ? Planet.ColonyType.Industrial
                 : Planet.ColonyType.Core;
@@ -8988,6 +9131,10 @@ public class Authoritative4XSessionTests : StarDriveTest
             Authoritative4XLiveSession liveClient = Authoritative4XLiveSession.ClientGame(client.Screen,
                 clientTransport, Peer, client.Enemy.Id, new[] { client.Player.Id, client.Enemy.Id });
             client.UState.FogMapBytes = new byte[] { 1, 2, 3, 4 };
+            client.Screen.CamPos = new Vector3d(client.EnemyShip.Position.X, client.EnemyShip.Position.Y, 4_000);
+            client.Screen.CamDestination = client.Screen.CamPos;
+            client.Screen.SetViewPerspective(Matrices.CreateLookAtDown(client.Screen.CamPos.X,
+                client.Screen.CamPos.Y, -client.Screen.CamPos.Z), maxDistance: 3E+07);
             client.Screen.AttachAuthoritative4XMultiplayer(liveClient);
             Assert.IsNull(client.UState.FogMapBytes,
                 "Remote authoritative clients must discard host-side saved fog and rebuild from their assigned empire.");
@@ -9036,6 +9183,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsTrue(client.Screen.IsVisibleToLocalPlayerInMapForUi(client.EnemyShip));
             Assert.IsTrue(client.EnemyShip.IsVisibleToPlayerInMap,
                 "Ship-level visibility should also use the assigned local empire so icons and scene objects can render.");
+            Assert.IsTrue(client.UState.Objects.VisibleShips.Any(s => s.Id == client.EnemyShip.Id),
+                "Passive clients should refresh their visible object cache immediately on attach so joined ships do not start invisible until a later resync.");
             Assert.AreNotEqual(client.EnemyShip.InPlayerSensorRange,
                 client.Screen.IsKnownToLocalPlayerForUi(client.EnemyShip),
                 "The local-view visibility proof must not be just a wrapper around UState.Player visibility.");
@@ -9439,8 +9588,9 @@ public class Authoritative4XSessionTests : StarDriveTest
             Planet requesterPlanet = started.Clients.First(c => c.PeerId == requestingPeer)
                 .Universe.UState.GetPlanet(authorityPlanet.Id);
             Assert.IsNotNull(requesterPlanet);
-            PlanetGridSquare[] requesterTiles = PrepareGroundTroopTiles(requesterPlanet, columns: 1, rows: 1);
-            requesterTiles[0].Biosphere = true;
+            Building mismatchBuilding = PickBlueprintBuilding(requesterPlanet);
+            requesterPlanet.AddBlueprints(TestBlueprintTemplate("Eight Client Only Resync", mismatchBuilding,
+                requesterPlanet.CType), requesterPlanet.Owner);
 
             requester.Submit(AuthoritativePlayerCommand.SetEmpireBudget(1_101, requestingEmpire,
                 taxRate: 0.23f, treasuryGoal: 0.44f, autoTaxes: false));
@@ -10621,7 +10771,6 @@ public class Authoritative4XSessionTests : StarDriveTest
             authorityPlanet.SetManualCivBudget(0.3f);
             authorityPlanet.SetManualGroundDefBudget(0.4f);
             authorityPlanet.SetManualSpaceDefBudget(0.5f);
-
             clientPlanet.CType = Planet.ColonyType.Colony;
             Assert.IsNull(clientPlanet.Owner,
                 "The test must start with the live mismatch shape: host-owned planet, passive client still unowned.");
@@ -10664,6 +10813,63 @@ public class Authoritative4XSessionTests : StarDriveTest
             AuthoritativeStateSnapshot repairedClient = AuthoritativeStateSnapshot.Capture(client.Screen, 12);
             Assert.AreEqual(authoritySnapshot.SyncDigest, repairedClient.SyncDigest,
                 "Applying authoritative P| rows should repair the planet runtime drift from live resync logs.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XSnapshot_AppliesColonyTileRowsBeforeDigestCompare_Headless()
+    {
+        const ulong Seed = 0x710E5EEDUL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            Planet authorityPlanet = authority.Planet;
+            Planet clientPlanet = client.Planet;
+            EnsureSingleBuildTile(authorityPlanet);
+            EnsureSingleBuildTile(clientPlanet);
+            PlanetGridSquare authorityTile = authorityPlanet.TilesList
+                .OrderBy(t => t.X)
+                .ThenBy(t => t.Y)
+                .First();
+            PlanetGridSquare clientTile = clientPlanet.GetTileByCoordinates(authorityTile.X, authorityTile.Y);
+
+            if (authorityTile.BuildingOnTile) authorityPlanet.DestroyBuildingOn(authorityTile);
+            if (clientTile.BuildingOnTile) clientPlanet.DestroyBuildingOn(clientTile);
+            if (authorityTile.Biosphere) authorityPlanet.DestroyBioSpheres(authorityTile, destroyBuilding: false);
+            if (clientTile.Biosphere) clientPlanet.DestroyBioSpheres(clientTile, destroyBuilding: false);
+            authorityTile.SetHabitable(false);
+            clientTile.SetHabitable(false);
+            authorityTile.Terraformable = false;
+            clientTile.Terraformable = false;
+            authorityTile.PlaceBuilding(ResourceManager.CreateBuilding(authorityPlanet, Building.OutpostId),
+                authorityPlanet);
+
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 18);
+            AuthoritativeStateSnapshot staleClient = AuthoritativeStateSnapshot.Capture(client.Screen, 18);
+            StringAssert.Contains(authoritySnapshot.Payload,
+                $"T|{authorityPlanet.Id}|{authorityTile.X}|{authorityTile.Y}|Outpost|0|0|0");
+            Assert.IsNull(clientTile.Building,
+                "The test must start with the live mismatch shape: host has T|Outpost and client lacks it.");
+            Assert.AreNotEqual(authoritySnapshot.SyncDigest, staleClient.SyncDigest,
+                "Colony tile rows must be covered by the canonical digest.");
+
+            authoritySnapshot.ApplyEmpireRuntimePayload(client.UState);
+
+            Assert.AreEqual("Outpost", clientTile.Building?.Name,
+                "T| replay must materialize host-authored colony tile buildings before digest comparison.");
+            Assert.IsFalse(clientTile.Biosphere);
+            Assert.IsFalse(clientTile.Habitable);
+            Assert.IsFalse(clientTile.Terraformable);
+            AuthoritativeStateSnapshot repairedClient = AuthoritativeStateSnapshot.Capture(client.Screen, 18);
+            Assert.AreEqual(authoritySnapshot.SyncDigest, repairedClient.SyncDigest,
+                "Applying authoritative T| rows should repair the colony tile drift from live resync logs.");
         }
         finally
         {

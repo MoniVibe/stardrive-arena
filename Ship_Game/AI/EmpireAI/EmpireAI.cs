@@ -155,7 +155,7 @@ namespace Ship_Game.AI
 
             if (IsAuthoritativeHumanControlled)
             {
-                RunResearchPlanner();
+                RunAuthoritativeHumanAutomationManagers();
                 return;
             }
 
@@ -207,6 +207,24 @@ namespace Ship_Game.AI
 
             RunMilitaryPlanner();
             RunWarPlanner();
+        }
+
+        void RunAuthoritativeHumanAutomationManagers()
+        {
+            RunEconomicPlanner();
+            ExpansionAI.RunExpansionPlanner();
+
+            if (ResearchStationsAI == null)
+                ResearchStationsAI = new(OwnerEmpire);
+
+            if (MiningOpsAI == null)
+                MiningOpsAI = new(OwnerEmpire);
+
+            ResearchStationsAI.RunResearchStationPlanner();
+            MiningOpsAI.RunMiningOpsPlanner();
+            SpaceRoadsManager.Update();
+            RunResearchPlanner();
+            RunMilitaryPlanner();
         }
 
         public void RemoveFactionEndedTasks()
