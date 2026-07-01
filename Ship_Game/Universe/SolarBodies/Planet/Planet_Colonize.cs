@@ -81,8 +81,8 @@ namespace Ship_Game
             else
                 CType = Owner.AssessColonyNeeds(this);
 
-            if (OwnerIsPlayer)
-                Universe.Notifications?.AddColonizedNotification(this, Universe.Player);
+            if (OwnerIsHumanControlled)
+                Universe.Notifications?.AddColonizedNotification(this, Owner);
         }
 
         void NewColonyAffectRelations()

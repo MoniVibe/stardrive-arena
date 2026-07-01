@@ -16,13 +16,16 @@ namespace Ship_Game.GameScreens.Espionage
         public AgentComponent Agents { get; private set; }
         public static readonly Color PanelBackground = new Color(23, 20, 14);
 
-        public EspionageScreen(UniverseScreen parent) : base(parent, toPause: parent)
+        public EspionageScreen(UniverseScreen parent) : base(parent, toPause: PauseTargetFor(parent))
         {
             Universe = parent;
             IsPopup = true;
             TransitionOnTime = 0.25f;
             TransitionOffTime = 0.25f;
         }
+
+        static UniverseScreen PauseTargetFor(UniverseScreen parent)
+            => parent?.IsAuthoritative4XMultiplayer == true ? null : parent;
 
         public override void LoadContent()
         {

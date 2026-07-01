@@ -126,6 +126,7 @@ namespace Ship_Game
             AddNotification(new Notification
             {
                 RelevantEmpire  = emp,
+                LocalEmpireOnly = true,
                 Message         = wasColonized.Name + Localizer.Token(GameText.WasColonizednclickForColonyScreen),
                 ReferencedItem1 = wasColonized,
                 IconPath        = wasColonized.IconPath,

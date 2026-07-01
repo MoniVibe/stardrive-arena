@@ -281,14 +281,14 @@ public partial class UniverseScreen
     }
 
     internal int SyncAuthoritative4XPassiveShipSceneObjectsForHeadless()
-        => SyncAuthoritative4XPassiveShipSceneObjects();
+        => SyncAuthoritative4XPassiveShipSceneObjects(ignoreSessionGate: true);
 
-    int SyncAuthoritative4XPassiveShipSceneObjects()
+    int SyncAuthoritative4XPassiveShipSceneObjects(bool ignoreSessionGate = false)
     {
-        if (Authoritative4XLive == null || Authoritative4XLive.IsHost)
+        if (!ignoreSessionGate && (Authoritative4XLive == null || Authoritative4XLive.IsHost))
             return 0;
 
-        Ship[] visible = UState.Objects?.VisibleShips ?? Array.Empty<Ship>();
+        Ship[] visible = UState.Ships ?? Array.Empty<Ship>();
         int synced = 0;
         for (int i = 0; i < visible.Length; ++i)
         {

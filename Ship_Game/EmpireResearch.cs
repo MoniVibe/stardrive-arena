@@ -172,8 +172,11 @@ namespace Ship_Game
             if (unLocked)
             {
                 Empire.UnlockTech(tech, TechUnlockType.Normal, null);
-                if (Empire.isPlayer)
+                if (Empire.isPlayer
+                    || Ship_Game.Multiplayer.Authoritative.AuthoritativeHumanPlayers.IsHumanControlled(Empire))
+                {
                     Empire.Universe?.Notifications.AddResearchComplete(tech.UID, Empire);
+                }
 
                 LeechTechByEspionage(tech.UID);
             }

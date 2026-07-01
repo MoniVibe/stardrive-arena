@@ -37,7 +37,7 @@ public static class AuthoritativeReplicationManifest
         new("SD", "StarDate", AuthoritativeReplicationApplyMode.DirectReplay,
             "Host-owned stardate for passive clients, which do not advance simulation time locally."),
         new("E", "EmpireRuntime", AuthoritativeReplicationApplyMode.DirectReplay,
-            "Cash, research queue, taxes, automation flags, and auto-design selections."),
+            "Cash, research queue/progress, taxes, automation flags, and auto-design selections."),
         new("U", "UnlockedTech", AuthoritativeReplicationApplyMode.BatchReplay,
             "Unlocked empire technology rows are replayed as an exact host-owned set."),
         new("D", "PlayerDesign", AuthoritativeReplicationApplyMode.DirectReplay,
@@ -70,8 +70,8 @@ public static class AuthoritativeReplicationManifest
             "Planet troop tile membership, owner, action counters, strength, and timers are replayed from the host."),
         new("GC", "GroundCombat", AuthoritativeReplicationApplyMode.DirectReplay,
             "Ground-combat phase, timer, participants, and defense tile are replayed from the host."),
-        new("ST", "ShipTroop", AuthoritativeReplicationApplyMode.DirectReplay,
-            "Ship-carried troop owner, action counters, strength, and timers are replayed from the host."),
+        new("ST", "ShipTroop", AuthoritativeReplicationApplyMode.BatchReplay,
+            "Ship-carried troop membership, owner, action counters, strength, and timers are replayed as an exact host-owned set."),
     };
 
     static readonly Dictionary<string, AuthoritativeReplicationRow> ByPrefix =

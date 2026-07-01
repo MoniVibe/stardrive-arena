@@ -22,7 +22,7 @@ namespace Ship_Game.GameScreens
         UILabel InfiltrationTitle;
         Color SeperatorColor;
 
-        public InfiltrationScreen(UniverseScreen parent) : base(parent, toPause: parent)
+        public InfiltrationScreen(UniverseScreen parent) : base(parent, toPause: PauseTargetFor(parent))
         {
             Universe = parent;
             IsPopup = true;
@@ -31,6 +31,9 @@ namespace Ship_Game.GameScreens
             Player = Universe.Player;
             SelectedEmpire = Player;
         }
+
+        static UniverseScreen PauseTargetFor(UniverseScreen parent)
+            => parent?.IsAuthoritative4XMultiplayer == true ? null : parent;
 
         public override void LoadContent()
         {

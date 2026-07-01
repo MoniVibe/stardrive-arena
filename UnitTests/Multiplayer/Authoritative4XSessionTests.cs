@@ -5964,6 +5964,59 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XShipTroopReplay_MaterializesMissingAndClearsStaleTroops_Headless()
+    {
+        const ulong Seed = 0x5700D10BUL;
+        BuiltWorld authority = BuildWorld(Seed, includeTroopShips: true);
+        BuiltWorld client = BuildWorld(Seed, includeTroopShips: true);
+
+        try
+        {
+            var replica = new Authoritative4XClientReplica(client.Screen, humanEmpireIds: new[] { client.Player.Id });
+            var command = AuthoritativePlayerCommand.NoOp(905, authority.Player.Id);
+            var result = new AuthoritativeCommandResult
+            {
+                Sequence = 905,
+                OriginPeer = 2,
+                Accepted = false,
+                Tick = 11,
+                Reason = "",
+            };
+
+            EnsureTroopLoaded(authority.TroopShip);
+            EnsureTroopLoaded(client.TroopShip);
+            authority.UState.Objects.UpdateLists(removeInactiveObjects: false);
+            client.UState.Objects.UpdateLists(removeInactiveObjects: false);
+            Troop authorityTroop = authority.TroopShip.GetOurTroops().First();
+            Troop staleClientTroop = client.TroopShip.GetOurTroops().First();
+            client.TroopShip.RemoveAnyTroop(staleClientTroop);
+            staleClientTroop.SetShip(null);
+            Assert.AreEqual(0, client.TroopShip.TroopCount,
+                "The client starts without the host ship-carried troop, matching the live ST-row drift.");
+
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 11);
+            StringAssert.Contains(authoritySnapshot.Payload, $"ST|{authority.TroopShip.Id}|0|",
+                "The authority snapshot must contain the ship-carried troop row this proof replays.");
+
+            replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
+
+            Assert.AreEqual(authoritySnapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                "Ship-carried troop batch replay must repair missing/client-only ST rows before digest comparison.");
+            Assert.AreEqual(1, client.TroopShip.TroopCount,
+                "The passive replica should materialize the host-owned ship-carried troop that was absent locally.");
+            Troop clientTroop = client.TroopShip.GetOurTroops().First();
+            Assert.AreEqual(authorityTroop.Name, clientTroop.Name);
+            Assert.AreSame(client.Player, clientTroop.Loyalty);
+            Assert.AreSame(client.TroopShip, clientTroop.HostShip);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XGroundTroopOrders_AttacksAndSync_Headless()
     {
         const ulong Seed = 0x6700D102UL;
@@ -7846,11 +7899,14 @@ public class Authoritative4XSessionTests : StarDriveTest
             string[] techs = ResearchCandidates(authority.Player, 2);
             authority.Player.Research.SetTopic(techs[0]);
             authority.Player.Research.AddTechToQueue(techs[1]);
+            TechEntry authorityTech = authority.Player.GetTechEntry(techs[0]);
+            authorityTech.Progress = authorityTech.TechCost * 0.375f;
             AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 1);
 
             client.Player.Research.Reset();
             client.Player.Research.SetTopic(techs[1]);
             client.Player.Research.AddTechToQueue(techs[0]);
+            client.Player.GetTechEntry(techs[0]).Progress = 0f;
 
             replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
 
@@ -7859,6 +7915,59 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(authority.Player.Research.Topic, client.Player.Research.Topic,
                 "The host snapshot should repair the active research topic.");
             AssertResearchQueuesEqual(authority.Player, client.Player);
+            Assert.AreEqual(BitConverter.SingleToUInt32Bits(authorityTech.Progress),
+                BitConverter.SingleToUInt32Bits(client.Player.GetTechEntry(techs[0]).Progress),
+                "Passive clients must replay the host research progress, not only the eventual unlock row.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientReplica_ReplaysLocalResearchAndColonizationNotifications_Headless()
+    {
+        const ulong Seed = 0x4E071F11UL;
+        BuiltWorld authority = BuildWorld(Seed, includeNeutralPlanet: true);
+        BuiltWorld client = BuildWorld(Seed, includeNeutralPlanet: true);
+
+        try
+        {
+            client.Screen.NotificationManager ??= new NotificationManager(client.Screen.ScreenManager, client.Screen);
+            client.Screen.NotificationManager.Clear();
+            var replica = new Authoritative4XClientReplica(client.Screen, humanEmpireIds: new[] { client.Player.Id });
+            var command = AuthoritativePlayerCommand.NoOp(247, authority.Player.Id);
+            var result = new AuthoritativeCommandResult
+            {
+                Sequence = 247,
+                OriginPeer = 2,
+                Accepted = false,
+                Tick = 12,
+                Reason = "",
+            };
+
+            TechEntry authorityTech = authority.Player.TechEntries
+                .Where(t => t.Discovered && t.CanBeResearched && !t.Unlocked)
+                .OrderBy(t => t.UID, StringComparer.Ordinal)
+                .First();
+            TechEntry clientTech = client.Player.GetTechEntry(authorityTech.UID);
+            Assert.IsFalse(clientTech.Unlocked);
+            authority.Player.UnlockTech(authorityTech, TechUnlockType.Normal, null);
+            authority.NeutralPlanet.SetOwner(authority.Player);
+            Assert.AreNotEqual(client.Player, client.NeutralPlanet.Owner,
+                "The client must start without the new colony before snapshot replay.");
+
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 12);
+            int before = client.Screen.NotificationManager.NumberOfNotifications;
+            replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
+
+            Assert.AreEqual(authoritySnapshot.SyncDigest, replica.LastSnapshot.SyncDigest);
+            Assert.IsTrue(client.Player.HasUnlocked(authorityTech.UID));
+            Assert.AreSame(client.Player, client.NeutralPlanet.Owner);
+            Assert.AreEqual(before + 2, client.Screen.NotificationManager.NumberOfNotifications,
+                "Passive clients should synthesize local notifications for newly owned colonies and newly unlocked tech.");
         }
         finally
         {
@@ -8052,6 +8161,30 @@ public class Authoritative4XSessionTests : StarDriveTest
             }
             Assert.IsTrue(clientShip.InFrustum,
                 "The host-transformed local ship should be marked in-frustum after the passive view refresh.");
+
+            var sceneObject = new SynapseGaming.LightingSystem.Rendering.SceneObject("passive-visible-cache-proof");
+            typeof(Ship).GetField("ShipSO",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                ?.SetValue(clientShip, sceneObject);
+            typeof(UniverseObjectManager).GetField("<VisibleShips>k__BackingField",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                ?.SetValue(client.UState.Objects, Array.Empty<Ship>());
+            authorityShip.Rotation = 2.125f;
+            authorityShip.YRotation = 0.25f;
+            authorityShip.XRotation = -0.125f;
+            authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 9);
+            replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
+
+            int synced = client.Screen.SyncAuthoritative4XPassiveShipSceneObjectsForHeadless();
+            Assert.IsTrue(synced > 0,
+                "Passive scene-object sync must scan local/known ships, not only the potentially stale VisibleShips cache.");
+            Matrix expectedWorld = Matrix.CreateTranslation(new Vector3(clientShip.ShipData.BaseHull.MeshOffset, 0f))
+                                 * Matrix.CreateRotationY(clientShip.YRotation)
+                                 * Matrix.CreateRotationX(clientShip.XRotation)
+                                 * Matrix.CreateRotationZ(clientShip.Rotation)
+                                 * Matrix.CreateTranslation(new Vector3(clientShip.Position, 0f));
+            Assert.AreEqual(expectedWorld, sceneObject.World,
+                "Passive clients should update the 3D hull orientation even when the visible-object cache lags.");
         }
         finally
         {

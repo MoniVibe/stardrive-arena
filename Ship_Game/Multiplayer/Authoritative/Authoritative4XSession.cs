@@ -94,8 +94,6 @@ public sealed class AuthoritativeStateSnapshot
                 ApplyShipVisibilityLine(universe, line);
             else if (line.StartsWith("GT|", StringComparison.Ordinal))
                 ApplyGroundTroopLine(universe, line);
-            else if (line.StartsWith("ST|", StringComparison.Ordinal))
-                ApplyShipTroopLine(universe, line);
         }
 
         ApplyUnlockedTechPayload(universe, lines);
@@ -108,6 +106,7 @@ public sealed class AuthoritativeStateSnapshot
 
         ApplyShipPresencePayload(universe, lines);
         ApplyShipRuntimePayload(universe, lines);
+        ApplyShipTroopPayload(universe, lines);
         ApplyColonyTilePayload(universe, lines);
         ApplyGroundTroopPayload(universe, lines);
         ApplyGroundCombatPayload(universe, lines);
@@ -194,6 +193,8 @@ public sealed class AuthoritativeStateSnapshot
         empire.data.CurrentConstructor = p[12] ?? "";
         empire.data.CurrentResearchStation = p[13] ?? "";
         empire.data.CurrentMiningStation = p[14] ?? "";
+        if (p.Length > 15 && TryParseFloatBits(p[15], out float researchProgress))
+            ApplyResearchProgress(empire, p[2] ?? "", researchProgress);
     }
 
     static void ApplyResearchRuntime(Empire empire, string topic, string queueSignature)
@@ -206,6 +207,19 @@ public sealed class AuthoritativeStateSnapshot
 
         if (topic.NotEmpty() && empire.Research.Topic != topic)
             empire.Research.SetTopic(topic);
+    }
+
+    static void ApplyResearchProgress(Empire empire, string topic, float progress)
+    {
+        if (topic.IsEmpty()
+            || !empire.TryGetTechEntry(topic, out TechEntry tech)
+            || tech == TechEntry.None
+            || tech.Unlocked)
+        {
+            return;
+        }
+
+        tech.Progress = Math.Clamp(progress, 0f, tech.TechCost);
     }
 
     static void ApplyUnlockedTechLine(UniverseState universe, string line)
@@ -1048,6 +1062,7 @@ public sealed class AuthoritativeStateSnapshot
               .Append('|').Append(e.data.CurrentConstructor ?? "")
               .Append('|').Append(e.data.CurrentResearchStation ?? "")
               .Append('|').Append(e.data.CurrentMiningStation ?? "")
+              .Append('|').Append(ResearchProgress(e))
               .AppendLine();
 
         foreach (Empire e in us.Empires.OrderBy(e => e.Id))
@@ -1577,6 +1592,16 @@ public sealed class AuthoritativeStateSnapshot
     static string ResearchQueueSignature(Empire empire)
         => string.Join(",", empire.data.ResearchQueue);
 
+    static uint ResearchProgress(Empire empire)
+    {
+        string topic = empire.Research.Topic ?? "";
+        return topic.NotEmpty()
+               && empire.TryGetTechEntry(topic, out TechEntry tech)
+               && tech != TechEntry.None
+            ? FloatBits(tech.Progress)
+            : FloatBits(0f);
+    }
+
     static AuthoritativeEmpireAutomationFlags AutomationFlags(Empire e)
     {
         var flags = AuthoritativeEmpireAutomationFlags.None;
@@ -1827,8 +1852,79 @@ public sealed class AuthoritativeStateSnapshot
                 ApplyShipTransformLine(universe, line);
             else if (line.StartsWith("SV|", StringComparison.Ordinal))
                 ApplyShipVisibilityLine(universe, line);
-            else if (line.StartsWith("ST|", StringComparison.Ordinal))
-                ApplyShipTroopLine(universe, line);
+        }
+    }
+
+    static void ApplyShipTroopPayload(UniverseState universe, string[] lines)
+    {
+        var desired = new Dictionary<int, List<string>>();
+        var shipIds = new HashSet<int>();
+        foreach (string rawLine in lines)
+        {
+            string line = rawLine.TrimEnd('\r');
+            if ((line.StartsWith("S|", StringComparison.Ordinal)
+                 || line.StartsWith("SX|", StringComparison.Ordinal))
+                && int.TryParse(line.Split('|')[1], NumberStyles.Integer, CultureInfo.InvariantCulture,
+                    out int snapshotShipId))
+            {
+                shipIds.Add(snapshotShipId);
+                continue;
+            }
+
+            if (!line.StartsWith("ST|", StringComparison.Ordinal))
+                continue;
+
+            string[] troopParts = line.Split('|');
+            if (troopParts.Length < 10
+                || !int.TryParse(troopParts[1], NumberStyles.Integer, CultureInfo.InvariantCulture,
+                    out int shipId))
+            {
+                continue;
+            }
+
+            if (!desired.TryGetValue(shipId, out List<string> rows))
+            {
+                rows = new List<string>();
+                desired[shipId] = rows;
+            }
+            shipIds.Add(shipId);
+            rows.Add(line);
+        }
+
+        foreach (int shipId in shipIds.OrderBy(id => id))
+        {
+            Ship ship = universe.Objects.FindShip(shipId);
+            if (ship == null)
+                continue;
+
+            desired.TryGetValue(shipId, out List<string> rows);
+            rows ??= new List<string>();
+            var existing = ship.GetOurTroops().ToList();
+            foreach (Troop troop in existing)
+            {
+                ship.RemoveAnyTroop(troop);
+                troop.SetShip(null);
+            }
+
+            var used = new HashSet<Troop>();
+            foreach (string row in rows)
+            {
+                string[] p = row.Split('|');
+                if (p.Length < 10)
+                    continue;
+
+                Troop troop = FindMatchingShipTroop(existing, used, p)
+                              ?? CreateShipTroopForAuthoritativeReplay(universe, p);
+                if (troop == null)
+                    continue;
+
+                used.Add(troop);
+                ApplyTroopRuntime(universe, troop, p, loyaltyIndex: 3, nameIndex: 4,
+                    strengthIndex: 5, moveActionsIndex: 6, attackActionsIndex: 7, moveTimerIndex: 8,
+                    attackTimerIndex: 9);
+                if (troop.Loyalty != null)
+                    ship.AddTroop(troop);
+            }
         }
     }
 
@@ -2070,10 +2166,39 @@ public sealed class AuthoritativeStateSnapshot
         return troop;
     }
 
+    static Troop CreateShipTroopForAuthoritativeReplay(UniverseState universe, string[] p)
+    {
+        int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int loyaltyId);
+        string name = p[4] ?? "";
+        if (!ResourceManager.GetTroopTemplate(name, out Troop template))
+            return null;
+
+        Troop troop = template.Clone();
+        if (troop.StrengthMax <= 0)
+            troop.StrengthMax = troop.Strength;
+        Empire loyalty = universe.Empires.FirstOrDefault(e => e.Id == loyaltyId);
+        if (loyalty != null)
+            troop.SetOwner(loyalty);
+        return troop;
+    }
+
     static Troop FindMatchingGroundTroop(List<Troop> existing, HashSet<Troop> used, string[] p)
     {
         int.TryParse(p[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out int loyaltyId);
         string name = p[6] ?? "";
+        Troop match = existing.FirstOrDefault(t => !used.Contains(t)
+                                                   && (t.Loyalty?.Id ?? 0) == loyaltyId
+                                                   && string.Equals(t.Name ?? "", name, StringComparison.Ordinal));
+        match ??= existing.FirstOrDefault(t => !used.Contains(t)
+                                               && string.Equals(t.Name ?? "", name, StringComparison.Ordinal));
+        match ??= existing.FirstOrDefault(t => !used.Contains(t));
+        return match;
+    }
+
+    static Troop FindMatchingShipTroop(List<Troop> existing, HashSet<Troop> used, string[] p)
+    {
+        int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int loyaltyId);
+        string name = p[4] ?? "";
         Troop match = existing.FirstOrDefault(t => !used.Contains(t)
                                                    && (t.Loyalty?.Id ?? 0) == loyaltyId
                                                    && string.Equals(t.Name ?? "", name, StringComparison.Ordinal));
@@ -2591,8 +2716,13 @@ public sealed class Authoritative4XClientReplica
             if (!local.Accepted)
                 throw new System.InvalidOperationException($"Client replica rejected accepted command {command.Sequence}: {local.Reason}");
         }
+        Empire localEmpireBefore = Universe.Player;
+        int localEmpireId = localEmpireBefore?.Id ?? 0;
+        HashSet<int> ownedPlanetsBefore = OwnedPlanetIds(localEmpireBefore);
+        HashSet<string> unlockedTechsBefore = UnlockedTechIds(localEmpireBefore);
         authoritySnapshot.ApplyShipPresencePayload(Universe.UState);
         authoritySnapshot.ApplyEmpireRuntimePayload(Universe.UState);
+        NotifyLocalAuthoritativeDeltas(localEmpireId, ownedPlanetsBefore, unlockedTechsBefore);
         Tick = authoritySnapshot.Tick;
         LastSnapshot = AuthoritativeStateSnapshot.Capture(Universe, Tick);
         bool rawHashMismatch = LastSnapshot.HashLo != authoritySnapshot.HashLo
@@ -2611,6 +2741,39 @@ public sealed class Authoritative4XClientReplica
             ? new Authoritative4XRawHashDrift(command, result, authoritySnapshot, LastSnapshot)
             : null;
     }
+
+    void NotifyLocalAuthoritativeDeltas(int localEmpireId, HashSet<int> ownedPlanetsBefore,
+        HashSet<string> unlockedTechsBefore)
+    {
+        if (localEmpireId <= 0 || Universe.NotificationManager == null)
+            return;
+
+        Empire local = Universe.UState.GetEmpire(localEmpireId);
+        if (local == null)
+            return;
+
+        foreach (Planet planet in local.GetPlanets().OrderBy(p => p.Id))
+            if (!ownedPlanetsBefore.Contains(planet.Id))
+                Universe.NotificationManager.AddColonizedNotification(planet, local);
+
+        foreach (TechEntry tech in local.TechEntries
+                     .Where(t => t?.Unlocked == true && !unlockedTechsBefore.Contains(t.UID))
+                     .OrderBy(t => t.UID, StringComparer.Ordinal))
+        {
+            Universe.NotificationManager.AddResearchComplete(tech.UID, local);
+        }
+    }
+
+    static HashSet<int> OwnedPlanetIds(Empire empire)
+        => empire?.GetPlanets().Select(p => p.Id).ToHashSet()
+           ?? new HashSet<int>();
+
+    static HashSet<string> UnlockedTechIds(Empire empire)
+        => empire?.TechEntries
+               .Where(t => t?.Unlocked == true)
+               .Select(t => t.UID)
+               .ToHashSet(StringComparer.Ordinal)
+           ?? new HashSet<string>(StringComparer.Ordinal);
 
     void AssertReplicaUnchangedSinceLastSnapshot(AuthoritativePlayerCommand command,
         AuthoritativeCommandResult result)
