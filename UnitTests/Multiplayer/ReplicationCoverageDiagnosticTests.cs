@@ -18,6 +18,81 @@ public sealed class ReplicationCoverageDiagnosticTests
     public TestContext TestContext { get; set; }
 
     [TestMethod]
+    public void ReplicationManifest_ExecutableDescriptors_EnforceCoverageSymmetry_Headless()
+    {
+        ReplicatedRowDescriptor[] descriptors = AuthoritativeReplicationManifest.AllRows.ToArray();
+
+        string[] declaredPrefixes = Sorted(descriptors.Select(row => row.Prefix)).ToArray();
+        string[] emittedPrefixes = Sorted(descriptors.Where(row => row.EmitsPayload).Select(row => row.Prefix)).ToArray();
+        string[] coveredPrefixes = Sorted(descriptors
+            .Where(row => row.HasApply || row.KnownGap)
+            .Select(row => row.Prefix)).ToArray();
+
+        AssertSetsEqual(declaredPrefixes, emittedPrefixes,
+            "Every declared row prefix must be emitted by at least one executable descriptor.");
+        AssertSetsEqual(declaredPrefixes, coveredPrefixes,
+            "Every declared row prefix must either replay or be explicitly declared as a KnownGap.");
+
+        ReplicatedRowDescriptor[] uncoveredFatal = descriptors
+            .Where(row => row.DigestPolicy == AuthoritativeReplicationDigestPolicy.Fatal)
+            .Where(row => !row.HasApply && !row.KnownGap)
+            .ToArray();
+        Assert.AreEqual(0, uncoveredFatal.Length,
+            "Fatal digest descriptors require an apply delegate unless they are explicit P2 KnownGap descriptors: "
+            + string.Join(",", uncoveredFatal.Select(row => row.Id)));
+
+        ReplicatedRowDescriptor[] uncoveredTransform = descriptors
+            .Where(row => row.DigestPolicy == AuthoritativeReplicationDigestPolicy.Transform)
+            .Where(row => !row.HasApply)
+            .ToArray();
+        Assert.AreEqual(0, uncoveredTransform.Length,
+            "Transform digest descriptors require replay coverage: "
+            + string.Join(",", uncoveredTransform.Select(row => row.Id)));
+
+        string[] knownGapIds = descriptors
+            .Where(row => row.KnownGap)
+            .Select(row => row.Id)
+            .OrderBy(id => id, StringComparer.Ordinal)
+            .ToArray();
+        AssertSetsEqual(new[]
+        {
+            "BP.Blueprint",
+            "D.DescriptiveFields",
+            "F.Signatures",
+            "FP.FleetPatrol",
+            "G.DeepSpaceMovePosition",
+            "G.FleetRequisition",
+            "G.Refit",
+            "S.PolicyFields",
+        }, knownGapIds, "KnownGap descriptors must stay explicit P2 debt, not silent missing replay.");
+    }
+
+    [TestMethod]
+    public void ReplicationManifest_TopLevelDispatch_WalksDescriptorList_Headless()
+    {
+        string root = FindRepoRoot();
+        string authoritativeSessionPath = Path.Combine(root, "Ship_Game", "Multiplayer", "Authoritative",
+            "Authoritative4XSession.cs");
+        string source = File.ReadAllText(authoritativeSessionPath);
+
+        string buildPayloadBody = Slice(source, "static string BuildPayload", "static Ship[] SnapshotShips");
+        Assert.IsFalse(Regex.IsMatch(buildPayloadBody, @"sb\.Append\(""[A-Z][A-Z0-9]*\|""\)"),
+            "BuildPayload must emit through descriptor delegates, not raw row append blocks.");
+        StringAssert.Contains(buildPayloadBody, "AuthoritativeReplicationManifest.AllRows");
+
+        string replayBody = Slice(source, "public void ApplyEmpireRuntimePayload", "public void ApplyShipPresencePayload");
+        Assert.IsFalse(Regex.IsMatch(replayBody, @"StartsWith\(""[A-Z][A-Z0-9]*\|"",\s*StringComparison\.Ordinal\)"),
+            "Top-level replay dispatch must walk descriptors, not raw prefix branches.");
+        StringAssert.Contains(replayBody, "AuthoritativeReplicationManifest.DescriptorForLine");
+        StringAssert.Contains(replayBody, "AuthoritativeReplicationManifest.AllRows");
+
+        string filterBody = Slice(source, "static string FilterPayload", "static string BlueprintSignature");
+        Assert.IsFalse(filterBody.Contains("StartsWith(\"SX|", StringComparison.Ordinal),
+            "Digest filtering must derive from descriptor digest policy, not hard-coded SX checks.");
+        StringAssert.Contains(filterBody, "AuthoritativeReplicationManifest.DigestPolicyForLine");
+    }
+
+    [TestMethod]
     public void ReplicationCoverageDiagnostic_DumpsTruthGapReport_Headless()
     {
         DiagnosticSnapshot snapshot = BuildDiagnosticSnapshot();
@@ -35,11 +110,17 @@ public sealed class ReplicationCoverageDiagnosticTests
 
         string payload = CaptureRepresentativePayload();
         string[] observedPayloadPrefixes = PrefixesForPayload(payload).ToArray();
-        string[] builderSourcePrefixes = ExtractPayloadBuilderPrefixes(authoritativeSessionSource).ToArray();
+        string[] builderSourcePrefixes = AuthoritativeReplicationManifest.AllRows
+            .Where(row => row.EmitsPayload)
+            .Select(row => row.Prefix)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(prefix => prefix, StringComparer.Ordinal)
+            .ToArray();
         string[] replaySourcePrefixes = ExtractReplayDispatchPrefixes(authoritativeSessionSource).ToArray();
 
         var manifestRows = AuthoritativeReplicationManifest.AllRows
             .OrderBy(row => row.Prefix, StringComparer.Ordinal)
+            .ThenBy(row => row.Id, StringComparer.Ordinal)
             .Select(row => new ManifestRow(row.Prefix, row.Owner, row.ApplyMode.ToString(), row.Notes))
             .ToArray();
 
@@ -98,7 +179,8 @@ public sealed class ReplicationCoverageDiagnosticTests
         allPrefixes.UnionWith(snapshot.FieldCoverage.Select(row => row.Prefix));
 
         Dictionary<string, ManifestRow> manifestByPrefix = snapshot.ManifestRows
-            .ToDictionary(row => row.Prefix, StringComparer.Ordinal);
+            .GroupBy(row => row.Prefix, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
         Dictionary<string, RowFieldCoverage> fieldsByPrefix = snapshot.FieldCoverage
             .ToDictionary(row => row.Prefix, StringComparer.Ordinal);
 
@@ -199,6 +281,17 @@ public sealed class ReplicationCoverageDiagnosticTests
 
     static string[] Except(string[] left, string[] right)
         => left.Except(right, StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal).ToArray();
+
+    static void AssertSetsEqual(string[] expected, string[] actual, string message)
+    {
+        string[] expectedSorted = expected.Distinct(StringComparer.Ordinal)
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
+        string[] actualSorted = actual.Distinct(StringComparer.Ordinal)
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
+        CollectionAssert.AreEqual(expectedSorted, actualSorted, message);
+    }
 
     static string InlineFields(string[] fields)
         => fields == null || fields.Length == 0 ? "" : string.Join("<br>", fields);

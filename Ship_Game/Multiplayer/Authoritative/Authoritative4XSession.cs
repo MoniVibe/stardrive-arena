@@ -21,7 +21,7 @@ using Vector2 = SDGraphics.Vector2;
 
 namespace Ship_Game.Multiplayer.Authoritative;
 
-public sealed class AuthoritativeStateSnapshot
+public sealed partial class AuthoritativeStateSnapshot
 {
     const int VolatileShipPositionDigest = 0;
     static readonly ConstructorInfo ShipWithIdCtor = typeof(Ship).GetConstructor(
@@ -73,47 +73,39 @@ public sealed class AuthoritativeStateSnapshot
 
         universe.Objects.UpdateLists(removeInactiveObjects: false);
         string[] lines = Payload.Split('\n');
+        ApplyInitialReplayLines(universe, lines);
+        ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.UnlockedTech);
+        ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.PlayerDesign);
+        ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.ShipPresence);
+        ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.ShipRuntime);
+        ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.ShipTroop);
+        ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.ColonyTile);
+        ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.GroundTroop);
+        ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.GroundCombat);
+        ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.FleetRuntime);
+        ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.ConstructionQueue);
+        ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.ColonizationGoal);
+        ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.DeepSpaceGoal);
+    }
+
+    static void ApplyInitialReplayLines(UniverseState universe, string[] lines)
+    {
         foreach (string rawLine in lines)
         {
             string line = rawLine.TrimEnd('\r');
-            if (line.StartsWith("V|", StringComparison.Ordinal))
-                ApplyUniversePreferenceLine(universe, line);
-            else if (line.StartsWith("SD|", StringComparison.Ordinal))
-                ApplyStarDateLine(universe, line);
-            else if (line.StartsWith("E|", StringComparison.Ordinal))
-                ApplyEmpireRuntimeLine(universe, line);
-            else if (line.StartsWith("P|", StringComparison.Ordinal))
-                ApplyPlanetRuntimeLine(universe, line);
-            else if (line.StartsWith("R|", StringComparison.Ordinal))
-                ApplyRelationshipLine(universe, line);
-            else if (line.StartsWith("S|", StringComparison.Ordinal))
-                ApplyShipRuntimeLine(universe, line);
-            else if (line.StartsWith("SX|", StringComparison.Ordinal))
-                ApplyShipTransformLine(universe, line);
-            else if (line.StartsWith("SV|", StringComparison.Ordinal))
-                ApplyShipVisibilityLine(universe, line);
-            else if (line.StartsWith("GT|", StringComparison.Ordinal))
-                ApplyGroundTroopLine(universe, line);
+            ReplicatedRowDescriptor descriptor = AuthoritativeReplicationManifest.DescriptorForLine(line);
+            descriptor?.InitialApplyLine?.Invoke(universe, line);
         }
+    }
 
-        ApplyUnlockedTechPayload(universe, lines);
-        foreach (string rawLine in lines)
+    static void ApplyReplayStage(UniverseState universe, string[] lines,
+        AuthoritativeReplicationApplyStage stage)
+    {
+        foreach (ReplicatedRowDescriptor descriptor in AuthoritativeReplicationManifest.AllRows)
         {
-            string line = rawLine.TrimEnd('\r');
-            if (line.StartsWith("D|", StringComparison.Ordinal))
-                ApplyPlayerDesignLine(universe, line);
+            if (descriptor.ApplyStage == stage)
+                descriptor.Apply?.Invoke(universe, lines);
         }
-
-        ApplyShipPresencePayload(universe, lines);
-        ApplyShipRuntimePayload(universe, lines);
-        ApplyShipTroopPayload(universe, lines);
-        ApplyColonyTilePayload(universe, lines);
-        ApplyGroundTroopPayload(universe, lines);
-        ApplyGroundCombatPayload(universe, lines);
-        ApplyFleetRuntimePayload(universe, lines);
-        ApplyConstructionQueuePayload(universe, lines);
-        ApplyColonizationGoalPayload(universe, lines);
-        ApplyDeepSpaceGoalPayload(universe, lines);
     }
 
     public void ApplyShipPresencePayload(UniverseState universe)
@@ -137,7 +129,7 @@ public sealed class AuthoritativeStateSnapshot
         }
     }
 
-    static void ApplyUniversePreferenceLine(UniverseState universe, string line)
+    internal static void ApplyUniversePreferenceLine(UniverseState universe, string line)
     {
         string[] p = line.Split('|');
         if (p.Length < 2
@@ -153,7 +145,7 @@ public sealed class AuthoritativeStateSnapshot
             preferences.HasFlag(AuthoritativeUniversePreferenceFlags.PrioritizeProjectors);
     }
 
-    static void ApplyStarDateLine(UniverseState universe, string line)
+    internal static void ApplyStarDateLine(UniverseState universe, string line)
     {
         string[] p = line.Split('|');
         if (p.Length < 2 || !TryParseFloatBits(p[1], out float starDate))
@@ -162,7 +154,7 @@ public sealed class AuthoritativeStateSnapshot
         universe.StarDate = starDate;
     }
 
-    static void ApplyEmpireRuntimeLine(UniverseState universe, string line)
+    internal static void ApplyEmpireRuntimeLine(UniverseState universe, string line)
     {
         string[] p = line.Split('|');
         if (p.Length < 15
@@ -323,7 +315,7 @@ public sealed class AuthoritativeStateSnapshot
         }
     }
 
-    static void ApplyPlayerDesignLine(UniverseState universe, string line)
+    internal static void ApplyPlayerDesignLine(UniverseState universe, string line)
     {
         string[] p = line.Split('|');
         if (p.Length < 3
@@ -551,7 +543,7 @@ public sealed class AuthoritativeStateSnapshot
             ? planet.TilesList.FirstOrDefault(t => t.X == x && t.Y == y)
             : null;
 
-    static void ApplyPlanetRuntimeLine(UniverseState universe, string line)
+    internal static void ApplyPlanetRuntimeLine(UniverseState universe, string line)
     {
         string[] p = line.Split('|');
         if (p.Length < 34
@@ -973,7 +965,7 @@ public sealed class AuthoritativeStateSnapshot
         }
     }
 
-    static void ApplyRelationshipLine(UniverseState universe, string line)
+    internal static void ApplyRelationshipLine(UniverseState universe, string line)
     {
         string[] p = line.Split('|');
         if (p.Length < 10
@@ -1044,378 +1036,39 @@ public sealed class AuthoritativeStateSnapshot
     static string BuildPayload(UniverseState us, uint tick)
     {
         var sb = new StringBuilder(4096);
-        sb.Append("V|").Append((int)UniversePreferenceFlags(us)).AppendLine();
-        sb.Append("SD|").Append(FloatBits(us.StarDate)).AppendLine();
+        EmitPayloadStage(us, tick, sb, AuthoritativeReplicationEmitStage.PreScoped);
 
-        foreach (Empire e in us.Empires.OrderBy(e => e.Id))
-            sb.Append("E|").Append(e.Id)
-              .Append('|').Append(e.Research.Topic ?? "")
-              .Append('|').Append(ResearchQueueSignature(e))
-              .Append('|').Append(FloatBits(e.Money))
-              .Append('|').Append(FloatBits(e.data.TaxRate))
-              .Append('|').Append(FloatBits(e.data.treasuryGoal))
-              .Append('|').Append(e.AutoTaxes ? 1 : 0)
-              .Append('|').Append((int)AutomationFlags(e))
-              .Append('|').Append(e.data.CurrentAutoFreighter ?? "")
-              .Append('|').Append(e.data.CurrentAutoColony ?? "")
-              .Append('|').Append(e.data.CurrentAutoScout ?? "")
-              .Append('|').Append(e.data.CurrentConstructor ?? "")
-              .Append('|').Append(e.data.CurrentResearchStation ?? "")
-              .Append('|').Append(e.data.CurrentMiningStation ?? "")
-              .Append('|').Append(ResearchProgress(e))
-              .AppendLine();
-
-        foreach (Empire e in us.Empires.OrderBy(e => e.Id))
+        foreach (Empire empire in us.Empires.OrderBy(e => e.Id))
         {
-            foreach (TechEntry tech in e.TechEntries
-                         .Where(t => t.Unlocked)
-                         .OrderBy(t => t.UID, StringComparer.Ordinal))
+            foreach (ReplicatedRowDescriptor descriptor in AuthoritativeReplicationManifest.AllRows)
             {
-                sb.Append("U|").Append(e.Id)
-                  .Append('|').Append(tech.UID)
-                  .Append('|').Append(tech.Level)
-                  .AppendLine();
+                if (descriptor.EmitStage == AuthoritativeReplicationEmitStage.PerEmpire)
+                    descriptor.EmitEmpire?.Invoke(empire, tick, sb);
             }
         }
 
-        foreach (Empire e in us.Empires.OrderBy(e => e.Id))
+        foreach (Planet planet in us.Planets.OrderBy(p => p.Id))
         {
-            foreach (IShipDesign design in e.ShipsWeCanBuildSnapshot
-                         .Where(d => d.IsPlayerDesign)
-                         .OrderBy(d => d.Name, StringComparer.Ordinal))
+            foreach (ReplicatedRowDescriptor descriptor in AuthoritativeReplicationManifest.AllRows)
             {
-                sb.Append("D|").Append(e.Id)
-                  .Append('|').Append(design.Name)
-                  .Append('|').Append(design.Hull)
-                  .Append('|').Append((int)design.Role)
-                  .Append('|').Append(FloatBits(design.BaseCost))
-                  .Append('|').Append(DesignSlotSignature(design))
-                  .Append('|').Append(DesignBase64(design))
-                  .AppendLine();
+                if (descriptor.EmitStage == AuthoritativeReplicationEmitStage.PerPlanet)
+                    descriptor.EmitPlanet?.Invoke(planet, tick, sb);
             }
         }
 
-        foreach (Empire e in us.Empires.OrderBy(e => e.Id))
-        {
-            foreach (Relationship rel in e.AllRelations.OrderBy(r => r.Them.Id))
-                sb.Append("R|").Append(e.Id)
-                  .Append('|').Append(rel.Them.Id)
-                  .Append('|').Append(rel.Known ? 1 : 0)
-                  .Append('|').Append(rel.AtWar ? 1 : 0)
-                  .Append('|').Append(rel.Treaty_NAPact ? 1 : 0)
-                  .Append('|').Append(rel.Treaty_Trade ? 1 : 0)
-                  .Append('|').Append(rel.Treaty_OpenBorders ? 1 : 0)
-                  .Append('|').Append(rel.Treaty_Alliance ? 1 : 0)
-                  .Append('|').Append(rel.Treaty_Peace ? 1 : 0)
-                  .AppendLine();
-        }
-
-        foreach (Empire e in us.Empires.OrderBy(e => e.Id))
-        {
-            foreach (MarkForColonization goal in e.AI.FindGoals<MarkForColonization>()
-                         .OrderBy(g => g.TargetPlanet?.Id ?? 0)
-                         .ThenBy(g => g.FinishedShip?.Id ?? 0))
-            {
-                sb.Append("G|").Append(e.Id)
-                  .Append("|MarkForColonization")
-                  .Append('|').Append(goal.TargetPlanet?.Id ?? 0)
-                  .Append('|').Append(goal.IsManualColonizationOrder ? 1 : 0)
-                  .Append('|').Append(goal.FinishedShip?.Id ?? 0)
-                  .AppendLine();
-            }
-
-            foreach (Goal goal in e.AI.Goals
-                         .Where(g => g is RefitShip)
-                         .OrderBy(g => g.OldShip?.Id ?? 0)
-                         .ThenBy(g => g.ToBuild?.Name ?? "", StringComparer.Ordinal))
-            {
-                var refitGoal = (RefitShip)goal;
-                sb.Append("G|").Append(e.Id)
-                  .Append("|Refit")
-                  .Append('|').Append(goal.Step)
-                  .Append('|').Append(goal.OldShip?.Id ?? 0)
-                  .Append('|').Append(goal.ToBuild?.Name ?? "")
-                  .Append('|').Append(goal.PlanetBuildingAt?.Id ?? 0)
-                  .Append('|').Append(refitGoal.Rush ? 1 : 0)
-                  .Append('|').Append(refitGoal.Fleet?.Id ?? 0)
-                  .Append('|').Append(refitGoal.Fleet?.Key ?? 0)
-                  .AppendLine();
-            }
-
-            foreach (FleetRequisition goal in e.AI.Goals
-                         .OfType<FleetRequisition>()
-                         .OrderBy(g => g.Fleet?.Key ?? 0)
-                         .ThenBy(FleetGoalNodeIndex)
-                         .ThenBy(g => g.Build?.Template?.Name ?? "", StringComparer.Ordinal))
-            {
-                sb.Append("G|").Append(e.Id)
-                  .Append("|FleetRequisition")
-                  .Append('|').Append(goal.Step)
-                  .Append('|').Append(goal.Fleet?.Id ?? 0)
-                  .Append('|').Append(goal.Fleet?.Key ?? 0)
-                  .Append('|').Append(FleetGoalNodeIndex(goal))
-                  .Append('|').Append(goal.Build?.Template?.Name ?? "")
-                  .Append('|').Append(goal.PlanetBuildingAt?.Id ?? 0)
-                  .Append('|').Append(goal.Build?.Rush == true ? 1 : 0)
-                  .AppendLine();
-            }
-
-            foreach (Goal goal in e.AI.Goals
-                         .Where(IsDeepSpaceBuildStateGoal)
-                         .OrderBy(g => (int)g.Type)
-                         .ThenBy(g => g.ToBuild?.Name ?? "", StringComparer.Ordinal)
-                         .ThenBy(g => g.TargetPlanet?.Id ?? 0)
-                         .ThenBy(g => DeepSpaceGoalSystem(g)?.Id ?? 0)
-                         .ThenBy(g => g.BuildPosition.X)
-                         .ThenBy(g => g.BuildPosition.Y))
-            {
-                Vector2 buildPosition = goal.BuildPosition;
-                Vector2 movePosition = goal.MovePosition;
-                sb.Append("G|").Append(e.Id)
-                  .Append("|DeepSpace")
-                  .Append('|').Append((int)goal.Type)
-                  .Append('|').Append(goal.Step)
-                  .Append('|').Append(goal.ToBuild?.Name ?? "")
-                  .Append('|').Append(goal.TargetPlanet?.Id ?? 0)
-                  .Append('|').Append(DeepSpaceGoalSystem(goal)?.Id ?? 0)
-                  .Append('|').Append(goal.TargetShip?.Id ?? 0)
-                  .Append('|').Append(goal.PlanetBuildingAt?.Id ?? 0)
-                  .Append('|').Append(FloatBits(buildPosition.X))
-                  .Append('|').Append(FloatBits(buildPosition.Y))
-                  .Append('|').Append(FloatBits(movePosition.X))
-                  .Append('|').Append(FloatBits(movePosition.Y))
-                  .AppendLine();
-            }
-
-            foreach (FleetPatrol patrol in e.FleetPatrols.OrderBy(p => p.Name ?? "", StringComparer.Ordinal))
-                sb.Append("FP|").Append(e.Id)
-                  .Append('|').Append(FleetPatrolPlanSignature(patrol))
-                  .AppendLine();
-
-            foreach (Fleet f in e.AllFleets.Where(f => f != null).OrderBy(f => f.Key).ThenBy(f => f.Id))
-                sb.Append("F|").Append(e.Id)
-                  .Append('|').Append(SnapshotFleetId(f))
-                  .Append('|').Append(f.Key)
-                  .Append('|').Append(f.Name ?? "")
-                  .Append('|').Append(f.FleetIconIndex)
-                  .Append('|').Append(SnapshotFleetCommandShipId(f))
-                  .Append('|').Append(FloatBits(f.FinalPosition.X))
-                  .Append('|').Append(FloatBits(f.FinalPosition.Y))
-                  .Append('|').Append(FloatBits(f.FinalDirection.X))
-                  .Append('|').Append(FloatBits(f.FinalDirection.Y))
-                  .Append('|').Append(FleetShipSignature(f))
-                  .Append('|').Append(FleetNodeSignature(f))
-                  .Append('|').Append(FleetPatrolSignature(f))
-                  .AppendLine();
-        }
-
-        foreach (Planet p in us.Planets.OrderBy(p => p.Id))
-        {
-            sb.Append("P|").Append(p.Id)
-              .Append('|').Append(p.Owner?.Id ?? 0)
-              .Append('|').Append((int)p.CType)
-              .Append('|').Append(p.GarrisonSize)
-              .Append('|').Append(p.WantedPlatforms)
-              .Append('|').Append(p.WantedShipyards)
-              .Append('|').Append(p.WantedStations)
-              .Append('|').Append(FloatBits(p.Food.Percent))
-              .Append('|').Append(FloatBits(p.Prod.Percent))
-              .Append('|').Append(FloatBits(p.Res.Percent))
-              .Append('|').Append(p.Food.PercentLock ? 1 : 0)
-              .Append('|').Append(p.Prod.PercentLock ? 1 : 0)
-              .Append('|').Append(p.Res.PercentLock ? 1 : 0)
-              .Append('|').Append((int)p.FS)
-              .Append('|').Append((int)p.PS)
-              .Append('|').Append(p.ManualFoodImportSlots)
-              .Append('|').Append(p.ManualProdImportSlots)
-              .Append('|').Append(p.ManualColoImportSlots)
-              .Append('|').Append(p.ManualFoodExportSlots)
-              .Append('|').Append(p.ManualProdExportSlots)
-              .Append('|').Append(p.ManualColoExportSlots)
-              .Append('|').Append(p.PrioritizedPort ? 1 : 0)
-              .Append('|').Append(p.GovOrbitals ? 1 : 0)
-              .Append('|').Append(p.AutoBuildTroops ? 1 : 0)
-              .Append('|').Append(p.DontScrapBuildings ? 1 : 0)
-              .Append('|').Append(p.Quarantine ? 1 : 0)
-              .Append('|').Append(p.ManualOrbitals ? 1 : 0)
-              .Append('|').Append(p.GovGroundDefense ? 1 : 0)
-              .Append('|').Append(p.SpecializedTradeHub ? 1 : 0)
-              .Append('|').Append(FloatBits(p.ManualCivilianBudget))
-              .Append('|').Append(FloatBits(p.ManualGrdDefBudget))
-              .Append('|').Append(FloatBits(p.ManualSpcDefBudget))
-              .Append('|').Append(p.ConstructionQueue.Count)
-              .AppendLine();
-
-            if (p.HasBlueprints)
-                sb.Append("BP|").Append(p.Id)
-                  .Append('|').Append(BlueprintSignature(p))
-                  .AppendLine();
-
-            foreach (PlanetGridSquare tile in p.TilesList
-                         .Where(t => t.BuildingOnTile || t.Biosphere)
-                         .OrderBy(t => t.X)
-                         .ThenBy(t => t.Y))
-            {
-                sb.Append("T|").Append(p.Id)
-                  .Append('|').Append(tile.X)
-                  .Append('|').Append(tile.Y)
-                  .Append('|').Append(tile.Building?.Name ?? "")
-                  .Append('|').Append(tile.Biosphere ? 1 : 0)
-                  .Append('|').Append(tile.Habitable ? 1 : 0)
-                  .Append('|').Append(tile.Terraformable ? 1 : 0)
-                  .AppendLine();
-            }
-
-            foreach (PlanetGridSquare tile in p.TilesList
-                         .Where(t => t.TroopsHere.Count > 0)
-                         .OrderBy(t => t.X)
-                         .ThenBy(t => t.Y))
-            {
-                for (int i = 0; i < tile.TroopsHere.Count; ++i)
-                {
-                    Troop troop = tile.TroopsHere[i];
-                    sb.Append("GT|").Append(p.Id)
-                      .Append('|').Append(tile.X)
-                      .Append('|').Append(tile.Y)
-                      .Append('|').Append(i)
-                      .Append('|').Append(troop.Loyalty?.Id ?? 0)
-                      .Append('|').Append(troop.Name ?? "")
-                      .Append('|').Append(FloatBits(troop.Strength))
-                      .Append('|').Append(troop.AvailableMoveActions)
-                      .Append('|').Append(troop.AvailableAttackActions)
-                      .Append('|').Append(FloatBits(troop.MoveTimer))
-                      .Append('|').Append(FloatBits(troop.AttackTimer))
-                      .AppendLine();
-                }
-            }
-
-            for (int i = 0; i < p.ActiveCombats.Count; ++i)
-            {
-                Combat combat = p.ActiveCombats[i];
-                sb.Append("GC|").Append(p.Id)
-                  .Append('|').Append(i)
-                  .Append('|').Append(combat.Phase)
-                  .Append('|').Append(FloatBits(combat.Timer))
-                  .Append('|').Append(combat.AttackerLoyalty?.Id ?? 0)
-                  .Append('|').Append(combat.DefenseTile?.X ?? -1)
-                  .Append('|').Append(combat.DefenseTile?.Y ?? -1)
-                  .Append('|').Append(GroundTroopRef(p, combat.AttackingTroop))
-                  .Append('|').Append(GroundTroopRef(p, combat.DefendingTroop))
-                  .Append('|').Append(GroundBuildingRef(p, combat.AttackingBuilding))
-                  .Append('|').Append(GroundBuildingRef(p, combat.DefendingBuilding))
-                  .AppendLine();
-            }
-
-            QueueItem[] queue = p.Construction.GetConstructionQueueSnapshot();
-            for (int i = 0; i < queue.Length; ++i)
-            {
-                QueueItem q = queue[i];
-                sb.Append("Q|").Append(p.Id)
-                  .Append('|').Append(i)
-                  .Append('|').Append(q.isShip ? 1 : 0)
-                  .Append('|').Append(q.isBuilding ? 1 : 0)
-                  .Append('|').Append(q.isTroop ? 1 : 0)
-                  .Append('|').Append((int)q.QType)
-                  .Append('|').Append(q.ShipData?.Name ?? "")
-                  .Append('|').Append(q.Building?.Name ?? "")
-                  .Append('|').Append(q.TroopType ?? "")
-                  .Append('|').Append(q.pgs?.X ?? -1)
-                  .Append('|').Append(q.pgs?.Y ?? -1)
-                  .Append('|').Append(FloatBits(q.Cost))
-                  .Append('|').Append(FloatBits(q.ProductionSpent))
-                  .Append('|').Append(q.Rush ? 1 : 0)
-                  .Append('|').Append(q.IsCancelled ? 1 : 0)
-                  .AppendLine();
-            }
-        }
-
-        Ship[] snapshotShips = SnapshotShips(us);
-        var activeShipIds = new HashSet<int>(snapshotShips.Select(s => s.Id));
-        foreach (Ship s in snapshotShips)
-            sb.Append("SC|").Append(s.Id)
-              .Append('|').Append(s.Loyalty?.Id ?? 0)
-              .Append('|').Append(s.ShipData?.Name ?? s.Name ?? "")
-              .AppendLine();
-
-        foreach (Ship s in snapshotShips)
-        {
-            int snapshotFleetId = SnapshotFleetId(s.Fleet);
-            sb.Append("S|").Append(s.Id)
-              .Append('|').Append(s.Loyalty?.Id ?? 0)
-              .Append('|').Append(snapshotFleetId)
-              .Append('|').Append(snapshotFleetId)
-              .Append('|').Append((int)s.AI.State)
-              .Append('|').Append((int)s.AI.CombatState)
-              .Append('|').Append(VolatileShipPositionDigest)
-              .Append('|').Append(VolatileShipPositionDigest)
-              .Append('|').Append(VolatileShipPositionDigest)
-              .Append('|').Append(VolatileShipPositionDigest)
-              .Append('|').Append(FloatBits(s.ScuttleTimer))
-              .Append('|').Append(SnapshotShipId(s.AI.Target, activeShipIds))
-              .Append('|').Append(s.AI.HasPriorityTarget ? 1 : 0)
-              .Append('|').Append(TargetQueueSignature(s, activeShipIds))
-              .Append('|').Append(SnapshotShipId(s.AI.EscortTarget, activeShipIds))
-              .Append('|').Append(ShipOrderQueueSignature(s, activeShipIds))
-              .Append('|').Append(s.IsFreighter ? 1 : 0)
-              .Append('|').Append(s.TransportingFood ? 1 : 0)
-              .Append('|').Append(s.TransportingProduction ? 1 : 0)
-              .Append('|').Append(s.TransportingColonists ? 1 : 0)
-              .Append('|').Append(s.AllowInterEmpireTrade ? 1 : 0)
-              .Append('|').Append(s.Carrier?.HasFighterBays == true ? 1 : 0)
-              .Append('|').Append(s.Carrier?.FightersOut == true ? 1 : 0)
-              .Append('|').Append(s.Carrier?.HasTroopBays == true ? 1 : 0)
-              .Append('|').Append(s.Carrier?.TroopsOut == true ? 1 : 0)
-              .Append('|').Append(s.Carrier?.RecallFightersBeforeFTL == true ? 1 : 0)
-              .Append('|').Append(s.Carrier?.SendTroopsToShip == true ? 1 : 0)
-              .Append('|').Append(s.Carrier?.AllowBoardShip == true ? 1 : 0)
-              .Append('|').Append(s.ManualHangarOverride ? 1 : 0)
-              .Append('|').Append(TradeRouteSignature(s))
-              .Append('|').Append(AreaOfOperationSignature(s))
-              .AppendLine();
-        }
-
-        foreach (Ship s in snapshotShips)
-            sb.Append("SX|").Append(s.Id)
-              .Append('|').Append(tick)
-              .Append('|').Append(FloatBits(s.Position.X))
-              .Append('|').Append(FloatBits(s.Position.Y))
-              .Append('|').Append(FloatBits(s.Velocity.X))
-              .Append('|').Append(FloatBits(s.Velocity.Y))
-              .Append('|').Append(FloatBits(s.Rotation))
-              .Append('|').Append(s.System?.Id ?? 0)
-              .Append('|').Append(s.Active ? 1 : 0)
-              .Append('|').Append(s.Dying ? 1 : 0)
-              .Append('|').Append(FloatBits(s.YRotation))
-              .Append('|').Append(FloatBits(s.XRotation))
-              .AppendLine();
-
-        foreach (Ship s in snapshotShips)
-            sb.Append("SV|").Append(s.Id)
-              .Append('|').Append(ShipKnownByMask(us, s))
-              .AppendLine();
-
-        foreach (Ship s in snapshotShips)
-        {
-            IReadOnlyList<Troop> troops = s.GetOurTroops();
-            for (int i = 0; i < troops.Count; ++i)
-            {
-                Troop troop = troops[i];
-                sb.Append("ST|").Append(s.Id)
-                  .Append('|').Append(i)
-                  .Append('|').Append(troop.Loyalty?.Id ?? 0)
-                  .Append('|').Append(troop.Name ?? "")
-                  .Append('|').Append(FloatBits(troop.Strength))
-                  .Append('|').Append(troop.AvailableMoveActions)
-                  .Append('|').Append(troop.AvailableAttackActions)
-                  .Append('|').Append(FloatBits(troop.MoveTimer))
-                  .Append('|').Append(FloatBits(troop.AttackTimer))
-                  .AppendLine();
-            }
-        }
-
+        EmitPayloadStage(us, tick, sb, AuthoritativeReplicationEmitStage.PostScoped);
         return sb.ToString();
     }
 
+    static void EmitPayloadStage(UniverseState us, uint tick, StringBuilder sb,
+        AuthoritativeReplicationEmitStage stage)
+    {
+        foreach (ReplicatedRowDescriptor descriptor in AuthoritativeReplicationManifest.AllRows)
+        {
+            if (descriptor.EmitStage == stage)
+                descriptor.Emit?.Invoke(us, tick, sb);
+        }
+    }
     static Ship[] SnapshotShips(UniverseState us)
         => us.Ships
             .Concat(us.Empires.SelectMany(e => e.AllFleets
@@ -1493,11 +1146,13 @@ public sealed class AuthoritativeStateSnapshot
         return "0x" + h.Value.ToString("X16", CultureInfo.InvariantCulture);
     }
 
-    static string DurablePayload(string payload) => FilterPayload(payload, includeTransformRows: false);
+    static string DurablePayload(string payload)
+        => FilterPayload(payload, AuthoritativeReplicationDigestPolicy.Fatal);
 
-    static string TransformPayload(string payload) => FilterPayload(payload, includeTransformRows: true);
+    static string TransformPayload(string payload)
+        => FilterPayload(payload, AuthoritativeReplicationDigestPolicy.Transform);
 
-    static string FilterPayload(string payload, bool includeTransformRows)
+    static string FilterPayload(string payload, AuthoritativeReplicationDigestPolicy digestPolicy)
     {
         if (string.IsNullOrEmpty(payload))
             return "";
@@ -1506,9 +1161,11 @@ public sealed class AuthoritativeStateSnapshot
         foreach (string rawLine in payload.Split('\n'))
         {
             string line = rawLine.TrimEnd('\r');
-            bool isTransform = line.StartsWith("SX|", StringComparison.Ordinal);
-            if (string.IsNullOrEmpty(line) || isTransform != includeTransformRows)
+            if (string.IsNullOrEmpty(line)
+                || AuthoritativeReplicationManifest.DigestPolicyForLine(line) != digestPolicy)
+            {
                 continue;
+            }
             sb.Append(line).AppendLine();
         }
         return sb.ToString();
@@ -1737,7 +1394,7 @@ public sealed class AuthoritativeStateSnapshot
             or ShipAI.Plan.PickupGoodsForStation
             or ShipAI.Plan.DropOffGoodsForStation;
 
-    static void ApplyShipRuntimeLine(UniverseState universe, string line)
+    internal static void ApplyShipRuntimeLine(UniverseState universe, string line)
     {
         string[] p = line.Split('|');
         if (p.Length < 32
@@ -2039,7 +1696,7 @@ public sealed class AuthoritativeStateSnapshot
         planet.UpdatePlanetStatsByRecalculation();
     }
 
-    static void ApplyGroundTroopLine(UniverseState universe, string line)
+    internal static void ApplyGroundTroopLine(UniverseState universe, string line)
     {
         string[] p = line.Split('|');
         if (p.Length < 12
@@ -2356,7 +2013,7 @@ public sealed class AuthoritativeStateSnapshot
             troop.AttackTimer = attackTimer;
     }
 
-    static void ApplyShipTransformLine(UniverseState universe, string line)
+    internal static void ApplyShipTransformLine(UniverseState universe, string line)
     {
         string[] p = line.Split('|');
         if (p.Length < 11
@@ -2392,7 +2049,7 @@ public sealed class AuthoritativeStateSnapshot
             ship.XRotation = xRotation;
     }
 
-    static void ApplyShipVisibilityLine(UniverseState universe, string line)
+    internal static void ApplyShipVisibilityLine(UniverseState universe, string line)
     {
         string[] p = line.Split('|');
         if (p.Length < 3

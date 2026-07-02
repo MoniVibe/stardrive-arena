@@ -7809,14 +7809,14 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "Every canonical payload row prefix must be documented in the replication manifest: "
                 + string.Join(",", unknownPrefixes));
 
-            Assert.IsTrue(AuthoritativeReplicationManifest.TryGetRow("E", out AuthoritativeReplicationRow empireRow));
+            Assert.IsTrue(AuthoritativeReplicationManifest.TryGetRow("E", out ReplicatedRowDescriptor empireRow));
             Assert.AreEqual("EmpireRuntime", empireRow.Owner);
             Assert.AreEqual(AuthoritativeReplicationApplyMode.DirectReplay, empireRow.ApplyMode);
-            Assert.IsTrue(AuthoritativeReplicationManifest.TryGetRow("Q", out AuthoritativeReplicationRow queueRow));
+            Assert.IsTrue(AuthoritativeReplicationManifest.TryGetRow("Q", out ReplicatedRowDescriptor queueRow));
             Assert.AreEqual(AuthoritativeReplicationApplyMode.BatchReplay, queueRow.ApplyMode);
-            Assert.IsTrue(AuthoritativeReplicationManifest.TryGetRow("FP", out AuthoritativeReplicationRow patrolRow));
+            Assert.IsTrue(AuthoritativeReplicationManifest.TryGetRow("FP", out ReplicatedRowDescriptor patrolRow));
             Assert.AreEqual(AuthoritativeReplicationApplyMode.DigestOnly, patrolRow.ApplyMode);
-            Assert.IsTrue(AuthoritativeReplicationManifest.TryGetRow("SX", out AuthoritativeReplicationRow transformRow));
+            Assert.IsTrue(AuthoritativeReplicationManifest.TryGetRow("SX", out ReplicatedRowDescriptor transformRow));
             Assert.AreEqual("ShipTransform", transformRow.Owner);
             Assert.AreEqual(AuthoritativeReplicationApplyMode.DirectReplay, transformRow.ApplyMode);
             StringAssert.Contains(AuthoritativeReplicationManifest.DescribeDiff("S|1|", "S|2|"), "owner=ShipRuntime");
