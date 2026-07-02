@@ -206,7 +206,7 @@ namespace Ship_Game.GameScreens.DiplomacyScreen
                 IntelLevel = empireAndIntel.IntelLevel;
                 LinkPos    = center.PointFromAngle(180 + angle, 45);
                 TradePos   = center.PointFromAngle(170 + angle, 45);
-                Portrait = Empire.Universe.Player.IsKnown(empireAndIntel.Empire) || empireAndIntel.Empire.isPlayer
+                Portrait = Empire.Universe.LocalPlayerForUi.IsKnown(empireAndIntel.Empire) || empireAndIntel.Empire.isPlayer
                             ? ResourceManager.Texture("Portraits/" + Empire.data.PortraitName)
                             : ResourceManager.Texture("Portraits/unknown");
             }

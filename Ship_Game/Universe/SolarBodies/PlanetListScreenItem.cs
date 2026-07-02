@@ -27,7 +27,7 @@ namespace Ship_Game
         public Rectangle OrdersRect;
         public Rectangle DistanceRect;
 
-        Empire Player => Planet.Universe.Player;
+        Empire Player => Planet.Universe.LocalPlayerForUi;
         private readonly Color Cream = Colors.Cream;
         private readonly Graphics.Font NormalFont = Fonts.Arial20Bold;
         private readonly Graphics.Font SmallFont  = Fonts.Arial12Bold;
@@ -55,7 +55,7 @@ namespace Ship_Game
             EmpireColor     = Planet.Owner?.EmpireColor ?? new Color(255, 239, 208);
             CanSendTroops   = canSendTroops;
 
-            foreach (Goal g in planet.Universe.Player.AI.Goals)
+            foreach (Goal g in Player.AI.Goals)
             {
                 if (g.IsColonizationGoal(planet))
                     MarkedForColonization = true;
@@ -475,7 +475,7 @@ namespace Ship_Game
                 }
 
                 GameAudio.EchoAffirmative();
-                Player.AI.AddGoalAndEvaluate(new MarkForColonization(Planet, Planet.Universe.Player, isManual:true));
+                Player.AI.AddGoalAndEvaluate(new MarkForColonization(Planet, Player, isManual:true));
                 Colonize.Text = "Cancel Colonize";
                 Colonize.Style = ButtonStyle.Default;
                 MarkedForColonization = true;
@@ -499,7 +499,7 @@ namespace Ship_Game
             }
 
             GameAudio.EchoAffirmative();
-            Planet.Universe.Player.AI.CancelColonization(Planet);
+            Player.AI.CancelColonization(Planet);
             MarkedForColonization = false;
             Colonize.Text  = "Colonize";
             Colonize.Style = ButtonStyle.BigDip;

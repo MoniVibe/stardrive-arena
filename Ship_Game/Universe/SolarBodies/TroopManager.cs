@@ -433,7 +433,7 @@ namespace Ship_Game
             if (Owner == null || invadingForces <= NumInvadersLast || invadingEmpires.Count == 0)
                 return; // FB - nothing to change if no new troops invade
 
-            Empire player = Ground.Universe.Player;
+            Empire player = Ground.Universe.LocalPlayerForUi;
             if (invadingEmpires.Any(e => e.isPlayer) && !Owner.IsFaction && !player.IsAtWarWith(Owner))
             {
                 if (player.IsNAPactWith(Owner))

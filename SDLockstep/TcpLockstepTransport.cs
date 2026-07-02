@@ -59,7 +59,7 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
         var transport = new TcpLockstepTransport(remotePeerId);
         transport.Listener = new TcpListener(IPAddress.Any, port);
         transport.Listener.Start();
-        transport.AcceptTask = Task.Run(transport.AcceptLoop);
+        transport.AcceptTask = StartLongRunning(transport.AcceptLoop);
         return transport;
     }
 
@@ -68,7 +68,7 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
         var transport = new TcpLockstepTransport(remotePeerId: 0, multiRemote: true);
         transport.Listener = new TcpListener(IPAddress.Any, port);
         transport.Listener.Start();
-        transport.AcceptTask = Task.Run(transport.AcceptLoop);
+        transport.AcceptTask = StartLongRunning(transport.AcceptLoop);
         return transport;
     }
 
@@ -92,7 +92,11 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
             ProtocolVersion = 1,
             PlayerName = $"Peer {localPeerId}",
         });
-        transport.WaitForOutboundIdle(TimeSpan.FromSeconds(1));
+        if (!transport.WaitForOutboundIdle(TimeSpan.FromSeconds(5)))
+        {
+            lock (transport.Gate)
+                transport.LastError = $"Timed out sending peer hello for {localPeerId}.";
+        }
         return transport;
     }
 
@@ -261,10 +265,14 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
             LastError = "";
         }
         ConnectedEvent.Set();
-        connection.WriteTask = Task.Run(() => WriteLoop(connection));
+        connection.WriteTask = StartLongRunning(() => WriteLoop(connection));
         FlushPendingRemote();
-        connection.ReadTask = Task.Run(() => ReadLoop(connection));
+        connection.ReadTask = StartLongRunning(() => ReadLoop(connection));
     }
+
+    static Task StartLongRunning(Action action)
+        => Task.Factory.StartNew(action, CancellationToken.None,
+            TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
     void ReadLoop(RemoteConnection connection)
     {

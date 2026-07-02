@@ -35,6 +35,7 @@ namespace Ship_Game.Universe
         public float UniverseWidth => Size*2f;
         public float UniverseRadius => Size;
         [StarData] public Empire Player;
+        public Empire LocalPlayerForUi => Screen?.Player ?? Player;
         [StarData] public Empire Cordrazine;
         [StarData] public Empire Remnants;
         [StarData] public Empire Unknown;

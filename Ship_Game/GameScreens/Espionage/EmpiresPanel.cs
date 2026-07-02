@@ -39,12 +39,14 @@ namespace Ship_Game.GameScreens.Espionage
                 list.Add(new EmpireButton(screen, e, new Rectangle(0, 0, 134, 148), OnEmpireSelected));
 
             Size = new Vector2(list.Width, 188);
-            Screen.SelectedEmpire = Screen.Universe.Player;
+            Empire player = Screen.Universe.Player;
+            Screen.SelectedEmpire = player;
         }
 
         void OnEmpireSelected(EmpireButton button)
         {
-            if (Screen.Universe.Player == button.Empire || Screen.Universe.Player.IsKnown(button.Empire))
+            Empire player = Screen.Universe.Player;
+            if (player == button.Empire || player.IsKnown(button.Empire))
             {
                 Screen.SelectedEmpire = button.Empire;
                 Screen.Agents.Reinitialize();

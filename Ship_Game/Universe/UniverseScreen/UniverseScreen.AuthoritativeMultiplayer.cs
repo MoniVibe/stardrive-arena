@@ -372,6 +372,9 @@ public partial class UniverseScreen
         ScreenManager.AddScreen(screen);
     }
 
+    internal void DetachAuthoritative4XMultiplayerForTest()
+        => DetachAuthoritative4XMultiplayer();
+
     void DetachAuthoritative4XMultiplayer()
     {
         Authoritative4XLive?.Dispose();

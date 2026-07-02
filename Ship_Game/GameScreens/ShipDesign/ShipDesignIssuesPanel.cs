@@ -109,7 +109,7 @@ namespace Ship_Game.GameScreens.ShipDesign
                 Issues.CheckLowResearchTime(ds.ResearchTime());
                 Issues.CheckLowRefiningTime(ds.RefiningTime());
                 Issues.CheckSecondaryCarrier(ds.TotalHangarArea > 0, Screen.Role, (int)S.WeaponsMaxRange);
-                Issues.CheckConstructorCost(S.IsConstructor, S.GetCost(S.Universe.Player));
+                Issues.CheckConstructorCost(S.IsConstructor, S.GetCost(S.Universe.LocalPlayerForUi));
                 Issues.CheckDedicatedCarrier(ds.TotalHangarArea > 0, Screen.Role, (int)S.WeaponsMaxRange, S.SensorRange,
                     S.ShipData.DefaultCombatState is CombatState.ShortRange or CombatState.AttackRuns);
 

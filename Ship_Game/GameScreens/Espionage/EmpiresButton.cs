@@ -35,7 +35,7 @@ namespace Ship_Game.GameScreens
             Empire = e;
             Screen = screen;
             OnClick = onClick;
-            Player = Empire.Universe.Player;
+            Player = Empire.Universe.LocalPlayerForUi;
         }
 
         public EmpireButton(InfiltrationScreen screen, Empire e, in Rectangle rect, Action<EmpireButton> onClick)
@@ -44,7 +44,7 @@ namespace Ship_Game.GameScreens
             Empire = e;
             InfiltrationScreen = screen;
             OnClick = onClick;
-            Player = Empire.Universe.Player;
+            Player = Empire.Universe.LocalPlayerForUi;
             if (!IsLocalPlayer)
             {
                 Espionage = Player.GetRelations(Empire).Espionage;

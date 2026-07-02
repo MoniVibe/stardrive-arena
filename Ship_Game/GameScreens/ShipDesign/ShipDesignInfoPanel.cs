@@ -46,7 +46,7 @@ namespace Ship_Game.GameScreens.ShipDesign
             else
             {
                 S = ship;
-                Ds = ds ?? new ShipDesignStats(ship, ship.Universe.Player);
+                Ds = ds ?? new ShipDesignStats(ship, ship.Universe.LocalPlayerForUi);
                 UpdateDesignStats = ds == null;
                 CreateElements();
             }
@@ -213,7 +213,7 @@ namespace Ship_Game.GameScreens.ShipDesign
         public override void Update(float fixedDeltaTime)
         {
             if (UpdateDesignStats)
-                Ds.Update(S.Universe.Player);
+                Ds.Update(S.Universe.LocalPlayerForUi);
 
             // Toggle which items are visible
             foreach ((UIElementV2 item, Func<bool> visibility) in DynamicVisibility)

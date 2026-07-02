@@ -22,7 +22,7 @@ namespace Ship_Game
         private readonly UniverseScreen Universe;
         private readonly SubTexture PortraitShine = ResourceManager.Texture("Portraits/portrait_shine");
         private Planet Planet;
-        Empire Player => Planet.Universe.Player;
+        Empire Player => Planet.Universe.LocalPlayerForUi;
         private DrawableSprite PortraitSprite;
         private UIPanel Portrait;
         UIPanel BluePrintsIcon;
@@ -539,7 +539,7 @@ namespace Ship_Game
                     && !Planet.SpecializedTradeHub
                     && !Planet.HasBlueprints;
 
-                int numTroopsCanLaunch    = DefenseTabView ? Planet.NumTroopsCanLaunchFor(Planet.Universe.Player) : 0;
+                int numTroopsCanLaunch    = DefenseTabView ? Planet.NumTroopsCanLaunchFor(Player) : 0;
                 int garrisonSize          = (int)Math.Round(Garrison.AbsoluteValue);
                 CallTroops.Visible        = DefenseTabView && Planet.OwnerIsPlayer;
                 LaunchSingleTroop.Visible = CallTroops.Visible && numTroopsCanLaunch > 0;
@@ -759,7 +759,7 @@ namespace Ship_Game
                 return;
             }
 
-            if (Planet.Universe.Player.GetTroopShipForRebase(out Ship troopShip, Planet.Position, Planet.Name))
+            if (Player.GetTroopShipForRebase(out Ship troopShip, Planet.Position, Planet.Name))
             {
                 GameAudio.EchoAffirmative();
                 troopShip.AI.OrderRebase(Planet, true);
@@ -870,7 +870,7 @@ namespace Ship_Game
 
         void OnLaunchSingleTroopClicked(UIButton b)
         {
-            foreach (Troop troop in Planet.Troops.GetLaunchableTroops(Planet.Universe.Player))
+            foreach (Troop troop in Planet.Troops.GetLaunchableTroops(Player))
             {
                 PlanetGridSquare tile = FindTroopTile(troop);
                 switch (Authoritative4XClientContext.TrySubmitLaunchGroundTroop(Player, Planet, tile, troop))
@@ -906,7 +906,7 @@ namespace Ship_Game
 
         void UpdateButtons()
         {
-            if (Planet.Owner != Planet.Universe.Player)
+            if (Planet.Owner != Player)
                 return;
             var ships = Planet.Owner.OwnedShips;
 
@@ -931,8 +931,8 @@ namespace Ship_Game
 
         void UpdateGovOrbitalStats()
         {
-            if (Planet.Owner != Planet.Universe.Player
-                && !Planet.Universe.Player.data.MoleList.Any(m => m.PlanetId == Planet.Id))
+            if (Planet.Owner != Player
+                && !Player.data.MoleList.Any(m => m.PlanetId == Planet.Id))
             {
                 return;
             }

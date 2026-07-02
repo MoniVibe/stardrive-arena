@@ -193,7 +193,7 @@ namespace Ship_Game
             string description = b.GetShortDescrText(p);
 
             if (b.IsBiospheres) // Override for special biosphere case
-                description = $"{(p.PopPerBiosphere(p.Universe.Player)/1000).String(2)} {description}";
+                description = $"{(p.PopPerBiosphere(p.Universe.LocalPlayerForUi)/1000).String(2)} {description}";
             
             return description;
         }

@@ -13,7 +13,7 @@ public abstract class PlanetScreen : GameScreen
     {
         P = p ?? throw new ArgumentNullException(nameof(p));
         Universe = p.Universe;
-        Player = Universe.Screen?.Player ?? Universe.Player;
+        Player = Universe.LocalPlayerForUi;
         IsPopup = true; // auto-dismiss with right-click
     }
 }

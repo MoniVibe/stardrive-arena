@@ -418,7 +418,7 @@ namespace Ship_Game.GameScreens.DiplomacyScreen
             var empires = new Array<Empire>();
             foreach (Empire empire in them.Universe.MajorEmpiresAtWarWith(ai))
             {
-                if (empire.IsAlliedWith(them.Universe.Player))
+                if (empire.IsAlliedWith(them.Universe.LocalPlayerForUi))
                     empires.Add(empire);
             }
 
@@ -442,7 +442,7 @@ namespace Ship_Game.GameScreens.DiplomacyScreen
         {
             // The player can view peer alliances if it has some relations with this empire
             // Or with the empire's other trade partners.
-            var player = e.Universe.Player;
+            var player = e.Universe.LocalPlayerForUi;
             return e.IsTradeTreaty(player) 
                    || e.IsOpenBordersTreaty(player) 
                    || e.IsAlliedWith(player) 

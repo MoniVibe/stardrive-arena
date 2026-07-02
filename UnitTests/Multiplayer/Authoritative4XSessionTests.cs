@@ -6720,6 +6720,47 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XLocalViewEmpire_DoesNotOverwriteSerializedPlayer_Headless()
+    {
+        const ulong Seed = 0x10CA14E0UL;
+        BuiltWorld world = BuildWorld(Seed);
+        Authoritative4XLiveSession live = null;
+
+        try
+        {
+            int port = FreeTcpPort();
+            TcpLockstepTransport transport = TcpLockstepTransport.Host(port, remotePeerId: 9);
+            live = Authoritative4XLiveSession.HostGame(world.Screen, transport,
+                localPeerId: 9,
+                new Dictionary<int, int> { [9] = world.Enemy.Id },
+                new[] { world.Player.Id, world.Enemy.Id });
+            world.Screen.AttachAuthoritative4XMultiplayer(live);
+
+            Assert.AreSame(world.Player, world.UState.Player,
+                "The authoritative local-view bind must not rewrite the serialized/simulation player empire.");
+            Assert.AreSame(world.Enemy, world.Screen.Player,
+                "UniverseScreen.Player should resolve to the local UI empire while attached to authoritative MP.");
+            Assert.AreSame(world.Enemy, world.UState.LocalPlayerForUi,
+                "Lower-level UI helpers that only have UniverseState must resolve the local UI empire.");
+
+            using var planetScreen = new TestPlanetScreen(world.Screen, world.EnemyPlanet);
+            Assert.AreSame(world.Enemy, planetScreen.Player,
+                "Planet popups opened by a joined player must use that joined player's empire for controls and display.");
+
+            world.Screen.DetachAuthoritative4XMultiplayerForTest();
+            Assert.AreSame(world.Player, world.Screen.Player,
+                "Detaching the session should restore the stock single-player player binding.");
+            Assert.AreSame(world.Player, world.UState.LocalPlayerForUi,
+                "The UI accessor should fall back to the serialized player when no authoritative session is active.");
+        }
+        finally
+        {
+            live?.Dispose();
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientContext_SubmitsUniversePreferencesWithoutLocalMutation_Headless()
     {
         const ulong Seed = 0xA470A16UL;
@@ -9818,12 +9859,13 @@ public class Authoritative4XSessionTests : StarDriveTest
         string tempDir = Path.Combine(Path.GetTempPath(), "stardrive-auth4x-eight-resync-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
         using Authoritative4XLobbyStartResult started = lobby.StartInProcess();
+        TcpLockstepTransport hostTransport = null;
         TcpLockstepTransport[] clientTransports = Array.Empty<TcpLockstepTransport>();
         Authoritative4XNetworkClient[] networkClients = Array.Empty<Authoritative4XNetworkClient>();
         try
         {
             int port = FreeTcpPort();
-            TcpLockstepTransport hostTransport = TcpLockstepTransport.HostMulti(port);
+            hostTransport = TcpLockstepTransport.HostMulti(port);
             clientTransports = remotePeers
                 .Select(peer => TcpLockstepTransport.JoinAsPeer("127.0.0.1", port, peer,
                     Authoritative4XNetworkHost.HostPeerId))
@@ -9907,6 +9949,7 @@ public class Authoritative4XSessionTests : StarDriveTest
                 client.Dispose();
             foreach (TcpLockstepTransport transport in clientTransports)
                 transport.Dispose();
+            hostTransport?.Dispose();
             if (Directory.Exists(tempDir))
                 Directory.Delete(tempDir, recursive: true);
         }

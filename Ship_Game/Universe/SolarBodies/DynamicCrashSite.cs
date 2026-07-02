@@ -211,7 +211,8 @@ namespace Ship_Game.Universe.SolarBodies
             if (NumTroopsSurvived == 0)
                 return;
 
-            bool playerTroopsRecovered = Loyalty == p.Universe.Player && owner != p.Universe.Player;
+            Empire localPlayer = p.Universe.LocalPlayerForUi;
+            bool playerTroopsRecovered = Loyalty == localPlayer && owner != localPlayer;
             if (Loyalty == owner)
             {
                 message = "Friendly Troops have Survived.";

@@ -283,7 +283,7 @@ namespace Ship_Game.Universe.SolarBodies
             if (item.Rush || Owner.RushAllConstruction)
             {
                 float prodToRush = item.ProductionNeeded.UpperBound(P.ProdHere);
-                if (prodToRush * GlobalStats.Defaults.RushCostPercentage + 1000 < P.Universe.Player.Money)
+                if (prodToRush * GlobalStats.Defaults.RushCostPercentage + 1000 < P.Universe.LocalPlayerForUi.Money)
                     RushProduction(0, prodToRush);
             }
         }
