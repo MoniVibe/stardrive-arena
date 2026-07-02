@@ -1777,8 +1777,53 @@ namespace Ship_Game
 
         public void SwitchRushAllConstruction(bool rush)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.EmpireAutomation,
+                nameof(RushAllConstruction));
             foreach (Planet planet in OwnedPlanets)
                 planet.Construction.SwitchRushAllConstruction(rush);
+        }
+
+        public void SetAuthoritativeAutomationState(AuthoritativeEmpireAutomationFlags flags,
+            string freighter = null, string colony = null, string scout = null, string constructor = null,
+            string researchStation = null, string miningStation = null, bool updateRushQueues = false)
+        {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.EmpireAutomation,
+                "AutomationFlags");
+
+            flags &= AuthoritativeEmpireAutomationFlags.All;
+            AutoPickConstructors = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickConstructors);
+            AutoPickBestColonizer = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestColonizer);
+            AutoPickBestFreighter = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter);
+            AutoResearch = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoResearch);
+            AutoBuildTerraformers = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildTerraformers);
+            AutoTaxes = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoTaxes);
+            AutoPickBestResearchStation = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation);
+            AutoPickBestMiningStation = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation);
+            AutoExplore = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoExplore);
+            AutoColonize = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoColonize);
+            AutoBuildSpaceRoads = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildSpaceRoads);
+            AutoFreighters = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoFreighters);
+            AutoBuildResearchStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations);
+            AutoBuildMiningStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations);
+            AutoMilitary = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoMilitary);
+
+            bool rushAll = flags.HasFlag(AuthoritativeEmpireAutomationFlags.RushAllConstruction);
+            RushAllConstruction = rushAll;
+            if (updateRushQueues)
+                SwitchRushAllConstruction(rushAll);
+
+            if (freighter != null)
+                data.CurrentAutoFreighter = freighter;
+            if (colony != null)
+                data.CurrentAutoColony = colony;
+            if (scout != null)
+                data.CurrentAutoScout = scout;
+            if (constructor != null)
+                data.CurrentConstructor = constructor;
+            if (researchStation != null)
+                data.CurrentResearchStation = researchStation;
+            if (miningStation != null)
+                data.CurrentMiningStation = miningStation;
         }
 
         public Planet.ColonyType AssessColonyNeeds2(Planet p)

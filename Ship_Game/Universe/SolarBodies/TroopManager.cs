@@ -8,6 +8,7 @@ using Point = SDGraphics.Point;
 using Ship_Game.Data.Serialization;
 using System.Collections.Generic;
 using Ship_Game.Utils;
+using Ship_Game.Multiplayer.Authoritative;
 
 // ReSharper disable once CheckNamespace
 namespace Ship_Game
@@ -58,6 +59,8 @@ namespace Ship_Game
 
         public void SetInCombat(float timer = 1)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(Ground, AuthoritativeMutationFamily.TroopRuntime,
+                nameof(InCombatTimer));
             InCombatTimer = timer;
         }
 
@@ -77,6 +80,8 @@ namespace Ship_Game
 
         public void AddTroop(PlanetGridSquare tile, Troop troop)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(Ground, AuthoritativeMutationFamily.TroopRuntime,
+                "GroundTroopMembership");
             lock (TroopsHere)
             {
                 if (TroopsHere.AddUniqueRef(troop))
@@ -92,6 +97,8 @@ namespace Ship_Game
         // ship updates can pick the same launchable troop.
         public bool TryRemoveTroop(PlanetGridSquare tile, Troop troop, bool quiet = false)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(Ground, AuthoritativeMutationFamily.TroopRuntime,
+                "GroundTroopMembership");
             lock (TroopsHere)
             {
                 // not using RemoveSwapLast since the order of troop is important for allied invasion

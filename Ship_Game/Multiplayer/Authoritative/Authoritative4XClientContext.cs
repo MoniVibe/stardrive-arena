@@ -37,12 +37,14 @@ public sealed class Authoritative4XClientContext : IDisposable
 
     public readonly int PeerId;
     public readonly int EmpireId;
+    public readonly bool IsPassiveClient;
 
     Authoritative4XClientContext(int peerId, int empireId, int firstSequence,
-        Action<AuthoritativePlayerCommand> submitCommand)
+        Action<AuthoritativePlayerCommand> submitCommand, bool isPassiveClient)
     {
         PeerId = peerId;
         EmpireId = empireId;
+        IsPassiveClient = isPassiveClient;
         NextSequence = firstSequence;
         SubmitCommand = submitCommand ?? throw new ArgumentNullException(nameof(submitCommand));
         Previous = Active;
@@ -72,10 +74,31 @@ public sealed class Authoritative4XClientContext : IDisposable
     public static bool ShouldBlockLocalMutation(ShipGroup group)
         => IsActive || group?.Owner?.Universe?.Screen?.IsAuthoritative4XMultiplayer == true;
 
+    public static bool ShouldTripMutationGuard(UniverseScreen universe)
+        => Active?.IsPassiveClient == true
+           || universe?.Authoritative4XMultiplayer is { IsHost: false };
+
+    public static bool ShouldTripMutationGuard(UniverseState universe)
+        => Active?.IsPassiveClient == true
+           || universe?.Screen?.Authoritative4XMultiplayer is { IsHost: false };
+
+    public static bool ShouldTripMutationGuard(Empire empire)
+        => Active?.IsPassiveClient == true
+           || empire?.Universe?.Screen?.Authoritative4XMultiplayer is { IsHost: false };
+
+    public static bool ShouldTripMutationGuard(Planet planet)
+        => Active?.IsPassiveClient == true
+           || planet?.Universe?.Screen?.Authoritative4XMultiplayer is { IsHost: false };
+
+    public static bool ShouldTripMutationGuard(Ship ship)
+        => Active?.IsPassiveClient == true
+           || ship?.Universe?.Screen?.Authoritative4XMultiplayer is { IsHost: false };
+
     public static Authoritative4XClientContext Begin(int peerId, int empireId,
-        Action<AuthoritativePlayerCommand> submitCommand, int firstSequence = 1)
+        Action<AuthoritativePlayerCommand> submitCommand, int firstSequence = 1,
+        bool isPassiveClient = true)
     {
-        return new Authoritative4XClientContext(peerId, empireId, firstSequence, submitCommand);
+        return new Authoritative4XClientContext(peerId, empireId, firstSequence, submitCommand, isPassiveClient);
     }
 
     public void Activate()

@@ -1,6 +1,7 @@
 ﻿using System;
 using SDUtils;
 using Ship_Game.Fleets;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 
 namespace Ship_Game
@@ -9,6 +10,8 @@ namespace Ship_Game
     {
         public void SetOwner(Empire newOwner, Empire attacker = null)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.PlanetRuntime,
+                nameof(Owner));
             Empire oldOwner = Owner;
             Owner = newOwner;
             Food.ResetAveragePercentage();
@@ -76,6 +79,8 @@ namespace Ship_Game
 
         void SetupColonyType()
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.PlanetRuntime,
+                nameof(CType));
             if (OwnerIsHumanControlled && !Owner.AutoColonize)
                 CType = ColonyType.Colony;
             else

@@ -7,6 +7,7 @@ using System.Xml.Serialization;
 using SDGraphics;
 using SDUtils;
 using Ship_Game.Data.Serialization;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Universe;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
@@ -129,6 +130,8 @@ namespace Ship_Game
 
         public void ChangeLoyalty(Empire newOwner)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(Loyalty ?? newOwner, AuthoritativeMutationFamily.TroopRuntime,
+                nameof(Loyalty));
             Empire oldLoyalty = Loyalty;
             Loyalty = newOwner;
             if (HostPlanet != null)
@@ -146,36 +149,48 @@ namespace Ship_Game
 
         public void UpdateAttackActions(int amount)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(Loyalty, AuthoritativeMutationFamily.TroopRuntime,
+                nameof(AvailableAttackActions));
             AvailableAttackActions = (AvailableAttackActions + amount).Clamped(0, MaxStoredActions);
         }
-
         public void UpdateMoveActions(int amount)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(Loyalty, AuthoritativeMutationFamily.TroopRuntime,
+                nameof(AvailableMoveActions));
             AvailableMoveActions = (AvailableMoveActions + amount).Clamped(0, MaxStoredActions);
         }
 
         public void UpdateMoveTimer(float amount)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(Loyalty, AuthoritativeMutationFamily.TroopRuntime,
+                nameof(MoveTimer));
             if (!CanMove) MoveTimer += amount;
         }
 
         public void UpdateAttackTimer(float amount)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(Loyalty, AuthoritativeMutationFamily.TroopRuntime,
+                nameof(AttackTimer));
             if (!CanAttack) AttackTimer += amount;
         }
-
         public void UpdateLaunchTimer(float amount)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(Loyalty, AuthoritativeMutationFamily.TroopRuntime,
+                nameof(Launchtimer));
             Launchtimer += amount;
         }
 
         public void ResetMoveTimer()
         {
+            AuthoritativeMutationGuard.AssertCanMutate(Loyalty, AuthoritativeMutationFamily.TroopRuntime,
+                nameof(MoveTimer));
             MoveTimer = Math.Max(MoveTimerBase - (int)(Level * 0.5), 5);
         }
 
         public void ResetAttackTimer()
         {
+            AuthoritativeMutationGuard.AssertCanMutate(Loyalty, AuthoritativeMutationFamily.TroopRuntime,
+                nameof(AttackTimer));
             AttackTimer = Math.Max(AttackTimerBase - (int)(Level * 0.5), 5);
         }
 
@@ -305,16 +320,22 @@ namespace Ship_Game
 
         public void SetOwner(Empire e)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(Loyalty ?? e, AuthoritativeMutationFamily.TroopRuntime,
+                nameof(Loyalty));
             Loyalty = e;
         }
 
         public void SetPlanet(Planet newPlanet)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(newPlanet ?? HostPlanet,
+                AuthoritativeMutationFamily.TroopRuntime, nameof(HostPlanet));
             HostPlanet = newPlanet;
         }
 
         public void SetShip(Ship s)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(s ?? HostShip,
+                AuthoritativeMutationFamily.TroopRuntime, nameof(HostShip));
             HostShip = s;
         }
 
@@ -366,6 +387,8 @@ namespace Ship_Game
         /// </summary>
         public void DamageTroop(float amount, Planet planet, PlanetGridSquare tile, out bool dead)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(planet, AuthoritativeMutationFamily.TroopRuntime,
+                nameof(Strength));
             dead     = false;
             Strength = (Strength - amount).Clamped(0, ActualStrengthMax);
             if (Strength < 1)
@@ -381,6 +404,8 @@ namespace Ship_Game
 
         public void DamageTroop(Ship combatShip, ref float damage)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(combatShip, AuthoritativeMutationFamily.TroopRuntime,
+                nameof(Strength));
             float oldStrength = Strength;
             Strength = oldStrength - damage; // deal the damage
             
@@ -394,6 +419,8 @@ namespace Ship_Game
 
         public void HealTroop(float amount)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(Loyalty, AuthoritativeMutationFamily.TroopRuntime,
+                nameof(Strength));
             Strength = (Strength + amount).UpperBound(ActualStrengthMax);
         }
 

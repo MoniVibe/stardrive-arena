@@ -103,7 +103,7 @@ public sealed class Authoritative4XLiveSession : IDisposable
         if (Telemetry != null && transport != null && Authoritative4XLiveTelemetry.IsWireTraceEnabled())
             transport.AuthoritativeFrameTrace = Telemetry.WireFrame;
         UiContext = Authoritative4XClientContext.Begin(localPeerId, localEmpireId, SubmitFromUi,
-            Math.Max(1, firstUiSequence));
+            Math.Max(1, firstUiSequence), isPassiveClient: role == Authoritative4XLiveRole.Client);
     }
 
     public static Authoritative4XLiveSession HostGame(UniverseScreen universe,

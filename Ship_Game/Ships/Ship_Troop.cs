@@ -4,6 +4,7 @@ using SDGraphics;
 using SDUtils;
 using Ship_Game.AI;
 using Ship_Game.Data.Serialization;
+using Ship_Game.Multiplayer.Authoritative;
 
 namespace Ship_Game.Ships
 {
@@ -37,6 +38,8 @@ namespace Ship_Game.Ships
         // NOTE: could be an enemy troop or a friendly one
         public void AddTroop(Troop troop)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.TroopRuntime,
+                "ShipTroopMembership");
             if (troop.Loyalty == Loyalty)
                 OurTroops.Add(troop);
             else
@@ -47,6 +50,8 @@ namespace Ship_Game.Ships
 
         public void RemoveAnyTroop(Troop troop)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.TroopRuntime,
+                "ShipTroopMembership");
             if (troop.Loyalty == Loyalty)
                 OurTroops.RemoveRef(troop);
             else
@@ -64,6 +69,8 @@ namespace Ship_Game.Ships
 
         public void KillAllTroops()
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.TroopRuntime,
+                "ShipTroopMembership");
             for (int i = OurTroops.Count - 1; i >= 0; i--)
                 OurTroops.RemoveAt(i);
         }

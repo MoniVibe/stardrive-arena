@@ -11,6 +11,7 @@ using SDUtils;
 using Ship_Game.AI;
 using Ship_Game.Commands.Goals;
 using Ship_Game.Data.Serialization;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Spatial;
 using Ship_Game.Gameplay;
 using Ship_Game.Utils;
@@ -192,6 +193,8 @@ namespace Ship_Game
 
         public void SetPrioritizedPort(bool value)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.PlanetRuntime,
+                nameof(PrioritizedPort));
             PrioritizedPort = value;
             Owner?.UpdatePlayerPrioritizedPorts();
         }
@@ -1489,6 +1492,8 @@ namespace Ship_Game
 
         public void ResetGarrisonSize()
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.PlanetRuntime,
+                nameof(GarrisonSize));
             GarrisonSize = 0; // Default is 0 for players. AI manages it's own troops
         }
 

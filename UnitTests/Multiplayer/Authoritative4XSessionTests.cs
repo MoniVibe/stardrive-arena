@@ -7921,6 +7921,158 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void AuthoritativeMutationGuard_ThrowsOnPassiveClientPlantedLeaks_Headless()
+    {
+        if (!DebugMutationGuardEnabled)
+            return;
+
+        const ulong Seed = 0x50374755415244UL;
+        BuiltWorld world = BuildWorld(Seed, includeTroopShips: true);
+
+        try
+        {
+            EnsureTroopLoaded(world.TroopShip);
+            Troop troop = world.TroopShip.GetOurTroops().First();
+
+            AssertPassiveMutationThrows(world, AuthoritativeMutationFamily.PlanetRuntime,
+                () => world.Planet.SetColonyType(Planet.ColonyType.Industrial));
+            AssertPassiveMutationThrows(world, AuthoritativeMutationFamily.TroopRuntime,
+                () => troop.UpdateMoveActions(-1));
+            AssertPassiveMutationThrows(world, AuthoritativeMutationFamily.ShipRuntime,
+                () => world.Ship.SetAuthoritativeTransform(world.Ship.Position + new Vector2(16f, -4f),
+                    world.Ship.Velocity, world.Ship.Rotation + 0.25f, world.Ship.System,
+                    world.Ship.Active, world.Ship.Dying, world.Ship.YRotation + 0.125f,
+                    world.Ship.XRotation));
+            AssertPassiveMutationThrows(world, AuthoritativeMutationFamily.Diplomacy,
+                () => world.Player.SetRelationsAsKnown(world.Player.GetRelations(world.Enemy), world.Enemy));
+            AssertPassiveMutationThrows(world, AuthoritativeMutationFamily.EmpireAutomation,
+                () => world.Player.SwitchRushAllConstruction(!world.Player.RushAllConstruction));
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void AuthoritativeMutationGuard_AllowsReplayApplyAndAcceptedCommandScopes_Headless()
+    {
+        if (!DebugMutationGuardEnabled)
+            return;
+
+        const ulong ReplaySeed = 0x50375245504CUL;
+        BuiltWorld authority = BuildWorld(ReplaySeed, includeTroopShips: true);
+        BuiltWorld client = BuildWorld(ReplaySeed, includeTroopShips: true);
+
+        try
+        {
+            EnsureTroopLoaded(authority.TroopShip);
+            EnsureTroopLoaded(client.TroopShip);
+            Troop authorityTroop = authority.TroopShip.GetOurTroops().First();
+            authorityTroop.AvailableMoveActions = 0;
+            authorityTroop.UpdateMoveActions(1);
+            authority.Planet.SetColonyType(Planet.ColonyType.Industrial);
+            authority.Ship.SetAuthoritativeTransform(authority.Ship.Position + new Vector2(32f, 8f),
+                authority.Ship.Velocity + new Vector2(2f, -1f), authority.Ship.Rotation + 0.5f,
+                authority.Ship.System, authority.Ship.Active, authority.Ship.Dying,
+                authority.Ship.YRotation + 0.25f, authority.Ship.XRotation + 0.125f);
+            authority.Player.GetRelations(authority.Enemy).SetAuthoritativeDiplomacyState(authority.Player,
+                known: true, atWar: true, nap: false, trade: false, openBorders: false,
+                alliance: false, peace: false);
+            var replayFlags = AuthoritativeEmpireAutomationFlags.AutoExplore
+                              | AuthoritativeEmpireAutomationFlags.AutoResearch
+                              | AuthoritativeEmpireAutomationFlags.RushAllConstruction;
+            authority.Player.SetAuthoritativeAutomationState(replayFlags, "", "", "", "", "", "");
+
+            AuthoritativeStateSnapshot snapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 7);
+            using (Authoritative4XClientContext.Begin(2, client.Player.Id, _ => { }))
+            {
+                snapshot.ApplyRelationshipPayload(client.UState);
+                snapshot.ApplyShipPresencePayload(client.UState);
+                snapshot.ApplyEmpireRuntimePayload(client.UState);
+            }
+
+            Assert.AreEqual(authority.Planet.CType, client.Planet.CType);
+            Assert.AreEqual(authorityTroop.AvailableMoveActions,
+                client.TroopShip.GetOurTroops().First().AvailableMoveActions);
+            Assert.AreEqual(authority.Ship.Position, client.Ship.Position);
+            Assert.AreEqual(authority.Ship.Velocity, client.Ship.Velocity);
+            Assert.AreEqual(authority.Ship.YRotation, client.Ship.YRotation);
+            Assert.AreEqual(authority.Player.GetRelations(authority.Enemy).AtWar,
+                client.Player.GetRelations(client.Enemy).AtWar);
+            AssertEmpireAutomation(client.Player, replayFlags, "", "", "", "", "", "");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+
+        const ulong AcceptedSeed = 0x5037434D44UL;
+        BuiltWorld commandWorld = BuildWorld(AcceptedSeed, includeTroopShips: true);
+
+        try
+        {
+            EnsureTroopLoaded(commandWorld.TroopShip);
+            Troop troop = commandWorld.TroopShip.GetOurTroops().First();
+            using (Authoritative4XClientContext.Begin(2, commandWorld.Player.Id, _ => { }))
+            {
+#if DEBUG
+                using (AuthoritativeMutationGuard.EnterAcceptedCommandApply())
+                {
+                    commandWorld.Planet.SetColonyType(Planet.ColonyType.Research);
+                    troop.UpdateAttackActions(-1);
+                    commandWorld.Ship.SetAuthoritativeTransform(
+                        commandWorld.Ship.Position + new Vector2(4f, 4f),
+                        commandWorld.Ship.Velocity, commandWorld.Ship.Rotation,
+                        commandWorld.Ship.System, commandWorld.Ship.Active, commandWorld.Ship.Dying,
+                        commandWorld.Ship.YRotation, commandWorld.Ship.XRotation);
+                    commandWorld.Player.SetRelationsAsKnown(
+                        commandWorld.Player.GetRelations(commandWorld.Enemy), commandWorld.Enemy);
+                    commandWorld.Player.SetAuthoritativeAutomationState(
+                        AuthoritativeEmpireAutomationFlags.AutoResearch, "", "", "", "", "", "",
+                        updateRushQueues: true);
+                }
+#endif
+
+                var applicator = new Authoritative4XCommandApplicator(commandWorld.UState);
+                AuthoritativeCommandResult result = applicator.Apply(
+                    AuthoritativePlayerCommand.SetColonyType(900, commandWorld.Player.Id,
+                        commandWorld.Planet.Id, Planet.ColonyType.Military),
+                    tick: 9);
+                Assert.IsTrue(result.Accepted, result.Reason);
+            }
+        }
+        finally
+        {
+            commandWorld.Screen.Dispose();
+        }
+    }
+
+    static bool DebugMutationGuardEnabled
+    {
+        get
+        {
+#if DEBUG
+            return true;
+#else
+            return false;
+#endif
+        }
+    }
+
+    static void AssertPassiveMutationThrows(BuiltWorld world, AuthoritativeMutationFamily family, Action mutate)
+    {
+        using (Authoritative4XClientContext.Begin(2, world.Player.Id, _ => { }))
+        {
+            InvalidOperationException e = Assert.ThrowsExactly<InvalidOperationException>(mutate);
+            StringAssert.Contains(e.Message,
+                "Passive authoritative client attempted local replicated-state mutation");
+            StringAssert.Contains(e.Message, $"family={family}");
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientReplica_ReconcilesEmpireRuntimeRowBeforeDigest_Headless()
     {
         const ulong Seed = 0x4E4D50495245UL;

@@ -3,6 +3,7 @@ using SDGraphics;
 using SDUtils;
 using Ship_Game.AI;
 using Ship_Game.Data.Serialization;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 
 namespace Ship_Game
@@ -68,6 +69,19 @@ namespace Ship_Game
 
         public int NumFreightersPickingUpFood { get; private set; }
         public int NumFreightersPickingUpProd { get; private set; }
+
+        public void SetManualTradeSlots(int foodImport, int prodImport, int coloImport,
+            int foodExport, int prodExport, int coloExport)
+        {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.PlanetRuntime,
+                "ManualTradeSlots");
+            ManualFoodImportSlots = foodImport;
+            ManualProdImportSlots = prodImport;
+            ManualColoImportSlots = coloImport;
+            ManualFoodExportSlots = foodExport;
+            ManualProdExportSlots = prodExport;
+            ManualColoExportSlots = coloExport;
+        }
 
         public void UpdateIncomingTradeGoods()
         {

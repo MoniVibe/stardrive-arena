@@ -6,6 +6,7 @@ using Ship_Game.AI;
 using Ship_Game.AI.Budget;
 using Ship_Game.Commands.Goals;
 using Ship_Game.Data.Serialization;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 
 namespace Ship_Game
@@ -532,32 +533,69 @@ namespace Ship_Game
 
         public void SetWantedPlatforms(byte num)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.PlanetRuntime,
+                nameof(WantedPlatforms));
             WantedPlatforms = num;
         }
 
         public void SetWantedShipyards(byte num)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.PlanetRuntime,
+                nameof(WantedShipyards));
             WantedShipyards = num;
         }
 
         public void SetWantedStations(byte num)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.PlanetRuntime,
+                nameof(WantedStations));
             WantedStations = num;
+        }
+
+        public void SetDefenseTargets(int garrisonSize, byte wantedPlatforms, byte wantedShipyards,
+            byte wantedStations)
+        {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.PlanetRuntime,
+                "DefenseTargets");
+            GarrisonSize = garrisonSize;
+            WantedPlatforms = wantedPlatforms;
+            WantedShipyards = wantedShipyards;
+            WantedStations = wantedStations;
+        }
+
+        public void SetGovernorOptions(bool govOrbitals, bool autoBuildTroops, bool dontScrapBuildings,
+            bool quarantine, bool manualOrbitals, bool govGroundDefense, bool specializedTradeHub)
+        {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.PlanetRuntime,
+                "GovernorOptions");
+            GovOrbitals = govOrbitals;
+            AutoBuildTroops = autoBuildTroops;
+            DontScrapBuildings = dontScrapBuildings;
+            Quarantine = quarantine;
+            ManualOrbitals = manualOrbitals;
+            GovGroundDefense = govGroundDefense;
+            SpecializedTradeHub = specializedTradeHub;
         }
 
 
         public void SetManualCivBudget(float num)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.PlanetRuntime,
+                nameof(ManualCivilianBudget));
             ManualCivilianBudget = num;
         }
 
         public void SetManualGroundDefBudget(float num)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.PlanetRuntime,
+                nameof(ManualGrdDefBudget));
             ManualGrdDefBudget = num;
         }
 
         public void SetManualSpaceDefBudget(float num)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.PlanetRuntime,
+                nameof(ManualSpcDefBudget));
             ManualSpcDefBudget = num;
         }
     }

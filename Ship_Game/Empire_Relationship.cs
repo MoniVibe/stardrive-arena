@@ -329,6 +329,10 @@ namespace Ship_Game
 
         public void SetRelationsAsKnown(Relationship rel, Empire them)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.Diplomacy,
+                "KnownEmpires");
+            AuthoritativeMutationGuard.AssertCanMutate(rel, this, AuthoritativeMutationFamily.Diplomacy,
+                nameof(Relationship.Known));
             rel.Known = true;
             KnownEmpires.Set(them.Id);
         }

@@ -82,6 +82,10 @@ public sealed partial class AuthoritativeStateSnapshot
 
     public void ApplyEmpireRuntimePayload(UniverseState universe)
     {
+#if DEBUG
+        using (AuthoritativeMutationGuard.EnterReplayApply())
+#endif
+        {
         if (universe == null || string.IsNullOrEmpty(Payload))
             return;
 
@@ -100,6 +104,7 @@ public sealed partial class AuthoritativeStateSnapshot
         ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.ConstructionQueue);
         ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.ColonizationGoal);
         ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.DeepSpaceGoal);
+        }
     }
 
     static void ApplyInitialReplayLines(UniverseState universe, string[] lines)
@@ -124,14 +129,23 @@ public sealed partial class AuthoritativeStateSnapshot
 
     public void ApplyShipPresencePayload(UniverseState universe)
     {
+#if DEBUG
+        using (AuthoritativeMutationGuard.EnterReplayApply())
+#endif
+        {
         if (universe == null || string.IsNullOrEmpty(Payload))
             return;
 
         ApplyShipPresencePayload(universe, Payload.Split('\n'));
+        }
     }
 
     public void ApplyRelationshipPayload(UniverseState universe)
     {
+#if DEBUG
+        using (AuthoritativeMutationGuard.EnterReplayApply())
+#endif
+        {
         if (universe == null || string.IsNullOrEmpty(Payload))
             return;
 
@@ -140,6 +154,7 @@ public sealed partial class AuthoritativeStateSnapshot
             string line = rawLine.TrimEnd('\r');
             if (line.StartsWith("R|", StringComparison.Ordinal))
                 ApplyRelationshipLine(universe, line);
+        }
         }
     }
 
@@ -190,15 +205,12 @@ public sealed partial class AuthoritativeStateSnapshot
             empire.data.TaxRate = taxRate;
         if (TryParseFloatBits(p[6], out float treasuryGoal))
             empire.data.treasuryGoal = treasuryGoal;
-        if (int.TryParse(p[8], NumberStyles.Integer, CultureInfo.InvariantCulture, out int flags))
-            ApplyAutomationFlags(empire, (AuthoritativeEmpireAutomationFlags)flags);
-
-        empire.data.CurrentAutoFreighter = p[9] ?? "";
-        empire.data.CurrentAutoColony = p[10] ?? "";
-        empire.data.CurrentAutoScout = p[11] ?? "";
-        empire.data.CurrentConstructor = p[12] ?? "";
-        empire.data.CurrentResearchStation = p[13] ?? "";
-        empire.data.CurrentMiningStation = p[14] ?? "";
+        AuthoritativeEmpireAutomationFlags automationFlags = int.TryParse(p[8],
+            NumberStyles.Integer, CultureInfo.InvariantCulture, out int flags)
+                ? (AuthoritativeEmpireAutomationFlags)flags
+                : AutomationFlags(empire);
+        empire.SetAuthoritativeAutomationState(automationFlags, p[9] ?? "", p[10] ?? "",
+            p[11] ?? "", p[12] ?? "", p[13] ?? "", p[14] ?? "");
         if (p.Length > 15 && TryParseFloatBits(p[15], out float researchProgress))
             ApplyResearchProgress(empire, p[2] ?? "", researchProgress);
     }
@@ -598,17 +610,23 @@ public sealed partial class AuthoritativeStateSnapshot
         if (int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int colonyType)
             && Enum.IsDefined(typeof(Planet.ColonyType), colonyType))
         {
-            planet.CType = (Planet.ColonyType)colonyType;
+            planet.SetColonyType((Planet.ColonyType)colonyType);
         }
 
+        int garrisonSize = planet.GarrisonSize;
+        byte parsedWantedPlatforms = planet.WantedPlatforms;
+        byte parsedWantedShipyards = planet.WantedShipyards;
+        byte parsedWantedStations = planet.WantedStations;
         if (int.TryParse(p[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int garrison))
-            planet.GarrisonSize = garrison;
+            garrisonSize = garrison;
         if (TryParseByte(p[5], out byte wantedPlatforms))
-            planet.SetWantedPlatforms(wantedPlatforms);
+            parsedWantedPlatforms = wantedPlatforms;
         if (TryParseByte(p[6], out byte wantedShipyards))
-            planet.SetWantedShipyards(wantedShipyards);
+            parsedWantedShipyards = wantedShipyards;
         if (TryParseByte(p[7], out byte wantedStations))
-            planet.SetWantedStations(wantedStations);
+            parsedWantedStations = wantedStations;
+        planet.SetDefenseTargets(garrisonSize, parsedWantedPlatforms, parsedWantedShipyards,
+            parsedWantedStations);
 
         if (TryParseFloatBits(p[8], out float foodPercent))
             planet.Food.Percent = foodPercent;
@@ -632,27 +650,29 @@ public sealed partial class AuthoritativeStateSnapshot
             planet.PS = (Planet.GoodState)prodState;
         }
 
-        if (int.TryParse(p[16], NumberStyles.Integer, CultureInfo.InvariantCulture, out int foodImport))
-            planet.ManualFoodImportSlots = foodImport;
-        if (int.TryParse(p[17], NumberStyles.Integer, CultureInfo.InvariantCulture, out int prodImport))
-            planet.ManualProdImportSlots = prodImport;
-        if (int.TryParse(p[18], NumberStyles.Integer, CultureInfo.InvariantCulture, out int coloImport))
-            planet.ManualColoImportSlots = coloImport;
-        if (int.TryParse(p[19], NumberStyles.Integer, CultureInfo.InvariantCulture, out int foodExport))
-            planet.ManualFoodExportSlots = foodExport;
-        if (int.TryParse(p[20], NumberStyles.Integer, CultureInfo.InvariantCulture, out int prodExport))
-            planet.ManualProdExportSlots = prodExport;
-        if (int.TryParse(p[21], NumberStyles.Integer, CultureInfo.InvariantCulture, out int coloExport))
-            planet.ManualColoExportSlots = coloExport;
+        int foodImport = planet.ManualFoodImportSlots;
+        int prodImport = planet.ManualProdImportSlots;
+        int coloImport = planet.ManualColoImportSlots;
+        int foodExport = planet.ManualFoodExportSlots;
+        int prodExport = planet.ManualProdExportSlots;
+        int coloExport = planet.ManualColoExportSlots;
+        if (int.TryParse(p[16], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedFoodImport))
+            foodImport = parsedFoodImport;
+        if (int.TryParse(p[17], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedProdImport))
+            prodImport = parsedProdImport;
+        if (int.TryParse(p[18], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedColoImport))
+            coloImport = parsedColoImport;
+        if (int.TryParse(p[19], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedFoodExport))
+            foodExport = parsedFoodExport;
+        if (int.TryParse(p[20], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedProdExport))
+            prodExport = parsedProdExport;
+        if (int.TryParse(p[21], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedColoExport))
+            coloExport = parsedColoExport;
+        planet.SetManualTradeSlots(foodImport, prodImport, coloImport, foodExport, prodExport, coloExport);
 
         planet.SetPrioritizedPort(ParseFlag(p[22]));
-        planet.GovOrbitals = ParseFlag(p[23]);
-        planet.AutoBuildTroops = ParseFlag(p[24]);
-        planet.DontScrapBuildings = ParseFlag(p[25]);
-        planet.Quarantine = ParseFlag(p[26]);
-        planet.ManualOrbitals = ParseFlag(p[27]);
-        planet.GovGroundDefense = ParseFlag(p[28]);
-        planet.SetSpecializedTradeHub(ParseFlag(p[29]));
+        planet.SetGovernorOptions(ParseFlag(p[23]), ParseFlag(p[24]), ParseFlag(p[25]),
+            ParseFlag(p[26]), ParseFlag(p[27]), ParseFlag(p[28]), ParseFlag(p[29]));
 
         if (TryParseFloatBits(p[30], out float civilianBudget))
             planet.SetManualCivBudget(civilianBudget);
@@ -1020,34 +1040,9 @@ public sealed partial class AuthoritativeStateSnapshot
         if (empire == null || target == null || empire == target)
             return;
 
-        Relationship rel = empire.GetRelations(target);
-        rel.Known = ParseFlag(p[3]);
-        rel.AtWar = ParseFlag(p[4]);
-        rel.Treaty_NAPact = ParseFlag(p[5]);
-        rel.Treaty_Trade = ParseFlag(p[6]);
-        rel.Treaty_OpenBorders = ParseFlag(p[7]);
-        rel.Treaty_Alliance = ParseFlag(p[8]);
-        rel.Treaty_Peace = ParseFlag(p[9]);
-
-        if (rel.AtWar)
-        {
-            rel.CanAttack = true;
-            rel.IsHostile = true;
-            if (rel.ActiveWar == null)
-                rel.ActiveWar = War.CreateInstance(empire, target, WarType.ImperialistWar);
-        }
-        else
-        {
-            rel.CanAttack = false;
-            rel.IsHostile = false;
-            rel.CancelPrepareForWar();
-            if (rel.ActiveWar != null)
-            {
-                rel.ActiveWar.EndStarDate = empire.Universe.StarDate;
-                rel.WarHistory.Add(rel.ActiveWar);
-                rel.ActiveWar = null;
-            }
-        }
+        empire.GetRelations(target).SetAuthoritativeDiplomacyState(empire,
+            ParseFlag(p[3]), ParseFlag(p[4]), ParseFlag(p[5]), ParseFlag(p[6]),
+            ParseFlag(p[7]), ParseFlag(p[8]), ParseFlag(p[9]));
     }
 
     static bool ParseFlag(string value)
@@ -2239,22 +2234,18 @@ public sealed partial class AuthoritativeStateSnapshot
         if (ship == null)
             return;
 
-        var position = new Vector2(x, y);
-        var velocity = new Vector2(vx, vy);
-        if (ship.Position != position || ship.Velocity != velocity)
-            ship.ReinsertSpatial = true;
-
-        ship.Position = position;
-        ship.Velocity = velocity;
-        ship.Rotation = rotation;
+        SolarSystem system = ship.System;
         if (int.TryParse(p[8], NumberStyles.Integer, CultureInfo.InvariantCulture, out int systemId))
-            ship.System = systemId > 0 ? universe.Systems.FirstOrDefault(s => s.Id == systemId) : null;
-        ship.Active = ParseFlag(p[9]);
-        ship.Dying = ParseFlag(p[10]);
-        if (p.Length > 11 && TryParseFloatBits(p[11], out float yRotation))
-            ship.YRotation = yRotation;
-        if (p.Length > 12 && TryParseFloatBits(p[12], out float xRotation))
-            ship.XRotation = xRotation;
+            system = systemId > 0 ? universe.Systems.FirstOrDefault(s => s.Id == systemId) : null;
+        float yRotation = ship.YRotation;
+        if (p.Length > 11 && TryParseFloatBits(p[11], out float parsedYRotation))
+            yRotation = parsedYRotation;
+        float xRotation = ship.XRotation;
+        if (p.Length > 12 && TryParseFloatBits(p[12], out float parsedXRotation))
+            xRotation = parsedXRotation;
+
+        ship.SetAuthoritativeTransform(new Vector2(x, y), new Vector2(vx, vy), rotation,
+            system, ParseFlag(p[9]), ParseFlag(p[10]), yRotation, xRotation);
     }
 
     internal static void ApplyShipVisibilityLine(UniverseState universe, string line)
@@ -2391,25 +2382,7 @@ public sealed partial class AuthoritativeStateSnapshot
 
     static void ApplyAutomationFlags(Empire empire, AuthoritativeEmpireAutomationFlags flags)
     {
-        flags &= AuthoritativeEmpireAutomationFlags.All;
-        empire.AutoPickConstructors = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickConstructors);
-        empire.AutoPickBestColonizer = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestColonizer);
-        empire.AutoPickBestFreighter = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter);
-        empire.AutoResearch = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoResearch);
-        empire.AutoBuildTerraformers = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildTerraformers);
-        empire.AutoTaxes = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoTaxes);
-        empire.AutoPickBestResearchStation = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation);
-        empire.AutoPickBestMiningStation = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation);
-        empire.AutoExplore = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoExplore);
-        empire.AutoColonize = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoColonize);
-        empire.AutoBuildSpaceRoads = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildSpaceRoads);
-        empire.AutoFreighters = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoFreighters);
-        empire.AutoBuildResearchStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations);
-        empire.AutoBuildMiningStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations);
-        empire.AutoMilitary = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoMilitary);
-
-        bool rushAll = flags.HasFlag(AuthoritativeEmpireAutomationFlags.RushAllConstruction);
-        empire.RushAllConstruction = rushAll;
+        empire.SetAuthoritativeAutomationState(flags);
     }
 
     readonly struct ConstructionQueueRuntime
@@ -2573,7 +2546,7 @@ public sealed class Authoritative4XClientReplica
     public Authoritative4XRawHashDrift LastRawHashDrift { get; private set; }
 
     public Authoritative4XClientReplica(UniverseScreen universe, float dt = 1f / 60f,
-        int[] humanEmpireIds = null, bool detectLocalMutation = false)
+        int[] humanEmpireIds = null, bool detectLocalMutation = true)
     {
         Universe = universe;
         Step = new FixedSimTime(dt);

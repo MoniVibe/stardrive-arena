@@ -38,71 +38,76 @@ public sealed class Authoritative4XCommandApplicator
 
         using (StarDriveCommandContext.Enter(tick, empire.Id))
         {
-            return command.Kind switch
+#if DEBUG
+            using (AuthoritativeMutationGuard.EnterAcceptedCommandApply())
+#endif
             {
-                AuthoritativePlayerCommandKind.NoOp => Accept(result),
-                AuthoritativePlayerCommandKind.MoveShip => ApplyMove(command, empire, result),
-                AuthoritativePlayerCommandKind.SetColonyType => ApplyColonyType(command, empire, result),
-                AuthoritativePlayerCommandKind.SetColonizationGoal => ApplyColonizationGoal(command, empire, result),
-                AuthoritativePlayerCommandKind.SetColonyLabor => ApplyColonyLabor(command, empire, result),
-                AuthoritativePlayerCommandKind.SetResearchTopic => ApplyResearchTopic(command, empire, result),
-                AuthoritativePlayerCommandKind.QueueResearch => ApplyQueueResearch(command, empire, result),
-                AuthoritativePlayerCommandKind.RemoveResearchQueueItem => ApplyRemoveResearchQueueItem(command, empire, result),
-                AuthoritativePlayerCommandKind.MoveResearchQueueItem => ApplyMoveResearchQueueItem(command, empire, result),
-                AuthoritativePlayerCommandKind.SetEmpireBudget => ApplyEmpireBudget(command, empire, result),
-                AuthoritativePlayerCommandKind.SetEmpireAutomation => ApplyEmpireAutomation(command, empire, result),
-                AuthoritativePlayerCommandKind.SetUniversePreferences => ApplyUniversePreferences(command, empire, result),
-                AuthoritativePlayerCommandKind.DiplomacyProposal => ApplyDiplomacy(command, empire, result),
-                AuthoritativePlayerCommandKind.DiplomacyResponse => ApplyDiplomacy(command, empire, result),
-                AuthoritativePlayerCommandKind.DesignShip => ApplyDesignShip(command, empire, result),
-                AuthoritativePlayerCommandKind.QueueBuild => ApplyQueueBuild(command, empire, result),
-                AuthoritativePlayerCommandKind.QueueBuilding => ApplyQueueBuilding(command, empire, result),
-                AuthoritativePlayerCommandKind.QueueTroop => ApplyQueueTroop(command, empire, result),
-                AuthoritativePlayerCommandKind.CancelConstructionQueueItem => ApplyCancelConstructionQueueItem(command, empire, result),
-                AuthoritativePlayerCommandKind.ReorderConstructionQueueItem => ApplyReorderConstructionQueueItem(command, empire, result),
-                AuthoritativePlayerCommandKind.RushConstructionQueueItem => ApplyRushConstructionQueueItem(command, empire, result),
-                AuthoritativePlayerCommandKind.ToggleConstructionRush => ApplyToggleConstructionRush(command, empire, result),
-                AuthoritativePlayerCommandKind.SetPlanetGoodsState => ApplyPlanetGoodsState(command, empire, result),
-                AuthoritativePlayerCommandKind.SetPlanetPrioritizedPort => ApplyPlanetPrioritizedPort(command, empire, result),
-                AuthoritativePlayerCommandKind.SetPlanetManualBudget => ApplyPlanetManualBudget(command, empire, result),
-                AuthoritativePlayerCommandKind.SetPlanetGovernorOptions => ApplyPlanetGovernorOptions(command, empire, result),
-                AuthoritativePlayerCommandKind.SetPlanetManualTradeSlots => ApplyPlanetManualTradeSlots(command, empire, result),
-                AuthoritativePlayerCommandKind.SetPlanetDefenseTargets => ApplyPlanetDefenseTargets(command, empire, result),
-                AuthoritativePlayerCommandKind.SetFleetAssignment => ApplyFleetAssignment(command, empire, result),
-                AuthoritativePlayerCommandKind.MoveFleet => ApplyMoveFleet(command, empire, result),
-                AuthoritativePlayerCommandKind.RenameFleet => ApplyRenameFleet(command, empire, result),
-                AuthoritativePlayerCommandKind.RenameShip => ApplyRenameShip(command, empire, result),
-                AuthoritativePlayerCommandKind.RenamePlanet => ApplyRenamePlanet(command, empire, result),
-                AuthoritativePlayerCommandKind.GroundTroopOrder => ApplyGroundTroopOrder(command, empire, result),
-                AuthoritativePlayerCommandKind.SetFleetIcon => ApplySetFleetIcon(command, empire, result),
-                AuthoritativePlayerCommandKind.AutoArrangeFleet => ApplyAutoArrangeFleet(command, empire, result),
-                AuthoritativePlayerCommandKind.LoadFleetPatrol => ApplyLoadFleetPatrol(command, empire, result),
-                AuthoritativePlayerCommandKind.RenameFleetPatrol => ApplyRenameFleetPatrol(command, empire, result),
-                AuthoritativePlayerCommandKind.DeleteFleetPatrol => ApplyDeleteFleetPatrol(command, empire, result),
-                AuthoritativePlayerCommandKind.ClearFleetPatrol => ApplyClearFleetPatrol(command, empire, result),
-                AuthoritativePlayerCommandKind.CreateFleetPatrol => ApplyCreateFleetPatrol(command, empire, result),
-                AuthoritativePlayerCommandKind.SetFleetLayout => ApplyFleetLayout(command, empire, result),
-                AuthoritativePlayerCommandKind.QueueFleetRequisition => ApplyQueueFleetRequisition(command, empire, result),
-                AuthoritativePlayerCommandKind.QueueDeepSpaceBuild => ApplyDeepSpaceBuild(command, empire, result),
-                AuthoritativePlayerCommandKind.CancelDeepSpaceBuild => ApplyCancelDeepSpaceBuild(command, empire, result),
-                AuthoritativePlayerCommandKind.QueuePlanetOrbitalBuild => ApplyPlanetOrbitalBuild(command, empire, result),
-                AuthoritativePlayerCommandKind.BuildCapitalHere => ApplyBuildCapitalHere(command, empire, result),
-                AuthoritativePlayerCommandKind.ApplyColonyBlueprints => ApplyColonyBlueprints(command, empire, result),
-                AuthoritativePlayerCommandKind.ClearColonyBlueprints => ApplyClearColonyBlueprints(command, empire, result),
-                AuthoritativePlayerCommandKind.ScrapColonyTile => ApplyScrapColonyTile(command, empire, result),
-                AuthoritativePlayerCommandKind.ShipSpecialOrder => ApplyShipSpecialOrder(command, empire, result),
-                AuthoritativePlayerCommandKind.ShipLifecycleOrder => ApplyShipLifecycleOrder(command, empire, result),
-                AuthoritativePlayerCommandKind.SetShipCombatStance => ApplyShipCombatStance(command, empire, result),
-                AuthoritativePlayerCommandKind.SetShipTradePolicy => ApplyShipTradePolicy(command, empire, result),
-                AuthoritativePlayerCommandKind.SetShipCarrierPolicy => ApplyShipCarrierPolicy(command, empire, result),
-                AuthoritativePlayerCommandKind.SetShipTradeRoute => ApplyShipTradeRoute(command, empire, result),
-                AuthoritativePlayerCommandKind.SetShipAreaOfOperation => ApplyShipAreaOfOperation(command, empire, result),
-                AuthoritativePlayerCommandKind.RefitShip => ApplyShipRefit(command, empire, result),
-                AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
-                AuthoritativePlayerCommandKind.ShipTargetOrder => ApplyShipTargetOrder(command, empire, result),
-                AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
-                _ => Reject(result, $"Unsupported command kind {command.Kind}."),
-            };
+                return command.Kind switch
+                {
+                    AuthoritativePlayerCommandKind.NoOp => Accept(result),
+                    AuthoritativePlayerCommandKind.MoveShip => ApplyMove(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetColonyType => ApplyColonyType(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetColonizationGoal => ApplyColonizationGoal(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetColonyLabor => ApplyColonyLabor(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetResearchTopic => ApplyResearchTopic(command, empire, result),
+                    AuthoritativePlayerCommandKind.QueueResearch => ApplyQueueResearch(command, empire, result),
+                    AuthoritativePlayerCommandKind.RemoveResearchQueueItem => ApplyRemoveResearchQueueItem(command, empire, result),
+                    AuthoritativePlayerCommandKind.MoveResearchQueueItem => ApplyMoveResearchQueueItem(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetEmpireBudget => ApplyEmpireBudget(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetEmpireAutomation => ApplyEmpireAutomation(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetUniversePreferences => ApplyUniversePreferences(command, empire, result),
+                    AuthoritativePlayerCommandKind.DiplomacyProposal => ApplyDiplomacy(command, empire, result),
+                    AuthoritativePlayerCommandKind.DiplomacyResponse => ApplyDiplomacy(command, empire, result),
+                    AuthoritativePlayerCommandKind.DesignShip => ApplyDesignShip(command, empire, result),
+                    AuthoritativePlayerCommandKind.QueueBuild => ApplyQueueBuild(command, empire, result),
+                    AuthoritativePlayerCommandKind.QueueBuilding => ApplyQueueBuilding(command, empire, result),
+                    AuthoritativePlayerCommandKind.QueueTroop => ApplyQueueTroop(command, empire, result),
+                    AuthoritativePlayerCommandKind.CancelConstructionQueueItem => ApplyCancelConstructionQueueItem(command, empire, result),
+                    AuthoritativePlayerCommandKind.ReorderConstructionQueueItem => ApplyReorderConstructionQueueItem(command, empire, result),
+                    AuthoritativePlayerCommandKind.RushConstructionQueueItem => ApplyRushConstructionQueueItem(command, empire, result),
+                    AuthoritativePlayerCommandKind.ToggleConstructionRush => ApplyToggleConstructionRush(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetPlanetGoodsState => ApplyPlanetGoodsState(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetPlanetPrioritizedPort => ApplyPlanetPrioritizedPort(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetPlanetManualBudget => ApplyPlanetManualBudget(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetPlanetGovernorOptions => ApplyPlanetGovernorOptions(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetPlanetManualTradeSlots => ApplyPlanetManualTradeSlots(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetPlanetDefenseTargets => ApplyPlanetDefenseTargets(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetFleetAssignment => ApplyFleetAssignment(command, empire, result),
+                    AuthoritativePlayerCommandKind.MoveFleet => ApplyMoveFleet(command, empire, result),
+                    AuthoritativePlayerCommandKind.RenameFleet => ApplyRenameFleet(command, empire, result),
+                    AuthoritativePlayerCommandKind.RenameShip => ApplyRenameShip(command, empire, result),
+                    AuthoritativePlayerCommandKind.RenamePlanet => ApplyRenamePlanet(command, empire, result),
+                    AuthoritativePlayerCommandKind.GroundTroopOrder => ApplyGroundTroopOrder(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetFleetIcon => ApplySetFleetIcon(command, empire, result),
+                    AuthoritativePlayerCommandKind.AutoArrangeFleet => ApplyAutoArrangeFleet(command, empire, result),
+                    AuthoritativePlayerCommandKind.LoadFleetPatrol => ApplyLoadFleetPatrol(command, empire, result),
+                    AuthoritativePlayerCommandKind.RenameFleetPatrol => ApplyRenameFleetPatrol(command, empire, result),
+                    AuthoritativePlayerCommandKind.DeleteFleetPatrol => ApplyDeleteFleetPatrol(command, empire, result),
+                    AuthoritativePlayerCommandKind.ClearFleetPatrol => ApplyClearFleetPatrol(command, empire, result),
+                    AuthoritativePlayerCommandKind.CreateFleetPatrol => ApplyCreateFleetPatrol(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetFleetLayout => ApplyFleetLayout(command, empire, result),
+                    AuthoritativePlayerCommandKind.QueueFleetRequisition => ApplyQueueFleetRequisition(command, empire, result),
+                    AuthoritativePlayerCommandKind.QueueDeepSpaceBuild => ApplyDeepSpaceBuild(command, empire, result),
+                    AuthoritativePlayerCommandKind.CancelDeepSpaceBuild => ApplyCancelDeepSpaceBuild(command, empire, result),
+                    AuthoritativePlayerCommandKind.QueuePlanetOrbitalBuild => ApplyPlanetOrbitalBuild(command, empire, result),
+                    AuthoritativePlayerCommandKind.BuildCapitalHere => ApplyBuildCapitalHere(command, empire, result),
+                    AuthoritativePlayerCommandKind.ApplyColonyBlueprints => ApplyColonyBlueprints(command, empire, result),
+                    AuthoritativePlayerCommandKind.ClearColonyBlueprints => ApplyClearColonyBlueprints(command, empire, result),
+                    AuthoritativePlayerCommandKind.ScrapColonyTile => ApplyScrapColonyTile(command, empire, result),
+                    AuthoritativePlayerCommandKind.ShipSpecialOrder => ApplyShipSpecialOrder(command, empire, result),
+                    AuthoritativePlayerCommandKind.ShipLifecycleOrder => ApplyShipLifecycleOrder(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetShipCombatStance => ApplyShipCombatStance(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetShipTradePolicy => ApplyShipTradePolicy(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetShipCarrierPolicy => ApplyShipCarrierPolicy(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetShipTradeRoute => ApplyShipTradeRoute(command, empire, result),
+                    AuthoritativePlayerCommandKind.SetShipAreaOfOperation => ApplyShipAreaOfOperation(command, empire, result),
+                    AuthoritativePlayerCommandKind.RefitShip => ApplyShipRefit(command, empire, result),
+                    AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
+                    AuthoritativePlayerCommandKind.ShipTargetOrder => ApplyShipTargetOrder(command, empire, result),
+                    AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
+                    _ => Reject(result, $"Unsupported command kind {command.Kind}."),
+                };
+            }
         }
     }
 
@@ -194,32 +199,9 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, reason);
         }
 
-        empire.AutoPickConstructors = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickConstructors);
-        empire.AutoPickBestColonizer = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestColonizer);
-        empire.AutoPickBestFreighter = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter);
-        empire.AutoResearch = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoResearch);
-        empire.AutoBuildTerraformers = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildTerraformers);
-        empire.AutoTaxes = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoTaxes);
-        empire.AutoPickBestResearchStation = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation);
-        empire.AutoPickBestMiningStation = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation);
-        empire.AutoExplore = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoExplore);
-        empire.AutoColonize = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoColonize);
-        empire.AutoBuildSpaceRoads = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildSpaceRoads);
-        empire.AutoFreighters = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoFreighters);
-        empire.AutoBuildResearchStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations);
-        empire.AutoBuildMiningStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations);
-        empire.AutoMilitary = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoMilitary);
-
-        bool rushAll = flags.HasFlag(AuthoritativeEmpireAutomationFlags.RushAllConstruction);
-        empire.RushAllConstruction = rushAll;
-        empire.SwitchRushAllConstruction(rushAll);
-
-        empire.data.CurrentAutoFreighter = normalizedFreighter;
-        empire.data.CurrentAutoColony = normalizedColony;
-        empire.data.CurrentAutoScout = normalizedScout;
-        empire.data.CurrentConstructor = normalizedConstructor;
-        empire.data.CurrentResearchStation = normalizedResearchStation;
-        empire.data.CurrentMiningStation = normalizedMiningStation;
+        empire.SetAuthoritativeAutomationState(flags, normalizedFreighter, normalizedColony,
+            normalizedScout, normalizedConstructor, normalizedResearchStation, normalizedMiningStation,
+            updateRushQueues: true);
         return Accept(result);
     }
 
@@ -944,7 +926,7 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, $"Invalid colony type {command.TargetId}.");
 
         var type = (Planet.ColonyType)command.TargetId;
-        planet.CType = type;
+        planet.SetColonyType(type);
         if (type is Planet.ColonyType.Colony or Planet.ColonyType.TradeHub)
         {
             planet.RemoveBlueprints();
@@ -2054,13 +2036,14 @@ public sealed class Authoritative4XCommandApplicator
         if ((options & ~AuthoritativePlanetGovernorOptions.All) != 0)
             return Reject(result, $"Unsupported planet governor option flags {command.TargetId}.");
 
-        planet.GovOrbitals = options.HasFlag(AuthoritativePlanetGovernorOptions.GovOrbitals);
-        planet.AutoBuildTroops = options.HasFlag(AuthoritativePlanetGovernorOptions.AutoBuildTroops);
-        planet.DontScrapBuildings = options.HasFlag(AuthoritativePlanetGovernorOptions.DontScrapBuildings);
-        planet.Quarantine = options.HasFlag(AuthoritativePlanetGovernorOptions.Quarantine);
-        planet.ManualOrbitals = options.HasFlag(AuthoritativePlanetGovernorOptions.ManualOrbitals);
-        planet.GovGroundDefense = options.HasFlag(AuthoritativePlanetGovernorOptions.GovGroundDefense);
-        planet.SetSpecializedTradeHub(options.HasFlag(AuthoritativePlanetGovernorOptions.SpecializedTradeHub));
+        planet.SetGovernorOptions(
+            options.HasFlag(AuthoritativePlanetGovernorOptions.GovOrbitals),
+            options.HasFlag(AuthoritativePlanetGovernorOptions.AutoBuildTroops),
+            options.HasFlag(AuthoritativePlanetGovernorOptions.DontScrapBuildings),
+            options.HasFlag(AuthoritativePlanetGovernorOptions.Quarantine),
+            options.HasFlag(AuthoritativePlanetGovernorOptions.ManualOrbitals),
+            options.HasFlag(AuthoritativePlanetGovernorOptions.GovGroundDefense),
+            options.HasFlag(AuthoritativePlanetGovernorOptions.SpecializedTradeHub));
         return Accept(result);
     }
 
@@ -2079,12 +2062,7 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, $"Invalid planet manual trade slot payload '{command.Text}'.");
         }
 
-        planet.ManualFoodImportSlots = foodImport;
-        planet.ManualProdImportSlots = prodImport;
-        planet.ManualColoImportSlots = coloImport;
-        planet.ManualFoodExportSlots = foodExport;
-        planet.ManualProdExportSlots = prodExport;
-        planet.ManualColoExportSlots = coloExport;
+        planet.SetManualTradeSlots(foodImport, prodImport, coloImport, foodExport, prodExport, coloExport);
         return Accept(result);
     }
 
@@ -2102,10 +2080,8 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, $"Invalid planet defense target payload '{command.Text}'.");
         }
 
-        planet.GarrisonSize = garrisonSize;
-        planet.SetWantedPlatforms((byte)wantedPlatforms);
-        planet.SetWantedShipyards((byte)wantedShipyards);
-        planet.SetWantedStations((byte)wantedStations);
+        planet.SetDefenseTargets(garrisonSize, (byte)wantedPlatforms, (byte)wantedShipyards,
+            (byte)wantedStations);
         return Accept(result);
     }
 

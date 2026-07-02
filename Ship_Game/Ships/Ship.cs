@@ -14,6 +14,7 @@ using SDGraphics;
 using SDUtils;
 using Ship_Game.Data.Serialization;
 using Ship_Game.ExtensionMethods;
+using Ship_Game.Multiplayer.Authoritative;
 using Rectangle = SDGraphics.Rectangle;
 
 namespace Ship_Game.Ships
@@ -152,6 +153,24 @@ namespace Ship_Game.Ships
 
         /// TRUE if this ship is Active and not displaying its Dying animation
         public bool IsAlive => Active && !Dying;
+
+        public void SetAuthoritativeTransform(Vector2 position, Vector2 velocity, float rotation,
+            SolarSystem system, bool active, bool dying, float yRotation, float xRotation)
+        {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.ShipRuntime,
+                "Transform");
+            if (Position != position || Velocity != velocity)
+                ReinsertSpatial = true;
+
+            Position = position;
+            Velocity = velocity;
+            Rotation = rotation;
+            System = system;
+            Active = active;
+            Dying = dying;
+            YRotation = yRotation;
+            XRotation = xRotation;
+        }
 
         [StarData] public PlanetCrash PlanetCrash;
         [StarData] public LaunchShip LaunchShip;

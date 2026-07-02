@@ -12,6 +12,7 @@ using Ship_Game.Data.Serialization;
 using Ship_Game.Debug;
 using Ship_Game.Empires.Components;
 using Ship_Game.GameScreens.DiplomacyScreen;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Universe;
 using System.Windows.Forms.VisualStyles;
 
@@ -235,6 +236,8 @@ namespace Ship_Game.Gameplay
 
         public void CancelPrepareForWar()
         {
+            AuthoritativeMutationGuard.AssertCanMutate(Them, AuthoritativeMutationFamily.Diplomacy,
+                nameof(PreparingForWar));
             // Note - prepare for war goal will exit by itself since it has check logic for this
             PreparingForWar = false;
         }
@@ -246,6 +249,8 @@ namespace Ship_Game.Gameplay
         
         public void SetTreaty(Empire us, TreatyType treatyType, bool value)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, us, AuthoritativeMutationFamily.Diplomacy,
+                $"Treaty_{treatyType}");
             switch (treatyType)
             {
                 case TreatyType.Alliance:      Treaty_Alliance    = value; HandleAlliance(); break;
@@ -541,7 +546,44 @@ namespace Ship_Game.Gameplay
 
         public void SetInitialStrength(float n)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(Them, AuthoritativeMutationFamily.Diplomacy,
+                nameof(InitialStrength));
             InitialStrength = 50f + n;
+        }
+
+        public void SetAuthoritativeDiplomacyState(Empire us, bool known, bool atWar, bool nap, bool trade,
+            bool openBorders, bool alliance, bool peace)
+        {
+            AuthoritativeMutationGuard.AssertCanMutate(this, us, AuthoritativeMutationFamily.Diplomacy,
+                "RelationshipState");
+
+            Known = known;
+            AtWar = atWar;
+            Treaty_NAPact = nap;
+            Treaty_Trade = trade;
+            Treaty_OpenBorders = openBorders;
+            Treaty_Alliance = alliance;
+            Treaty_Peace = peace;
+
+            if (AtWar)
+            {
+                CanAttack = true;
+                IsHostile = true;
+                if (ActiveWar == null)
+                    ActiveWar = War.CreateInstance(us, Them, WarType.ImperialistWar);
+            }
+            else
+            {
+                CanAttack = false;
+                IsHostile = false;
+                PreparingForWar = false;
+                if (ActiveWar != null)
+                {
+                    ActiveWar.EndStarDate = us.Universe.StarDate;
+                    WarHistory.Add(ActiveWar);
+                    ActiveWar = null;
+                }
+            }
         }
 
         // updates basic relationship metrics

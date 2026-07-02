@@ -3,6 +3,7 @@ using Ship_Game.AI.Budget;
 using System.Linq;
 using SDUtils;
 using Ship_Game.Data.Serialization;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Universe.SolarBodies;
 using System.Collections.Generic;
 
@@ -26,7 +27,16 @@ namespace Ship_Game
 
         public void SetSpecializedTradeHub(bool value)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.PlanetRuntime,
+                nameof(SpecializedTradeHub));
             SpecializedTradeHub = value;
+        }
+
+        public void SetColonyType(ColonyType type)
+        {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.PlanetRuntime,
+                nameof(CType));
+            CType = type;
         }
 
         public void DoGoverning()
