@@ -19,7 +19,7 @@ public enum ArenaMultiplayerRole
 
 public sealed class ArenaMultiplayerSettings
 {
-    public const int ProtocolVersion = 1;
+    public const int ProtocolVersion = 2;
     const char FleetSeparator = '\u001f';
 
     public int MatchSeed = 0x5EED;

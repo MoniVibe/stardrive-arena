@@ -12,11 +12,13 @@ using Ship_Game.AI;
 using Ship_Game.AI.StrategyAI.WarGoals;
 using Ship_Game.Commands.Goals;
 using Ship_Game.Determinism;
+using Ship_Game.Empires.Components;
 using Ship_Game.Fleets;
 using Ship_Game.Gameplay;
 using Ship_Game.Ships;
 using Ship_Game.Ships.AI;
 using Ship_Game.Universe;
+using Rectangle = SDGraphics.Rectangle;
 using Vector2 = SDGraphics.Vector2;
 
 namespace Ship_Game.Multiplayer.Authoritative;
@@ -35,6 +37,18 @@ public sealed partial class AuthoritativeStateSnapshot
         .GetField("UniqueObjectIds", BindingFlags.Instance | BindingFlags.NonPublic);
     static readonly FieldInfo GoalStepField = typeof(Goal)
         .GetField("<Step>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic);
+    static readonly Dictionary<string, int[]> FatalDigestColumnsByPrefix = new(StringComparer.Ordinal)
+    {
+        ["D"] = new[] { 0, 1, 2, 7 },
+        ["F"] = Enumerable.Range(0, 11).ToArray(),
+        ["S"] = new[]
+        {
+            0, 1, 2, 3, 4, 5, 6,
+            11, 12, 13, 14, 15, 16,
+            18, 19, 20, 21,
+            23, 25, 26, 27, 28, 29, 30, 31,
+        },
+    };
 
     public uint Tick;
     public ulong HashLo;
@@ -334,13 +348,15 @@ public sealed partial class AuthoritativeStateSnapshot
         if (empire == null)
             return;
 
-        if (ResourceManager.Ships.GetDesign(designName, out IShipDesign existing) && existing.IsPlayerDesign)
+        string design64 = p.Length >= 8 ? p[7] ?? "" : "";
+        if (ResourceManager.Ships.GetDesign(designName, out IShipDesign existing)
+            && existing.IsPlayerDesign
+            && string.Equals(DesignBase64(existing), design64, StringComparison.Ordinal))
         {
-            empire.AddBuildableShip(existing);
+            ReplaceBuildableShipForAuthoritativeReplay(empire, existing);
             return;
         }
 
-        string design64 = p.Length >= 8 ? p[7] ?? "" : "";
         if (design64.IsEmpty())
             return;
 
@@ -361,7 +377,23 @@ public sealed partial class AuthoritativeStateSnapshot
             return;
 
         if (ResourceManager.Ships.GetDesign(design.Name, out IShipDesign registered) && registered.IsPlayerDesign)
-            empire.AddBuildableShip(registered);
+            ReplaceBuildableShipForAuthoritativeReplay(empire, registered);
+    }
+
+    static void ReplaceBuildableShipForAuthoritativeReplay(Empire empire, IShipDesign registered)
+    {
+        if (empire == null || registered == null)
+            return;
+
+        foreach (IShipDesign current in empire.ShipsWeCanBuildSnapshot)
+        {
+            if (!ReferenceEquals(current, registered)
+                && string.Equals(current?.Name ?? "", registered.Name, StringComparison.Ordinal))
+            {
+                empire.RemoveBuildableShip(current);
+            }
+        }
+        empire.AddBuildableShip(registered);
     }
 
     static void ApplyConstructionQueuePayload(UniverseState universe, string[] lines)
@@ -885,7 +917,9 @@ public sealed partial class AuthoritativeStateSnapshot
                 || !int.TryParse(p[8], NumberStyles.Integer, CultureInfo.InvariantCulture, out int targetShipId)
                 || !int.TryParse(p[9], NumberStyles.Integer, CultureInfo.InvariantCulture, out int planetBuildingAtId)
                 || !TryParseFloatBits(p[10], out float buildX)
-                || !TryParseFloatBits(p[11], out float buildY))
+                || !TryParseFloatBits(p[11], out float buildY)
+                || !TryParseFloatBits(p[12], out float moveX)
+                || !TryParseFloatBits(p[13], out float moveY))
             {
                 continue;
             }
@@ -896,7 +930,8 @@ public sealed partial class AuthoritativeStateSnapshot
                 desired[empireId] = goals;
             }
             goals.Add(new DeepSpaceGoalRuntime((GoalType)goalType, step, p[5] ?? "", targetPlanetId,
-                targetSystemId, targetShipId, planetBuildingAtId, new Vector2(buildX, buildY)));
+                targetSystemId, targetShipId, planetBuildingAtId, new Vector2(buildX, buildY),
+                new Vector2(moveX, moveY)));
         }
 
         foreach (Empire empire in universe.Empires)
@@ -938,6 +973,7 @@ public sealed partial class AuthoritativeStateSnapshot
         {
             deepSpace.Build = runtime.ToBuildName.NotEmpty() ? new BuildableShip(runtime.ToBuildName) : null;
             deepSpace.StaticBuildPos = runtime.BuildPosition;
+            deepSpace.SetAuthoritativeReplayMovePosition(runtime.MovePosition);
             deepSpace.TargetSystem = runtime.TargetSystemId != 0
                 ? universe.Systems.FirstOrDefault(s => s.Id == runtime.TargetSystemId)
                 : null;
@@ -1152,6 +1188,53 @@ public sealed partial class AuthoritativeStateSnapshot
     static string TransformPayload(string payload)
         => FilterPayload(payload, AuthoritativeReplicationDigestPolicy.Transform);
 
+    internal static string FirstFatalPayloadDifferenceForLog(string authorityPayload, string clientPayload)
+    {
+        List<ProjectedPayloadLine> authority = ProjectedFatalPayloadLines(authorityPayload);
+        List<ProjectedPayloadLine> client = ProjectedFatalPayloadLines(clientPayload);
+        int count = Math.Max(authority.Count, client.Count);
+        for (int i = 0; i < count; ++i)
+        {
+            bool hasAuthority = i < authority.Count;
+            bool hasClient = i < client.Count;
+            string authorityProjection = hasAuthority ? authority[i].DigestLine : "<missing>";
+            string clientProjection = hasClient ? client[i].DigestLine : "<missing>";
+            if (string.Equals(authorityProjection, clientProjection, StringComparison.Ordinal))
+                continue;
+
+            string authorityRaw = hasAuthority ? authority[i].RawLine : "<missing>";
+            string clientRaw = hasClient ? client[i].RawLine : "<missing>";
+            string authorityRawLine = hasAuthority
+                ? authority[i].RawLineNumber.ToString(CultureInfo.InvariantCulture)
+                : "<missing>";
+            string clientRawLine = hasClient
+                ? client[i].RawLineNumber.ToString(CultureInfo.InvariantCulture)
+                : "<missing>";
+            return $"firstDiff line={i + 1} authorityRawLine={authorityRawLine} " +
+                   $"clientRawLine={clientRawLine} " +
+                   $"{AuthoritativeReplicationManifest.DescribeDiff(authorityRaw, clientRaw)} " +
+                   $"authorityProjected='{authorityProjection}' clientProjected='{clientProjection}' " +
+                   $"authority='{authorityRaw}' client='{clientRaw}'";
+        }
+        return "payloads matched under fatal projection";
+    }
+
+    static List<ProjectedPayloadLine> ProjectedFatalPayloadLines(string payload)
+    {
+        string[] lines = (payload ?? "").Split('\n');
+        var projected = new List<ProjectedPayloadLine>(lines.Length);
+        for (int i = 0; i < lines.Length; ++i)
+        {
+            string raw = lines[i].TrimEnd('\r');
+            string digestLine = FatalDigestLine(raw);
+            if (string.IsNullOrEmpty(digestLine))
+                continue;
+
+            projected.Add(new ProjectedPayloadLine(i + 1, raw, digestLine));
+        }
+        return projected;
+    }
+
     static string FilterPayload(string payload, AuthoritativeReplicationDigestPolicy digestPolicy)
     {
         if (string.IsNullOrEmpty(payload))
@@ -1161,12 +1244,57 @@ public sealed partial class AuthoritativeStateSnapshot
         foreach (string rawLine in payload.Split('\n'))
         {
             string line = rawLine.TrimEnd('\r');
-            if (string.IsNullOrEmpty(line)
-                || AuthoritativeReplicationManifest.DigestPolicyForLine(line) != digestPolicy)
+            string digestLine = DigestLineForPolicy(line, digestPolicy);
+            if (string.IsNullOrEmpty(digestLine))
             {
                 continue;
             }
-            sb.Append(line).AppendLine();
+            sb.Append(digestLine).AppendLine();
+        }
+        return sb.ToString();
+    }
+
+    static string DigestLineForPolicy(string line, AuthoritativeReplicationDigestPolicy digestPolicy)
+    {
+        if (string.IsNullOrEmpty(line))
+            return "";
+
+        if (digestPolicy == AuthoritativeReplicationDigestPolicy.Fatal)
+            return FatalDigestLine(line);
+
+        return AuthoritativeReplicationManifest.DigestPolicyForLine(line) == digestPolicy ? line : "";
+    }
+
+    static string FatalDigestLine(string line)
+    {
+        ReplicatedRowDescriptor descriptor = AuthoritativeReplicationManifest.DescriptorForLine(line);
+        if (descriptor?.DigestPolicy == AuthoritativeReplicationDigestPolicy.HostOnlyDiagnostic)
+            return "";
+
+        string[] p = line.Split('|');
+        if (p.Length == 0)
+            return "";
+
+        if (FatalDigestColumnsByPrefix.TryGetValue(p[0], out int[] columns))
+            return ProjectDigestColumns(line, p, columns);
+
+        return AuthoritativeReplicationManifest.DigestPolicyForLine(line)
+               == AuthoritativeReplicationDigestPolicy.Fatal
+            ? line
+            : "";
+    }
+
+    static string ProjectDigestColumns(string line, string[] parts, int[] columns)
+    {
+        if (columns.Length == 0 || columns.Any(column => column < 0 || column >= parts.Length))
+            return line;
+
+        var sb = new StringBuilder(line.Length);
+        for (int i = 0; i < columns.Length; ++i)
+        {
+            if (i != 0)
+                sb.Append('|');
+            sb.Append(parts[columns[i]]);
         }
         return sb.ToString();
     }
@@ -1407,6 +1535,9 @@ public sealed partial class AuthoritativeStateSnapshot
         if (ship?.AI == null)
             return;
 
+        if (int.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int loyaltyId))
+            ApplyShipLoyalty(universe, ship, loyaltyId);
+
         if (int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int fleetId)
             && int.TryParse(p[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int fleetKey))
         {
@@ -1439,6 +1570,83 @@ public sealed partial class AuthoritativeStateSnapshot
                 ? universe.Objects.FindShip(escortId)
                 : null;
         ApplyShipOrderQueueSignature(universe, ship, p[16]);
+        ApplyShipPolicyFields(ship, p);
+    }
+
+    static void ApplyShipLoyalty(UniverseState universe, Ship ship, int loyaltyId)
+    {
+        Empire newLoyalty = universe.Empires.FirstOrDefault(e => e.Id == loyaltyId);
+        Empire oldLoyalty = ship.Loyalty;
+        if (newLoyalty == null || newLoyalty == oldLoyalty)
+            return;
+
+        RemoveShipFromAuthoritativeFleetCaches(ship);
+        ship.Loyalty = newLoyalty;
+        if (oldLoyalty != null)
+            universe.UpdateShipInfluence(ship, oldLoyalty, newLoyalty);
+
+        (oldLoyalty as IEmpireShipLists)?.RemoveShipAtEndOfTurn(ship);
+        (newLoyalty as IEmpireShipLists)?.AddNewShipAtEndOfTurn(ship);
+        ship.ShipStatusChanged = true;
+        ship.ReinsertSpatial = true;
+    }
+
+    static void ApplyShipPolicyFields(Ship ship, string[] p)
+    {
+        ship.TransportingFood = ParseFlag(p[18]);
+        ship.TransportingProduction = ParseFlag(p[19]);
+        ship.TransportingColonists = ParseFlag(p[20]);
+        ship.AllowInterEmpireTrade = ParseFlag(p[21]);
+
+        if (ship.Carrier != null)
+        {
+            bool fightersOut = ParseFlag(p[23]);
+            bool troopsOut = ParseFlag(p[25]);
+            if (ship.Carrier.FightersOut != fightersOut)
+                ship.Carrier.FightersOut = fightersOut;
+            if (ship.Carrier.TroopsOut != troopsOut)
+                ship.Carrier.TroopsOut = troopsOut;
+            ship.Carrier.SetRecallFightersBeforeFTL(ParseFlag(p[26]));
+            ship.Carrier.SetSendTroopsToShip(ParseFlag(p[27]));
+            ship.Carrier.AllowBoardShip = ParseFlag(p[28]);
+        }
+        ship.ManualHangarOverride = ParseFlag(p[29]);
+        ApplyShipTradeRouteSignature(ship, p[30]);
+        ApplyShipAreaOfOperationSignature(ship, p[31]);
+    }
+
+    static void ApplyShipTradeRouteSignature(Ship ship, string signature)
+    {
+        var tradeRoutes = new Array<int>();
+        if (!string.IsNullOrEmpty(signature))
+        {
+            foreach (string token in signature.Split(','))
+                if (int.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out int planetId))
+                    tradeRoutes.Add(planetId);
+        }
+        ship.DownloadTradeRoutes(tradeRoutes);
+    }
+
+    static void ApplyShipAreaOfOperationSignature(Ship ship, string signature)
+    {
+        ship.AreaOfOperation ??= new Array<Rectangle>();
+        ship.AreaOfOperation.Clear();
+        if (string.IsNullOrEmpty(signature))
+            return;
+
+        foreach (string rectText in signature.Split(';'))
+        {
+            string[] values = rectText.Split(',');
+            if (values.Length != 4
+                || !int.TryParse(values[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int x)
+                || !int.TryParse(values[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int y)
+                || !int.TryParse(values[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int width)
+                || !int.TryParse(values[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int height))
+            {
+                continue;
+            }
+            ship.AreaOfOperation.Add(new Rectangle(x, y, width, height));
+        }
     }
 
     static void ApplyShipFleetMembership(Ship ship, int fleetId, int fleetKey)
@@ -2268,9 +2476,11 @@ public sealed partial class AuthoritativeStateSnapshot
         public readonly int TargetShipId;
         public readonly int PlanetBuildingAtId;
         public readonly Vector2 BuildPosition;
+        public readonly Vector2 MovePosition;
 
         public DeepSpaceGoalRuntime(GoalType type, int step, string toBuildName, int targetPlanetId,
-            int targetSystemId, int targetShipId, int planetBuildingAtId, Vector2 buildPosition)
+            int targetSystemId, int targetShipId, int planetBuildingAtId, Vector2 buildPosition,
+            Vector2 movePosition)
         {
             Type = type;
             Step = step;
@@ -2280,6 +2490,21 @@ public sealed partial class AuthoritativeStateSnapshot
             TargetShipId = targetShipId;
             PlanetBuildingAtId = planetBuildingAtId;
             BuildPosition = buildPosition;
+            MovePosition = movePosition;
+        }
+    }
+
+    readonly struct ProjectedPayloadLine
+    {
+        public readonly int RawLineNumber;
+        public readonly string RawLine;
+        public readonly string DigestLine;
+
+        public ProjectedPayloadLine(int rawLineNumber, string rawLine, string digestLine)
+        {
+            RawLineNumber = rawLineNumber;
+            RawLine = rawLine;
+            DigestLine = digestLine;
         }
     }
 }
@@ -2506,19 +2731,7 @@ public sealed class Authoritative4XSyncMismatchException : InvalidOperationExcep
            $"{FirstPayloadDifferenceForLog(authoritySnapshot?.Payload, clientSnapshot?.Payload)}";
 
     internal static string FirstPayloadDifferenceForLog(string authorityPayload, string clientPayload)
-    {
-        string[] authority = (authorityPayload ?? "").Split('\n');
-        string[] client = (clientPayload ?? "").Split('\n');
-        int count = Math.Max(authority.Length, client.Length);
-        for (int i = 0; i < count; ++i)
-        {
-            string a = i < authority.Length ? authority[i].TrimEnd('\r') : "<missing>";
-            string c = i < client.Length ? client[i].TrimEnd('\r') : "<missing>";
-            if (!string.Equals(a, c, StringComparison.Ordinal))
-                return $"firstDiff line={i + 1} {AuthoritativeReplicationManifest.DescribeDiff(a, c)} authority='{a}' client='{c}'";
-        }
-        return "payloads matched";
-    }
+        => AuthoritativeStateSnapshot.FirstFatalPayloadDifferenceForLog(authorityPayload, clientPayload);
 }
 
 public readonly struct Authoritative4XClientSpec

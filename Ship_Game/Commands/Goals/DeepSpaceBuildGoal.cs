@@ -20,6 +20,8 @@ namespace Ship_Game.Commands.Goals
         // constructor passes each detour during execution.
         [StarData] public Vector2[] Detours;
         [StarData] public int DetourIndex;
+        [StarData] bool HasAuthoritativeReplayMovePosition;
+        [StarData] Vector2 AuthoritativeReplayMovePosition;
 
         public override IShipDesign ToBuild => Build.Template;
         public override bool IsBuildingOrbitalFor(Planet planet) => TetherPlanet != null && TetherPlanet == planet;
@@ -78,11 +80,20 @@ namespace Ship_Game.Commands.Goals
         {
             get
             {
+                if (HasAuthoritativeReplayMovePosition)
+                    return AuthoritativeReplayMovePosition;
+
                 Planet targetPlanet = TetherPlanet ?? TargetPlanet;
                 if (targetPlanet != null)
                     return targetPlanet.Position + TetherOffset;
                 return BuildPosition;
             }
+        }
+
+        public void SetAuthoritativeReplayMovePosition(Vector2 movePosition)
+        {
+            HasAuthoritativeReplayMovePosition = true;
+            AuthoritativeReplayMovePosition = movePosition;
         }
 
         public Vector2 GetThrustTarget(Vector2 shipPosition)

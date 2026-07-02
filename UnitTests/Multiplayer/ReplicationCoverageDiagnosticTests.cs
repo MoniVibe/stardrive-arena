@@ -25,20 +25,21 @@ public sealed class ReplicationCoverageDiagnosticTests
         string[] declaredPrefixes = Sorted(descriptors.Select(row => row.Prefix)).ToArray();
         string[] emittedPrefixes = Sorted(descriptors.Where(row => row.EmitsPayload).Select(row => row.Prefix)).ToArray();
         string[] coveredPrefixes = Sorted(descriptors
-            .Where(row => row.HasApply || row.KnownGap)
+            .Where(row => row.HasApply
+                          || row.DigestPolicy == AuthoritativeReplicationDigestPolicy.HostOnlyDiagnostic)
             .Select(row => row.Prefix)).ToArray();
 
         AssertSetsEqual(declaredPrefixes, emittedPrefixes,
             "Every declared row prefix must be emitted by at least one executable descriptor.");
         AssertSetsEqual(declaredPrefixes, coveredPrefixes,
-            "Every declared row prefix must either replay or be explicitly declared as a KnownGap.");
+            "Every declared row prefix must either replay or be explicitly host-only diagnostic.");
 
         ReplicatedRowDescriptor[] uncoveredFatal = descriptors
             .Where(row => row.DigestPolicy == AuthoritativeReplicationDigestPolicy.Fatal)
-            .Where(row => !row.HasApply && !row.KnownGap)
+            .Where(row => !row.HasApply)
             .ToArray();
         Assert.AreEqual(0, uncoveredFatal.Length,
-            "Fatal digest descriptors require an apply delegate unless they are explicit P2 KnownGap descriptors: "
+            "Fatal digest descriptors require an apply delegate: "
             + string.Join(",", uncoveredFatal.Select(row => row.Id)));
 
         ReplicatedRowDescriptor[] uncoveredTransform = descriptors
@@ -54,17 +55,24 @@ public sealed class ReplicationCoverageDiagnosticTests
             .Select(row => row.Id)
             .OrderBy(id => id, StringComparer.Ordinal)
             .ToArray();
+        AssertSetsEqual(Array.Empty<string>(), knownGapIds,
+            "KnownGap descriptors must be closed or explicitly moved out of the fatal digest.");
+
+        string[] hostOnlyIds = descriptors
+            .Where(row => row.DigestPolicy == AuthoritativeReplicationDigestPolicy.HostOnlyDiagnostic)
+            .Select(row => row.Id)
+            .OrderBy(id => id, StringComparer.Ordinal)
+            .ToArray();
         AssertSetsEqual(new[]
         {
             "BP.Blueprint",
             "D.DescriptiveFields",
             "F.Signatures",
             "FP.FleetPatrol",
-            "G.DeepSpaceMovePosition",
             "G.FleetRequisition",
             "G.Refit",
-            "S.PolicyFields",
-        }, knownGapIds, "KnownGap descriptors must stay explicit P2 debt, not silent missing replay.");
+            "S.PolicyDiagnostics",
+        }, hostOnlyIds, "P2 host-only diagnostic descriptors must stay explicit.");
     }
 
     [TestMethod]
@@ -340,7 +348,7 @@ public sealed class ReplicationCoverageDiagnosticTests
             "EmpireId|DesignName|Hull|Role|BaseCost|DesignSlotSignature|DesignBase64",
             "EmpireId|DesignName|DesignBase64",
             "",
-            "Apply ignores descriptive hull/role/base cost/slot signature after name/base64 validation."),
+            "Descriptive hull/role/base cost/slot signature columns are host-only diagnostic; fatal compare keeps name/base64."),
 
         Row("R", "Relationship",
             "EmpireId|TargetEmpireId|Known|AtWar|Treaty_NAPact|Treaty_Trade|Treaty_OpenBorders|Treaty_Alliance|Treaty_Peace",
@@ -350,21 +358,21 @@ public sealed class ReplicationCoverageDiagnosticTests
 
         Row("G", "EmpireGoal",
             "EmpireId|GoalKind|MarkForColonization.TargetPlanetId|MarkForColonization.IsManual|MarkForColonization.FinishedShipId|Refit.Step|Refit.OldShipId|Refit.ToBuildName|Refit.PlanetBuildingAtId|Refit.Rush|Refit.FleetId|Refit.FleetKey|FleetRequisition.Step|FleetRequisition.FleetId|FleetRequisition.FleetKey|FleetRequisition.NodeIndex|FleetRequisition.TemplateName|FleetRequisition.PlanetBuildingAtId|FleetRequisition.Rush|DeepSpace.GoalType|DeepSpace.Step|DeepSpace.ToBuildName|DeepSpace.TargetPlanetId|DeepSpace.TargetSystemId|DeepSpace.TargetShipId|DeepSpace.PlanetBuildingAtId|DeepSpace.BuildPosition.X|DeepSpace.BuildPosition.Y|DeepSpace.MovePosition.X|DeepSpace.MovePosition.Y",
-            "EmpireId|GoalKind|MarkForColonization.TargetPlanetId|MarkForColonization.IsManual|MarkForColonization.FinishedShipId|DeepSpace.GoalType|DeepSpace.Step|DeepSpace.ToBuildName|DeepSpace.TargetPlanetId|DeepSpace.TargetSystemId|DeepSpace.TargetShipId|DeepSpace.PlanetBuildingAtId|DeepSpace.BuildPosition.X|DeepSpace.BuildPosition.Y",
+            "EmpireId|GoalKind|MarkForColonization.TargetPlanetId|MarkForColonization.IsManual|MarkForColonization.FinishedShipId|DeepSpace.GoalType|DeepSpace.Step|DeepSpace.ToBuildName|DeepSpace.TargetPlanetId|DeepSpace.TargetSystemId|DeepSpace.TargetShipId|DeepSpace.PlanetBuildingAtId|DeepSpace.BuildPosition.X|DeepSpace.BuildPosition.Y|DeepSpace.MovePosition.X|DeepSpace.MovePosition.Y",
             "AI.Goals.Count",
-            "G is mode-mixed: MarkForColonization and DeepSpace replay, Refit and FleetRequisition are payload-only."),
+            "G is mode-mixed: MarkForColonization and DeepSpace replay, while Refit and FleetRequisition are host-only diagnostics."),
 
         Row("FP", "FleetPatrol",
             "EmpireId|FleetPatrolPlanSignature",
             "",
             "",
-            "Manifest declares DigestOnly. Current fatal SyncDigest includes it because only SX is filtered out."),
+            "Fleet patrol definitions are host-only diagnostic and excluded from the fatal client digest."),
 
         Row("F", "FleetRuntime",
             "EmpireId|FleetId|FleetKey|Name|FleetIconIndex|CommandShipId|FinalPosition.X|FinalPosition.Y|FinalDirection.X|FinalDirection.Y|FleetShipSignature|FleetNodeSignature|FleetPatrolSignature",
             "EmpireId|FleetId|FleetKey|Name|FleetIconIndex|CommandShipId|FinalPosition.X|FinalPosition.Y|FinalDirection.X|FinalDirection.Y|CommandShipMembership",
             "AllFleets.Count",
-            "Membership/layout/patrol signatures are fatal payload-digest fields but are not replay-applied."),
+            "Membership/layout/patrol signatures are host-only diagnostic; fatal fleet compare keeps replayed runtime columns."),
 
         Row("P", "PlanetRuntime",
             "PlanetId|OwnerId|ColonyType|GarrisonSize|WantedPlatforms|WantedShipyards|WantedStations|Food.Percent|Prod.Percent|Res.Percent|Food.PercentLock|Prod.PercentLock|Res.PercentLock|FoodState|ProdState|ManualFoodImportSlots|ManualProdImportSlots|ManualColoImportSlots|ManualFoodExportSlots|ManualProdExportSlots|ManualColoExportSlots|PrioritizedPort|GovOrbitals|AutoBuildTroops|DontScrapBuildings|Quarantine|ManualOrbitals|GovGroundDefense|SpecializedTradeHub|ManualCivilianBudget|ManualGroundDefBudget|ManualSpaceDefBudget|ConstructionQueue.Count",
@@ -376,7 +384,7 @@ public sealed class ReplicationCoverageDiagnosticTests
             "PlanetId|BlueprintSignature",
             "",
             "",
-            "Manifest declares DigestOnly. Current fatal SyncDigest includes it because only SX is filtered out."),
+            "Colony blueprint signatures are host-only diagnostic and excluded from the fatal client digest."),
 
         Row("T", "ColonyTile",
             "PlanetId|TileX|TileY|BuildingName|Biosphere|Habitable|Terraformable",
@@ -409,10 +417,10 @@ public sealed class ReplicationCoverageDiagnosticTests
             "Raw hash sees ship existence/id but not owner/design identity."),
 
         Row("S", "ShipRuntime",
-            "ShipId|LoyaltyId|FleetId|FleetKey|AIState|CombatState|VolatileMoveX|VolatileMoveY|VolatileTargetX|VolatileTargetY|ScuttleTimer|TargetShipId|HasPriorityTarget|TargetQueueSignature|EscortTargetId|ShipOrderQueueSignature|IsFreighter|TransportingFood|TransportingProduction|TransportingColonists|AllowInterEmpireTrade|HasFighterBays|FightersOut|HasTroopBays|TroopsOut|RecallFightersBeforeFTL|SendTroopsToShip|AllowBoardShip|ManualHangarOverride|TradeRouteSignature|AreaOfOperationSignature",
-            "ShipId|FleetId|FleetKey|AIState|CombatState|ScuttleTimer|TargetShipId|HasPriorityTarget|TargetQueueSignature|EscortTargetId|ShipOrderQueueSignature",
+            "ShipId|LoyaltyId|FleetId|FleetKey|AIState|CombatState|ScuttleTimer|TargetShipId|HasPriorityTarget|TargetQueueSignature|EscortTargetId|ShipOrderQueueSignature|TransportingFood|TransportingProduction|TransportingColonists|AllowInterEmpireTrade|FightersOut|TroopsOut|RecallFightersBeforeFTL|SendTroopsToShip|AllowBoardShip|ManualHangarOverride|TradeRouteSignature|AreaOfOperationSignature",
+            "ShipId|LoyaltyId|FleetId|FleetKey|AIState|CombatState|ScuttleTimer|TargetShipId|HasPriorityTarget|TargetQueueSignature|EscortTargetId|ShipOrderQueueSignature|TransportingFood|TransportingProduction|TransportingColonists|AllowInterEmpireTrade|FightersOut|TroopsOut|RecallFightersBeforeFTL|SendTroopsToShip|AllowBoardShip|ManualHangarOverride|TradeRouteSignature|AreaOfOperationSignature",
             "ShipId|Health",
-            "Many durable ship policy/order fields are fatal payload-digest covered but not applied by ApplyShipRuntimeLine."),
+            "Fatal digest projection drops volatile movement placeholders and design-derived capability diagnostics while keeping replayed runtime and policy fields."),
 
         Row("SX", "ShipTransform",
             "ShipId|Tick|Position.X|Position.Y|Velocity.X|Velocity.Y|Rotation|SystemId|Active|Dying|YRotation|XRotation",

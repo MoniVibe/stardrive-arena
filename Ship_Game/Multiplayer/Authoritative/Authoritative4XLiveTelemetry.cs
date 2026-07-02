@@ -532,19 +532,7 @@ public sealed class Authoritative4XLiveTelemetry : IDisposable
         => snapshot == null ? "" : $"0x{snapshot.HashHi:X16}:0x{snapshot.HashLo:X16}";
 
     static string FirstPayloadDifference(string authorityPayload, string clientPayload)
-    {
-        string[] authority = (authorityPayload ?? "").Split('\n');
-        string[] client = (clientPayload ?? "").Split('\n');
-        int count = Math.Max(authority.Length, client.Length);
-        for (int i = 0; i < count; ++i)
-        {
-            string a = i < authority.Length ? authority[i].TrimEnd('\r') : "<missing>";
-            string c = i < client.Length ? client[i].TrimEnd('\r') : "<missing>";
-            if (!string.Equals(a, c, StringComparison.Ordinal))
-                return $"line={i + 1} authority=\"{a}\" client=\"{c}\"";
-        }
-        return "payloads differ only outside line comparison";
-    }
+        => AuthoritativeStateSnapshot.FirstFatalPayloadDifferenceForLog(authorityPayload, clientPayload);
 
     static string OneLine(string text)
         => (text ?? "").Replace("\\", "\\\\")

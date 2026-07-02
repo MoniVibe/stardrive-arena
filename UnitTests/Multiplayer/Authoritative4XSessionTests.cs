@@ -949,6 +949,35 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XSyncMismatch_FirstDiffUsesFatalProjection_Headless()
+    {
+        const string AuthorityPayload =
+            "D|1|Projected Design|hull|1|1110966272|slots|BASE64\n" +
+            "E|1|authority-topic\n";
+        const string ClientPayload =
+            "D|1|Projected Design|hull|1|1145946112|slots|BASE64\n" +
+            "E|1|client-topic\n";
+
+        string diff = Authoritative4XSyncMismatchException.FirstPayloadDifferenceForLog(
+            AuthorityPayload, ClientPayload);
+
+        StringAssert.Contains(diff, "firstDiff line=2");
+        StringAssert.Contains(diff, "authorityRawLine=2");
+        StringAssert.Contains(diff, "clientRawLine=2");
+        StringAssert.Contains(diff, "authorityProjected='E|1|authority-topic'");
+        StringAssert.Contains(diff, "clientProjected='E|1|client-topic'");
+        Assert.IsFalse(diff.Contains("1110966272"),
+            "Projected-equal D raw BaseCost drift must not choose the firstDiff line.");
+        Assert.IsFalse(diff.Contains("1145946112"),
+            "Projected-equal D raw BaseCost drift must not choose the firstDiff line.");
+
+        string hostOnlyDiff = Authoritative4XSyncMismatchException.FirstPayloadDifferenceForLog(
+            "E|1|same\n",
+            "BP|42|client-only\nE|1|same\n");
+        Assert.AreEqual("payloads matched under fatal projection", hostOnlyDiff);
+    }
+
+    [TestMethod]
     public void Authoritative4XSession_AppliesCommandRequestsAndSyncsClient_Headless()
     {
         const ulong Seed = 0x5A17D21UL;
@@ -2384,7 +2413,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsFalse(authority.Planet.SpecializedTradeHub,
                 "Loading blueprints should mirror the live UI and clear specialized trade hub.");
             Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
-                "The authoritative sync digest must cover colony blueprint apply state.");
+                "Applying blueprints still changes the fatal digest here because the command clears replayed P| governor flags.");
             StringAssert.Contains(session.LastAuthoritySnapshot.Payload, $"BP|{authority.Planet.Id}|MP Industrial Plan");
             StringAssert.Contains(session.LastAuthoritySnapshot.Payload, blueprintBuilding.Name);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
@@ -2395,10 +2424,22 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
             Assert.IsFalse(authority.Planet.HasBlueprints);
             Assert.IsFalse(client.Planet.HasBlueprints);
-            Assert.AreNotEqual(beforeClearDigest, session.LastAuthoritySnapshot.SyncDigest,
-                "The authoritative sync digest must cover colony blueprint clear state.");
+            Assert.AreEqual(beforeClearDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "BP rows are host-only diagnostics; clearing only blueprint signature rows must not move the fatal digest.");
             Assert.IsFalse(session.LastAuthoritySnapshot.Payload.Contains($"BP|{authority.Planet.Id}|"));
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            client.Planet.AddBlueprints(TestBlueprintTemplate("Client Diagnostic Blueprint", blueprintBuilding,
+                Planet.ColonyType.Industrial), client.Player);
+            AuthoritativeStateSnapshot noBlueprintAuthority = AuthoritativeStateSnapshot.Capture(authority.Screen,
+                session.LastAuthoritySnapshot.Tick);
+            AuthoritativeStateSnapshot clientBlueprintDrift = AuthoritativeStateSnapshot.Capture(client.Screen,
+                session.LastAuthoritySnapshot.Tick);
+            Assert.AreNotEqual(PayloadRowForTest(noBlueprintAuthority.Payload, $"BP|{authority.Planet.Id}|"),
+                PayloadRowForTest(clientBlueprintDrift.Payload, $"BP|{client.Planet.Id}|"),
+                "The fixture must inject a client-only BP diagnostic row drift.");
+            Assert.AreEqual(noBlueprintAuthority.SyncDigest, clientBlueprintDrift.SyncDigest,
+                "Client-only BP diagnostic drift must not be a fatal sync mismatch.");
 
             string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
             var linkedTemplate = TestBlueprintTemplate("MP Linked Plan", blueprintBuilding,
@@ -3719,9 +3760,22 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual("Renamed Patrol", authorityPatrol.Name);
             Assert.AreEqual("Renamed Patrol", clientPatrol.Name);
             StringAssert.Contains(session.LastAuthoritySnapshot.Payload, $"FP|{authority.Player.Id}|Renamed Patrol");
-            Assert.AreNotEqual(savedPlanDigest, session.LastAuthoritySnapshot.SyncDigest,
-                "The sync digest must cover saved patrol plan renames.");
+            Assert.AreEqual(savedPlanDigest, session.LastAuthoritySnapshot.SyncDigest,
+                "FP rows are host-only diagnostics; renaming a saved patrol plan must not move the fatal digest.");
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
+
+            FleetPatrol clientDiagnosticPatrol = client.Player.AddPatrolRoute(clientFleet,
+                TestPatrolWaypoints(clientFleet.FinalPosition + new Vector2(6_000f, 0f)));
+            clientDiagnosticPatrol.ChangeName("Client Diagnostic Patrol");
+            AuthoritativeStateSnapshot authorityPatrolSnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen,
+                session.LastAuthoritySnapshot.Tick);
+            AuthoritativeStateSnapshot clientPatrolDrift = AuthoritativeStateSnapshot.Capture(client.Screen,
+                session.LastAuthoritySnapshot.Tick);
+            Assert.IsFalse(authorityPatrolSnapshot.Payload.Contains("Client Diagnostic Patrol"),
+                "The authority fixture must not contain the client-only FP diagnostic row.");
+            StringAssert.Contains(clientPatrolDrift.Payload, "Client Diagnostic Patrol");
+            Assert.AreEqual(authorityPatrolSnapshot.SyncDigest, clientPatrolDrift.SyncDigest,
+                "Client-only FP diagnostic drift must not be a fatal sync mismatch.");
 
             string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
             session.SubmitFromClient(AuthoritativePlayerCommand.RenameFleetPatrol(151,
@@ -8922,13 +8976,21 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsNotNull(host.LastResult, "The host should process the submitted command before the client polls.");
             Assert.AreEqual(1, host.LastResult.Sequence);
 
-            Building mismatchBuilding = PickBlueprintBuilding(client.Planet);
-            client.Planet.AddBlueprints(TestBlueprintTemplate("Client Only Mismatch", mismatchBuilding,
-                client.Planet.CType), client.Player);
+            PumpLiveTcpUntil(() => NetworkClientCaughtUp(liveClient, Peer, 1), host, liveClient);
+            Planet.ColonyType driftType = client.Planet.CType == Planet.ColonyType.Core
+                ? Planet.ColonyType.Industrial
+                : Planet.ColonyType.Core;
+            client.Planet.CType = driftType;
+            Assert.AreNotEqual(authority.Planet.CType, client.Planet.CType,
+                "The forced telemetry mismatch must mutate a fatal client-local planet runtime field.");
+            Assert.IsTrue(Authoritative4XClientContext.TrySubmitSetEmpireBudget(client.Player,
+                taxRate: 0.21f, treasuryGoal: 0.42f, autoTaxes: false),
+                "The live client should submit a second command after the forced local mutation.");
             Authoritative4XSyncMismatchException mismatch = null;
             DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
             while (mismatch == null && DateTime.UtcNow < deadline)
             {
+                host.Poll();
                 liveClient.Poll();
                 mismatch = liveClient.LastSyncMismatch;
                 System.Threading.Thread.Sleep(5);
@@ -8937,8 +8999,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsNotNull(mismatch, "The deliberately perturbed client replica should report a sync mismatch.");
             Assert.IsTrue(liveClient.IsWaitingForResync,
                 "A mismatching client should stop applying live traffic until it receives an authoritative save.");
-            Assert.AreEqual(1, mismatch.Result.Sequence);
-            Assert.AreEqual(AuthoritativePlayerCommandKind.SetColonyType, mismatch.Command.Kind);
+            Assert.AreEqual(2, mismatch.Result.Sequence);
+            Assert.AreEqual(AuthoritativePlayerCommandKind.SetEmpireBudget, mismatch.Command.Kind);
             StringAssert.Contains(mismatch.Message, "firstDiff",
                 "Live crash text should include the first canonical payload difference for cross-machine triage.");
 
@@ -8962,8 +9024,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             StringAssert.Contains(text, "SYNC_MISMATCH");
             StringAssert.Contains(text, $"sessionId={SessionId}");
             StringAssert.Contains(text, $"startFingerprint={StartFingerprint}");
-            StringAssert.Contains(text, "seq=1");
-            StringAssert.Contains(text, "kind=SetColonyType");
+            StringAssert.Contains(text, "seq=2");
+            StringAssert.Contains(text, "kind=SetEmpireBudget");
             StringAssert.Contains(text, "firstDiff='");
             StringAssert.Contains(text, "authorityPayload='");
             StringAssert.Contains(text, "clientPayload='");
@@ -8984,8 +9046,8 @@ public class Authoritative4XSessionTests : StarDriveTest
             StringAssert.Contains(recentText, "mismatch origin=");
             StringAssert.Contains(recentText, "COMMAND source=ui");
             StringAssert.Contains(recentText, "RESULT origin=");
-            StringAssert.Contains(recentText, "seq=1");
-            StringAssert.Contains(recentText, "kind=SetColonyType");
+            StringAssert.Contains(recentText, "seq=2");
+            StringAssert.Contains(recentText, "kind=SetEmpireBudget");
         }
         finally
         {
@@ -9072,9 +9134,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(firstType, authorityJoinPlanet.CType);
             Assert.AreEqual(firstType, clientJoinPlanet.CType);
 
-            Building mismatchBuilding = PickBlueprintBuilding(clientJoinPlanet);
-            clientJoinPlanet.AddBlueprints(TestBlueprintTemplate("Client Only Resync", mismatchBuilding,
-                clientJoinPlanet.CType), client.Enemy);
+            clientJoinPlanet.GarrisonSize += 7;
             Planet.ColonyType mismatchCommandType = firstType == Planet.ColonyType.Core
                 ? Planet.ColonyType.Industrial
                 : Planet.ColonyType.Core;
@@ -9897,12 +9957,14 @@ public class Authoritative4XSessionTests : StarDriveTest
             Planet requesterPlanet = started.Clients.First(c => c.PeerId == requestingPeer)
                 .Universe.UState.GetPlanet(authorityPlanet.Id);
             Assert.IsNotNull(requesterPlanet);
-            Building mismatchBuilding = PickBlueprintBuilding(requesterPlanet);
-            requesterPlanet.AddBlueprints(TestBlueprintTemplate("Eight Client Only Resync", mismatchBuilding,
-                requesterPlanet.CType), requesterPlanet.Owner);
 
             requester.Submit(AuthoritativePlayerCommand.SetEmpireBudget(1_101, requestingEmpire,
                 taxRate: 0.23f, treasuryGoal: 0.44f, autoTaxes: false));
+            PumpTcpUntil(() => NetworkClientCaughtUp(requester, requestingPeer, 1_101), host, networkClients);
+
+            requesterPlanet.GarrisonSize += 5;
+            requester.Submit(AuthoritativePlayerCommand.SetEmpireBudget(1_102, requestingEmpire,
+                taxRate: 0.24f, treasuryGoal: 0.45f, autoTaxes: false));
             PumpTcpUntil(() => requester.IsWaitingForResync, host, networkClients);
 
             AuthoritativeResyncRequestMessage[] requests = DrainResyncRequestsWithPump(host, networkClients);
@@ -10628,6 +10690,10 @@ public class Authoritative4XSessionTests : StarDriveTest
 
             Assert.AreEqual(liveHost.LastSnapshot.SyncDigest, liveJoin.LastSnapshot.SyncDigest,
                 FirstPayloadDifferenceForTest(liveHost.LastSnapshot.Payload, liveJoin.LastSnapshot.Payload));
+            Assert.IsFalse(liveJoin.IsWaitingForResync,
+                "A clean multi-tick host/client heartbeat must not enter resync wait state.");
+            Assert.AreEqual(0, liveHost.DrainResyncRequests().Length,
+                "A clean multi-tick host/client heartbeat must not send resync requests.");
         }
         finally
         {
@@ -11444,6 +11510,240 @@ public class Authoritative4XSessionTests : StarDriveTest
         {
             authority.Dispose();
             client.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XSnapshot_AppliesShipPolicyRowsBeforeDigestCompare_Headless()
+    {
+        const ulong Seed = 0x51490A2UL;
+        BuiltWorld authority = BuildWorld(Seed, extraPlayerPlanet: true, includeFreighter: true,
+            includeCarrierPolicyShips: true);
+        BuiltWorld client = BuildWorld(Seed, extraPlayerPlanet: true, includeFreighter: true,
+            includeCarrierPolicyShips: true);
+
+        try
+        {
+            Planet authorityTradeTarget = authority.Player.GetPlanets()
+                .OrderByDescending(p => p.Id)
+                .First(p => p != authority.Planet);
+            Planet clientTradeTarget = client.UState.GetPlanet(authorityTradeTarget.Id);
+            authority.FreighterShip.TransportingFood = true;
+            authority.FreighterShip.TransportingProduction = false;
+            authority.FreighterShip.TransportingColonists = true;
+            authority.FreighterShip.AllowInterEmpireTrade = true;
+            authority.FreighterShip.DownloadTradeRoutes(new Array<int>
+            {
+                authority.Planet.Id,
+                authorityTradeTarget.Id,
+            });
+            authority.FreighterShip.AreaOfOperation.Clear();
+            authority.FreighterShip.AreaOfOperation.Add(new Rectangle(8_000, 9_000, 12_000, 13_000));
+            authority.CarrierShip.Carrier.SetRecallFightersBeforeFTL(false);
+            authority.CarrierShip.ManualHangarOverride = true;
+            authority.TroopCarrierShip.Carrier.SetSendTroopsToShip(true);
+            authority.TroopCarrierShip.Carrier.AllowBoardShip = false;
+
+            client.FreighterShip.TransportingFood = false;
+            client.FreighterShip.TransportingProduction = true;
+            client.FreighterShip.TransportingColonists = false;
+            client.FreighterShip.AllowInterEmpireTrade = false;
+            client.FreighterShip.DownloadTradeRoutes(new Array<int> { client.EnemyPlanet.Id });
+            client.FreighterShip.AreaOfOperation.Clear();
+            client.FreighterShip.AreaOfOperation.Add(new Rectangle(-20_000, -21_000, 5_000, 5_000));
+            client.CarrierShip.Carrier.SetRecallFightersBeforeFTL(true);
+            client.CarrierShip.ManualHangarOverride = false;
+            client.TroopCarrierShip.Carrier.SetSendTroopsToShip(false);
+            client.TroopCarrierShip.Carrier.AllowBoardShip = true;
+
+            authority.UState.Objects.UpdateLists(removeInactiveObjects: false);
+            client.UState.Objects.UpdateLists(removeInactiveObjects: false);
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 52);
+            AuthoritativeStateSnapshot staleClient = AuthoritativeStateSnapshot.Capture(client.Screen, 52);
+            string authorityFreighterRow = ShipPayloadRowForTest(authoritySnapshot.Payload, authority.FreighterShip.Id);
+            string staleFreighterRow = ShipPayloadRowForTest(staleClient.Payload, client.FreighterShip.Id);
+            Assert.AreNotEqual("<missing>", authorityFreighterRow,
+                "The fixture must expose the authority freighter as a canonical S row.");
+            Assert.AreNotEqual("<missing>", staleFreighterRow,
+                "The fixture must expose the client freighter as a canonical S row.");
+            Assert.AreNotEqual(authorityFreighterRow, staleFreighterRow,
+                "The fixture must inject S.PolicyFields drift into the freighter row.");
+            Assert.AreNotEqual(authoritySnapshot.SyncDigest, staleClient.SyncDigest,
+                "S.PolicyFields are still fatal because the replay path repairs them.");
+
+            authoritySnapshot.ApplyEmpireRuntimePayload(client.UState);
+
+            Assert.IsTrue(client.FreighterShip.TransportingFood);
+            Assert.IsFalse(client.FreighterShip.TransportingProduction);
+            Assert.IsTrue(client.FreighterShip.TransportingColonists);
+            Assert.IsTrue(client.FreighterShip.AllowInterEmpireTrade);
+            CollectionAssert.AreEqual(new[] { client.Planet.Id, clientTradeTarget.Id },
+                client.FreighterShip.TradeRoutes.ToArray());
+            CollectionAssert.AreEqual(authority.FreighterShip.AreaOfOperation.ToArray(),
+                client.FreighterShip.AreaOfOperation.ToArray());
+            Assert.IsFalse(client.CarrierShip.Carrier.RecallFightersBeforeFTL);
+            Assert.IsTrue(client.CarrierShip.ManualHangarOverride);
+            Assert.IsTrue(client.TroopCarrierShip.Carrier.SendTroopsToShip);
+            Assert.IsFalse(client.TroopCarrierShip.Carrier.AllowBoardShip);
+
+            AuthoritativeStateSnapshot repairedClient = AuthoritativeStateSnapshot.Capture(client.Screen, 52);
+            Assert.AreEqual(authoritySnapshot.SyncDigest, repairedClient.SyncDigest,
+                "Applying S| policy fields must repair owner/trade/carrier policy drift before digest comparison.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XSnapshot_AppliesDeepSpaceMovePositionBeforeDigestCompare_Headless()
+    {
+        const ulong Seed = 0xDEE95401UL;
+        BuiltWorld authority = BuildWorld(Seed, includePlatform: true);
+        BuiltWorld client = BuildWorld(Seed, includePlatform: true);
+
+        try
+        {
+            IShipDesign design = PickBuildableDeepSpacePlatform(authority.Player);
+            var authorityGoal = new DeepSpaceBuildGoal(GoalType.DeepSpaceConstruction, authority.Player)
+            {
+                Build = new BuildableShip(design.Name),
+                StaticBuildPos = new Vector2(70_000f, -15_000f),
+            };
+            authorityGoal.SetAuthoritativeReplayMovePosition(new Vector2(12_345f, -67_890f));
+            authority.Player.AI.AddGoal(authorityGoal);
+
+            var staleClientGoal = new DeepSpaceBuildGoal(GoalType.DeepSpaceConstruction, client.Player)
+            {
+                Build = new BuildableShip(design.Name),
+                StaticBuildPos = new Vector2(70_000f, -15_000f),
+            };
+            staleClientGoal.SetAuthoritativeReplayMovePosition(new Vector2(-1_000f, 2_000f));
+            client.Player.AI.AddGoal(staleClientGoal);
+
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 56);
+            AuthoritativeStateSnapshot staleClient = AuthoritativeStateSnapshot.Capture(client.Screen, 56);
+            string authorityRow = PayloadRowForTest(authoritySnapshot.Payload,
+                $"G|{authority.Player.Id}|DeepSpace|");
+            string staleRow = PayloadRowForTest(staleClient.Payload, $"G|{client.Player.Id}|DeepSpace|");
+            Assert.AreNotEqual(authorityRow, staleRow,
+                $"The fixture must inject only DeepSpace MovePosition drift. authority='{authorityRow}' client='{staleRow}'");
+            Assert.AreNotEqual(authoritySnapshot.SyncDigest, staleClient.SyncDigest,
+                "G.DeepSpaceMovePosition remains fatal because the replay path repairs it.");
+
+            authoritySnapshot.ApplyEmpireRuntimePayload(client.UState);
+
+            DeepSpaceBuildGoal repaired = client.Player.AI.Goals.OfType<DeepSpaceBuildGoal>().Single();
+            Assert.AreEqual(authorityGoal.MovePosition, repaired.MovePosition);
+            AuthoritativeStateSnapshot repairedClient = AuthoritativeStateSnapshot.Capture(client.Screen, 56);
+            Assert.AreEqual(authoritySnapshot.SyncDigest, repairedClient.SyncDigest,
+                "Applying G|DeepSpace rows must carry MovePosition into the passive replay goal.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XSnapshot_HostOnlyDiagnosticRowsDoNotTriggerFatalResync_Headless()
+    {
+        RunCase("D.DescriptiveFields", 0xD1A6D001UL, seed => BuildWorld(seed), (authority, client) =>
+        {
+            const string DesignName = "P2 HostOnly Diagnostic Design";
+            ResourceManager.Ships.Delete(DesignName);
+            ShipDesign authorityDesign = BuildLegalPlayerDesign(authority.Player, DesignName);
+            ShipDesign clientDesign = ShipDesign.FromBytes(
+                Convert.FromBase64String(authorityDesign.GetBase64DesignString()));
+            clientDesign.IsPlayerDesign = true;
+            clientDesign.IsReadonlyDesign = false;
+            Assert.IsTrue(authority.Player.AddBuildableShip(authorityDesign));
+            Assert.IsTrue(client.Player.AddBuildableShip(clientDesign));
+            SetShipDesignBaseCostForTest(clientDesign, authorityDesign.BaseCost + 777f);
+        }, world => $"D|{world.Player.Id}|P2 HostOnly Diagnostic Design|");
+
+        RunCase("G.Refit", 0xD1A6D002UL, seed => BuildWorld(seed), (authority, client) =>
+        {
+            IShipDesign refitDesign = PickRefitTarget(client.Ship);
+            client.Player.AI.AddGoal(new RefitShip(client.Ship, refitDesign, client.Player, rush: true));
+        }, world => $"G|{world.Player.Id}|Refit|");
+
+        RunCase("G.FleetRequisition", 0xD1A6D003UL, seed => BuildWorld(seed), (authority, client) =>
+        {
+            IShipDesign design = PickMobileBuildableShip(authority.Player);
+            CreateFleetRequisitionFixture(authority.Player, fleetKey: 7, design.Name);
+            Fleet clientFleet = CreateFleetRequisitionFixture(client.Player, fleetKey: 7, design.Name);
+            client.Player.AI.AddGoal(new FleetRequisition(design.Name, client.Player, clientFleet, rush: true));
+        }, world => $"G|{world.Player.Id}|FleetRequisition|");
+
+        RunCase("FP.FleetPatrol", 0xD1A6D004UL, seed => BuildWorld(seed), (authority, client) =>
+        {
+            authority.Player.CreateFleet(6, null);
+            Fleet clientFleet = client.Player.CreateFleet(6, null);
+            client.Player.AddPatrolRoute(clientFleet, TestPatrolWaypoints(new Vector2(31_000f, 32_000f)));
+        }, world => $"FP|{world.Player.Id}|");
+
+        RunCase("F.Signatures", 0xD1A6D005UL, seed => BuildWorld(seed), (authority, client) =>
+        {
+            Fleet authorityFleet = authority.Player.CreateFleet(8, null);
+            Fleet clientFleet = client.Player.CreateFleet(8, null);
+            authorityFleet.Name = "P2 Runtime Fleet";
+            clientFleet.Name = "P2 Runtime Fleet";
+            authorityFleet.FinalPosition = new Vector2(9_000f, 10_000f);
+            clientFleet.FinalPosition = authorityFleet.FinalPosition;
+            authorityFleet.FinalDirection = new Vector2(0f, 1f);
+            clientFleet.FinalDirection = authorityFleet.FinalDirection;
+            clientFleet.Patrol = new FleetPatrol("Client Only Active Patrol",
+                TestPatrolWaypoints(new Vector2(45_000f, 46_000f)));
+        }, world => $"F|{world.Player.Id}|");
+
+        RunCase("BP.Blueprint", 0xD1A6D006UL, seed => BuildWorld(seed), (authority, client) =>
+        {
+            Building building = PickBlueprintBuilding(client.Planet);
+            client.Planet.AddBlueprints(TestBlueprintTemplate("P2 Client Blueprint", building,
+                client.Planet.CType), client.Player);
+        }, world => $"BP|{world.Planet.Id}|");
+
+        void RunCase(string rowId, ulong seed, Func<ulong, BuiltWorld> build,
+            Action<BuiltWorld, BuiltWorld> injectDrift, Func<BuiltWorld, string> rowPrefix)
+        {
+            BuiltWorld authority = build(seed);
+            BuiltWorld client = build(seed);
+            try
+            {
+                injectDrift(authority, client);
+                AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 64);
+                AuthoritativeStateSnapshot clientSnapshot = AuthoritativeStateSnapshot.Capture(client.Screen, 64);
+                string authorityRow = PayloadRowForTest(authoritySnapshot.Payload, rowPrefix(authority));
+                string clientRow = PayloadRowForTest(clientSnapshot.Payload, rowPrefix(client));
+                Assert.AreNotEqual(authorityRow, clientRow,
+                    $"{rowId} drift injection did not produce a diagnostic payload row difference.");
+                Assert.AreEqual(authoritySnapshot.SyncDigest, clientSnapshot.SyncDigest,
+                    $"{rowId} must be ignored by the fatal digest. authority='{authorityRow}' client='{clientRow}'");
+
+                var replica = new Authoritative4XClientReplica(client.Screen,
+                    humanEmpireIds: client.UState.Empires.Select(e => e.Id).ToArray(),
+                    detectLocalMutation: true);
+                var command = AuthoritativePlayerCommand.NoOp(9_000, client.Player.Id);
+                var result = new AuthoritativeCommandResult
+                {
+                    Sequence = command.Sequence,
+                    OriginPeer = 3,
+                    Accepted = false,
+                    Tick = authoritySnapshot.Tick,
+                };
+                replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
+                Assert.AreEqual(authoritySnapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                    $"{rowId} host-only drift must not raise a replica sync mismatch/resync request.");
+            }
+            finally
+            {
+                authority.Screen.Dispose();
+                client.Screen.Dispose();
+            }
         }
     }
 
@@ -13625,6 +13925,14 @@ public class Authoritative4XSessionTests : StarDriveTest
         clone.IsPlayerDesign = true;
         clone.IsReadonlyDesign = false;
         return clone;
+    }
+
+    static void SetShipDesignBaseCostForTest(ShipDesign design, float baseCost)
+    {
+        var field = typeof(ShipDesign).GetField("<BaseCost>k__BackingField",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.IsNotNull(field, "ShipDesign.BaseCost backing field is required for D.DescriptiveFields drift injection.");
+        field.SetValue(design, baseCost);
     }
 
     static ShipDesign BuildIllegalLockedModuleDesign(Empire empire, string name)
