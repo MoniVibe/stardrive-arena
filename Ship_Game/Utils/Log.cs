@@ -100,6 +100,9 @@ namespace Ship_Game
             if (LogFile == null)
             {
                 bool isReadOnly = Directory.GetCurrentDirectory().Contains("Program Files");
+#if DEBUG
+                isReadOnly |= GlobalStats.IsUnitTest;
+#endif
                 string logDir = isReadOnly ? Dir.StarDriveAppData + "/" : "";
 
                 LogFilePath = $"{logDir}blackbox.log";

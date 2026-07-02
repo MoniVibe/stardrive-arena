@@ -49,6 +49,7 @@ namespace UnitTests
         
         static void CreateGameInstance()
         {
+            GlobalStats.IsUnitTest = true;
             GlobalStats.LoadConfig();
             // Tests must always run against vanilla content. The net8 testhost
             // ignores UnitTests/app.config (where ActiveMod=""), so LoadConfig can
@@ -118,6 +119,8 @@ namespace UnitTests
         static void ConfigureAssembly()
         {
             AppDomain.CurrentDomain.ProcessExit += (sender, e) => Cleanup();
+
+            ConfigureTestAppData();
             
             Directory.SetCurrentDirectory("../../../game");
             StarDriveAbsolutePath = Directory.GetCurrentDirectory();
@@ -131,5 +134,27 @@ namespace UnitTests
             catch {}
         }
 
+        static void ConfigureTestAppData()
+        {
+#if DEBUG
+            string root = Environment.GetEnvironmentVariable("STARDRIVE_TEST_APPDATA");
+            if (string.IsNullOrWhiteSpace(root))
+                root = Path.GetFullPath("../../../TestResults/AppData");
+
+            Environment.SetEnvironmentVariable("STARDRIVE_TEST_APPDATA", root);
+            string starDriveDir = Path.Combine(root, "StarDrive");
+            Directory.CreateDirectory(starDriveDir);
+
+            string userConfig = Path.Combine(starDriveDir, "StarDrive.user.config");
+            string current = File.Exists(userConfig) ? File.ReadAllText(userConfig) : "";
+            if (!current.Contains("ConfigVersion", StringComparison.Ordinal))
+            {
+                string template = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "UnitTests.dll.config");
+                if (!File.Exists(template))
+                    template = Path.GetFullPath("../../../UnitTests/app.config");
+                File.Copy(template, userConfig, overwrite: true);
+            }
+#endif
+        }
     }
 }

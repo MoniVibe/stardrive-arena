@@ -2869,6 +2869,14 @@ public sealed class Authoritative4XInProcessMultiClientSession
     public AuthoritativeStateSnapshot LastClientSnapshotFor(int peerId) => LastSnapshots[peerId];
     public AuthoritativeDiplomacyPopup[] PopupsFor(int peerId) => Popups[peerId].ToArray();
 
+#if DEBUG
+    public void ApplySessionControlForTest(bool paused, float gameSpeed)
+    {
+        foreach (Authoritative4XClientReplica client in Clients.Values)
+            client.ApplySessionControl(paused, gameSpeed);
+    }
+#endif
+
     void Pump()
     {
         for (int i = 0; i < 4; ++i)

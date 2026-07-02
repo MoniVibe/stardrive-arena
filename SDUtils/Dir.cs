@@ -68,8 +68,19 @@ public static class Dir
             CopyDir(subdir.FullName, Path.Combine(destDirName, subdir.Name), true);
     }
 
-    static string AppData => Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)
-        .NormalizedFilePath();
+    static string AppData
+    {
+        get
+        {
+#if DEBUG
+            string testOverride = Environment.GetEnvironmentVariable("STARDRIVE_TEST_APPDATA");
+            if (!string.IsNullOrWhiteSpace(testOverride))
+                return testOverride.NormalizedFilePath();
+#endif
+            return Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)
+                .NormalizedFilePath();
+        }
+    }
 
     // {AppData}/StarDrive
     // This is where all the saved games and cache files are stored
