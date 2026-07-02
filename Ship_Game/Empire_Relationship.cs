@@ -72,7 +72,7 @@ namespace Ship_Game
             }
 
             if (notify)
-                Universe.Notifications.AddTreatyBreak(this, type);
+                Universe.Notifications?.AddTreatyBreak(this, type);
         }
 
         public void BreakAllTreatiesWith(Empire them, bool includingPeace = false)

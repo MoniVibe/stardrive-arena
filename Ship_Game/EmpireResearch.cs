@@ -265,6 +265,30 @@ namespace Ship_Game
         public int IndexInQueue(string techUID) => Queue.IndexOf(techUID);
         public bool IsQueued(string tech) => Queue.Contains(tech);
 
+        public void SetQueueExact(IEnumerable<string> techUids)
+        {
+            Queue.Clear();
+            ShipModulesInQueue.Clear();
+            if (techUids == null)
+                return;
+
+            foreach (string techUid in techUids)
+            {
+                if (techUid.IsEmpty())
+                    continue;
+                if (!Empire.TryGetTechEntry(techUid, out TechEntry entry))
+                {
+                    Log.Error($"SetResearchQueueExact: Unrecognized tech: {techUid}");
+                    continue;
+                }
+
+                Queue.Add(techUid);
+                var unlockableModules = entry.GetUnlockableModules(Empire);
+                foreach (var module in unlockableModules)
+                    ShipModulesInQueue.Add(module.ModuleUID);
+            }
+        }
+
         // reorders tech in the queue
         // [0] is the currently researched tech
         public void ReorderTech(int oldIndex, int newIndex)

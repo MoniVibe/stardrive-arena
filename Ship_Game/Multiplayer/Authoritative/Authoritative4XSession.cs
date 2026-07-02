@@ -217,14 +217,7 @@ public sealed partial class AuthoritativeStateSnapshot
 
     static void ApplyResearchRuntime(Empire empire, string topic, string queueSignature)
     {
-        empire.data.ResearchQueue.Clear();
-        empire.data.ShipModulesInResearchQueues.Clear();
-
-        foreach (string techUid in queueSignature.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
-            empire.Research.AddTechToQueue(techUid);
-
-        if (topic.NotEmpty() && empire.Research.Topic != topic)
-            empire.Research.SetTopic(topic);
+        empire.Research.SetQueueExact(queueSignature.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries));
     }
 
     static void ApplyResearchProgress(Empire empire, string topic, float progress)
@@ -2568,9 +2561,12 @@ public sealed class Authoritative4XClientReplica
         Universe.UState.GameSpeed = AuthoritativeGameSpeed;
         if (result.Accepted)
         {
-            AuthoritativeCommandResult local = Applicator.Apply(command, result.Tick);
-            if (!local.Accepted)
-                throw new System.InvalidOperationException($"Client replica rejected accepted command {command.Sequence}: {local.Reason}");
+            if (!IsSnapshotOnlyReplay(command.Kind))
+            {
+                AuthoritativeCommandResult local = Applicator.Apply(command, result.Tick);
+                if (!local.Accepted)
+                    throw new System.InvalidOperationException($"Client replica rejected accepted command {command.Sequence}: {local.Reason}");
+            }
         }
         Empire localEmpireBefore = Universe.Player;
         int localEmpireId = localEmpireBefore?.Id ?? 0;
@@ -2630,6 +2626,10 @@ public sealed class Authoritative4XClientReplica
                .Select(t => t.UID)
                .ToHashSet(StringComparer.Ordinal)
            ?? new HashSet<string>(StringComparer.Ordinal);
+
+    static bool IsSnapshotOnlyReplay(AuthoritativePlayerCommandKind kind)
+        => kind is AuthoritativePlayerCommandKind.DiplomacyProposal
+                   or AuthoritativePlayerCommandKind.DiplomacyResponse;
 
     void AssertReplicaUnchangedSinceLastSnapshot(AuthoritativePlayerCommand command,
         AuthoritativeCommandResult result)

@@ -8173,6 +8173,72 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XClientReplica_ReplaysResearchQueueExactWithoutPrereqExpansion_Headless()
+    {
+        const ulong Seed = 0x50344E47001UL;
+        const string Target = "Titans";
+        const string Trailing = "Spaceport";
+        string[] prerequisites = { "Corvettes", "FrigateConstruction", "Cruisers", "Battleships" };
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            PrepareDiscoveredUnresearchedTechs(authority.Player,
+                prerequisites.Concat(new[] { Target, Trailing }).ToArray());
+            PrepareDiscoveredUnresearchedTechs(client.Player,
+                prerequisites.Concat(new[] { Target, Trailing }).ToArray());
+
+            authority.Player.Research.Reset();
+            authority.Player.Research.AddTechToQueue(Target);
+            foreach (string prerequisite in prerequisites)
+            {
+                Assert.IsTrue(authority.Player.Research.IsQueued(prerequisite),
+                    $"Host-side gameplay queueing must still expand discovered prerequisite {prerequisite}.");
+            }
+
+            authority.Player.Research.Reset();
+            authority.Player.Research.SetTopic(Target);
+            authority.Player.Research.AddToQueue(Trailing);
+            CollectionAssert.AreEqual(new[] { Target, Trailing }, authority.Player.data.ResearchQueue.ToArray(),
+                "The authority fixture must capture the host-authored queue without prerequisite entries.");
+
+            client.Player.Research.Reset();
+            client.Player.Research.SetTopic(Trailing);
+            client.Player.Research.AddToQueue(prerequisites[0]);
+            var replica = new Authoritative4XClientReplica(client.Screen, humanEmpireIds: new[] { client.Player.Id });
+            var command = AuthoritativePlayerCommand.NoOp(5044, authority.Player.Id);
+            var result = new AuthoritativeCommandResult
+            {
+                Sequence = 5044,
+                OriginPeer = 2,
+                Accepted = false,
+                Tick = 10,
+                Reason = "",
+            };
+
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 10);
+            StringAssert.Contains(authoritySnapshot.Payload, ResearchQueuePayloadPrefix(authority.Player));
+            replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
+
+            CollectionAssert.AreEqual(new[] { Target, Trailing }, client.Player.data.ResearchQueue.ToArray(),
+                "Passive replay must set the exact host research queue and must not expand prerequisites locally.");
+            foreach (string prerequisite in prerequisites)
+            {
+                Assert.IsFalse(client.Player.Research.IsQueued(prerequisite),
+                    $"Passive replay must not add prerequisite {prerequisite} beyond the host payload.");
+            }
+            AssertResearchQueuesEqual(authority.Player, client.Player);
+            Assert.AreEqual(authoritySnapshot.SyncDigest, replica.LastSnapshot.SyncDigest);
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientReplica_ReplaysLocalResearchAndColonizationNotifications_Headless()
     {
         const ulong Seed = 0x4E071F11UL;
@@ -14254,6 +14320,17 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.IsTrue(uids.Length >= count,
             $"Expected at least {count} discovered, researchable techs for authoritative MP research tests.");
         return uids;
+    }
+
+    static void PrepareDiscoveredUnresearchedTechs(Empire empire, string[] techUids)
+    {
+        foreach (string techUid in techUids)
+        {
+            TechEntry tech = empire.GetTechEntry(techUid);
+            Assert.AreNotSame(TechEntry.None, tech, $"Empire {empire.Id} needs tech {techUid} for the research replay proof.");
+            tech.SetDiscovered(true);
+            tech.ForceNeedsFullResearch();
+        }
     }
 
     static (string uid, int index) FindQueuedResearch(Empire empire, Func<int, bool> indexPredicate)
