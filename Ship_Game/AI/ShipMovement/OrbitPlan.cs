@@ -98,7 +98,8 @@ namespace Ship_Game.AI.ShipMovement
             // if no enemies near us, then consider the following MAGIC STOP optimization:
             if (!AI.BadGuysNear)
             {
-                bool visible = orbitTarget.System.InFrustum
+                bool visible = Owner.Universe.Screen?.IsAuthoritative4XMultiplayer == true
+                               || orbitTarget.System.InFrustum
                                && Owner.Universe.IsSystemViewOrCloser;
                 if (!visible) // don't update orbits in invisible systems
                 {

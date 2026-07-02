@@ -8423,6 +8423,56 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XLiveHost_OffscreenOrbitingShipsStillAdvance_Headless()
+    {
+        const ulong Seed = 0x04B17D0BUL;
+        const int HostPeer = 2;
+        const int RemotePeer = 3;
+        BuiltWorld world = BuildWorld(Seed);
+        TcpLockstepTransport transport = null;
+        Authoritative4XLiveSession liveHost = null;
+
+        try
+        {
+            transport = TcpLockstepTransport.Host(FreeTcpPort(), RemotePeer);
+            liveHost = Authoritative4XLiveSession.HostGame(world.Screen, transport, HostPeer,
+                new Dictionary<int, int>
+                {
+                    [HostPeer] = world.Player.Id,
+                    [RemotePeer] = world.Enemy.Id,
+                },
+                new[] { world.Player.Id, world.Enemy.Id });
+            world.Screen.AttachAuthoritative4XMultiplayer(liveHost);
+
+            Ship joinerShip = world.EnemyShip;
+            Planet joinerPlanet = world.EnemyPlanet;
+            joinerShip.Position = joinerPlanet.Position + new Vector2(joinerPlanet.Radius + 500f, 0f);
+            joinerShip.Velocity = Vector2.Zero;
+            joinerShip.ReinsertSpatial = true;
+            joinerShip.OrderToOrbit(joinerPlanet, clearOrders: true);
+            joinerShip.InFrustum = false;
+            joinerPlanet.System.InFrustum = false;
+            world.UState.ViewState = UniverseScreen.UnivScreenState.SystemView;
+            world.Screen.CamPos = new Vector3d(world.Planet.Position.X, world.Planet.Position.Y, 4_000);
+            world.Screen.CamDestination = world.Screen.CamPos;
+
+            Vector2 start = joinerShip.Position;
+            for (int i = 0; i < 120; ++i)
+                liveHost.Poll();
+
+            Assert.IsTrue(joinerShip.Position.Distance(start) > 1f || joinerShip.Velocity.Length() > 1f,
+                "Authoritative MP host simulation must not freeze a joined player's orbiting ships just "
+                + "because the host camera is not looking at that system.");
+        }
+        finally
+        {
+            liveHost?.Dispose();
+            transport?.Dispose();
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XLiveHost_BroadcastsPauseAndSpeedControl_Headless()
     {
         const ulong Seed = 0x41E40058UL;
