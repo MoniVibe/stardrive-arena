@@ -450,8 +450,15 @@ namespace Ship_Game
         static int InitThreadPool()
         {
             AppDomain.CurrentDomain.ProcessExit += (sender, e) => ClearPool();
-            int cores = GetPhysicalCPUCoreCount();
-            return cores;
+            try
+            {
+                int cores = GetPhysicalCPUCoreCount();
+                return cores > 0 ? cores : Environment.ProcessorCount;
+            }
+            catch (DllNotFoundException)
+            {
+                return Environment.ProcessorCount;
+            }
         }
 
         public static int PoolSize { get { lock (Pool) { return Pool.Count; } } }

@@ -5,6 +5,8 @@ namespace Ship_Game.SpriteSystem
 {
     public class AtlasPath
     {
+        public static string StarDriveAppDataOverride;
+
         public readonly string OriginalName;
 
         public readonly string CacheAtlasTex;
@@ -52,7 +54,10 @@ namespace Ship_Game.SpriteSystem
         public static string GetCacheRoot()
         {
             string cache = GlobalStats.HasMod ? $"/TC-{GlobalStats.ModName}" : "/TextureCache";
-            return Dir.StarDriveAppData + cache;
+            string appData = string.IsNullOrWhiteSpace(StarDriveAppDataOverride)
+                ? Dir.StarDriveAppData
+                : StarDriveAppDataOverride.Replace('\\', '/');
+            return appData + cache;
         }
     }
 }

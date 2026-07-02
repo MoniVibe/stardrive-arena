@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -53,11 +54,19 @@ namespace Ship_Game.Ships
         );
 
         ByteBuffer* Buffer;
-        public int Capacity => Buffer->Capacity;
+        StringBuilder Managed;
+        public int Capacity => Buffer != null ? Buffer->Capacity : Managed.Capacity;
 
         public ShipDesignWriter(int initialCapacity = 4096)
         {
-            Buffer = ByteBufferNew(initialCapacity);
+            try
+            {
+                Buffer = ByteBufferNew(initialCapacity);
+            }
+            catch (Exception e) when (IsNativeLoadFailure(e))
+            {
+                Managed = new StringBuilder(initialCapacity);
+            }
         }
 
         ~ShipDesignWriter()
@@ -67,7 +76,8 @@ namespace Ship_Game.Ships
 
         void Destroy()
         {
-            ByteBufferDelete(Buffer);
+            if (Buffer != null)
+                ByteBufferDelete(Buffer);
             Buffer = null;
         }
 
@@ -79,17 +89,20 @@ namespace Ship_Game.Ships
 
         public void Clear()
         {
-            Buffer->Size = 0;
+            if (Buffer != null) Buffer->Size = 0;
+            else Managed.Clear();
         }
 
         public override string ToString()
         {
-            return Encoding.ASCII.GetString(Buffer->Data, Buffer->Size);
+            return Buffer != null ? Encoding.ASCII.GetString(Buffer->Data, Buffer->Size) : Managed.ToString();
         }
 
         // NOTE: This must ALWAYS COPY the bytes
         public byte[] GetASCIIBytes()
         {
+            if (Buffer == null)
+                return Encoding.ASCII.GetBytes(Managed.ToString());
             byte[] bytes = new byte[Buffer->Size];
             ByteBufferCopy(Buffer, bytes);
             return bytes;
@@ -105,30 +118,35 @@ namespace Ship_Game.Ships
         // value
         public void Write(string value)
         {
-            ByteBufferWriteS(Buffer, value, value.Length);
+            if (Buffer != null) ByteBufferWriteS(Buffer, value, value.Length);
+            else Managed.Append(value);
         }
 
         // -1234
         public void Write(int value)
         {
-            ByteBufferWriteI(Buffer, value);
+            if (Buffer != null) ByteBufferWriteI(Buffer, value);
+            else Managed.Append(value.ToString(CultureInfo.InvariantCulture));
         }
 
         // -1234.456
         public void Write(float value)
         {
-            ByteBufferWriteF(Buffer, value, maxDecimals:3);
+            if (Buffer != null) ByteBufferWriteF(Buffer, value, maxDecimals:3);
+            else Managed.Append(FloatToString(value, maxDecimals: 3));
         }
 
         public void Write(float value, int maxDecimals)
         {
-            ByteBufferWriteF(Buffer, value, maxDecimals);
+            if (Buffer != null) ByteBufferWriteF(Buffer, value, maxDecimals);
+            else Managed.Append(FloatToString(value, maxDecimals));
         }
 
         // -1234.456
         public void Write(double value)
         {
-            ByteBufferWriteD(Buffer, value, maxDecimals:3);
+            if (Buffer != null) ByteBufferWriteD(Buffer, value, maxDecimals:3);
+            else Managed.Append(value.ToString("0.################", CultureInfo.InvariantCulture));
         }
 
         // [x][separator][y]
@@ -141,6 +159,12 @@ namespace Ship_Game.Ships
 
         public void Write(char ch)
         {
+            if (Buffer == null)
+            {
+                Managed.Append(ch);
+                return;
+            }
+
             // fastpath: already enough capacity
             if (Buffer->Size < Buffer->Capacity)
             {
@@ -156,14 +180,14 @@ namespace Ship_Game.Ships
         public void Write<T>(string key, T value)
         {
             string val = value.ToString();
-            ByteBufferWriteKV(Buffer, key, key.Length, val, val.Length);
+            WriteKeyValue(key, val);
         }
 
         // key=true|false\n
         public void Write(string key, bool value)
         {
             string val = value ? "true" : "false";
-            ByteBufferWriteKV(Buffer, key, key.Length, val, val.Length);
+            WriteKeyValue(key, val);
         }
 
         // if value then: key=value\n
@@ -171,7 +195,7 @@ namespace Ship_Game.Ships
         {
             if (value.NotEmpty())
             {
-                ByteBufferWriteKV(Buffer, key, key.Length, value, value.Length);
+                WriteKeyValue(key, value);
             }
         }
 
@@ -211,5 +235,23 @@ namespace Ship_Game.Ships
             Write(values);
             Write('\n');
         }
+
+        void WriteKeyValue(string key, string value)
+        {
+            if (Buffer != null)
+                ByteBufferWriteKV(Buffer, key, key.Length, value, value.Length);
+            else
+                Managed.Append(key).Append('=').Append(value).Append('\n');
+        }
+
+        static string FloatToString(float value, int maxDecimals)
+        {
+            float scale = (float)Math.Pow(10, maxDecimals);
+            float truncated = (float)(Math.Truncate(value * scale) / scale);
+            return truncated.ToString("0." + new string('#', maxDecimals), CultureInfo.InvariantCulture);
+        }
+
+        static bool IsNativeLoadFailure(Exception e)
+            => e is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException;
     }
 }

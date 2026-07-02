@@ -25,6 +25,8 @@ namespace Ship_Game.Data.Texture
 
     public static class ImageUtils
     {
+        static volatile bool NativeImageUnavailable;
+
         // Color is a BGRA little-endian struct
         public static Color[] DecompressDxt5(Texture2D tex)
         {
@@ -95,11 +97,33 @@ namespace Ship_Game.Data.Texture
                 tex.SetData(color);
             }
 
-            IntPtr error = LoadPNGImage(filename, OnLoaded);
+            IntPtr error;
+            try
+            {
+                error = LoadPNGImage(filename, OnLoaded);
+            }
+            catch (DllNotFoundException)
+            {
+                return LoadPngManaged(device, filename, premultiplyAlpha);
+            }
             if (error != IntPtr.Zero)
             {
                 string message = Marshal.PtrToStringAnsi(error);
                 throw new Exception($"Load PNG {filename} failed: {message}");
+            }
+            return tex;
+        }
+
+        static Texture2D LoadPngManaged(GraphicsDevice device, string filename, bool premultiplyAlpha)
+        {
+            using FileStream fs = File.OpenRead(filename);
+            Texture2D tex = Texture2D.FromStream(device, fs);
+            if (premultiplyAlpha)
+            {
+                var pixels = new Color[tex.Width * tex.Height];
+                tex.GetData(pixels);
+                PremultiplyAlpha(pixels, pixels.Length);
+                tex.SetData(pixels);
             }
             return tex;
         }
@@ -215,15 +239,28 @@ namespace Ship_Game.Data.Texture
 
         public static unsafe void SaveAsPng(string filename, int width, int height, Color[] rgbaImage)
         {
-            fixed (Color* pColor = rgbaImage)
+            if (!NativeImageUnavailable)
             {
-                IntPtr error = SaveImageAsPNG(filename, width, height, pColor);
-                if (error != IntPtr.Zero)
+                try
                 {
-                    string message = Marshal.PtrToStringAnsi(error);
-                    Log.Error($"Save PNG {filename} failed: {message}");
+                    fixed (Color* pColor = rgbaImage)
+                    {
+                        IntPtr error = SaveImageAsPNG(filename, width, height, pColor);
+                        if (error != IntPtr.Zero)
+                        {
+                            string message = Marshal.PtrToStringAnsi(error);
+                            Log.Error($"Save PNG {filename} failed: {message}");
+                        }
+                    }
+                    return;
+                }
+                catch (Exception e) when (IsNativeLoadFailure(e))
+                {
+                    NativeImageUnavailable = true;
                 }
             }
+
+            SaveAsPngManaged(filename, width, height, rgbaImage);
         }
 
 
@@ -236,15 +273,44 @@ namespace Ship_Game.Data.Texture
             if (width == 0 || height == 0)
                 throw new ArgumentException($"DDS Width/Height cannot be zero: {width}x{height}");
 
-            fixed (Color* pColor = rgbaImage)
+            if (!NativeImageUnavailable)
             {
-                IntPtr error = SaveImageAsDDS(filename, width, height, pColor, flags);
-                if (error != IntPtr.Zero)
+                try
                 {
-                    string message = Marshal.PtrToStringAnsi(error);
-                    Log.Error($"Save DDS {filename} failed: {message}");
+                    fixed (Color* pColor = rgbaImage)
+                    {
+                        IntPtr error = SaveImageAsDDS(filename, width, height, pColor, flags);
+                        if (error != IntPtr.Zero)
+                        {
+                            string message = Marshal.PtrToStringAnsi(error);
+                            Log.Error($"Save DDS {filename} failed: {message}");
+                        }
+                    }
+                    return;
+                }
+                catch (Exception e) when (IsNativeLoadFailure(e))
+                {
+                    NativeImageUnavailable = true;
                 }
             }
+
+            SaveAsPngManaged(Path.ChangeExtension(filename, "png"), width, height, rgbaImage);
+        }
+
+        static bool IsNativeLoadFailure(Exception e)
+            => e is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException;
+
+        static void SaveAsPngManaged(string filename, int width, int height, Color[] rgbaImage)
+        {
+            GraphicsDevice device = GameBase.Base?.GraphicsDevice
+                ?? throw new InvalidOperationException("Cannot save PNG without an active graphics device.");
+            string dir = Path.GetDirectoryName(Path.GetFullPath(filename));
+            if (!string.IsNullOrEmpty(dir))
+                Directory.CreateDirectory(dir);
+            using Texture2D texture = new(device, width, height, false, SurfaceFormat.Color);
+            texture.SetData(rgbaImage);
+            using FileStream fs = File.Create(filename);
+            texture.SaveAsPng(fs, width, height);
         }
 
         // Write a DDS file containing already-compressed DXT1 or DXT5 blocks.

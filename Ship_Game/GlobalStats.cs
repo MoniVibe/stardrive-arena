@@ -49,6 +49,7 @@ public static class GlobalStats
     // Global GamePlay options for BB+ and for Mods which are loaded from Globals.yaml
     public static GamePlayGlobals Defaults;
     public static GamePlayGlobals VanillaDefaults;
+    public static bool SuppressConfigWrites;
 
     // Active Mod information
     public static ModEntry ActiveMod;
@@ -402,9 +403,12 @@ public static class GlobalStats
 
         Log.Write(ConsoleColor.DarkYellow, "Loaded App Settings");
 
-        // update TimesPlayed stats
-        WriteSetting(config, "TimesPlayed", ++TimesPlayed);
-        config.Save();
+        if (!SuppressConfigWrites)
+        {
+            // update TimesPlayed stats
+            WriteSetting(config, "TimesPlayed", ++TimesPlayed);
+            config.Save();
+        }
 
         LoadModInfo(ModPath);
     }
@@ -494,6 +498,9 @@ public static class GlobalStats
         // if the AppData config file doesn't exist, create one based on current defaults
         if (!File.Exists(configFile))
         {
+            if (SuppressConfigWrites)
+                return exeCfg;
+            Directory.CreateDirectory(Path.GetDirectoryName(configFile) ?? "");
             AutoDetectScreenResolution(exeCfg);
             exeCfg.SaveAs(configFile, ConfigurationSaveMode.Full);
         }
@@ -517,6 +524,8 @@ public static class GlobalStats
                     roamingSettings.Add(setting, exeSettings[setting].Value);
 
             // overwrite the version
+            if (exeSettings["ConfigVersion"] == null || SuppressConfigWrites)
+                return roamingCfg;
             roamingSettings["ConfigVersion"].Value = exeSettings["ConfigVersion"].Value;
 
             // force the exe config to save itself,
@@ -586,6 +595,9 @@ public static class GlobalStats
 
     public static void SaveActiveMod()
     {
+        if (SuppressConfigWrites)
+            return;
+
         var config = OpenUserConfiguration();
         WriteSetting(config, "ActiveMod", ModPath);
         config.Save();

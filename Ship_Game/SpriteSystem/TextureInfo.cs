@@ -153,14 +153,14 @@ namespace Ship_Game.SpriteSystem
 
                 DDSFlags flags = alpha ? DDSFlags.Dxt5 : DDSFlags.Dxt1;
                 ImageUtils.ConvertToDDS(ddsPath, Width, Height, color, flags);
-                return ddsPath;
+                return File.Exists(ddsPath) ? ddsPath : pngPath;
             }
             if (format == SurfaceFormat.Bgr32)
             {
                 var color = new Color[Texture.Width * Texture.Height];
                 Texture.GetData(color);
                 ImageUtils.ConvertToDDS(ddsPath, Width, Height, color, DDSFlags.Dxt1);
-                return ddsPath;
+                return File.Exists(ddsPath) ? ddsPath : pngPath;
             }
             Log.Error($"Unsupported format '{format}' from texture '{Name}.{Type}': "
                       +"Ensure you are using BGRA32 or BGR32 textures.");

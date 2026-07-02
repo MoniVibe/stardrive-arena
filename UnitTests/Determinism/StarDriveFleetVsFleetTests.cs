@@ -744,7 +744,8 @@ public class StarDriveFleetVsFleetTests : StarDriveTest
                         + $"({(aWins == 8 || bWins == 8 ? "SEED-STABLE" : "coin-flip-ish")})");
 
         // ---- emit JSON ----
-        string dir = Path.Combine(Directory.GetCurrentDirectory(), "battle-replays", "fights");
+        string dir = Path.GetFullPath(Path.Combine(StarDriveTestContext.StarDriveAbsolutePath, "..",
+            "sim-output", "battle-replays", "fights"));
         Directory.CreateDirectory(dir);
         string json = "[\n  " + string.Join(",\n  ", fights.Select(FightJson)) + "\n]\n";
         string jsonPath = Path.Combine(dir, "sweep.json");
@@ -1013,7 +1014,8 @@ public class StarDriveFleetVsFleetTests : StarDriveTest
         }
 
         // ---- emit JSON ----
-        string dir = Path.Combine(Directory.GetCurrentDirectory(), "battle-replays", "fights");
+        string dir = Path.GetFullPath(Path.Combine(StarDriveTestContext.StarDriveAbsolutePath, "..",
+            "sim-output", "battle-replays", "fights"));
         Directory.CreateDirectory(dir);
         string json = "[\n  " + string.Join(",\n  ", fights.Select(FightJson)) + "\n]\n";
         string jsonPath = Path.Combine(dir, "pareto.json");
@@ -6187,7 +6189,8 @@ public class StarDriveFleetVsFleetTests : StarDriveTest
         notes.Add($"reproducible={reproducible} over {firstWinners.Count} pairs");
 
         // ---- EMIT smallvessel.json ----
-        string dir = Path.Combine(Directory.GetCurrentDirectory(), "battle-replays", "fights");
+        string dir = Path.GetFullPath(Path.Combine(StarDriveTestContext.StarDriveAbsolutePath, "..",
+            "sim-output", "battle-replays", "fights"));
         Directory.CreateDirectory(dir);
 
         string designJson = string.Join(",\n    ", ranked.Select(r =>

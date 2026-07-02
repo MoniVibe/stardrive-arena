@@ -84,5 +84,8 @@ public static class Dir
 
     // {AppData}/StarDrive
     // This is where all the saved games and cache files are stored
-    public static readonly string StarDriveAppData = AppData + "/StarDrive";
+    public static string StarDriveAppDataOverride;
+    public static string StarDriveAppData => string.IsNullOrWhiteSpace(StarDriveAppDataOverride)
+        ? AppData + "/StarDrive"
+        : StarDriveAppDataOverride.NormalizedFilePath();
 }

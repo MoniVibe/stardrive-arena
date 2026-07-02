@@ -10,6 +10,74 @@ using System.Threading.Tasks;
 
 namespace SDLockstep;
 
+public sealed class TcpLockstepHazardProfile
+{
+    public int Seed { get; set; }
+    public int LatencyMs { get; set; }
+    public int JitterMs { get; set; }
+    public int BurstEvery { get; set; }
+    public int BurstDelayMs { get; set; }
+
+    public bool Enabled => LatencyMs > 0 || JitterMs > 0 || (BurstEvery > 0 && BurstDelayMs > 0);
+
+    public int DelayFor(int sequence, int toPeer, LockstepMessage message)
+    {
+        if (!Enabled || message == null)
+            return 0;
+
+        int delay = Math.Max(0, LatencyMs);
+        int jitter = Math.Max(0, JitterMs);
+        if (jitter > 0)
+        {
+            int span = checked(jitter * 2 + 1);
+            delay += StableModulo(Mix(sequence, toPeer, message.FromPeer, message.GetType().Name), span) - jitter;
+        }
+
+        if (BurstEvery > 0 && BurstDelayMs > 0 && sequence % BurstEvery == 0)
+            delay += BurstDelayMs;
+
+        return Math.Max(0, delay);
+    }
+
+    int Mix(int sequence, int toPeer, int fromPeer, string typeName)
+    {
+        unchecked
+        {
+            int h = Seed == 0 ? 0x5EED4A11 : Seed;
+            h = (h * 397) ^ sequence;
+            h = (h * 397) ^ toPeer;
+            h = (h * 397) ^ fromPeer;
+            for (int i = 0; i < typeName.Length; ++i)
+                h = (h * 397) ^ typeName[i];
+            return h;
+        }
+    }
+
+    static int StableModulo(int value, int modulus)
+    {
+        if (modulus <= 1)
+            return 0;
+        uint unsigned = unchecked((uint)value);
+        return (int)(unsigned % (uint)modulus);
+    }
+}
+
+public sealed class TcpLockstepHazardStats
+{
+    public int DelayedMessages { get; internal set; }
+    public long TotalDelayMs { get; internal set; }
+    public int MaxDelayMs { get; internal set; }
+
+    internal void Record(int delayMs)
+    {
+        if (delayMs <= 0)
+            return;
+        DelayedMessages++;
+        TotalDelayMs += delayMs;
+        MaxDelayMs = Math.Max(MaxDelayMs, delayMs);
+    }
+}
+
 /// <summary>
 /// Reliable ordered TCP transport for lockstep sessions. It deliberately keeps the
 /// <see cref="ILockstepTransport"/> surface: peers register local receivers, <see cref="Send"/>
@@ -35,6 +103,7 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
     Task AcceptTask;
     bool Disposed;
     readonly bool MultiRemote;
+    int HazardSequence;
 
     public int RemotePeerId { get; }
     public bool IsConnected { get; private set; }
@@ -47,6 +116,8 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
     public int PendingRemoteCount { get { lock (Gate) return PendingRemote.Count; } }
     public int InboundRemoteCount { get { lock (Gate) return InboundRemote.Count; } }
     public Action<string> AuthoritativeFrameTrace { get; set; }
+    public TcpLockstepHazardProfile HazardProfile { get; set; }
+    public TcpLockstepHazardStats HazardStats { get; } = new();
 
     TcpLockstepTransport(int remotePeerId, bool multiRemote = false)
     {
@@ -452,6 +523,10 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
     {
         try
         {
+            int delayMs = HazardDelay(envelope);
+            if (delayMs > 0)
+                Thread.Sleep(delayMs);
+
             byte[] payload = LockstepMessageCodec.Encode(envelope.Message, envelope.ToPeer);
             byte[] length = BitConverter.GetBytes(payload.Length);
             lock (connection.WriteGate)
@@ -481,6 +556,23 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
             }
             TraceAuthoritativeFrame("write-remote-error", envelope.ToPeer, envelope.Message, connection.PeerId);
         }
+    }
+
+    int HazardDelay(RemoteEnvelope envelope)
+    {
+        TcpLockstepHazardProfile profile = HazardProfile;
+        if (profile == null || !profile.Enabled)
+            return 0;
+
+        int sequence = Interlocked.Increment(ref HazardSequence);
+        int delayMs = profile.DelayFor(sequence, envelope.ToPeer, envelope.Message);
+        if (delayMs > 0)
+        {
+            HazardStats.Record(delayMs);
+            TraceAuthoritativeFrame($"hazard-delay ms={delayMs} seq={sequence}", envelope.ToPeer,
+                envelope.Message);
+        }
+        return delayMs;
     }
 
     void DrainInboundRemote()
