@@ -177,6 +177,7 @@
     <Compile Include="TestImpactPredictor.Scenario.cs" />
     <Compile Include="LinearAlgebra\TestMathExt.cs" />
     <Compile Include="Multiplayer\Authoritative4XSessionTests.cs" />
+    <Compile Include="Multiplayer\ReplicationCoverageDiagnosticTests.cs" />
     <Compile Include="Collections\TestSafeQueueT.cs" />
     <Compile Include="Universe\CameraProjectionTests.cs" />
     <Compile Include="Universe\CommonVisualization.cs" />
