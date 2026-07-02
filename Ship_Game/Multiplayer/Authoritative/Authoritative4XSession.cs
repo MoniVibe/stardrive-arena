@@ -2647,14 +2647,14 @@ public sealed class Authoritative4XAuthority
     }
 
     public (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot)
-        Process(AuthoritativePlayerCommand command)
+        Process(AuthoritativePlayerCommand command, bool captureSnapshot = true)
     {
         AuthoritativeCommandResult result = Applicator.Apply(command, Tick + 1);
-        return Advance(result);
+        return Advance(result, captureSnapshot);
     }
 
     public (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot)
-        RejectAndAdvance(int sequence, string reason)
+        RejectAndAdvance(int sequence, string reason, bool captureSnapshot = true)
     {
         return Advance(new AuthoritativeCommandResult
         {
@@ -2662,14 +2662,15 @@ public sealed class Authoritative4XAuthority
             Accepted = false,
             Tick = Tick + 1,
             Reason = reason ?? "",
-        });
+        }, captureSnapshot);
     }
 
-    (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) Advance(AuthoritativeCommandResult result)
+    (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) Advance(
+        AuthoritativeCommandResult result, bool captureSnapshot)
     {
         Universe.SingleSimulationStep(Step);
         Tick++;
-        return (result, AuthoritativeStateSnapshot.Capture(Universe, Tick));
+        return (result, captureSnapshot ? AuthoritativeStateSnapshot.Capture(Universe, Tick) : null);
     }
 
     public AuthoritativeDiplomacyPopup[] DrainDiplomacyPopups() => Diplomacy.DrainPopups();
@@ -3168,11 +3169,11 @@ public sealed class Authoritative4XNetworkHost : IDisposable
     public void Poll() => Transport.Poll();
     public void Dispose() => Transport.Dispose();
 
-    public void SubmitLocal(int peerId, AuthoritativePlayerCommand command)
+    public void SubmitLocal(int peerId, AuthoritativePlayerCommand command, bool broadcast = true)
     {
         if (IsResyncInProgress)
             return;
-        ProcessCommand(peerId, command);
+        ProcessCommand(peerId, command, broadcast);
     }
 
     public int BeginResyncEpoch(AuthoritativeResyncRequestMessage request)
@@ -3249,18 +3250,23 @@ public sealed class Authoritative4XNetworkHost : IDisposable
         }
     }
 
-    void ProcessCommand(int fromPeer, AuthoritativePlayerCommand command)
+    void ProcessCommand(int fromPeer, AuthoritativePlayerCommand command, bool broadcast = true)
     {
         (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) =
             !EmpireByPeer.TryGetValue(fromPeer, out int allowedEmpire) || allowedEmpire != command.EmpireId
                 ? Authority.RejectAndAdvance(command.Sequence,
-                    $"Peer {fromPeer} does not control empire {command.EmpireId}.")
-                : Authority.Process(command);
+                    $"Peer {fromPeer} does not control empire {command.EmpireId}.", broadcast)
+                : Authority.Process(command, broadcast);
         result.OriginPeer = fromPeer;
 
         LastResult = result;
-        LastAuthoritySnapshot = snapshot;
-        ProcessedCommands.Add(new Authoritative4XProcessedCommand(fromPeer, command, result, snapshot));
+        if (snapshot != null)
+            LastAuthoritySnapshot = snapshot;
+        if (broadcast)
+            ProcessedCommands.Add(new Authoritative4XProcessedCommand(fromPeer, command, result, snapshot));
+        if (!broadcast)
+            return;
+
         foreach (int peer in PeerIds)
         {
             if (peer == LocalPeerId)

@@ -455,7 +455,9 @@ namespace Ship_Game
                 {
                     SceneObjBackQueue.RemoveAtSwapLast(i);
                 }
-                else if (IsVisibleToLocalPlayerForUi(ship))
+                else if (IsVisibleToLocalPlayerForUi(ship)
+                         || (Authoritative4XMultiplayer?.IsHost == false
+                             && ShouldMaintainAuthoritative4XPassiveSceneObject(ship)))
                 {
                     ship.CreateSceneObject();
                     SceneObjBackQueue.RemoveAtSwapLast(i);

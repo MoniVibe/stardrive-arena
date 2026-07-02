@@ -119,10 +119,25 @@ public partial class UniverseScreen
     }
 
     public bool IsVisibleToLocalPlayerInMapForUi(Ship ship)
-        => ship?.InFrustum == true && IsKnownToLocalPlayerForUi(ship);
+        => IsShipInCurrentFrustumForUi(ship) && IsKnownToLocalPlayerForUi(ship);
 
     public bool IsVisibleToLocalPlayerForUi(Ship ship)
         => IsVisibleToLocalPlayerInMapForUi(ship) && UState.IsSystemViewOrCloser;
+
+    bool IsShipInCurrentFrustumForUi(Ship ship)
+    {
+        if (ship?.Active != true)
+            return false;
+        if (ship.InFrustum)
+            return true;
+        if (Authoritative4XLive?.IsHost == true)
+            return false;
+
+        bool inCurrentFrustum = IsInFrustum(ship.Position, Math.Max(ship.Radius, 32f));
+        if (inCurrentFrustum)
+            ship.InFrustum = true;
+        return inCurrentFrustum;
+    }
 
     public bool TrySaveAuthoritative4XSessionToDefault(out FileInfo savedFile, out string error)
     {
@@ -293,13 +308,19 @@ public partial class UniverseScreen
         for (int i = 0; i < visible.Length; ++i)
         {
             Ship ship = visible[i];
-            if (!IsVisibleToLocalPlayerForUi(ship))
+            if (!ShouldMaintainAuthoritative4XPassiveSceneObject(ship))
                 continue;
-            ship.SyncSceneObjectForPassiveAuthoritativeView();
+            ship.SyncSceneObjectForPassiveAuthoritativeView(forceVisible: true);
             ++synced;
         }
         return synced;
     }
+
+    internal bool ShouldMaintainAuthoritative4XPassiveSceneObject(Ship ship)
+        => ship?.Active == true
+           && !ship.Dying
+           && UState.IsSystemViewOrCloser
+           && IsKnownToLocalPlayerForUi(ship);
 
     void MarkKnownToAuthoritativeLocalPlayer(Ship ship)
     {
@@ -307,7 +328,7 @@ public partial class UniverseScreen
             return;
 
         ship.KnownByEmpires.SetSeen(Authoritative4XLocalPlayer);
-        if (ship.InFrustum && UState.IsSystemViewOrCloser)
+        if (UState.IsSystemViewOrCloser && IsShipInCurrentFrustumForUi(ship))
             QueueSceneObjectCreation(ship);
     }
 

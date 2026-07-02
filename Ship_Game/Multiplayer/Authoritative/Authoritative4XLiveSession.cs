@@ -20,6 +20,7 @@ public enum Authoritative4XLiveRole
 public sealed class Authoritative4XLiveSession : IDisposable
 {
     const int FirstHeartbeatSequence = -1;
+    const int HeartbeatBroadcastInterval = 4;
     static readonly float[] SpeedCycle = { 0.5f, 1f, 2f, 4f };
 
     readonly UniverseScreen Universe;
@@ -564,7 +565,9 @@ public sealed class Authoritative4XLiveSession : IDisposable
         if (Universe.UState.Paused || IsResyncInProgress)
             return;
 
-        Host.SubmitLocal(LocalPeerId, AuthoritativePlayerCommand.NoOp(HeartbeatSequence--, LocalEmpireId));
+        int sequence = HeartbeatSequence--;
+        bool broadcast = (-sequence % HeartbeatBroadcastInterval) == 0;
+        Host.SubmitLocal(LocalPeerId, AuthoritativePlayerCommand.NoOp(sequence, LocalEmpireId), broadcast);
     }
 
     void RecordNetworkError()
@@ -601,7 +604,12 @@ public sealed class Authoritative4XLiveSession : IDisposable
         if (drift == null)
             return;
 
-        string key = $"{drift.Result?.OriginPeer}:{drift.Result?.Sequence}:"
+        AuthoritativeCommandResult result = drift.Result;
+        bool heartbeat = result?.Sequence < 0;
+        if (heartbeat && result.Tick % 300 != 0)
+            return;
+
+        string key = $"{result?.OriginPeer}:{result?.Sequence}:"
                      + $"{drift.ClientSnapshot?.Tick}:{drift.AuthoritySnapshot?.HashLo}:"
                      + $"{drift.AuthoritySnapshot?.HashHi}:{drift.ClientSnapshot?.HashLo}:"
                      + $"{drift.ClientSnapshot?.HashHi}:{drift.ClientSnapshot?.SyncDigest}";

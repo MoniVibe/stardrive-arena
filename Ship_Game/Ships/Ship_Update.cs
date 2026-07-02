@@ -115,11 +115,11 @@ namespace Ship_Game.Ships
             }
         }
 
-        public void SyncSceneObjectForPassiveAuthoritativeView()
+        public void SyncSceneObjectForPassiveAuthoritativeView(bool forceVisible = false)
         {
             if (!Active || Dying)
                 return;
-            if (!IsVisibleToPlayer)
+            if (!forceVisible && !IsVisibleToPlayer)
                 return;
 
             if (ShipSO == null)

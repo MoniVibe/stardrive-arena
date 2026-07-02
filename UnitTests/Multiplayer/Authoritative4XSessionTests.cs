@@ -8169,6 +8169,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             typeof(UniverseObjectManager).GetField("<VisibleShips>k__BackingField",
                     System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
                 ?.SetValue(client.UState.Objects, Array.Empty<Ship>());
+            clientShip.InFrustum = false;
             authorityShip.Rotation = 2.125f;
             authorityShip.YRotation = 0.25f;
             authorityShip.XRotation = -0.125f;
@@ -8185,6 +8186,8 @@ public class Authoritative4XSessionTests : StarDriveTest
                                  * Matrix.CreateTranslation(new Vector3(clientShip.Position, 0f));
             Assert.AreEqual(expectedWorld, sceneObject.World,
                 "Passive clients should update the 3D hull orientation even when the visible-object cache lags.");
+            Assert.AreEqual(GlobalStats.ShipVisibility, sceneObject.Visibility,
+                "A stale frustum bit must not leave the joined-client hull scene object hidden.");
         }
         finally
         {
@@ -8394,10 +8397,21 @@ public class Authoritative4XSessionTests : StarDriveTest
                 new[] { authority.Player.Id, authority.Enemy.Id });
             authority.Screen.AttachAuthoritative4XMultiplayer(liveHost);
 
+            for (int i = 0; i < 3; ++i)
+            {
+                liveHost.Poll();
+                networkClient.Poll();
+                Assert.IsNull(networkClient.LastResult,
+                    "Host no-op heartbeats should advance authority state without broadcasting every frame; "
+                    + "otherwise remote UI commands get stuck behind stale full-snapshot traffic.");
+            }
+
             PumpLiveTcpUntil(() => NetworkClientCaughtHeartbeat(networkClient, HostPeer),
                 liveHost, networkClient);
             Assert.IsNotNull(authority.Screen.Authoritative4XMultiplayer,
                 "The visible universe should own the live authoritative session.");
+            Assert.AreEqual(-4, networkClient.LastResult.Sequence,
+                "The first broadcast heartbeat should be cadence-limited instead of frame-by-frame.");
             Assert.AreEqual(networkClient.LastAuthoritySnapshot.SyncDigest,
                 networkClient.LastClientSnapshot.SyncDigest);
         }
