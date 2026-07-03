@@ -2741,9 +2741,12 @@ public sealed class Authoritative4XClientReplica
         {
             if (!IsSnapshotOnlyReplay(command.Kind))
             {
-                AuthoritativeCommandResult local = Applicator.Apply(command, result.Tick);
+                AuthoritativeCommandResult local = Applicator.ApplyTrustedHostAccepted(command, result.Tick);
                 if (!local.Accepted)
-                    throw new System.InvalidOperationException($"Client replica rejected accepted command {command.Sequence}: {local.Reason}");
+                {
+                    Log.Warning("Client replica could not locally apply host-accepted command "
+                                + $"{command.Sequence} ({command.Kind}): {local.Reason}");
+                }
             }
         }
         Empire localEmpireBefore = Universe.Player;

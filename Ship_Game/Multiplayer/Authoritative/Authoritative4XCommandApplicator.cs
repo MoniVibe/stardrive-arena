@@ -5,6 +5,7 @@ using Ship_Game.AI;
 using Ship_Game.Commands.Goals;
 using Ship_Game.Determinism.Lockstep;
 using Ship_Game.Fleets;
+using Ship_Game.Gameplay;
 using Ship_Game.Ships;
 using Ship_Game.Ships.AI;
 using Ship_Game.Universe;
@@ -30,6 +31,12 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     public AuthoritativeCommandResult Apply(AuthoritativePlayerCommand command, uint tick)
+        => Apply(command, tick, trustHostAccepted: false);
+
+    public AuthoritativeCommandResult ApplyTrustedHostAccepted(AuthoritativePlayerCommand command, uint tick)
+        => Apply(command, tick, trustHostAccepted: true);
+
+    AuthoritativeCommandResult Apply(AuthoritativePlayerCommand command, uint tick, bool trustHostAccepted)
     {
         var result = new AuthoritativeCommandResult { Sequence = command.Sequence, Tick = tick };
         Empire empire = UState.GetEmpireById(command.EmpireId);
@@ -102,8 +109,8 @@ public sealed class Authoritative4XCommandApplicator
                     AuthoritativePlayerCommandKind.SetShipTradeRoute => ApplyShipTradeRoute(command, empire, result),
                     AuthoritativePlayerCommandKind.SetShipAreaOfOperation => ApplyShipAreaOfOperation(command, empire, result),
                     AuthoritativePlayerCommandKind.RefitShip => ApplyShipRefit(command, empire, result),
-                    AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result),
-                    AuthoritativePlayerCommandKind.ShipTargetOrder => ApplyShipTargetOrder(command, empire, result),
+                    AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result, trustHostAccepted),
+                    AuthoritativePlayerCommandKind.ShipTargetOrder => ApplyShipTargetOrder(command, empire, result, trustHostAccepted),
                     AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
                     _ => Reject(result, $"Unsupported command kind {command.Kind}."),
                 };
@@ -704,7 +711,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyAttackShip(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Ship ship = UState.Objects.FindShip(command.SubjectId);
         if (ship == null)
@@ -723,7 +730,8 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, $"Target ship {command.TargetId} is inactive.");
         if (target == ship)
             return Reject(result, "A ship cannot attack itself.");
-        if (!TryEnsureHostileShipTarget(empire, target, "attack", result, out AuthoritativeCommandResult reject))
+        if (!TryEnsureHostileShipTarget(empire, target, "attack", result,
+                out AuthoritativeCommandResult reject, trustHostAccepted))
             return reject;
 
         bool queue = string.Equals(command.Text, "queue", StringComparison.Ordinal);
@@ -735,7 +743,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyShipTargetOrder(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (!AuthoritativePlayerCommand.TryParseShipTargetOrderPayload(command.Text,
                 out AuthoritativeShipTargetOrderType orderType, out bool queue))
@@ -769,7 +777,7 @@ public sealed class Authoritative4XCommandApplicator
                 if (ship.IsPlatformOrStation || ship.ShipData.Role == RoleName.troop)
                     return Reject(result, $"Ship {ship.Id} cannot receive authoritative attack target orders.");
                 if (!TryEnsureHostileShipTarget(empire, target, "attack", result,
-                        out AuthoritativeCommandResult rejectedAttack))
+                        out AuthoritativeCommandResult rejectedAttack, trustHostAccepted))
                     return rejectedAttack;
                 if (queue)
                     ship.AI.OrderQueueSpecificTarget(target);
@@ -795,7 +803,7 @@ public sealed class Authoritative4XCommandApplicator
 
             case AuthoritativeShipTargetOrderType.Board:
                 if (!TryEnsureHostileShipTarget(empire, target, "board", result,
-                        out AuthoritativeCommandResult rejectedBoard))
+                        out AuthoritativeCommandResult rejectedBoard, trustHostAccepted))
                     return rejectedBoard;
                 if (!IsSingleTroopTargetOrderShip(ship) || ship.TroopCount == 0)
                     return Reject(result, $"Ship {ship.Id} has no boarding troop.");
@@ -808,7 +816,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     bool TryEnsureHostileShipTarget(Empire empire, Ship target, string verb, AuthoritativeCommandResult result,
-        out AuthoritativeCommandResult reject)
+        out AuthoritativeCommandResult reject, bool trustHostAccepted = false)
     {
         reject = null;
         if (target?.Loyalty == null)
@@ -827,6 +835,12 @@ public sealed class Authoritative4XCommandApplicator
         if (empire.IsEmpireAttackable(targetEmpire, target))
             return true;
 
+        if (trustHostAccepted)
+        {
+            MarkTrustedHostAcceptedWarAttackable(empire, targetEmpire);
+            return true;
+        }
+
         string reason = "";
         if (Diplomacy != null
             && AuthoritativeHumanPlayers.IsHumanVsHuman(empire, targetEmpire)
@@ -841,6 +855,22 @@ public sealed class Authoritative4XCommandApplicator
             ? reason
             : $"Empire {empire.Id} cannot {verb} ship {target.Id}.");
         return false;
+    }
+
+    static void MarkTrustedHostAcceptedWarAttackable(Empire empire, Empire targetEmpire)
+    {
+        MarkAtWarRelationshipAttackable(empire, targetEmpire);
+        MarkAtWarRelationshipAttackable(targetEmpire, empire);
+    }
+
+    static void MarkAtWarRelationshipAttackable(Empire empire, Empire targetEmpire)
+    {
+        Relationship rel = empire?.GetRelationsOrNull(targetEmpire);
+        if (rel?.AtWar != true)
+            return;
+
+        rel.CanAttack = true;
+        rel.IsHostile = true;
     }
 
     AuthoritativeCommandResult ApplyShipPlanetOrder(AuthoritativePlayerCommand command, Empire empire,

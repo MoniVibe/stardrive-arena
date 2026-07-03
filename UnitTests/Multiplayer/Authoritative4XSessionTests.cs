@@ -1434,6 +1434,79 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XHumanAttackShip_HostAcceptedReplayCannotBeClientRejected_Headless()
+    {
+        const ulong Seed = 0xA77ACD14UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+        const int PeerB = 3;
+
+        try
+        {
+            int empireA = authority.Player.Id;
+            int empireB = authority.Enemy.Id;
+            int[] humanEmpireIds = { empireA, empireB };
+            MakePeace(authority.Player, authority.Enemy);
+            MakePeace(client.Player, client.Enemy);
+            AuthoritativeHumanPlayers.SetHumanControlledEmpires(authority.UState, humanEmpireIds);
+            AuthoritativeHumanPlayers.SetHumanControlledEmpires(client.UState, humanEmpireIds);
+            Assert.IsTrue(AuthoritativeHumanPlayers.IsHumanVsHuman(client.Enemy, client.Player),
+                "The passive client must know both empires are human-controlled.");
+
+            var attack = AuthoritativePlayerCommand.AttackShip(14, empireB,
+                authority.EnemyShip.Id, authority.Ship.Id);
+            var authoritySession = new Authoritative4XAuthority(authority.Screen,
+                humanEmpireIds: humanEmpireIds);
+            (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) =
+                authoritySession.Process(attack);
+            result.OriginPeer = PeerB;
+            Assert.IsTrue(result.Accepted, result.Reason);
+            Assert.IsTrue(authority.Enemy.IsAtWarWith(authority.Player),
+                "Host acceptance should auto-declare war for the human-vs-human attack.");
+            Assert.IsTrue(authority.Enemy.IsEmpireAttackable(authority.Player, authority.Ship),
+                "Host acceptance should leave the attacker able to attack the target empire.");
+
+            MakeStaleAtWarWithoutAttackPermission(client.Enemy, client.Player);
+            MakeStaleAtWarWithoutAttackPermission(client.Player, client.Enemy);
+            var staleApplicator = new Authoritative4XCommandApplicator(client.UState,
+                new AuthoritativeDiplomacyManager(client.UState));
+            AuthoritativeCommandResult staleLocal = staleApplicator.Apply(attack, result.Tick);
+            Assert.IsFalse(staleLocal.Accepted,
+                "The repro must prove the old passive-client validation gate can reject an already-at-war relationship with stale CanAttack=false.");
+            StringAssert.Contains(staleLocal.Reason, "cannot attack ship");
+
+            MakeStaleAtWarWithoutAttackPermission(client.Enemy, client.Player);
+            MakeStaleAtWarWithoutAttackPermission(client.Player, client.Enemy);
+            var replica = new Authoritative4XClientReplica(client.Screen, humanEmpireIds: humanEmpireIds);
+            AuthoritativeStateSnapshot suppressedRelationshipReplay =
+                SuppressRelationshipReplayForTest(snapshot);
+
+            replica.ApplyAuthoritativeResult(attack, result, suppressedRelationshipReplay);
+
+            Assert.AreEqual(snapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                FirstPayloadDifferenceForTest(snapshot.Payload, replica.LastSnapshot.Payload));
+            Assert.AreEqual(snapshot.TransformDigest, replica.LastSnapshot.TransformDigest,
+                FirstPayloadDifferenceForTest(snapshot.Payload, replica.LastSnapshot.Payload));
+            Assert.IsTrue(client.Enemy.IsAtWarWith(client.Player));
+            Assert.IsTrue(client.Player.IsAtWarWith(client.Enemy));
+            Assert.IsTrue(client.Enemy.GetRelations(client.Player).CanAttack,
+                "Trusted host-accepted replay must repair stale attackability for the attacking relationship.");
+            Assert.IsTrue(client.Player.GetRelations(client.Enemy).CanAttack,
+                "Trusted host-accepted replay must repair stale attackability for the target relationship.");
+            Assert.IsTrue(client.Enemy.IsEmpireAttackable(client.Player, client.Ship));
+            Assert.AreEqual(client.Ship, client.EnemyShip.AI.Target);
+            Assert.AreEqual(AIState.AttackTarget, client.EnemyShip.AI.State);
+        }
+        finally
+        {
+            AuthoritativeHumanPlayers.Clear(authority.UState);
+            AuthoritativeHumanPlayers.Clear(client.UState);
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XColonizationGoal_MarksCancelsAndSyncs_Headless()
     {
         const ulong Seed = 0xC010412EUL;
@@ -15201,6 +15274,33 @@ public class Authoritative4XSessionTests : StarDriveTest
         Empire.UpdateBilateralRelations(a, b);
         Assert.IsFalse(a.IsAtWarWith(b), $"Empire {a.Id} should be at peace with {b.Id}.");
         Assert.IsFalse(b.IsAtWarWith(a), $"Empire {b.Id} should be at peace with {a.Id}.");
+    }
+
+    static void MakeStaleAtWarWithoutAttackPermission(Empire us, Empire them)
+    {
+        Relationship rel = us.GetRelations(them);
+        rel.AtWar = true;
+        rel.IsHostile = true;
+        rel.CanAttack = false;
+        rel.ActiveWar = null;
+    }
+
+    static AuthoritativeStateSnapshot SuppressRelationshipReplayForTest(AuthoritativeStateSnapshot snapshot)
+    {
+        string[] lines = snapshot.Payload.Split('\n');
+        for (int i = 0; i < lines.Length; ++i)
+            if (lines[i].StartsWith("R|", StringComparison.Ordinal))
+                lines[i] = "XR|" + lines[i].Substring(2);
+
+        return new AuthoritativeStateSnapshot
+        {
+            Tick = snapshot.Tick,
+            HashLo = snapshot.HashLo,
+            HashHi = snapshot.HashHi,
+            SyncDigest = snapshot.SyncDigest,
+            TransformDigest = snapshot.TransformDigest,
+            Payload = string.Join("\n", lines),
+        };
     }
 
     static void ClearWarOneWay(Empire us, Empire them)
