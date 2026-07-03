@@ -41,6 +41,7 @@ public static class AuthoritativeMutationGuard
 #if DEBUG
     [ThreadStatic] static int ReplayApplyDepth;
     [ThreadStatic] static int AcceptedCommandDepth;
+    [ThreadStatic] static int UniverseInitDepth;
 
     public static AuthoritativeMutationScope EnterReplayApply()
     {
@@ -54,7 +55,19 @@ public static class AuthoritativeMutationGuard
         return new AuthoritativeMutationScope(static () => --AcceptedCommandDepth);
     }
 
-    static bool IsSanctionedPath => ReplayApplyDepth > 0 || AcceptedCommandDepth > 0;
+    // Sanctions the one-time initial universe build (LoadContent -> InitializeUniverse:
+    // CreateStartingShips, solar-system/empire init, ship warmup). A passive joiner
+    // constructs a local universe that the host's first snapshot then reconciles;
+    // that construction is not passive-sim mutation. The live Update loop is NOT
+    // wrapped, so genuine passive-sim leaks are still caught.
+    public static AuthoritativeMutationScope EnterUniverseInitialization()
+    {
+        ++UniverseInitDepth;
+        return new AuthoritativeMutationScope(static () => --UniverseInitDepth);
+    }
+
+    static bool IsSanctionedPath => ReplayApplyDepth > 0 || AcceptedCommandDepth > 0
+        || UniverseInitDepth > 0;
 #endif
 
     public static void ResetForTests()
@@ -62,6 +75,7 @@ public static class AuthoritativeMutationGuard
 #if DEBUG
         ReplayApplyDepth = 0;
         AcceptedCommandDepth = 0;
+        UniverseInitDepth = 0;
 #endif
     }
 

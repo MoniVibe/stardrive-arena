@@ -395,6 +395,10 @@ namespace Ship_Game
                 return;
 
             IsUniverseInitialized = true;
+            // A passive authoritative joiner builds this universe locally before the
+            // host's first snapshot reconciles it; that one-time construction must not
+            // trip the passive-client mutation guard (the live Update loop still does).
+            using var _ = Multiplayer.Authoritative.AuthoritativeMutationGuard.EnterUniverseInitialization();
             CreateStartingShips();
             InitializeSolarSystems();
 

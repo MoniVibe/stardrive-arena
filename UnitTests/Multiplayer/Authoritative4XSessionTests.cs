@@ -8048,6 +8048,46 @@ public class Authoritative4XSessionTests : StarDriveTest
         }
     }
 
+    // Regression for the live joiner crash: a passive authoritative universe builds its
+    // initial local universe (LoadContent -> InitializeUniverse -> CreateStartingShips ->
+    // Ship..ctor -> KillAllTroops) before the host's first snapshot reconciles it. That
+    // one-time construction must NOT trip the guard; the live Update loop still must.
+    [TestMethod]
+    public void AuthoritativeMutationGuard_AllowsUniverseInitializationScope_Headless()
+    {
+        if (!DebugMutationGuardEnabled)
+            return;
+
+        const ulong Seed = 0x494E4954554EUL;
+        BuiltWorld world = BuildWorld(Seed, includeTroopShips: true);
+
+        try
+        {
+            Troop troop = FirstLoadedTroop(world.TroopShip);
+            using (Authoritative4XClientContext.Begin(2, world.Player.Id, _ => { }))
+            {
+#if DEBUG
+                using (AuthoritativeMutationGuard.EnterUniverseInitialization())
+                {
+                    world.Planet.SetColonyType(Planet.ColonyType.Industrial);
+                    troop.UpdateMoveActions(-1);
+                    world.Player.SwitchRushAllConstruction(!world.Player.RushAllConstruction);
+                }
+#endif
+
+                // Once the initial build completes, the live passive guard is armed again.
+                InvalidOperationException e = Assert.ThrowsExactly<InvalidOperationException>(
+                    () => world.Planet.SetColonyType(Planet.ColonyType.Research));
+                StringAssert.Contains(e.Message,
+                    "Passive authoritative client attempted local replicated-state mutation");
+            }
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
     static bool DebugMutationGuardEnabled
     {
         get
