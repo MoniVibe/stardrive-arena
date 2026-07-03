@@ -18,6 +18,7 @@ public partial class UniverseScreen
 
     public Authoritative4XLiveSession Authoritative4XMultiplayer => Authoritative4XLive;
     public bool IsAuthoritative4XMultiplayer => Authoritative4XLive != null;
+    public bool IsAuthoritative4XHost => Authoritative4XLive?.IsHost == true;
     public Empire Authoritative4XLocalPlayerForUi => Authoritative4XLocalPlayer;
     public override bool KeepActiveWhenGameUnfocused => IsAuthoritative4XMultiplayer;
 
@@ -26,6 +27,7 @@ public partial class UniverseScreen
         DetachAuthoritative4XMultiplayer();
         Authoritative4XLive = session;
         Authoritative4XLive?.ActivateUiCommandContext();
+        ResetAuthoritativeHostSimulationClock();
         EnsureAuthoritative4XLocalBinding(forceVisibilityRefresh: true);
         if (Authoritative4XLive != null && !Authoritative4XLive.IsHost)
             RefreshAuthoritative4XPassiveClientView();

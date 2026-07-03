@@ -7,6 +7,7 @@ using SDGraphics.Input;
 using SDGraphics;
 using SDUtils;
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
 using Ship_Game.Universe;
@@ -62,7 +63,7 @@ namespace Ship_Game
         readonly Map<Planet, float> PlanetDistanceToClosestColony = new Map<Planet, float>();
 
         public PlanetListScreen(UniverseScreen parent, EmpireUIOverlay empireUi, string audioCue = "")
-            : base(parent, toPause: parent)
+            : base(parent, toPause: PauseTargetFor(parent))
         {
             if(!string.IsNullOrEmpty(audioCue))
                 GameAudio.PlaySfxAsync(audioCue);
@@ -127,6 +128,11 @@ namespace Ship_Game
             Vector2 troopPos = new Vector2(TitleBar.Menu.X + TitleBar.Menu.Width + 17, TitleBar.Menu.Y + 65);
             AvailableTroops  = Add(new UILabel(troopPos, $"Available Troops: ", Fonts.Arial20Bold, Color.LightGreen));
         }
+
+        internal static UniverseScreen PauseTargetFor(UniverseScreen universe)
+            => universe?.IsAuthoritative4XMultiplayer == true || Authoritative4XClientContext.IsActive
+                ? null
+                : universe;
 
         void CalcPlanetsDistances()
         {

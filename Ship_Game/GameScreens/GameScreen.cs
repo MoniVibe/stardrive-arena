@@ -391,6 +391,10 @@ namespace Ship_Game
             Update(elapsed.RealTime.Seconds); // Update UIElementV2
         }
 
+        internal virtual void UpdateHidden(UpdateTimes elapsed)
+        {
+        }
+
         // TODO: This is deprecated by UIBasicAnimEffect system
         bool UpdateTransition(UpdateTimes elapsed, float transitionTime, int direction)
         {

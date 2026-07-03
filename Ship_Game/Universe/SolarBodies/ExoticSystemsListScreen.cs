@@ -7,6 +7,7 @@ using SDGraphics.Input;
 using SDGraphics;
 using SDUtils;
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
 using Ship_Game.Universe;
@@ -43,7 +44,7 @@ namespace Ship_Game
         readonly Map<ExplorableGameObject, float> DistancesToClosestColony = new();
 
         public ExoticSystemsListScreen(UniverseScreen parent, EmpireUIOverlay empireUi, string audioCue = "")
-            : base(parent, toPause: parent)
+            : base(parent, toPause: PauseTargetFor(parent))
         {
             if (!string.IsNullOrEmpty(audioCue))
                 GameAudio.PlaySfxAsync(audioCue);
@@ -97,6 +98,11 @@ namespace Ship_Game
             PlanetArrayListButton = Add(new UIButton(ButtonStyle.BigDip, planetArrayPos, GameText.PlanetArray));
             PlanetArrayListButton.OnClick = (b) => OnPlanetArrayListClick();
         }
+
+        internal static UniverseScreen PauseTargetFor(UniverseScreen universe)
+            => universe?.IsAuthoritative4XMultiplayer == true || Authoritative4XClientContext.IsActive
+                ? null
+                : universe;
 
         void CalcPlanetsDistances()
         {

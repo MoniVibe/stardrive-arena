@@ -6,6 +6,7 @@ using SDGraphics;
 using SDGraphics.Input;
 using SDUtils;
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
@@ -73,7 +74,7 @@ namespace Ship_Game
         private readonly SortButton SB_STL;
 
         public ShipListScreen(UniverseScreen parent, EmpireUIOverlay empUi, string audioCue = "")
-            : base(parent, toPause: parent)
+            : base(parent, toPause: PauseTargetFor(parent))
         {
             Universe = parent;
             if (!string.IsNullOrEmpty(audioCue))
@@ -148,6 +149,11 @@ namespace Ship_Game
             ShowRoles.ActiveIndex = IndexLast;  //fbedard: remember last filter
             ResetList(ShowRoles.ActiveValue);
         }
+
+        internal static UniverseScreen PauseTargetFor(UniverseScreen universe)
+            => universe?.IsAuthoritative4XMultiplayer == true || Authoritative4XClientContext.IsActive
+                ? null
+                : universe;
 
         public override void Draw(SpriteBatch batch, DrawTimes elapsed)
         {

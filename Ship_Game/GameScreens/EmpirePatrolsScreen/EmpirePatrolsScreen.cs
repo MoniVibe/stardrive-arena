@@ -38,7 +38,7 @@ namespace Ship_Game
         SortButton LastSorted;
 
         public EmpirePatrolsScreen(UniverseScreen parent, Empire player)
-            : base(parent, toPause: parent)
+            : base(parent, toPause: PauseTargetFor(parent))
         {
             Universe = parent;
             Player = player;
@@ -67,6 +67,11 @@ namespace Ship_Game
             SbNumFleetsAssigned = new SortButton(Player.data.PLSort, Localizer.Token(GameText.PatrolNumAssignedFleets));
             SbFleetsAssigned = new SortButton(Player.data.PLSort, Localizer.Token(GameText.PatrolAssignedFleets));
         }
+
+        internal static UniverseScreen PauseTargetFor(UniverseScreen universe)
+            => universe?.IsAuthoritative4XMultiplayer == true || Authoritative4XClientContext.IsActive
+                ? null
+                : universe;
 
         Vector2 GetCenteredTextOffset(Rectangle rect, GameText text)
         {

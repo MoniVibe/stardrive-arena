@@ -446,10 +446,7 @@ namespace Ship_Game
             IconsGroupTotalPerf.Stop();
 
             // Advance the simulation time just before we Notify
-            if (!UState.Paused && IsActive)
-            {
-                AdvanceSimulationTargetTime(elapsed.RealTime.Seconds);
-            }
+            AdvanceSimulationTargetTimeFromDraw(elapsed.RealTime.Seconds);
 
             // Notify ProcessTurns that Drawing has finished and while SwapBuffers is blocking,
             // the game logic can be updated

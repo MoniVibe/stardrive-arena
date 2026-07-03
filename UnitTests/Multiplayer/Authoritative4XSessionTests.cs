@@ -6,6 +6,7 @@ using Ship_Game;
 using Ship_Game.AI;
 using Ship_Game.Commands.Goals;
 using Ship_Game.Data;
+using Ship_Game.GameScreens;
 using Ship_Game.GameScreens.DiplomacyScreen;
 using Ship_Game.GameScreens.Arena;
 using Ship_Game.GameScreens.ShipDesign;
@@ -7016,6 +7017,26 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "Stock load/save screens should keep the existing single-player pause target when authoritative MP is inactive.");
             Assert.AreSame(world.Screen, PopupWindow.PauseTargetFor(world.Screen),
                 "Universe popups should keep the existing single-player pause target when authoritative MP is inactive.");
+            Assert.AreSame(world.Screen, ShipListScreen.PauseTargetFor(world.Screen),
+                "Ship list should keep the existing single-player pause target when authoritative MP is inactive.");
+            Assert.AreSame(world.Screen, ChoosePatrolPlan.PauseTargetFor(world.Screen),
+                "Patrol-plan selection should keep the existing single-player pause target when authoritative MP is inactive.");
+            Assert.AreSame(world.Screen, BlueprintsScreen.PauseTargetFor(world.Screen),
+                "Colony blueprints should keep the existing single-player pause target when authoritative MP is inactive.");
+            Assert.AreSame(world.Screen, EmpirePatrolsScreen.PauseTargetFor(world.Screen),
+                "Empire patrol management should keep the existing single-player pause target when authoritative MP is inactive.");
+            Assert.AreSame(world.Screen, BudgetScreen.PauseTargetFor(world.Screen),
+                "Budget management should keep the existing single-player pause target when authoritative MP is inactive.");
+            Assert.AreSame(world.Screen, DiplomacyScreen.PauseTargetFor(world.Screen),
+                "Diplomacy popups should keep the existing single-player pause target when authoritative MP is inactive.");
+            Assert.AreSame(world.Screen, MainDiplomacyScreen.PauseTargetFor(world.Screen),
+                "Main diplomacy should keep the existing single-player pause target when authoritative MP is inactive.");
+            Assert.AreSame(world.Screen, RefitToWindow.PauseTargetFor(world.Screen),
+                "Refit selection should keep the existing single-player pause target when authoritative MP is inactive.");
+            Assert.AreSame(world.Screen, PlanetListScreen.PauseTargetFor(world.Screen),
+                "Planet list should keep the existing single-player pause target when authoritative MP is inactive.");
+            Assert.AreSame(world.Screen, ExoticSystemsListScreen.PauseTargetFor(world.Screen),
+                "Exotic systems list should keep the existing single-player pause target when authoritative MP is inactive.");
 
             using (Authoritative4XClientContext.Begin(peerId: 2, empireId: world.Player.Id,
                        _ => { }, firstSequence: 2000))
@@ -7032,6 +7053,26 @@ public class Authoritative4XSessionTests : StarDriveTest
                     "Stock load/save screens must not locally pause an authoritative multiplayer session.");
                 Assert.IsNull(PopupWindow.PauseTargetFor(world.Screen),
                     "Universe popups must not locally pause an authoritative multiplayer session.");
+                Assert.IsNull(ShipListScreen.PauseTargetFor(world.Screen),
+                    "Ship list must not locally pause an authoritative multiplayer session.");
+                Assert.IsNull(ChoosePatrolPlan.PauseTargetFor(world.Screen),
+                    "Patrol-plan selection must not locally pause an authoritative multiplayer session.");
+                Assert.IsNull(BlueprintsScreen.PauseTargetFor(world.Screen),
+                    "Colony blueprints must not locally pause an authoritative multiplayer session.");
+                Assert.IsNull(EmpirePatrolsScreen.PauseTargetFor(world.Screen),
+                    "Empire patrol management must not locally pause an authoritative multiplayer session.");
+                Assert.IsNull(BudgetScreen.PauseTargetFor(world.Screen),
+                    "Budget management must not locally pause an authoritative multiplayer session.");
+                Assert.IsNull(DiplomacyScreen.PauseTargetFor(world.Screen),
+                    "Diplomacy popups must not locally pause an authoritative multiplayer session.");
+                Assert.IsNull(MainDiplomacyScreen.PauseTargetFor(world.Screen),
+                    "Main diplomacy must not locally pause an authoritative multiplayer session.");
+                Assert.IsNull(RefitToWindow.PauseTargetFor(world.Screen),
+                    "Refit selection must not locally pause an authoritative multiplayer session.");
+                Assert.IsNull(PlanetListScreen.PauseTargetFor(world.Screen),
+                    "Planet list must not locally pause an authoritative multiplayer session.");
+                Assert.IsNull(ExoticSystemsListScreen.PauseTargetFor(world.Screen),
+                    "Exotic systems list must not locally pause an authoritative multiplayer session.");
             }
         }
         finally
@@ -11046,6 +11087,89 @@ public class Authoritative4XSessionTests : StarDriveTest
             joinGenerated?.Dispose();
             hostTransport?.Dispose();
             joinTransport?.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XHostSimAndSnapshotsAdvanceWhileUniverseCovered_Headless()
+    {
+        const ulong Seed = 0xC04E4EDUL;
+        const int HostPeer = 2;
+        const int JoinPeer = 3;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        TcpLockstepTransport hostTransport = null;
+        TcpLockstepTransport joinTransport = null;
+        Authoritative4XLiveSession liveHost = null;
+        Authoritative4XLiveSession liveJoin = null;
+
+        try
+        {
+            int port = FreeTcpPort();
+            hostTransport = TcpLockstepTransport.HostMulti(port);
+            joinTransport = TcpLockstepTransport.JoinAsPeer("127.0.0.1", port, JoinPeer,
+                Authoritative4XLobby.AuthorityPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnections(1, TimeSpan.FromSeconds(3)),
+                "Covered-screen host proof TCP host did not accept the joiner.");
+
+            var empireByPeer = new Dictionary<int, int>
+            {
+                [HostPeer] = authority.Player.Id,
+                [JoinPeer] = authority.Enemy.Id,
+            };
+            int[] humanEmpireIds = { authority.Player.Id, authority.Enemy.Id };
+            liveHost = Authoritative4XLiveSession.HostGame(authority.Screen, hostTransport,
+                HostPeer, empireByPeer, humanEmpireIds);
+            liveJoin = Authoritative4XLiveSession.ClientGame(client.Screen, joinTransport,
+                JoinPeer, client.Enemy.Id, humanEmpireIds, empireByPeerForTelemetry: empireByPeer);
+            authority.Screen.AttachAuthoritative4XMultiplayer(liveHost);
+            client.Screen.AttachAuthoritative4XMultiplayer(liveJoin);
+            authority.UState.Paused = false;
+            client.UState.Paused = false;
+
+            int startSimTurn = authority.Screen.SimTurnId;
+            float startSimTime = authority.Screen.CurrentSimTime;
+            uint startClientSnapshotTick = liveJoin.LastSnapshot?.Tick ?? 0;
+
+            authority.Screen.ForceCoveredByFullScreenForTest(covered: true);
+            Assert.IsFalse(authority.Screen.IsActive,
+                "The regression must simulate a full-screen menu covering the host universe.");
+
+            authority.Screen.PumpSimulationForTest(0.25f);
+            Assert.IsTrue(authority.Screen.SimTurnId > startSimTurn,
+                "The authoritative host sim must keep processing turns while the universe screen is hidden.");
+            Assert.IsTrue(authority.Screen.CurrentSimTime > startSimTime,
+                "The authoritative host sim must consume target time while the universe screen is hidden.");
+
+            int hiddenFrames = 0;
+            DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while ((liveJoin.LastSnapshot == null || liveJoin.LastSnapshot.Tick <= startClientSnapshotTick)
+                   && DateTime.UtcNow < deadline)
+            {
+                ++hiddenFrames;
+                authority.Screen.UpdateHidden(new UpdateTimes(1f / 60f, hiddenFrames / 60f));
+                liveJoin.Poll();
+                System.Threading.Thread.Sleep(5);
+            }
+
+            Assert.IsNotNull(liveHost.LastSnapshot,
+                "The hidden host universe must continue polling the live session and capturing snapshots.");
+            Assert.IsNotNull(liveJoin.LastSnapshot,
+                "The passive client must receive host snapshots while the host universe is covered.");
+            Assert.IsTrue(liveJoin.LastSnapshot.Tick > startClientSnapshotTick,
+                "The passive client snapshot tick must advance while the host universe is covered.");
+            Assert.AreEqual(liveHost.LastSnapshot.SyncDigest, liveJoin.LastSnapshot.SyncDigest,
+                FirstPayloadDifferenceForTest(liveHost.LastSnapshot.Payload, liveJoin.LastSnapshot.Payload));
+        }
+        finally
+        {
+            liveHost?.Dispose();
+            liveJoin?.Dispose();
+            hostTransport?.Dispose();
+            joinTransport?.Dispose();
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
         }
     }
 

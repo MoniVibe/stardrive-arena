@@ -50,7 +50,7 @@ namespace Ship_Game
 
 
         public MainDiplomacyScreen(UniverseScreen screen)
-            : base(screen, toPause: screen.IsAuthoritative4XMultiplayer ? null : screen)
+            : base(screen, toPause: PauseTargetFor(screen))
         {
             Universe = screen;
             IsPopup = true;
@@ -86,6 +86,11 @@ namespace Ship_Game
             }
             Moles = empires;
         }
+
+        internal static UniverseScreen PauseTargetFor(UniverseScreen universe)
+            => universe?.IsAuthoritative4XMultiplayer == true || Authoritative4XClientContext.IsActive
+                ? null
+                : universe;
 
         bool IsLocalPlayerEmpire(Empire empire)
             => empire != null && Player != null

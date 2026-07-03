@@ -5,6 +5,7 @@ using Rectangle = SDGraphics.Rectangle;
 using SDUtils;
 using Color = Microsoft.Xna.Framework.Color;
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 using Font = Ship_Game.Graphics.Font;
 using Ship_Game.Universe.SolarBodies;
 using System.Collections.Generic;
@@ -77,7 +78,7 @@ namespace Ship_Game
         readonly GovernorDetailsComponent GovernorTab;
 
         public BlueprintsScreen(UniverseScreen parent, Empire player, BlueprintsTemplate template = null, GovernorDetailsComponent govTab = null) 
-            : base(parent, toPause: parent)
+            : base(parent, toPause: PauseTargetFor(parent))
         {
             Player = player;
             GovernorTab = govTab;
@@ -207,6 +208,11 @@ namespace Ship_Game
                 BlueprintsName.Text = template.Name;
             }
         }
+
+        internal static UniverseScreen PauseTargetFor(UniverseScreen universe)
+            => universe?.IsAuthoritative4XMultiplayer == true || Authoritative4XClientContext.IsActive
+                ? null
+                : universe;
 
         public override void PerformLayout()
         {

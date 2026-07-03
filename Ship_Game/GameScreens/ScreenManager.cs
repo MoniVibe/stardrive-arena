@@ -821,6 +821,8 @@ namespace Ship_Game
             {
                 if (screen.Visible)
                     screen.Update(elapsed, isTopMost: screen == topMost);
+                else
+                    screen.UpdateHidden(elapsed);
             }
         }
 

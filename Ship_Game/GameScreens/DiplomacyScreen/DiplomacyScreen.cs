@@ -78,7 +78,7 @@ namespace Ship_Game.GameScreens.DiplomacyScreen
 
         // BASE constructor
         DiplomacyScreen(GameScreen parent, Empire them, Empire us, string whichDialog, UniverseScreen toPause)
-            : base(parent, toPause: toPause)
+            : base(parent, toPause: PauseTargetFor(toPause))
         {
             Us = us;
             Them = them;
@@ -93,6 +93,11 @@ namespace Ship_Game.GameScreens.DiplomacyScreen
             AlliedEmpiresAtWar = GetAlliedEmpiresTheyAreAtWarWith(them, us);
             EmpiresTheyAreAlliedWith = GetAiAlliedEmpires(them, us);
         }
+
+        internal static UniverseScreen PauseTargetFor(UniverseScreen universe)
+            => universe?.IsAuthoritative4XMultiplayer == true || Authoritative4XClientContext.IsActive
+                ? null
+                : universe;
 
         DiplomacyScreen(Empire them, Empire us, string whichDialog, GameScreen parent)
             : this(parent, them, us, whichDialog, us.Universe.Screen)

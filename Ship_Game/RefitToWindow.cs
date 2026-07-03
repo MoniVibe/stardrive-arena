@@ -40,13 +40,18 @@ namespace Ship_Game
             Rush = false;
         }
 
-        public RefitToWindow(UniverseScreen parent, Ship ship) : base(parent, toPause: parent)
+        public RefitToWindow(UniverseScreen parent, Ship ship) : base(parent, toPause: PauseTargetFor(parent))
         {
             ShipToRefit = ship;
             IsPopup = true;
             TransitionOnTime = 0.25f;
             TransitionOffTime = 0.25f;
         }
+
+        internal static UniverseScreen PauseTargetFor(UniverseScreen universe)
+            => universe?.IsAuthoritative4XMultiplayer == true || Authoritative4XClientContext.IsActive
+                ? null
+                : universe;
 
         class RefitShipListItem : ScrollListItem<RefitShipListItem>
         {

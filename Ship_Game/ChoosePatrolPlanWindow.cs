@@ -24,13 +24,18 @@ namespace Ship_Game
         FleetPatrol SelectedPatrol;
         DanButton ConfirmPatrol;
 
-        public ChoosePatrolPlan(UniverseScreen parent, Fleet fleet) : base(parent, toPause: parent)
+        public ChoosePatrolPlan(UniverseScreen parent, Fleet fleet) : base(parent, toPause: PauseTargetFor(parent))
         {
             Fleet = fleet;
             IsPopup = true;
             TransitionOnTime = 0.25f;
             TransitionOffTime = 0.25f;
         }
+
+        internal static UniverseScreen PauseTargetFor(UniverseScreen universe)
+            => universe?.IsAuthoritative4XMultiplayer == true || Authoritative4XClientContext.IsActive
+                ? null
+                : universe;
 
         class ChoosePatrolListItem : ScrollListItem<ChoosePatrolListItem>
         {

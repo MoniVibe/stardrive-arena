@@ -701,6 +701,12 @@ namespace Ship_Game
             base.Update(fixedDeltaTime);
         }
 
+        internal override void UpdateHidden(UpdateTimes elapsed)
+        {
+            if (IsAuthoritative4XMultiplayer)
+                UpdateAuthoritative4XMultiplayer();
+        }
+
         void UpdateSelectedItems(UpdateTimes elapsed)
         {
             if (ShowSystemInfoOverlay)

@@ -23,13 +23,18 @@ namespace Ship_Game.GameScreens
         UILabel EmpireNetIncome;
         bool LoadingBudgetControls;
 
-        public BudgetScreen(UniverseScreen screen) : base(screen, toPause: screen)
+        public BudgetScreen(UniverseScreen screen) : base(screen, toPause: PauseTargetFor(screen))
         {
             Player            = screen.Player;
             IsPopup           = true;
             TransitionOnTime  = 0.25f;
             TransitionOffTime = 0.25f;
         }
+
+        internal static UniverseScreen PauseTargetFor(UniverseScreen universe)
+            => universe?.IsAuthoritative4XMultiplayer == true || Authoritative4XClientContext.IsActive
+                ? null
+                : universe;
 
         class SummaryPanel : UIList
         {
