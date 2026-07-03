@@ -41,7 +41,7 @@ public sealed class Authoritative4XCommandApplicator
         var result = new AuthoritativeCommandResult { Sequence = command.Sequence, Tick = tick };
         Empire empire = UState.GetEmpireById(command.EmpireId);
         if (empire == null)
-            return Reject(result, $"Empire {command.EmpireId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Empire {command.EmpireId} not found.");
 
         using (StarDriveCommandContext.Enter(tick, empire.Id))
         {
@@ -49,91 +49,102 @@ public sealed class Authoritative4XCommandApplicator
             using (AuthoritativeMutationGuard.EnterAcceptedCommandApply())
 #endif
             {
-                return command.Kind switch
+                try
                 {
-                    AuthoritativePlayerCommandKind.NoOp => Accept(result),
-                    AuthoritativePlayerCommandKind.MoveShip => ApplyMove(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetColonyType => ApplyColonyType(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetColonizationGoal => ApplyColonizationGoal(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetColonyLabor => ApplyColonyLabor(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetResearchTopic => ApplyResearchTopic(command, empire, result),
-                    AuthoritativePlayerCommandKind.QueueResearch => ApplyQueueResearch(command, empire, result),
-                    AuthoritativePlayerCommandKind.RemoveResearchQueueItem => ApplyRemoveResearchQueueItem(command, empire, result),
-                    AuthoritativePlayerCommandKind.MoveResearchQueueItem => ApplyMoveResearchQueueItem(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetEmpireBudget => ApplyEmpireBudget(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetEmpireAutomation => ApplyEmpireAutomation(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetUniversePreferences => ApplyUniversePreferences(command, empire, result),
-                    AuthoritativePlayerCommandKind.DiplomacyProposal => ApplyDiplomacy(command, empire, result),
-                    AuthoritativePlayerCommandKind.DiplomacyResponse => ApplyDiplomacy(command, empire, result),
-                    AuthoritativePlayerCommandKind.DesignShip => ApplyDesignShip(command, empire, result),
-                    AuthoritativePlayerCommandKind.QueueBuild => ApplyQueueBuild(command, empire, result),
-                    AuthoritativePlayerCommandKind.QueueBuilding => ApplyQueueBuilding(command, empire, result),
-                    AuthoritativePlayerCommandKind.QueueTroop => ApplyQueueTroop(command, empire, result),
-                    AuthoritativePlayerCommandKind.CancelConstructionQueueItem => ApplyCancelConstructionQueueItem(command, empire, result),
-                    AuthoritativePlayerCommandKind.ReorderConstructionQueueItem => ApplyReorderConstructionQueueItem(command, empire, result),
-                    AuthoritativePlayerCommandKind.RushConstructionQueueItem => ApplyRushConstructionQueueItem(command, empire, result),
-                    AuthoritativePlayerCommandKind.ToggleConstructionRush => ApplyToggleConstructionRush(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetPlanetGoodsState => ApplyPlanetGoodsState(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetPlanetPrioritizedPort => ApplyPlanetPrioritizedPort(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetPlanetManualBudget => ApplyPlanetManualBudget(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetPlanetGovernorOptions => ApplyPlanetGovernorOptions(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetPlanetManualTradeSlots => ApplyPlanetManualTradeSlots(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetPlanetDefenseTargets => ApplyPlanetDefenseTargets(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetFleetAssignment => ApplyFleetAssignment(command, empire, result),
-                    AuthoritativePlayerCommandKind.MoveFleet => ApplyMoveFleet(command, empire, result),
-                    AuthoritativePlayerCommandKind.RenameFleet => ApplyRenameFleet(command, empire, result),
-                    AuthoritativePlayerCommandKind.RenameShip => ApplyRenameShip(command, empire, result),
-                    AuthoritativePlayerCommandKind.RenamePlanet => ApplyRenamePlanet(command, empire, result),
-                    AuthoritativePlayerCommandKind.GroundTroopOrder => ApplyGroundTroopOrder(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetFleetIcon => ApplySetFleetIcon(command, empire, result),
-                    AuthoritativePlayerCommandKind.AutoArrangeFleet => ApplyAutoArrangeFleet(command, empire, result),
-                    AuthoritativePlayerCommandKind.LoadFleetPatrol => ApplyLoadFleetPatrol(command, empire, result),
-                    AuthoritativePlayerCommandKind.RenameFleetPatrol => ApplyRenameFleetPatrol(command, empire, result),
-                    AuthoritativePlayerCommandKind.DeleteFleetPatrol => ApplyDeleteFleetPatrol(command, empire, result),
-                    AuthoritativePlayerCommandKind.ClearFleetPatrol => ApplyClearFleetPatrol(command, empire, result),
-                    AuthoritativePlayerCommandKind.CreateFleetPatrol => ApplyCreateFleetPatrol(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetFleetLayout => ApplyFleetLayout(command, empire, result),
-                    AuthoritativePlayerCommandKind.QueueFleetRequisition => ApplyQueueFleetRequisition(command, empire, result),
-                    AuthoritativePlayerCommandKind.QueueDeepSpaceBuild => ApplyDeepSpaceBuild(command, empire, result),
-                    AuthoritativePlayerCommandKind.CancelDeepSpaceBuild => ApplyCancelDeepSpaceBuild(command, empire, result),
-                    AuthoritativePlayerCommandKind.QueuePlanetOrbitalBuild => ApplyPlanetOrbitalBuild(command, empire, result),
-                    AuthoritativePlayerCommandKind.BuildCapitalHere => ApplyBuildCapitalHere(command, empire, result),
-                    AuthoritativePlayerCommandKind.ApplyColonyBlueprints => ApplyColonyBlueprints(command, empire, result),
-                    AuthoritativePlayerCommandKind.ClearColonyBlueprints => ApplyClearColonyBlueprints(command, empire, result),
-                    AuthoritativePlayerCommandKind.ScrapColonyTile => ApplyScrapColonyTile(command, empire, result),
-                    AuthoritativePlayerCommandKind.ShipSpecialOrder => ApplyShipSpecialOrder(command, empire, result),
-                    AuthoritativePlayerCommandKind.ShipLifecycleOrder => ApplyShipLifecycleOrder(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetShipCombatStance => ApplyShipCombatStance(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetShipTradePolicy => ApplyShipTradePolicy(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetShipCarrierPolicy => ApplyShipCarrierPolicy(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetShipTradeRoute => ApplyShipTradeRoute(command, empire, result),
-                    AuthoritativePlayerCommandKind.SetShipAreaOfOperation => ApplyShipAreaOfOperation(command, empire, result),
-                    AuthoritativePlayerCommandKind.RefitShip => ApplyShipRefit(command, empire, result),
-                    AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result, trustHostAccepted),
-                    AuthoritativePlayerCommandKind.ShipTargetOrder => ApplyShipTargetOrder(command, empire, result, trustHostAccepted),
-                    AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result),
-                    _ => Reject(result, $"Unsupported command kind {command.Kind}."),
-                };
+                    return command.Kind switch
+                    {
+                        AuthoritativePlayerCommandKind.NoOp => Accept(result),
+                        AuthoritativePlayerCommandKind.MoveShip => ApplyMove(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetColonyType => ApplyColonyType(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetColonizationGoal => ApplyColonizationGoal(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetColonyLabor => ApplyColonyLabor(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetResearchTopic => ApplyResearchTopic(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.QueueResearch => ApplyQueueResearch(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.RemoveResearchQueueItem => ApplyRemoveResearchQueueItem(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.MoveResearchQueueItem => ApplyMoveResearchQueueItem(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetEmpireBudget => ApplyEmpireBudget(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetEmpireAutomation => ApplyEmpireAutomation(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetUniversePreferences => ApplyUniversePreferences(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.DiplomacyProposal => ApplyDiplomacy(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.DiplomacyResponse => ApplyDiplomacy(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.DesignShip => ApplyDesignShip(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.QueueBuild => ApplyQueueBuild(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.QueueBuilding => ApplyQueueBuilding(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.QueueTroop => ApplyQueueTroop(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.CancelConstructionQueueItem => ApplyCancelConstructionQueueItem(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.ReorderConstructionQueueItem => ApplyReorderConstructionQueueItem(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.RushConstructionQueueItem => ApplyRushConstructionQueueItem(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.ToggleConstructionRush => ApplyToggleConstructionRush(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetPlanetGoodsState => ApplyPlanetGoodsState(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetPlanetPrioritizedPort => ApplyPlanetPrioritizedPort(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetPlanetManualBudget => ApplyPlanetManualBudget(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetPlanetGovernorOptions => ApplyPlanetGovernorOptions(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetPlanetManualTradeSlots => ApplyPlanetManualTradeSlots(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetPlanetDefenseTargets => ApplyPlanetDefenseTargets(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetFleetAssignment => ApplyFleetAssignment(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.MoveFleet => ApplyMoveFleet(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.RenameFleet => ApplyRenameFleet(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.RenameShip => ApplyRenameShip(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.RenamePlanet => ApplyRenamePlanet(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.GroundTroopOrder => ApplyGroundTroopOrder(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetFleetIcon => ApplySetFleetIcon(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.AutoArrangeFleet => ApplyAutoArrangeFleet(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.LoadFleetPatrol => ApplyLoadFleetPatrol(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.RenameFleetPatrol => ApplyRenameFleetPatrol(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.DeleteFleetPatrol => ApplyDeleteFleetPatrol(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.ClearFleetPatrol => ApplyClearFleetPatrol(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.CreateFleetPatrol => ApplyCreateFleetPatrol(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetFleetLayout => ApplyFleetLayout(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.QueueFleetRequisition => ApplyQueueFleetRequisition(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.QueueDeepSpaceBuild => ApplyDeepSpaceBuild(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.CancelDeepSpaceBuild => ApplyCancelDeepSpaceBuild(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.QueuePlanetOrbitalBuild => ApplyPlanetOrbitalBuild(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.BuildCapitalHere => ApplyBuildCapitalHere(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.ApplyColonyBlueprints => ApplyColonyBlueprints(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.ClearColonyBlueprints => ApplyClearColonyBlueprints(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.ScrapColonyTile => ApplyScrapColonyTile(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.ShipSpecialOrder => ApplyShipSpecialOrder(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.ShipLifecycleOrder => ApplyShipLifecycleOrder(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetShipCombatStance => ApplyShipCombatStance(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetShipTradePolicy => ApplyShipTradePolicy(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetShipCarrierPolicy => ApplyShipCarrierPolicy(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetShipTradeRoute => ApplyShipTradeRoute(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.SetShipAreaOfOperation => ApplyShipAreaOfOperation(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.RefitShip => ApplyShipRefit(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.AttackShip => ApplyAttackShip(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.ShipTargetOrder => ApplyShipTargetOrder(command, empire, result, trustHostAccepted),
+                        AuthoritativePlayerCommandKind.ShipPlanetOrder => ApplyShipPlanetOrder(command, empire, result, trustHostAccepted),
+                        _ => Reject(result, $"Unsupported command kind {command.Kind}."),
+                    };
+                }
+                catch (Exception e) when (trustHostAccepted)
+                {
+                    return TrustedNoOp(result,
+                        $"Trusted host-accepted {command.Kind} apply could not run locally: {e.Message}");
+                }
             }
         }
     }
 
     AuthoritativeCommandResult ApplyDiplomacy(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
+        if (trustHostAccepted)
+            return Accept(result);
+
         return Diplomacy != null
             ? Diplomacy.Apply(command, empire, result)
             : Reject(result, "Authoritative diplomacy is not enabled for this session.");
     }
 
-    AuthoritativeCommandResult ApplyMove(AuthoritativePlayerCommand command, Empire empire, AuthoritativeCommandResult result)
+    AuthoritativeCommandResult ApplyMove(AuthoritativePlayerCommand command, Empire empire, AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Ship ship = UState.Objects.FindShip(command.SubjectId);
         if (ship == null)
-            return Reject(result, $"Ship {command.SubjectId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} not found.");
         if (!ship.Active)
-            return Reject(result, $"Ship {command.SubjectId} is inactive.");
-        if (ship.Loyalty != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} is inactive.");
+        if (!trustHostAccepted && ship.Loyalty != empire)
             return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
 
         Vector2 delta = command.Position - ship.Position;
@@ -148,7 +159,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyUniversePreferences(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         var flags = (AuthoritativeUniversePreferenceFlags)command.TargetId;
         if ((flags & ~AuthoritativeUniversePreferenceFlags.All) != 0)
@@ -162,7 +173,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyEmpireAutomation(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         var flags = (AuthoritativeEmpireAutomationFlags)command.TargetId;
         if ((flags & ~AuthoritativeEmpireAutomationFlags.All) != 0)
@@ -176,32 +187,39 @@ public sealed class Authoritative4XCommandApplicator
         }
 
         flags = AddBlankDesignAutoPickFallbacks(flags, freighter, colony, constructor, researchStation, miningStation);
-        if (!TryNormalizeAutomationDesign(empire, freighter, d => d.IsFreighter, "freighter",
-                RequiresDesign(flags, AuthoritativeEmpireAutomationFlags.AutoFreighters,
-                    AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter),
-                out string normalizedFreighter, out string reason)
-            || !TryNormalizeAutomationDesign(empire, colony, d => d.IsColonyShip, "colony ship",
-                RequiresDesign(flags, AuthoritativeEmpireAutomationFlags.AutoColonize,
-                    AuthoritativeEmpireAutomationFlags.AutoPickBestColonizer),
-                out string normalizedColony, out reason)
-            || !TryNormalizeAutomationDesign(empire, scout,
-                d => d.Role == RoleName.scout || d.Role == RoleName.fighter || d.ShipCategory == ShipCategory.Recon,
-                "scout", flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoExplore),
-                out string normalizedScout, out reason)
-            || !TryNormalizeAutomationDesign(empire, constructor, d => d.IsConstructor, "constructor",
-                RequiresDesign(flags, AuthoritativeEmpireAutomationFlags.AutoBuildSpaceRoads,
-                    AuthoritativeEmpireAutomationFlags.AutoPickConstructors),
-                out string normalizedConstructor, out reason)
-            || !TryNormalizeAutomationDesign(empire, researchStation, d => d.IsResearchStation,
-                "research station",
-                RequiresDesign(flags, AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations,
-                    AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation),
-                out string normalizedResearchStation, out reason)
-            || !TryNormalizeAutomationDesign(empire, miningStation, d => d.IsMiningStation,
-                "mining station",
-                RequiresDesign(flags, AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations,
-                    AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation),
-                out string normalizedMiningStation, out reason))
+        string normalizedFreighter = freighter?.Trim() ?? "";
+        string normalizedColony = colony?.Trim() ?? "";
+        string normalizedScout = scout?.Trim() ?? "";
+        string normalizedConstructor = constructor?.Trim() ?? "";
+        string normalizedResearchStation = researchStation?.Trim() ?? "";
+        string normalizedMiningStation = miningStation?.Trim() ?? "";
+        if (!trustHostAccepted
+            && (!TryNormalizeAutomationDesign(empire, freighter, d => d.IsFreighter, "freighter",
+                    RequiresDesign(flags, AuthoritativeEmpireAutomationFlags.AutoFreighters,
+                        AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter),
+                    out normalizedFreighter, out string reason)
+                || !TryNormalizeAutomationDesign(empire, colony, d => d.IsColonyShip, "colony ship",
+                    RequiresDesign(flags, AuthoritativeEmpireAutomationFlags.AutoColonize,
+                        AuthoritativeEmpireAutomationFlags.AutoPickBestColonizer),
+                    out normalizedColony, out reason)
+                || !TryNormalizeAutomationDesign(empire, scout,
+                    d => d.Role == RoleName.scout || d.Role == RoleName.fighter || d.ShipCategory == ShipCategory.Recon,
+                    "scout", flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoExplore),
+                    out normalizedScout, out reason)
+                || !TryNormalizeAutomationDesign(empire, constructor, d => d.IsConstructor, "constructor",
+                    RequiresDesign(flags, AuthoritativeEmpireAutomationFlags.AutoBuildSpaceRoads,
+                        AuthoritativeEmpireAutomationFlags.AutoPickConstructors),
+                    out normalizedConstructor, out reason)
+                || !TryNormalizeAutomationDesign(empire, researchStation, d => d.IsResearchStation,
+                    "research station",
+                    RequiresDesign(flags, AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations,
+                        AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation),
+                    out normalizedResearchStation, out reason)
+                || !TryNormalizeAutomationDesign(empire, miningStation, d => d.IsMiningStation,
+                    "mining station",
+                    RequiresDesign(flags, AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations,
+                        AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation),
+                    out normalizedMiningStation, out reason)))
         {
             return Reject(result, reason);
         }
@@ -240,14 +258,14 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyMoveFleet(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
             return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
 
         Fleet fleet = empire.GetFleetOrNull(command.SubjectId);
         if (fleet == null || fleet.Ships.Count == 0)
-            return Reject(result, $"Fleet {command.SubjectId} not found or empty.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Fleet {command.SubjectId} not found or empty.");
         if (!IsFinite(command.Position))
             return Reject(result, "Fleet destination must be finite.");
         if (!AuthoritativePlayerCommand.TryParseVectorPayload(command.Text, out Vector2 direction))
@@ -261,7 +279,7 @@ public sealed class Authoritative4XCommandApplicator
         if ((order & ~Allowed) != 0)
             return Reject(result, $"Fleet move order {order} is not supported by authoritative MP.");
 
-        if (!AnyFleetShipCanMove(fleet))
+        if (!trustHostAccepted && !AnyFleetShipCanMove(fleet))
             return Reject(result, $"Fleet {fleet.Key} has no ships that can receive fleet movement orders.");
 
         if (fleet.HasPatrolPlan)
@@ -271,7 +289,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyShipSpecialOrder(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
             || !Enum.IsDefined(typeof(AuthoritativeShipSpecialOrderType),
@@ -282,10 +300,10 @@ public sealed class Authoritative4XCommandApplicator
 
         Ship ship = UState.Objects.FindShip(command.SubjectId);
         if (ship == null)
-            return Reject(result, $"Ship {command.SubjectId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} not found.");
         if (!ship.Active)
-            return Reject(result, $"Ship {command.SubjectId} is inactive.");
-        if (ship.Loyalty != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} is inactive.");
+        if (!trustHostAccepted && ship.Loyalty != empire)
             return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
 
         switch ((AuthoritativeShipSpecialOrderType)command.TargetId)
@@ -295,10 +313,11 @@ public sealed class Authoritative4XCommandApplicator
                 return Accept(result);
 
             case AuthoritativeShipSpecialOrderType.Explore:
-                if (!ship.PlayerShipCanTakeFleetOrders()
+                if (!trustHostAccepted
+                    && (!ship.PlayerShipCanTakeFleetOrders()
                     || ship.IsPlatformOrStation
                     || ship.IsSubspaceProjector
-                    || ship.ShipData.Role == RoleName.troop)
+                    || ship.ShipData.Role == RoleName.troop))
                 {
                     return Reject(result, $"Ship {ship.Id} cannot receive an explore order.");
                 }
@@ -315,7 +334,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyShipLifecycleOrder(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
             || !Enum.IsDefined(typeof(AuthoritativeShipLifecycleOrderType),
@@ -326,30 +345,30 @@ public sealed class Authoritative4XCommandApplicator
 
         Ship ship = UState.Objects.FindShip(command.SubjectId);
         if (ship == null)
-            return Reject(result, $"Ship {command.SubjectId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} not found.");
         if (!ship.Active)
-            return Reject(result, $"Ship {command.SubjectId} is inactive.");
-        if (ship.Loyalty != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} is inactive.");
+        if (!trustHostAccepted && ship.Loyalty != empire)
             return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
-        if (!ship.CanBeScrapped)
+        if (!trustHostAccepted && !ship.CanBeScrapped)
             return Reject(result, $"Ship {command.SubjectId} cannot be scrapped or scuttled.");
 
         switch ((AuthoritativeShipLifecycleOrderType)command.TargetId)
         {
             case AuthoritativeShipLifecycleOrderType.Scrap:
-                if (ship.IsPlatformOrStation)
+                if (!trustHostAccepted && ship.IsPlatformOrStation)
                     return Reject(result, $"Ship {ship.Id} must be scuttled instead of scrapped.");
                 ship.AI.OrderScrapShip();
                 return Accept(result);
 
             case AuthoritativeShipLifecycleOrderType.Scuttle:
-                if (!ship.IsPlatformOrStation)
+                if (!trustHostAccepted && !ship.IsPlatformOrStation)
                     return Reject(result, $"Ship {ship.Id} is not a platform or station.");
                 ship.ScuttleTimer = 10f;
                 return Accept(result);
 
             case AuthoritativeShipLifecycleOrderType.CancelScuttle:
-                if (!ship.IsPlatformOrStation)
+                if (!trustHostAccepted && !ship.IsPlatformOrStation)
                     return Reject(result, $"Ship {ship.Id} is not a platform or station.");
                 ship.ScuttleTimer = -1f;
                 ship.AI.ClearOrders();
@@ -361,19 +380,20 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyShipCombatStance(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.TargetId < 0 || !Enum.IsDefined(typeof(CombatState), (CombatState)command.TargetId))
             return Reject(result, $"Unsupported ship combat stance {command.TargetId}.");
 
         Ship ship = UState.Objects.FindShip(command.SubjectId);
         if (ship == null)
-            return Reject(result, $"Ship {command.SubjectId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} not found.");
         if (!ship.Active)
-            return Reject(result, $"Ship {command.SubjectId} is inactive.");
-        if (ship.Loyalty != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} is inactive.");
+        if (!trustHostAccepted && ship.Loyalty != empire)
             return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
-        if (ship.IsConstructor || ship.IsMiningShip || ship.IsSupplyShuttle || ship.DesignRole == RoleName.ssp)
+        if (!trustHostAccepted
+            && (ship.IsConstructor || ship.IsMiningShip || ship.IsSupplyShuttle || ship.DesignRole == RoleName.ssp))
             return Reject(result, $"Ship {ship.Id} cannot receive combat stance orders.");
 
         ship.SetCombatStance((CombatState)command.TargetId);
@@ -381,7 +401,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyShipTradePolicy(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
             || !Enum.IsDefined(typeof(AuthoritativeShipTradePolicyKind),
@@ -394,12 +414,12 @@ public sealed class Authoritative4XCommandApplicator
 
         Ship ship = UState.Objects.FindShip(command.SubjectId);
         if (ship == null)
-            return Reject(result, $"Ship {command.SubjectId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} not found.");
         if (!ship.Active)
-            return Reject(result, $"Ship {command.SubjectId} is inactive.");
-        if (ship.Loyalty != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} is inactive.");
+        if (!trustHostAccepted && ship.Loyalty != empire)
             return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
-        if (!ship.IsFreighter)
+        if (!trustHostAccepted && !ship.IsFreighter)
             return Reject(result, $"Ship {ship.Id} is not a freighter.");
 
         bool enabled = command.Text == "1";
@@ -423,7 +443,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyShipRefit(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
             || !Enum.IsDefined(typeof(AuthoritativeShipRefitMode),
@@ -440,23 +460,23 @@ public sealed class Authoritative4XCommandApplicator
 
         Ship ship = UState.Objects.FindShip(command.SubjectId);
         if (ship == null)
-            return Reject(result, $"Ship {command.SubjectId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} not found.");
         if (!ship.Active)
-            return Reject(result, $"Ship {command.SubjectId} is inactive.");
-        if (ship.Loyalty != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} is inactive.");
+        if (!trustHostAccepted && ship.Loyalty != empire)
             return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
-        if (!CanApplyShipRefit(ship))
+        if (!trustHostAccepted && !CanApplyShipRefit(ship))
             return Reject(result, $"Ship {ship.Id} cannot be refitted.");
 
-        IShipDesign design = FindRefitDesign(ship, empire, designName);
+        IShipDesign design = FindRefitDesign(ship, empire, designName, trustHostAccepted);
         if (design == null)
-            return Reject(result, $"Design '{designName}' is not a valid refit target for ship {ship.Id}.");
-        if (!CanFindRefitPlanet(ship, empire, design))
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Design '{designName}' is not a valid refit target for ship {ship.Id}.");
+        if (!trustHostAccepted && !CanFindRefitPlanet(ship, empire, design))
             return Reject(result, $"Empire {empire.Id} has no valid refit yard for ship {ship.Id}.");
 
         var mode = (AuthoritativeShipRefitMode)command.TargetId;
         if (mode == AuthoritativeShipRefitMode.Fleet && ship.Fleet == null)
-            return Reject(result, $"Ship {ship.Id} is not assigned to a fleet.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {ship.Id} is not assigned to a fleet.");
 
         switch (mode)
         {
@@ -489,13 +509,14 @@ public sealed class Authoritative4XCommandApplicator
            && ship.AI.State != AIState.Scuttle
            && ship.ScuttleTimer < 0f;
 
-    static IShipDesign FindRefitDesign(Ship ship, Empire empire, string designName)
+    static IShipDesign FindRefitDesign(Ship ship, Empire empire, string designName, bool trustHostAccepted)
     {
         if (ship == null || empire == null || string.IsNullOrWhiteSpace(designName))
             return null;
 
         return empire.ShipsWeCanBuildSnapshot
-            .Where(design => empire.CanBuildShip(design) && IsValidRefitDesign(ship, design))
+            .Where(design => (trustHostAccepted || empire.CanBuildShip(design))
+                             && IsValidRefitDesign(ship, design))
             .OrderBy(design => design.Name, StringComparer.Ordinal)
             .FirstOrDefault(design => string.Equals(design.Name, designName, StringComparison.Ordinal));
     }
@@ -558,29 +579,29 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyShipTradeRoute(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.Text is not ("0" or "1"))
             return Reject(result, "Ship trade-route enabled flag must be 0 or 1.");
 
         Ship ship = UState.Objects.FindShip(command.SubjectId);
         if (ship == null)
-            return Reject(result, $"Ship {command.SubjectId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} not found.");
         if (!ship.Active)
-            return Reject(result, $"Ship {command.SubjectId} is inactive.");
-        if (ship.Loyalty != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} is inactive.");
+        if (!trustHostAccepted && ship.Loyalty != empire)
             return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
-        if (!ship.IsFreighter)
+        if (!trustHostAccepted && !ship.IsFreighter)
             return Reject(result, $"Ship {ship.Id} is not a freighter.");
 
         Planet planet = UState.GetPlanet(command.TargetId);
         if (planet == null)
-            return Reject(result, $"Planet {command.TargetId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.TargetId} not found.");
 
         bool enabled = command.Text == "1";
         if (enabled)
         {
-            if (!CanApplyTradeRoute(ship, planet))
+            if (!trustHostAccepted && !CanApplyTradeRoute(ship, planet))
                 return Reject(result, $"Planet {planet.Id} is not a valid trade route for ship {ship.Id}.");
 
             ship.AddTradeRoute(planet);
@@ -603,7 +624,7 @@ public sealed class Authoritative4XCommandApplicator
                || planet.IsResearchable);
 
     AuthoritativeCommandResult ApplyShipAreaOfOperation(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
             || !Enum.IsDefined(typeof(AuthoritativeShipAreaOfOperationAction),
@@ -617,12 +638,12 @@ public sealed class Authoritative4XCommandApplicator
 
         Ship ship = UState.Objects.FindShip(command.SubjectId);
         if (ship == null)
-            return Reject(result, $"Ship {command.SubjectId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} not found.");
         if (!ship.Active)
-            return Reject(result, $"Ship {command.SubjectId} is inactive.");
-        if (ship.Loyalty != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} is inactive.");
+        if (!trustHostAccepted && ship.Loyalty != empire)
             return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
-        if (!ship.IsFreighter)
+        if (!trustHostAccepted && !ship.IsFreighter)
             return Reject(result, $"Ship {ship.Id} is not a freighter.");
 
         ship.AreaOfOperation ??= new Array<Rectangle>();
@@ -645,7 +666,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyShipCarrierPolicy(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
             || !Enum.IsDefined(typeof(AuthoritativeShipCarrierPolicyKind),
@@ -658,14 +679,16 @@ public sealed class Authoritative4XCommandApplicator
 
         Ship ship = UState.Objects.FindShip(command.SubjectId);
         if (ship == null)
-            return Reject(result, $"Ship {command.SubjectId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} not found.");
         if (!ship.Active)
-            return Reject(result, $"Ship {command.SubjectId} is inactive.");
-        if (ship.Loyalty != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} is inactive.");
+        if (!trustHostAccepted && ship.Loyalty != empire)
             return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
+        if (ship.Carrier == null)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {ship.Id} has no carrier bays.");
 
         var policy = (AuthoritativeShipCarrierPolicyKind)command.TargetId;
-        if (!CanApplyShipCarrierPolicy(ship, policy))
+        if (!trustHostAccepted && !CanApplyShipCarrierPolicy(ship, policy))
             return Reject(result, $"Ship {ship.Id} cannot receive carrier policy {policy}.");
 
         bool enabled = command.Text == "1";
@@ -715,19 +738,19 @@ public sealed class Authoritative4XCommandApplicator
     {
         Ship ship = UState.Objects.FindShip(command.SubjectId);
         if (ship == null)
-            return Reject(result, $"Ship {command.SubjectId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} not found.");
         if (!ship.Active)
-            return Reject(result, $"Ship {command.SubjectId} is inactive.");
-        if (ship.Loyalty != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} is inactive.");
+        if (!trustHostAccepted && ship.Loyalty != empire)
             return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
         if (ship.ShipData.Role == RoleName.troop)
             return Reject(result, "Authoritative attack MVP does not support troop boarding orders.");
 
         Ship target = UState.Objects.FindShip(command.TargetId);
         if (target == null)
-            return Reject(result, $"Target ship {command.TargetId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Target ship {command.TargetId} not found.");
         if (!target.Active)
-            return Reject(result, $"Target ship {command.TargetId} is inactive.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Target ship {command.TargetId} is inactive.");
         if (target == ship)
             return Reject(result, "A ship cannot attack itself.");
         if (!TryEnsureHostileShipTarget(empire, target, "attack", result,
@@ -753,28 +776,28 @@ public sealed class Authoritative4XCommandApplicator
 
         Ship ship = UState.Objects.FindShip(command.SubjectId);
         if (ship == null)
-            return Reject(result, $"Ship {command.SubjectId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} not found.");
         if (!ship.Active)
-            return Reject(result, $"Ship {command.SubjectId} is inactive.");
-        if (ship.Loyalty != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} is inactive.");
+        if (!trustHostAccepted && ship.Loyalty != empire)
             return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
 
         Ship target = UState.Objects.FindShip(command.TargetId);
         if (target == null)
-            return Reject(result, $"Target ship {command.TargetId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Target ship {command.TargetId} not found.");
         if (!target.Active)
-            return Reject(result, $"Target ship {command.TargetId} is inactive.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Target ship {command.TargetId} is inactive.");
         if (target == ship)
             return Reject(result, "A ship cannot target itself.");
         if (target.Loyalty == null)
-            return Reject(result, $"Target ship {target.Id} has no owning empire.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Target ship {target.Id} has no owning empire.");
         if (queue && orderType != AuthoritativeShipTargetOrderType.Attack)
             return Reject(result, $"Ship target order {orderType} does not support queueing.");
 
         switch (orderType)
         {
             case AuthoritativeShipTargetOrderType.Attack:
-                if (ship.IsPlatformOrStation || ship.ShipData.Role == RoleName.troop)
+                if (!trustHostAccepted && (ship.IsPlatformOrStation || ship.ShipData.Role == RoleName.troop))
                     return Reject(result, $"Ship {ship.Id} cannot receive authoritative attack target orders.");
                 if (!TryEnsureHostileShipTarget(empire, target, "attack", result,
                         out AuthoritativeCommandResult rejectedAttack, trustHostAccepted))
@@ -786,17 +809,17 @@ public sealed class Authoritative4XCommandApplicator
                 return Accept(result);
 
             case AuthoritativeShipTargetOrderType.Escort:
-                if (target.Loyalty != empire)
+                if (!trustHostAccepted && target.Loyalty != empire)
                     return Reject(result, $"Ship {target.Id} is not a friendly escort target.");
                 ship.AI.AddEscortGoal(target);
                 return Accept(result);
 
             case AuthoritativeShipTargetOrderType.TransferTroops:
-                if (target.Loyalty != empire)
+                if (!trustHostAccepted && target.Loyalty != empire)
                     return Reject(result, $"Ship {target.Id} is not a friendly troop transfer target.");
-                if (!IsSingleTroopTargetOrderShip(ship) || ship.TroopCount == 0)
+                if (!trustHostAccepted && (!IsSingleTroopTargetOrderShip(ship) || ship.TroopCount == 0))
                     return Reject(result, $"Ship {ship.Id} has no transferable troop.");
-                if (target.TroopCapacity <= target.TroopCount)
+                if (!trustHostAccepted && target.TroopCapacity <= target.TroopCount)
                     return Reject(result, $"Ship {target.Id} has no troop capacity available.");
                 ship.AI.OrderTroopToShip(target);
                 return Accept(result);
@@ -805,7 +828,7 @@ public sealed class Authoritative4XCommandApplicator
                 if (!TryEnsureHostileShipTarget(empire, target, "board", result,
                         out AuthoritativeCommandResult rejectedBoard, trustHostAccepted))
                     return rejectedBoard;
-                if (!IsSingleTroopTargetOrderShip(ship) || ship.TroopCount == 0)
+                if (!trustHostAccepted && (!IsSingleTroopTargetOrderShip(ship) || ship.TroopCount == 0))
                     return Reject(result, $"Ship {ship.Id} has no boarding troop.");
                 ship.AI.OrderTroopToBoardShip(target);
                 return Accept(result);
@@ -828,6 +851,9 @@ public sealed class Authoritative4XCommandApplicator
         Empire targetEmpire = target.Loyalty;
         if (targetEmpire == empire)
         {
+            if (trustHostAccepted)
+                return true;
+
             reject = Reject(result, $"Empire {empire.Id} cannot {verb} ship {target.Id}.");
             return false;
         }
@@ -874,7 +900,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyShipPlanetOrder(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (!TryParsePlanetOrder(command.Text, out AuthoritativeShipPlanetOrderType orderType,
                 out bool clearOrders, out MoveOrder moveOrder))
@@ -884,17 +910,17 @@ public sealed class Authoritative4XCommandApplicator
 
         Ship ship = UState.Objects.FindShip(command.SubjectId);
         if (ship == null)
-            return Reject(result, $"Ship {command.SubjectId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} not found.");
         if (!ship.Active)
-            return Reject(result, $"Ship {command.SubjectId} is inactive.");
-        if (ship.Loyalty != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} is inactive.");
+        if (!trustHostAccepted && ship.Loyalty != empire)
             return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
-        if (ship.IsConstructor || ship.IsPlatformOrStation || ship.IsSubspaceProjector)
+        if (!trustHostAccepted && (ship.IsConstructor || ship.IsPlatformOrStation || ship.IsSubspaceProjector))
             return Reject(result, $"Ship {command.SubjectId} cannot receive authoritative planet orders.");
 
         Planet planet = UState.GetPlanet(command.TargetId);
         if (planet == null)
-            return Reject(result, $"Planet {command.TargetId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.TargetId} not found.");
 
         const MoveOrder Allowed = MoveOrder.Regular | MoveOrder.Aggressive | MoveOrder.StandGround;
         if ((moveOrder & ~Allowed) != 0)
@@ -907,35 +933,38 @@ public sealed class Authoritative4XCommandApplicator
                 return Accept(result);
 
             case AuthoritativeShipPlanetOrderType.Colonize:
-                if (!ship.ShipData.IsColonyShip)
+                if (!trustHostAccepted && !ship.ShipData.IsColonyShip)
                     return Reject(result, $"Ship {ship.Id} is not a colony ship.");
-                if (!planet.Habitable || planet.Owner != null)
+                if (!trustHostAccepted && (!planet.Habitable || planet.Owner != null))
                     return Reject(result, $"Planet {planet.Id} is not a legal colonization target.");
                 empire.AI.AddGoalAndEvaluate(new MarkForColonization(ship, planet, empire));
                 return Accept(result);
 
             case AuthoritativeShipPlanetOrderType.Bombard:
-                if (!ship.HasBombs)
+                if (!trustHostAccepted && !ship.HasBombs)
                     return Reject(result, $"Ship {ship.Id} cannot bombard planets.");
-                if (planet.Owner == null || planet.Owner == empire || !empire.IsEmpireAttackable(planet.Owner))
+                if (!trustHostAccepted
+                    && (planet.Owner == null || planet.Owner == empire || !empire.IsEmpireAttackable(planet.Owner)))
                     return Reject(result, $"Empire {empire.Id} cannot bombard planet {planet.Id}.");
                 ship.AI.OrderBombardPlanet(planet, clearOrders);
                 return Accept(result);
 
             case AuthoritativeShipPlanetOrderType.LandTroops:
-                if (!ship.Carrier.AnyAssaultOpsAvailable && !IsSingleTroopTargetOrderShip(ship)
-                                                        && !ship.IsDefaultAssaultShuttle)
+                if (!trustHostAccepted
+                    && !ship.Carrier.AnyAssaultOpsAvailable
+                    && !IsSingleTroopTargetOrderShip(ship)
+                    && !ship.IsDefaultAssaultShuttle)
                     return Reject(result, $"Ship {ship.Id} has no assault troops available.");
-                if (!planet.Habitable)
+                if (!trustHostAccepted && !planet.Habitable)
                     return Reject(result, $"Planet {planet.Id} is not habitable.");
                 bool legalLanding = planet.Owner == null
                                     || planet.Owner == empire
                                     || planet.Owner != empire && empire.IsAtWarWith(planet.Owner);
-                if (!legalLanding)
+                if (!trustHostAccepted && !legalLanding)
                     return Reject(result, $"Empire {empire.Id} cannot land troops on planet {planet.Id}.");
                 return ship.AI.OrderLandAllTroops(planet, clearOrders)
                     ? Accept(result)
-                    : Reject(result, $"Ship {ship.Id} could not receive troop landing order.");
+                    : TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {ship.Id} could not receive troop landing order.");
 
             default:
                 return Reject(result, $"Unsupported planet order {orderType}.");
@@ -945,12 +974,12 @@ public sealed class Authoritative4XCommandApplicator
     static bool IsSingleTroopTargetOrderShip(Ship ship)
         => ship?.DesignRole == RoleName.troop || ship?.ShipData.Role == RoleName.troop;
 
-    AuthoritativeCommandResult ApplyColonyType(AuthoritativePlayerCommand command, Empire empire, AuthoritativeCommandResult result)
+    AuthoritativeCommandResult ApplyColonyType(AuthoritativePlayerCommand command, Empire empire, AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} not found.");
-        if (planet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} not found.");
+        if (!trustHostAccepted && planet.Owner != empire)
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
         if (!System.Enum.IsDefined(typeof(Planet.ColonyType), command.TargetId))
             return Reject(result, $"Invalid colony type {command.TargetId}.");
@@ -966,14 +995,14 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyColonizationGoal(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} not found.");
-        if (planet.Owner != null)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} not found.");
+        if (!trustHostAccepted && planet.Owner != null)
             return Reject(result, $"Planet {planet.Id} is already owned.");
-        if (!planet.Habitable)
+        if (!trustHostAccepted && !planet.Habitable)
             return Reject(result, $"Planet {planet.Id} is not habitable.");
         if (command.TargetId is not (0 or 1))
             return Reject(result, $"Unsupported colonization goal state {command.TargetId}.");
@@ -993,7 +1022,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyDeepSpaceBuild(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (!AuthoritativePlayerCommand.TryParseDeepSpaceBuildPayload(command.Text,
                 out string designName, out Vector2 tetherOffset))
@@ -1003,22 +1032,22 @@ public sealed class Authoritative4XCommandApplicator
         if (!float.IsFinite(command.Position.X) || !float.IsFinite(command.Position.Y))
             return Reject(result, "Deep-space build position is not finite.");
         if (!ResourceManager.Ships.GetDesign(designName, out IShipDesign design))
-            return Reject(result, $"Deep-space build design '{designName}' was not found.");
-        if (!empire.CanBuildStation(design))
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Deep-space build design '{designName}' was not found.");
+        if (!trustHostAccepted && !empire.CanBuildStation(design))
             return Reject(result, $"Empire {empire.Id} cannot build deep-space design '{designName}'.");
 
         Planet targetPlanet = command.SubjectId == 0 ? null : UState.GetPlanet(command.SubjectId);
         if (command.SubjectId != 0 && targetPlanet == null)
-            return Reject(result, $"Deep-space target planet {command.SubjectId} was not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Deep-space target planet {command.SubjectId} was not found.");
 
         SolarSystem targetSystem = command.TargetId == 0 ? null : UState.Systems.FirstOrDefault(s => s.Id == command.TargetId);
         if (command.TargetId != 0 && targetSystem == null)
-            return Reject(result, $"Deep-space target system {command.TargetId} was not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Deep-space target system {command.TargetId} was not found.");
         targetSystem ??= targetPlanet?.System;
         if (targetPlanet != null && targetSystem != targetPlanet.System)
             return Reject(result, $"Deep-space target planet {targetPlanet.Id} is not in system {targetSystem?.Id ?? 0}.");
 
-        if (!CanQueueDeepSpaceBuild(empire, design, command.Position, targetPlanet, targetSystem))
+        if (!trustHostAccepted && !CanQueueDeepSpaceBuild(empire, design, command.Position, targetPlanet, targetSystem))
             return Reject(result, $"Deep-space build placement is not legal for '{designName}'.");
 
         if (design.IsResearchStation)
@@ -1047,7 +1076,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyCancelDeepSpaceBuild(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (!AuthoritativePlayerCommand.TryParseDeepSpaceCancelPayload(command.Text,
                 out string designName, out GoalType goalType))
@@ -1064,25 +1093,25 @@ public sealed class Authoritative4XCommandApplicator
             && (DeepSpaceGoalSystem(g)?.Id ?? 0) == command.TargetId
             && g.BuildPosition.AlmostEqual(command.Position, 1f));
         if (goal == null)
-            return Reject(result, $"Deep-space build goal '{designName}' was not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Deep-space build goal '{designName}' was not found.");
 
         CancelDeepSpaceBuildGoal(empire, goal);
         return Accept(result);
     }
 
     AuthoritativeCommandResult ApplyPlanetOrbitalBuild(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} was not found.");
-        if (planet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} was not found.");
+        if (!trustHostAccepted && planet.Owner != empire)
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
 
         string designName = command.Text?.Trim() ?? "";
         if (!ResourceManager.Ships.GetDesign(designName, out IShipDesign design))
-            return Reject(result, $"Orbital design '{designName}' was not found.");
-        if (!CanQueuePlanetOrbitalBuild(empire, planet, design))
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Orbital design '{designName}' was not found.");
+        if (!trustHostAccepted && !CanQueuePlanetOrbitalBuild(empire, planet, design))
             return Reject(result, $"Empire {empire.Id} cannot build orbital '{designName}' at planet {planet.Id}.");
 
         planet.AddOrbital(design);
@@ -1090,12 +1119,12 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyBuildCapitalHere(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} was not found.");
-        if (planet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} was not found.");
+        if (!trustHostAccepted && planet.Owner != empire)
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
 
         planet.BuildCapitalHere();
@@ -1103,16 +1132,16 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyColonyBlueprints(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} was not found.");
-        if (planet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} was not found.");
+        if (!trustHostAccepted && planet.Owner != empire)
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
         if (!AuthoritativePlayerCommand.TryParseBlueprintsTemplate(command.Text, out BlueprintsTemplate template))
             return Reject(result, "Invalid colony blueprints payload.");
-        if (!CanApplyColonyBlueprints(template, out string reason))
+        if (!trustHostAccepted && !CanApplyColonyBlueprints(template, out string reason))
             return Reject(result, reason);
 
         planet.DontScrapBuildings = false;
@@ -1122,12 +1151,12 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyClearColonyBlueprints(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} was not found.");
-        if (planet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} was not found.");
+        if (!trustHostAccepted && planet.Owner != empire)
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
 
         planet.RemoveBlueprints();
@@ -1135,12 +1164,12 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyScrapColonyTile(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} was not found.");
-        if (planet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} was not found.");
+        if (!trustHostAccepted && planet.Owner != empire)
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
         if (!AuthoritativePlayerCommand.TryParseTileCoordinates(command.Position, out int tileX, out int tileY))
             return Reject(result, "Invalid colony tile coordinate payload.");
@@ -1150,32 +1179,32 @@ public sealed class Authoritative4XCommandApplicator
 
         PlanetGridSquare tile = planet.TilesList.FirstOrDefault(t => t.X == tileX && t.Y == tileY);
         if (tile == null)
-            return Reject(result, $"Planet {planet.Id} has no tile at {tileX},{tileY}.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {planet.Id} has no tile at {tileX},{tileY}.");
 
         switch ((AuthoritativeColonyTileScrapKind)command.TargetId)
         {
             case AuthoritativeColonyTileScrapKind.Building:
-                return ScrapBuildingTile(planet, tile, command.Text?.Trim() ?? "", result);
+                return ScrapBuildingTile(planet, tile, command.Text?.Trim() ?? "", result, trustHostAccepted);
             case AuthoritativeColonyTileScrapKind.Biosphere:
-                return ScrapBiosphereTile(planet, tile, result);
+                return ScrapBiosphereTile(planet, tile, result, trustHostAccepted);
             default:
                 return Reject(result, $"Unsupported colony tile scrap kind {command.TargetId}.");
         }
     }
 
     AuthoritativeCommandResult ScrapBuildingTile(Planet planet, PlanetGridSquare tile, string expectedBuildingName,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Building building = tile.Building;
         if (building == null)
-            return Reject(result, $"Planet {planet.Id} tile {tile.X},{tile.Y} has no building to scrap.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {planet.Id} tile {tile.X},{tile.Y} has no building to scrap.");
         if (string.IsNullOrWhiteSpace(expectedBuildingName)
             || !string.Equals(building.Name, expectedBuildingName, StringComparison.Ordinal))
         {
-            return Reject(result,
+            return TrustedNoOpOrReject(result, trustHostAccepted,
                 $"Planet {planet.Id} tile {tile.X},{tile.Y} no longer contains building '{expectedBuildingName}'.");
         }
-        if (!building.Scrappable)
+        if (!trustHostAccepted && !building.Scrappable)
             return Reject(result, $"Building '{building.Name}' on planet {planet.Id} is not scrappable.");
 
         planet.ScrapBuilding(building);
@@ -1184,10 +1213,10 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ScrapBiosphereTile(Planet planet, PlanetGridSquare tile,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (!tile.Biosphere)
-            return Reject(result, $"Planet {planet.Id} tile {tile.X},{tile.Y} has no biosphere to scrap.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {planet.Id} tile {tile.X},{tile.Y} has no biosphere to scrap.");
 
         bool destroyBuilding = !tile.Building?.CanBuildAnywhere == true;
         planet.DestroyBioSpheres(tile, destroyBuilding);
@@ -1196,7 +1225,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyGroundTroopOrder(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
             || !Enum.IsDefined(typeof(AuthoritativeGroundTroopOrderType),
@@ -1207,8 +1236,8 @@ public sealed class Authoritative4XCommandApplicator
 
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} was not found.");
-        if (!planet.Habitable)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} was not found.");
+        if (!trustHostAccepted && !planet.Habitable)
             return Reject(result, $"Planet {planet.Id} cannot host ground troops.");
         if (!AuthoritativePlayerCommand.TryParseGroundTroopOrderPayload(command.Text,
                 out int troopIndex, out int targetTileX, out int targetTileY, out string expectedTroopName))
@@ -1219,50 +1248,52 @@ public sealed class Authoritative4XCommandApplicator
         return (AuthoritativeGroundTroopOrderType)(byte)command.TargetId switch
         {
             AuthoritativeGroundTroopOrderType.LaunchOne =>
-                ApplyLaunchOneGroundTroop(command, empire, planet, troopIndex, expectedTroopName, result),
+                ApplyLaunchOneGroundTroop(command, empire, planet, troopIndex, expectedTroopName, result, trustHostAccepted),
             AuthoritativeGroundTroopOrderType.LaunchAll =>
-                ApplyLaunchGroundTroops(empire, planet, recall: false, result),
+                ApplyLaunchGroundTroops(empire, planet, recall: false, result, trustHostAccepted),
             AuthoritativeGroundTroopOrderType.RecallAll =>
-                ApplyLaunchGroundTroops(empire, planet, recall: true, result),
+                ApplyLaunchGroundTroops(empire, planet, recall: true, result, trustHostAccepted),
             AuthoritativeGroundTroopOrderType.Move =>
                 ApplyMoveGroundTroop(command, empire, planet, troopIndex, expectedTroopName,
-                    targetTileX, targetTileY, result),
+                    targetTileX, targetTileY, result, trustHostAccepted),
             AuthoritativeGroundTroopOrderType.AttackTroop =>
                 ApplyGroundTroopAttackTroop(command, empire, planet, troopIndex, expectedTroopName,
-                    targetTileX, targetTileY, result),
+                    targetTileX, targetTileY, result, trustHostAccepted),
             AuthoritativeGroundTroopOrderType.AttackBuilding =>
                 ApplyGroundTroopAttackBuilding(command, empire, planet, troopIndex, expectedTroopName,
-                    targetTileX, targetTileY, result),
+                    targetTileX, targetTileY, result, trustHostAccepted),
             AuthoritativeGroundTroopOrderType.BuildingAttackTroop =>
                 ApplyBuildingAttackGroundTroop(command, empire, planet, troopIndex,
-                    targetTileX, targetTileY, result),
+                    targetTileX, targetTileY, result, trustHostAccepted),
             _ => Reject(result, $"Unsupported ground troop order {command.TargetId}."),
         };
     }
 
     AuthoritativeCommandResult ApplyLaunchOneGroundTroop(AuthoritativePlayerCommand command, Empire empire,
-        Planet planet, int troopIndex, string expectedTroopName, AuthoritativeCommandResult result)
+        Planet planet, int troopIndex, string expectedTroopName, AuthoritativeCommandResult result,
+        bool trustHostAccepted)
     {
         if (!TryGetOwnedGroundTroop(command, empire, planet, troopIndex, expectedTroopName,
-                result, out PlanetGridSquare tile, out Troop troop, out AuthoritativeCommandResult rejected))
+                result, trustHostAccepted, out PlanetGridSquare tile, out Troop troop,
+                out AuthoritativeCommandResult rejected))
         {
             return rejected;
         }
-        if (!troop.CanLaunch)
+        if (!trustHostAccepted && !troop.CanLaunch)
             return Reject(result, $"Troop {troop.Name} at planet {planet.Id} tile {tile.X},{tile.Y} cannot launch.");
 
         Ship troopShip = troop.Launch(tile);
         return troopShip != null
             ? Accept(result)
-            : Reject(result, $"Troop {troop.Name} at planet {planet.Id} failed to launch.");
+            : TrustedNoOpOrReject(result, trustHostAccepted, $"Troop {troop.Name} at planet {planet.Id} failed to launch.");
     }
 
     AuthoritativeCommandResult ApplyLaunchGroundTroops(Empire empire, Planet planet, bool recall,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Troop[] troops = planet.Troops.GetLaunchableTroops(empire).ToArray();
         if (troops.Length == 0)
-            return Reject(result, $"Planet {planet.Id} has no launchable troops for empire {empire.Id}.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {planet.Id} has no launchable troops for empire {empire.Id}.");
 
         bool launched = false;
         foreach (Troop troop in troops)
@@ -1278,38 +1309,39 @@ public sealed class Authoritative4XCommandApplicator
 
         return launched
             ? Accept(result)
-            : Reject(result, $"Planet {planet.Id} could not launch any troops for empire {empire.Id}.");
+            : TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {planet.Id} could not launch any troops for empire {empire.Id}.");
     }
 
     AuthoritativeCommandResult ApplyMoveGroundTroop(AuthoritativePlayerCommand command, Empire empire,
         Planet planet, int troopIndex, string expectedTroopName, int targetTileX, int targetTileY,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (!TryGetOwnedGroundTroop(command, empire, planet, troopIndex, expectedTroopName,
-                result, out PlanetGridSquare sourceTile, out Troop troop, out AuthoritativeCommandResult rejected))
+                result, trustHostAccepted, out PlanetGridSquare sourceTile, out Troop troop,
+                out AuthoritativeCommandResult rejected))
         {
             return rejected;
         }
 
         PlanetGridSquare targetTile = FindTile(planet, targetTileX, targetTileY);
         if (targetTile == null)
-            return Reject(result, $"Planet {planet.Id} has no target tile at {targetTileX},{targetTileY}.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {planet.Id} has no target tile at {targetTileX},{targetTileY}.");
         if (sourceTile == targetTile)
             return Reject(result, "Ground troop move target must differ from the source tile.");
-        if (!troop.CanMove)
+        if (!trustHostAccepted && !troop.CanMove)
             return Reject(result, $"Troop {troop.Name} at planet {planet.Id} cannot move.");
-        if (!targetTile.IsTileFree(empire))
+        if (!trustHostAccepted && !targetTile.IsTileFree(empire))
             return Reject(result, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} is not free.");
 
         int dx = Math.Abs(targetTile.X - sourceTile.X);
         int dy = Math.Abs(targetTile.Y - sourceTile.Y);
-        if (dx > troop.ActualRange || dy > troop.ActualRange)
+        if (!trustHostAccepted && (dx > troop.ActualRange || dy > troop.ActualRange))
             return Reject(result, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} is out of troop range.");
 
         troop.facingRight = targetTile.X > sourceTile.X;
         planet.Troops.MoveTowardsTarget(troop, sourceTile, targetTile);
         if (sourceTile.TroopsHere.ContainsRef(troop))
-            return Reject(result, $"Troop {troop.Name} at planet {planet.Id} could not move toward {targetTile.X},{targetTile.Y}.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Troop {troop.Name} at planet {planet.Id} could not move toward {targetTile.X},{targetTile.Y}.");
 
         planet.SetInGroundCombat(troop.Loyalty);
         return Accept(result);
@@ -1317,22 +1349,23 @@ public sealed class Authoritative4XCommandApplicator
 
     AuthoritativeCommandResult ApplyGroundTroopAttackTroop(AuthoritativePlayerCommand command, Empire empire,
         Planet planet, int troopIndex, string expectedTroopName, int targetTileX, int targetTileY,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (!TryGetOwnedGroundTroop(command, empire, planet, troopIndex, expectedTroopName,
-                result, out PlanetGridSquare sourceTile, out Troop troop, out AuthoritativeCommandResult rejected))
+                result, trustHostAccepted, out PlanetGridSquare sourceTile, out Troop troop,
+                out AuthoritativeCommandResult rejected))
         {
             return rejected;
         }
         if (!TryGetTargetTileInTroopRange(planet, sourceTile, troop.ActualRange, targetTileX, targetTileY,
-                result, out PlanetGridSquare targetTile, out rejected))
+                result, trustHostAccepted, out PlanetGridSquare targetTile, out rejected))
         {
             return rejected;
         }
-        if (!troop.CanAttack)
+        if (!trustHostAccepted && !troop.CanAttack)
             return Reject(result, $"Troop {troop.Name} at planet {planet.Id} tile {sourceTile.X},{sourceTile.Y} cannot attack.");
         if (!targetTile.LockOnEnemyTroop(empire, out Troop enemyTroop))
-            return Reject(result, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} has no attackable enemy troop.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} has no attackable enemy troop.");
 
         troop.FaceEnemy(targetTile, sourceTile);
         troop.UpdateAttackActions(-1);
@@ -1346,22 +1379,25 @@ public sealed class Authoritative4XCommandApplicator
 
     AuthoritativeCommandResult ApplyGroundTroopAttackBuilding(AuthoritativePlayerCommand command, Empire empire,
         Planet planet, int troopIndex, string expectedTroopName, int targetTileX, int targetTileY,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (!TryGetOwnedGroundTroop(command, empire, planet, troopIndex, expectedTroopName,
-                result, out PlanetGridSquare sourceTile, out Troop troop, out AuthoritativeCommandResult rejected))
+                result, trustHostAccepted, out PlanetGridSquare sourceTile, out Troop troop,
+                out AuthoritativeCommandResult rejected))
         {
             return rejected;
         }
         if (!TryGetTargetTileInTroopRange(planet, sourceTile, troop.ActualRange, targetTileX, targetTileY,
-                result, out PlanetGridSquare targetTile, out rejected))
+                result, trustHostAccepted, out PlanetGridSquare targetTile, out rejected))
         {
             return rejected;
         }
-        if (!troop.CanAttack)
+        if (!trustHostAccepted && !troop.CanAttack)
             return Reject(result, $"Troop {troop.Name} at planet {planet.Id} tile {sourceTile.X},{sourceTile.Y} cannot attack.");
-        if (!targetTile.CombatBuildingOnTile || planet.Owner == empire)
+        if (!trustHostAccepted && (!targetTile.CombatBuildingOnTile || planet.Owner == empire))
             return Reject(result, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} has no attackable enemy building.");
+        if (targetTile.Building == null)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} has no building.");
 
         troop.FaceEnemy(targetTile, sourceTile);
         CombatScreen.StartCombat(troop, targetTile.Building, targetTile, planet);
@@ -1370,26 +1406,33 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyBuildingAttackGroundTroop(AuthoritativePlayerCommand command, Empire empire,
-        Planet planet, int targetTroopIndex, int targetTileX, int targetTileY, AuthoritativeCommandResult result)
+        Planet planet, int targetTroopIndex, int targetTileX, int targetTileY, AuthoritativeCommandResult result,
+        bool trustHostAccepted)
     {
         if (!AuthoritativePlayerCommand.TryParseTileCoordinates(command.Position, out int sourceTileX, out int sourceTileY))
             return Reject(result, "Invalid ground building tile coordinate payload.");
 
         PlanetGridSquare sourceTile = FindTile(planet, sourceTileX, sourceTileY);
         if (sourceTile == null)
-            return Reject(result, $"Planet {planet.Id} has no tile at {sourceTileX},{sourceTileY}.");
-        if (planet.Owner != empire || !sourceTile.CombatBuildingOnTile || !sourceTile.Building.CanAttack)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {planet.Id} has no tile at {sourceTileX},{sourceTileY}.");
+        if (sourceTile.Building == null)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {planet.Id} tile {sourceTile.X},{sourceTile.Y} has no building.");
+        if (!trustHostAccepted && (planet.Owner != empire || !sourceTile.CombatBuildingOnTile || !sourceTile.Building.CanAttack))
             return Reject(result, $"Planet {planet.Id} tile {sourceTile.X},{sourceTile.Y} has no owned building that can attack.");
 
         PlanetGridSquare targetTile = FindTile(planet, targetTileX, targetTileY);
         if (targetTile == null)
-            return Reject(result, $"Planet {planet.Id} has no target tile at {targetTileX},{targetTileY}.");
-        if (Math.Abs(targetTile.X - sourceTile.X) > 1 || Math.Abs(targetTile.Y - sourceTile.Y) > 1)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {planet.Id} has no target tile at {targetTileX},{targetTileY}.");
+        if (!trustHostAccepted && (Math.Abs(targetTile.X - sourceTile.X) > 1 || Math.Abs(targetTile.Y - sourceTile.Y) > 1))
             return Reject(result, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} is out of building range.");
         if ((uint)targetTroopIndex >= targetTile.TroopsHere.Count
             || targetTile.TroopsHere[targetTroopIndex]?.Loyalty?.IsAtWarWith(empire) != true)
         {
-            return Reject(result, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} has no attackable troop index {targetTroopIndex}.");
+            if (!trustHostAccepted)
+                return Reject(result, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} has no attackable troop index {targetTroopIndex}.");
+
+            if ((uint)targetTroopIndex >= targetTile.TroopsHere.Count)
+                return TrustedNoOp(result, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} has no troop index {targetTroopIndex}.");
         }
 
         sourceTile.Building.UpdateAttackActions(-1);
@@ -1401,13 +1444,13 @@ public sealed class Authoritative4XCommandApplicator
 
     bool TryGetTargetTileInTroopRange(Planet planet, PlanetGridSquare sourceTile, int range,
         int targetTileX, int targetTileY, AuthoritativeCommandResult result,
-        out PlanetGridSquare targetTile, out AuthoritativeCommandResult rejected)
+        bool trustHostAccepted, out PlanetGridSquare targetTile, out AuthoritativeCommandResult rejected)
     {
         rejected = null;
         targetTile = FindTile(planet, targetTileX, targetTileY);
         if (targetTile == null)
         {
-            rejected = Reject(result, $"Planet {planet.Id} has no target tile at {targetTileX},{targetTileY}.");
+            rejected = TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {planet.Id} has no target tile at {targetTileX},{targetTileY}.");
             return false;
         }
         if (sourceTile == targetTile)
@@ -1415,7 +1458,8 @@ public sealed class Authoritative4XCommandApplicator
             rejected = Reject(result, "Ground troop attack target must differ from the source tile.");
             return false;
         }
-        if (Math.Abs(targetTile.X - sourceTile.X) > range || Math.Abs(targetTile.Y - sourceTile.Y) > range)
+        if (!trustHostAccepted
+            && (Math.Abs(targetTile.X - sourceTile.X) > range || Math.Abs(targetTile.Y - sourceTile.Y) > range))
         {
             rejected = Reject(result, $"Planet {planet.Id} target tile {targetTile.X},{targetTile.Y} is out of troop range.");
             return false;
@@ -1424,8 +1468,8 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     bool TryGetOwnedGroundTroop(AuthoritativePlayerCommand command, Empire empire, Planet planet, int troopIndex,
-        string expectedTroopName, AuthoritativeCommandResult result, out PlanetGridSquare tile, out Troop troop,
-        out AuthoritativeCommandResult rejected)
+        string expectedTroopName, AuthoritativeCommandResult result, bool trustHostAccepted,
+        out PlanetGridSquare tile, out Troop troop, out AuthoritativeCommandResult rejected)
     {
         tile = null;
         troop = null;
@@ -1440,25 +1484,30 @@ public sealed class Authoritative4XCommandApplicator
         tile = FindTile(planet, tileX, tileY);
         if (tile == null)
         {
-            rejected = Reject(result, $"Planet {planet.Id} has no tile at {tileX},{tileY}.");
+            rejected = TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {planet.Id} has no tile at {tileX},{tileY}.");
             return false;
         }
         if ((uint)troopIndex >= tile.TroopsHere.Count)
         {
-            rejected = Reject(result, $"Planet {planet.Id} tile {tileX},{tileY} has no troop index {troopIndex}.");
+            rejected = TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {planet.Id} tile {tileX},{tileY} has no troop index {troopIndex}.");
             return false;
         }
 
         troop = tile.TroopsHere[troopIndex];
-        if (troop?.Loyalty != empire)
+        if (!trustHostAccepted && troop?.Loyalty != empire)
         {
             rejected = Reject(result, $"Planet {planet.Id} tile {tileX},{tileY} troop {troopIndex} is not owned by empire {empire.Id}.");
+            return false;
+        }
+        if (troop == null)
+        {
+            rejected = TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {planet.Id} tile {tileX},{tileY} troop {troopIndex} was not found.");
             return false;
         }
         if (!string.IsNullOrEmpty(expectedTroopName)
             && !string.Equals(troop.Name, expectedTroopName, StringComparison.Ordinal))
         {
-            rejected = Reject(result, $"Planet {planet.Id} tile {tileX},{tileY} troop {troopIndex} no longer matches {expectedTroopName}.");
+            rejected = TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {planet.Id} tile {tileX},{tileY} troop {troopIndex} no longer matches {expectedTroopName}.");
             return false;
         }
 
@@ -1617,14 +1666,14 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyColonyLabor(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} not found.");
-        if (planet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} not found.");
+        if (!trustHostAccepted && planet.Owner != empire)
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
-        if (planet.CType is not (Planet.ColonyType.Colony or Planet.ColonyType.TradeHub))
+        if (!trustHostAccepted && planet.CType is not (Planet.ColonyType.Colony or Planet.ColonyType.TradeHub))
             return Reject(result, $"Planet {command.SubjectId} is governed by {planet.CType} and cannot receive manual labor.");
         if (!AuthoritativePlayerCommand.TryParseColonyLaborPayload(command.Text, out float food,
                 out float production, out float research, out bool foodLocked, out bool productionLocked,
@@ -1638,7 +1687,7 @@ public sealed class Authoritative4XCommandApplicator
         float sum = food + production + research;
         if (Math.Abs(sum - 1f) > 0.0001f)
             return Reject(result, $"Colony labor percentages must sum to 1, got {sum}.");
-        if (planet.IsCybernetic && Math.Abs(food) > 0.0001f)
+        if (!trustHostAccepted && planet.IsCybernetic && Math.Abs(food) > 0.0001f)
             return Reject(result, "Cybernetic colonies cannot assign food labor.");
 
         planet.Food.Percent = food;
@@ -1651,16 +1700,16 @@ public sealed class Authoritative4XCommandApplicator
         return Accept(result);
     }
 
-    AuthoritativeCommandResult ApplyResearchTopic(AuthoritativePlayerCommand command, Empire empire, AuthoritativeCommandResult result)
+    AuthoritativeCommandResult ApplyResearchTopic(AuthoritativePlayerCommand command, Empire empire, AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         string techUid = command.Text ?? "";
         if (techUid.IsEmpty())
             return Reject(result, "Research topic is empty.");
         if (!ResourceManager.TryGetTech(techUid, out _))
-            return Reject(result, $"Tech {techUid} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Tech {techUid} not found.");
         if (!empire.TryGetTechEntry(techUid, out TechEntry entry))
-            return Reject(result, $"Empire {empire.Id} has no tech entry for {techUid}.");
-        if (entry.Unlocked)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Empire {empire.Id} has no tech entry for {techUid}.");
+        if (!trustHostAccepted && entry.Unlocked)
             return Reject(result, $"Tech {techUid} is already unlocked.");
 
         empire.Research.SetTopic(techUid);
@@ -1668,16 +1717,16 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyQueueResearch(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
-        if (!TryGetResearchEntry(command.Text, empire, result, out string techUid, out TechEntry entry,
+        if (!TryGetResearchEntry(command.Text, empire, result, trustHostAccepted, out string techUid, out TechEntry entry,
                 out AuthoritativeCommandResult rejected))
         {
             return rejected;
         }
-        if (!entry.Discovered)
+        if (!trustHostAccepted && !entry.Discovered)
             return Reject(result, $"Tech {techUid} is not discovered by empire {empire.Id}.");
-        if (!entry.CanBeResearched)
+        if (!trustHostAccepted && !entry.CanBeResearched)
             return Reject(result, $"Tech {techUid} cannot be researched by empire {empire.Id}.");
 
         empire.Research.AddTechToQueue(techUid);
@@ -1685,24 +1734,24 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyRemoveResearchQueueItem(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
-        if (!TryGetResearchEntry(command.Text, empire, result, out string techUid, out _,
+        if (!TryGetResearchEntry(command.Text, empire, result, trustHostAccepted, out string techUid, out _,
                 out AuthoritativeCommandResult rejected))
         {
             return rejected;
         }
         if (!empire.Research.IsQueued(techUid))
-            return Reject(result, $"Tech {techUid} is not queued for empire {empire.Id}.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Tech {techUid} is not queued for empire {empire.Id}.");
 
         empire.Research.RemoveTechFromQueue(techUid);
         return Accept(result);
     }
 
     AuthoritativeCommandResult ApplyMoveResearchQueueItem(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
-        if (!TryGetResearchEntry(command.Text, empire, result, out string techUid, out _,
+        if (!TryGetResearchEntry(command.Text, empire, result, trustHostAccepted, out string techUid, out _,
                 out AuthoritativeCommandResult rejected))
         {
             return rejected;
@@ -1716,30 +1765,30 @@ public sealed class Authoritative4XCommandApplicator
 
         int index = empire.Research.IndexInQueue(techUid);
         if (index < 0)
-            return Reject(result, $"Tech {techUid} is not queued for empire {empire.Id}.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Tech {techUid} is not queued for empire {empire.Id}.");
 
         switch ((AuthoritativeResearchQueueMove)command.TargetId)
         {
             case AuthoritativeResearchQueueMove.Up:
-                if (!empire.Research.CanMoveUp(index))
+                if (!trustHostAccepted && !empire.Research.CanMoveUp(index))
                     return Reject(result, $"Tech {techUid} cannot move up in the research queue.");
                 empire.Research.MoveUp(index);
                 return Accept(result);
 
             case AuthoritativeResearchQueueMove.Down:
-                if (!empire.Research.CanMoveDown(index))
+                if (!trustHostAccepted && !empire.Research.CanMoveDown(index))
                     return Reject(result, $"Tech {techUid} cannot move down in the research queue.");
                 empire.Research.MoveDown(index);
                 return Accept(result);
 
             case AuthoritativeResearchQueueMove.ToTopOrPrereq:
                 if (empire.Research.MoveToTopOrPreReq(index) == 0)
-                    return Reject(result, $"Tech {techUid} could not move toward the top of the research queue.");
+                    return TrustedNoOpOrReject(result, trustHostAccepted, $"Tech {techUid} could not move toward the top of the research queue.");
                 return Accept(result);
 
             case AuthoritativeResearchQueueMove.ToTopWithPrereqs:
                 if (empire.Research.MoveToTopWithPreReqs(index) == 0)
-                    return Reject(result, $"Tech {techUid} could not move to the top of the research queue.");
+                    return TrustedNoOpOrReject(result, trustHostAccepted, $"Tech {techUid} could not move to the top of the research queue.");
                 return Accept(result);
 
             default:
@@ -1748,7 +1797,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyEmpireBudget(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (!AuthoritativePlayerCommand.TryParseEmpireBudgetPayload(command.Text, out float taxRate,
                 out float treasuryGoal, out bool autoTaxes))
@@ -1768,7 +1817,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyDesignShip(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.Text.IsEmpty())
             return Reject(result, "Ship design payload is empty.");
@@ -1787,15 +1836,15 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, "Ship design payload did not produce a named design.");
         if (design.Hull.IsEmpty() || !ResourceManager.Hull(design.Hull, out _))
             return Reject(result, $"Ship design {design.Name} uses unknown hull {design.Hull}.");
-        if (!empire.IsHullUnlocked(design.Hull))
+        if (!trustHostAccepted && !empire.IsHullUnlocked(design.Hull))
             return Reject(result, $"Empire {empire.Id} has not unlocked hull {design.Hull}.");
-        if (!design.IsValidDesign)
+        if (!trustHostAccepted && !design.IsValidDesign)
             return Reject(result, $"Ship design {design.Name} is not a valid buildable design.");
         if (design.IsPlatformOrStation)
             return Reject(result, "Authoritative shipyard MVP supports mobile ship designs only.");
-        if (!CanBeAddedToHumanBuildables(design, empire))
+        if (!trustHostAccepted && !CanBeAddedToHumanBuildables(design, empire))
             return Reject(result, $"Ship design {design.Name} is not legal for empire {empire.Id}.");
-        if (!empire.WeCanBuildThis(design))
+        if (!trustHostAccepted && !empire.WeCanBuildThis(design))
             return Reject(result, $"Empire {empire.Id} lacks technology or modules for design {design.Name}.");
 
         IShipDesign registered = RegisterPlayerDesign(design, out string conflictReason);
@@ -1803,31 +1852,31 @@ public sealed class Authoritative4XCommandApplicator
             return Reject(result, conflictReason);
 
         empire.AddBuildableShip(registered);
-        if (!empire.CanBuildShip(registered))
+        if (!trustHostAccepted && !empire.CanBuildShip(registered))
             return Reject(result, $"Empire {empire.Id} could not register buildable design {registered.Name}.");
 
         return Accept(result);
     }
 
     AuthoritativeCommandResult ApplyQueueBuild(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} not found.");
-        if (planet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} not found.");
+        if (!trustHostAccepted && planet.Owner != empire)
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
-        if (!planet.HasSpacePort)
+        if (!trustHostAccepted && !planet.HasSpacePort)
             return Reject(result, $"Planet {command.SubjectId} has no spaceport or shipyard.");
 
         string designName = command.Text ?? "";
         if (designName.IsEmpty())
             return Reject(result, "Build design name is empty.");
         if (!ResourceManager.Ships.GetDesign(designName, out IShipDesign design))
-            return Reject(result, $"Ship design {designName} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship design {designName} not found.");
         if (design.IsPlatformOrStation)
             return Reject(result, "Authoritative shipyard MVP queues mobile ships only.");
-        if (!empire.CanBuildShip(design))
+        if (!trustHostAccepted && !empire.CanBuildShip(design))
             return Reject(result, $"Empire {empire.Id} cannot build design {designName}.");
 
         planet.Construction.Enqueue(design, QueueTypeFor(design), notifyOnEmpty: false);
@@ -1835,25 +1884,26 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyQueueBuilding(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} not found.");
-        if (planet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} not found.");
+        if (!trustHostAccepted && planet.Owner != empire)
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
 
         string buildingName = command.Text ?? "";
         if (buildingName.IsEmpty())
             return Reject(result, "Building name is empty.");
         if (!ResourceManager.GetBuilding(buildingName, out Building template))
-            return Reject(result, $"Building {buildingName} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Building {buildingName} not found.");
 
         planet.RefreshBuildingsWeCanBuildHere();
         Building buildable = planet.GetBuildingsCanBuild()
             .FirstOrDefault(b => b.BID == template.BID || string.Equals(b.Name, buildingName, StringComparison.Ordinal));
-        if (buildable == null)
+        if (buildable == null && !trustHostAccepted)
             return Reject(result, $"Empire {empire.Id} cannot build {buildingName} at planet {planet.Id}.");
+        buildable ??= template;
 
         PlanetGridSquare where = null;
         if (command.TargetId == 1)
@@ -1862,8 +1912,8 @@ public sealed class Authoritative4XCommandApplicator
             int tileY = (int)command.Position.Y;
             where = planet.TilesList.FirstOrDefault(tile => tile.X == tileX && tile.Y == tileY);
             if (where == null)
-                return Reject(result, $"Tile {tileX},{tileY} was not found at planet {planet.Id}.");
-            if (!where.CanEnqueueBuildingHere(buildable))
+                return TrustedNoOpOrReject(result, trustHostAccepted, $"Tile {tileX},{tileY} was not found at planet {planet.Id}.");
+            if (!trustHostAccepted && !where.CanEnqueueBuildingHere(buildable))
                 return Reject(result, $"Tile {tileX},{tileY} cannot queue {buildingName} at planet {planet.Id}.");
         }
         else if (command.TargetId != 0)
@@ -1873,26 +1923,26 @@ public sealed class Authoritative4XCommandApplicator
 
         return planet.Construction.Enqueue(buildable, where, playerAdded: true)
             ? Accept(result)
-            : Reject(result, $"No valid tile was available for {buildingName} at planet {planet.Id}.");
+            : TrustedNoOpOrReject(result, trustHostAccepted, $"No valid tile was available for {buildingName} at planet {planet.Id}.");
     }
 
     AuthoritativeCommandResult ApplyQueueTroop(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} not found.");
-        if (planet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} not found.");
+        if (!trustHostAccepted && planet.Owner != empire)
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
-        if (!planet.HasSpacePort)
+        if (!trustHostAccepted && !planet.HasSpacePort)
             return Reject(result, $"Planet {command.SubjectId} has no spaceport for troop training.");
 
         string troopName = command.Text ?? "";
         if (troopName.IsEmpty())
             return Reject(result, "Troop name is empty.");
         if (!ResourceManager.GetTroopTemplate(troopName, out Troop template))
-            return Reject(result, $"Troop {troopName} not found.");
-        if (!empire.WeCanBuildTroop(template.Name))
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Troop {troopName} not found.");
+        if (!trustHostAccepted && !empire.WeCanBuildTroop(template.Name))
             return Reject(result, $"Empire {empire.Id} cannot build troop {template.Name}.");
 
         planet.Construction.Enqueue(template, QueueItemType.Troop);
@@ -1900,11 +1950,11 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyCancelConstructionQueueItem(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
-        if (!TryGetOwnedQueueItem(command, empire, result, out Planet planet, out QueueItem item, out AuthoritativeCommandResult rejected))
+        if (!TryGetOwnedQueueItem(command, empire, result, trustHostAccepted, out Planet planet, out QueueItem item, out AuthoritativeCommandResult rejected))
             return rejected;
-        if (item.IsComplete)
+        if (!trustHostAccepted && item.IsComplete)
             return Reject(result, $"Construction queue item {command.TargetId} at planet {planet.Id} is already complete.");
 
         planet.Construction.Cancel(item);
@@ -1912,16 +1962,16 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyReorderConstructionQueueItem(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
-        if (!TryGetOwnedQueueItem(command, empire, result, out Planet planet, out _, out AuthoritativeCommandResult rejected))
+        if (!TryGetOwnedQueueItem(command, empire, result, trustHostAccepted, out Planet planet, out _, out AuthoritativeCommandResult rejected))
             return rejected;
 
         int currentIndex = command.TargetId;
         int moveToIndex = (int)command.Position.X;
         int queueCount = planet.ConstructionQueue.Count;
         if ((uint)moveToIndex >= queueCount)
-            return Reject(result, $"Construction queue target index {moveToIndex} is outside planet {planet.Id} queue.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Construction queue target index {moveToIndex} is outside planet {planet.Id} queue.");
         if (currentIndex == moveToIndex)
             return Accept(result);
 
@@ -1930,14 +1980,14 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyRushConstructionQueueItem(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
-        if (!TryGetOwnedQueueItem(command, empire, result, out Planet planet, out QueueItem item,
+        if (!TryGetOwnedQueueItem(command, empire, result, trustHostAccepted, out Planet planet, out QueueItem item,
                 out AuthoritativeCommandResult rejected))
         {
             return rejected;
         }
-        if (item.IsComplete)
+        if (!trustHostAccepted && item.IsComplete)
             return Reject(result, $"Construction queue item {command.TargetId} at planet {planet.Id} is already complete.");
 
         float maxAmount = command.Position.X;
@@ -1946,18 +1996,18 @@ public sealed class Authoritative4XCommandApplicator
 
         return planet.Construction.RushProduction(command.TargetId, maxAmount, rushButton: true)
             ? Accept(result)
-            : Reject(result, $"Planet {planet.Id} could not rush construction queue item {command.TargetId}.");
+            : TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {planet.Id} could not rush construction queue item {command.TargetId}.");
     }
 
     AuthoritativeCommandResult ApplyToggleConstructionRush(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
-        if (!TryGetOwnedQueueItem(command, empire, result, out Planet planet, out QueueItem item,
+        if (!TryGetOwnedQueueItem(command, empire, result, trustHostAccepted, out Planet planet, out QueueItem item,
                 out AuthoritativeCommandResult rejected))
         {
             return rejected;
         }
-        if (item.IsComplete)
+        if (!trustHostAccepted && item.IsComplete)
             return Reject(result, $"Construction queue item {command.TargetId} at planet {planet.Id} is already complete.");
 
         item.Rush = !item.Rush;
@@ -1965,12 +2015,12 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyPlanetGoodsState(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} not found.");
-        if (planet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} not found.");
+        if (!trustHostAccepted && planet.Owner != empire)
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
         if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
             || !Enum.IsDefined(typeof(AuthoritativePlanetGoodsKind),
@@ -1987,7 +2037,7 @@ public sealed class Authoritative4XCommandApplicator
         switch ((AuthoritativePlanetGoodsKind)command.TargetId)
         {
             case AuthoritativePlanetGoodsKind.Food:
-                if (!planet.NonCybernetic)
+                if (!trustHostAccepted && !planet.NonCybernetic)
                     return Reject(result, $"Planet {planet.Id} cannot set food trade policy.");
                 planet.FS = state;
                 return Accept(result);
@@ -2002,16 +2052,16 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyPlanetPrioritizedPort(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} not found.");
-        if (planet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} not found.");
+        if (!trustHostAccepted && planet.Owner != empire)
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
 
         bool prioritized = command.TargetId != 0;
-        if (prioritized && !planet.HasSpacePort)
+        if (!trustHostAccepted && prioritized && !planet.HasSpacePort)
             return Reject(result, $"Planet {planet.Id} cannot be a prioritized port without a space port.");
 
         planet.SetPrioritizedPort(prioritized);
@@ -2019,12 +2069,12 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyPlanetManualBudget(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} not found.");
-        if (planet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} not found.");
+        if (!trustHostAccepted && planet.Owner != empire)
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
         if (command.TargetId < byte.MinValue || command.TargetId > byte.MaxValue
             || !Enum.IsDefined(typeof(AuthoritativePlanetBudgetKind),
@@ -2054,12 +2104,12 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyPlanetGovernorOptions(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} not found.");
-        if (planet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} not found.");
+        if (!trustHostAccepted && planet.Owner != empire)
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
 
         var options = (AuthoritativePlanetGovernorOptions)command.TargetId;
@@ -2078,12 +2128,12 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyPlanetManualTradeSlots(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} not found.");
-        if (planet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} not found.");
+        if (!trustHostAccepted && planet.Owner != empire)
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
         if (!AuthoritativePlayerCommand.TryParseManualTradeSlotsPayload(command.Text,
                 out int foodImport, out int prodImport, out int coloImport,
@@ -2097,12 +2147,12 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyPlanetDefenseTargets(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} not found.");
-        if (planet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} not found.");
+        if (!trustHostAccepted && planet.Owner != empire)
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
         if (!AuthoritativePlayerCommand.TryParsePlanetDefenseTargetsPayload(command.Text,
                 out int garrisonSize, out int wantedPlatforms, out int wantedShipyards, out int wantedStations))
@@ -2116,7 +2166,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyFleetAssignment(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
             return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
@@ -2143,12 +2193,12 @@ public sealed class Authoritative4XCommandApplicator
             {
                 Ship ship = UState.Objects.FindShip(shipIds[i]);
                 if (ship == null)
-                    return Reject(result, $"Ship {shipIds[i]} not found.");
+                    return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {shipIds[i]} not found.");
                 if (!ship.Active)
-                    return Reject(result, $"Ship {ship.Id} is inactive.");
-                if (ship.Loyalty != empire)
+                    return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {ship.Id} is inactive.");
+                if (!trustHostAccepted && ship.Loyalty != empire)
                     return Reject(result, $"Ship {ship.Id} is not owned by empire {empire.Id}.");
-                if (!ship.CanBeAddedToFleets())
+                if (!trustHostAccepted && !ship.CanBeAddedToFleets())
                     return Reject(result, $"Ship {ship.Id} cannot be assigned to fleets.");
                 resolved[i] = ship;
             }
@@ -2174,7 +2224,7 @@ public sealed class Authoritative4XCommandApplicator
                 Fleet fleet = existing?.Ships.Count > 0 ? existing : empire.CreateFleet(command.SubjectId, null);
                 Ship[] newShips = ships.Where(s => s.Fleet != fleet).ToArray();
                 if (newShips.Length == 0)
-                    return Reject(result, "No selected ships can be added to the target fleet.");
+                    return TrustedNoOpOrReject(result, trustHostAccepted, "No selected ships can be added to the target fleet.");
                 AddShipsToFleet(fleet, newShips);
                 if (fleet.Name.IsEmpty() || fleet.Name.Contains("Fleet"))
                     fleet.Name = Fleet.GetDefaultFleetName(command.SubjectId);
@@ -2187,14 +2237,14 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyRenameFleet(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
             return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
 
         Fleet fleet = empire.GetFleetOrNull(command.SubjectId);
         if (fleet == null)
-            return Reject(result, $"Fleet {command.SubjectId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Fleet {command.SubjectId} not found.");
 
         string name = command.Text?.Trim() ?? "";
         if (name.Length == 0)
@@ -2209,14 +2259,14 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyRenameShip(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Ship ship = UState.Objects.FindShip(command.SubjectId);
         if (ship == null)
-            return Reject(result, $"Ship {command.SubjectId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} not found.");
         if (!ship.Active)
-            return Reject(result, $"Ship {command.SubjectId} is inactive.");
-        if (ship.Loyalty != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Ship {command.SubjectId} is inactive.");
+        if (!trustHostAccepted && ship.Loyalty != empire)
             return Reject(result, $"Ship {command.SubjectId} is not owned by empire {empire.Id}.");
 
         if (!TryValidateRename(command.Text, AuthoritativePlayerCommand.MaxShipRenameLength,
@@ -2230,12 +2280,12 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyRenamePlanet(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         Planet planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
-            return Reject(result, $"Planet {command.SubjectId} not found.");
-        if (planet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} not found.");
+        if (!trustHostAccepted && planet.Owner != empire)
             return Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
 
         if (!TryValidateRename(command.Text, AuthoritativePlayerCommand.MaxPlanetRenameLength,
@@ -2249,7 +2299,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplySetFleetIcon(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
             return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
@@ -2258,21 +2308,21 @@ public sealed class Authoritative4XCommandApplicator
 
         Fleet fleet = empire.GetFleetOrNull(command.SubjectId);
         if (fleet == null)
-            return Reject(result, $"Fleet {command.SubjectId} not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Fleet {command.SubjectId} not found.");
 
         fleet.FleetIconIndex = command.TargetId;
         return Accept(result);
     }
 
     AuthoritativeCommandResult ApplyAutoArrangeFleet(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
             return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
 
         Fleet fleet = empire.GetFleetOrNull(command.SubjectId);
         if (fleet == null || fleet.Ships.Count == 0)
-            return Reject(result, $"Fleet {command.SubjectId} not found or empty.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Fleet {command.SubjectId} not found or empty.");
 
         fleet.AutoArrange();
         fleet.Update(FixedSimTime.Zero);
@@ -2280,7 +2330,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyQueueFleetRequisition(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
             return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
@@ -2293,8 +2343,8 @@ public sealed class Authoritative4XCommandApplicator
 
         Fleet fleet = empire.GetFleetOrNull(command.SubjectId);
         if (fleet == null)
-            return Reject(result, $"Fleet {command.SubjectId} not found.");
-        if (fleet.Owner != empire)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Fleet {command.SubjectId} not found.");
+        if (!trustHostAccepted && fleet.Owner != empire)
             return Reject(result, $"Fleet {command.SubjectId} is not owned by empire {empire.Id}.");
 
         int[] targetIndices = requestedIndices.Length > 0
@@ -2303,23 +2353,23 @@ public sealed class Authoritative4XCommandApplicator
                 .Where(i => IsEmptyRequisitionNode(fleet.DataNodes[i]))
                 .ToArray();
         if (targetIndices.Length == 0)
-            return Reject(result, $"Fleet {command.SubjectId} has no empty requisition nodes.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Fleet {command.SubjectId} has no empty requisition nodes.");
 
         foreach (int index in targetIndices)
         {
             if ((uint)index >= fleet.DataNodes.Count)
-                return Reject(result, $"Fleet requisition node {index} was not found.");
+                return TrustedNoOpOrReject(result, trustHostAccepted, $"Fleet requisition node {index} was not found.");
 
             FleetDataNode node = fleet.DataNodes[index];
             if (!IsEmptyRequisitionNode(node))
-                return Reject(result, $"Fleet requisition node {index} is already filled or queued.");
+                return TrustedNoOpOrReject(result, trustHostAccepted, $"Fleet requisition node {index} is already filled or queued.");
             if (string.IsNullOrWhiteSpace(node.ShipName))
-                return Reject(result, $"Fleet requisition node {index} has no ship design.");
+                return TrustedNoOpOrReject(result, trustHostAccepted, $"Fleet requisition node {index} has no ship design.");
             if (!ResourceManager.Ships.GetDesign(node.ShipName, out IShipDesign design))
-                return Reject(result, $"Fleet requisition design '{node.ShipName}' was not found.");
+                return TrustedNoOpOrReject(result, trustHostAccepted, $"Fleet requisition design '{node.ShipName}' was not found.");
             if (design.IsPlatformOrStation)
                 return Reject(result, $"Fleet requisition design '{node.ShipName}' is not a mobile ship.");
-            if (!empire.CanBuildShip(design))
+            if (!trustHostAccepted && !empire.CanBuildShip(design))
                 return Reject(result, $"Empire {empire.Id} cannot build fleet requisition design '{node.ShipName}'.");
         }
 
@@ -2338,7 +2388,7 @@ public sealed class Authoritative4XCommandApplicator
         => node?.Ship == null && node?.Goal == null;
 
     AuthoritativeCommandResult ApplyFleetLayout(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
             return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
@@ -2351,20 +2401,20 @@ public sealed class Authoritative4XCommandApplicator
             if (node.ShipId == 0)
             {
                 if (!ResourceManager.Ships.GetDesign(node.ShipName, out IShipDesign design))
-                    return Reject(result, $"Fleet layout design '{node.ShipName}' was not found.");
-                if (!empire.CanBuildShip(design))
+                    return TrustedNoOpOrReject(result, trustHostAccepted, $"Fleet layout design '{node.ShipName}' was not found.");
+                if (!trustHostAccepted && !empire.CanBuildShip(design))
                     return Reject(result, $"Empire {empire.Id} cannot build fleet layout design '{node.ShipName}'.");
                 continue;
             }
 
             Ship ship = UState.Objects.FindShip(node.ShipId);
             if (ship == null)
-                return Reject(result, $"Fleet layout ship {node.ShipId} was not found.");
+                return TrustedNoOpOrReject(result, trustHostAccepted, $"Fleet layout ship {node.ShipId} was not found.");
             if (!ship.Active)
-                return Reject(result, $"Fleet layout ship {ship.Id} is inactive.");
-            if (ship.Loyalty != empire)
+                return TrustedNoOpOrReject(result, trustHostAccepted, $"Fleet layout ship {ship.Id} is inactive.");
+            if (!trustHostAccepted && ship.Loyalty != empire)
                 return Reject(result, $"Fleet layout ship {ship.Id} is not owned by empire {empire.Id}.");
-            if (!ship.CanBeAddedToFleets())
+            if (!trustHostAccepted && !ship.CanBeAddedToFleets())
                 return Reject(result, $"Fleet layout ship {ship.Id} cannot be assigned to fleets.");
             shipsById[node.ShipId] = ship;
         }
@@ -2418,14 +2468,14 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyLoadFleetPatrol(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
             return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
 
         Fleet fleet = empire.GetFleetOrNull(command.SubjectId);
         if (fleet == null || fleet.Ships.Count == 0)
-            return Reject(result, $"Fleet {command.SubjectId} not found or empty.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Fleet {command.SubjectId} not found or empty.");
 
         string patrolName = command.Text?.Trim() ?? "";
         if (patrolName.Length == 0)
@@ -2434,7 +2484,7 @@ public sealed class Authoritative4XCommandApplicator
         FleetPatrol patrol = empire.FleetPatrols.FirstOrDefault(p =>
             string.Equals(p.Name, patrolName, StringComparison.Ordinal));
         if (patrol == null)
-            return Reject(result, $"Patrol plan '{patrolName}' not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Patrol plan '{patrolName}' not found.");
 
         fleet.LoadPatrol(patrol);
         fleet.Update(FixedSimTime.Zero);
@@ -2442,7 +2492,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyRenameFleetPatrol(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (!AuthoritativePlayerCommand.TryParsePatrolRenamePayload(command.Text,
                 out string oldName, out string newName))
@@ -2455,8 +2505,8 @@ public sealed class Authoritative4XCommandApplicator
         FleetPatrol patrol = empire.FleetPatrols.FirstOrDefault(p =>
             string.Equals(p.Name, oldName, StringComparison.Ordinal));
         if (patrol == null)
-            return Reject(result, $"Patrol plan '{oldName}' not found.");
-        if (empire.FleetPatrols.Any(p => !ReferenceEquals(p, patrol)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Patrol plan '{oldName}' not found.");
+        if (!trustHostAccepted && empire.FleetPatrols.Any(p => !ReferenceEquals(p, patrol)
                                         && string.Equals(p.Name, newName, StringComparison.Ordinal)))
         {
             return Reject(result, $"Patrol plan '{newName}' already exists.");
@@ -2467,7 +2517,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyDeleteFleetPatrol(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         string patrolName = command.Text?.Trim() ?? "";
         if (!AuthoritativePlayerCommand.IsLegalPatrolName(patrolName))
@@ -2476,7 +2526,7 @@ public sealed class Authoritative4XCommandApplicator
         FleetPatrol patrol = empire.FleetPatrols.FirstOrDefault(p =>
             string.Equals(p.Name, patrolName, StringComparison.Ordinal));
         if (patrol == null)
-            return Reject(result, $"Patrol plan '{patrolName}' not found.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Patrol plan '{patrolName}' not found.");
 
         foreach (Fleet fleet in empire.AllFleets)
         {
@@ -2492,16 +2542,16 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyClearFleetPatrol(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
             return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
 
         Fleet fleet = empire.GetFleetOrNull(command.SubjectId);
         if (fleet == null || fleet.Ships.Count == 0)
-            return Reject(result, $"Fleet {command.SubjectId} not found or empty.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Fleet {command.SubjectId} not found or empty.");
         if (!fleet.HasPatrolPlan)
-            return Reject(result, $"Fleet {command.SubjectId} has no active patrol.");
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Fleet {command.SubjectId} has no active patrol.");
 
         fleet.ClearPatrol();
         fleet.Update(FixedSimTime.Zero);
@@ -2509,15 +2559,15 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     AuthoritativeCommandResult ApplyCreateFleetPatrol(AuthoritativePlayerCommand command, Empire empire,
-        AuthoritativeCommandResult result)
+        AuthoritativeCommandResult result, bool trustHostAccepted)
     {
         if (command.SubjectId is < Empire.FirstFleetKey or > Empire.LastFleetKey)
             return Reject(result, $"Fleet key {command.SubjectId} is outside the player fleet range.");
 
         Fleet fleet = empire.GetFleetOrNull(command.SubjectId);
         if (fleet == null || fleet.Ships.Count == 0)
-            return Reject(result, $"Fleet {command.SubjectId} not found or empty.");
-        if (fleet.HasPatrolPlan)
+            return TrustedNoOpOrReject(result, trustHostAccepted, $"Fleet {command.SubjectId} not found or empty.");
+        if (!trustHostAccepted && fleet.HasPatrolPlan)
             return Reject(result, $"Fleet {command.SubjectId} already has an active patrol.");
         if (!AuthoritativePlayerCommand.TryParsePatrolWaypoints(command.Text, out WayPoint[] points))
             return Reject(result, "Invalid fleet patrol waypoint payload.");
@@ -2618,7 +2668,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     bool TryGetOwnedQueueItem(AuthoritativePlayerCommand command, Empire empire, AuthoritativeCommandResult result,
-        out Planet planet, out QueueItem item, out AuthoritativeCommandResult rejected)
+        bool trustHostAccepted, out Planet planet, out QueueItem item, out AuthoritativeCommandResult rejected)
     {
         planet = null;
         item = null;
@@ -2627,10 +2677,10 @@ public sealed class Authoritative4XCommandApplicator
         planet = UState.GetPlanet(command.SubjectId);
         if (planet == null)
         {
-            rejected = Reject(result, $"Planet {command.SubjectId} not found.");
+            rejected = TrustedNoOpOrReject(result, trustHostAccepted, $"Planet {command.SubjectId} not found.");
             return false;
         }
-        if (planet.Owner != empire)
+        if (!trustHostAccepted && planet.Owner != empire)
         {
             rejected = Reject(result, $"Planet {command.SubjectId} is not owned by empire {empire.Id}.");
             return false;
@@ -2639,7 +2689,7 @@ public sealed class Authoritative4XCommandApplicator
         int queueIndex = command.TargetId;
         if ((uint)queueIndex >= planet.ConstructionQueue.Count)
         {
-            rejected = Reject(result, $"Construction queue index {queueIndex} is outside planet {planet.Id} queue.");
+            rejected = TrustedNoOpOrReject(result, trustHostAccepted, $"Construction queue index {queueIndex} is outside planet {planet.Id} queue.");
             return false;
         }
 
@@ -2648,7 +2698,7 @@ public sealed class Authoritative4XCommandApplicator
     }
 
     static bool TryGetResearchEntry(string requestedTechUid, Empire empire, AuthoritativeCommandResult result,
-        out string techUid, out TechEntry entry, out AuthoritativeCommandResult rejected)
+        bool trustHostAccepted, out string techUid, out TechEntry entry, out AuthoritativeCommandResult rejected)
     {
         techUid = requestedTechUid ?? "";
         entry = null;
@@ -2661,12 +2711,12 @@ public sealed class Authoritative4XCommandApplicator
         }
         if (!ResourceManager.TryGetTech(techUid, out _))
         {
-            rejected = Reject(result, $"Tech {techUid} not found.");
+            rejected = TrustedNoOpOrReject(result, trustHostAccepted, $"Tech {techUid} not found.");
             return false;
         }
         if (!empire.TryGetTechEntry(techUid, out entry))
         {
-            rejected = Reject(result, $"Empire {empire.Id} has no tech entry for {techUid}.");
+            rejected = TrustedNoOpOrReject(result, trustHostAccepted, $"Empire {empire.Id} has no tech entry for {techUid}.");
             return false;
         }
         return true;
@@ -2763,6 +2813,17 @@ public sealed class Authoritative4XCommandApplicator
     {
         result.Accepted = true;
         result.Reason = "";
+        return result;
+    }
+
+    static AuthoritativeCommandResult TrustedNoOpOrReject(AuthoritativeCommandResult result,
+        bool trustHostAccepted, string reason)
+        => trustHostAccepted ? TrustedNoOp(result, reason) : Reject(result, reason);
+
+    static AuthoritativeCommandResult TrustedNoOp(AuthoritativeCommandResult result, string reason)
+    {
+        result.Accepted = true;
+        result.Reason = reason ?? "";
         return result;
     }
 

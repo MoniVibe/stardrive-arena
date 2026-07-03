@@ -1514,6 +1514,221 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XTrustedQueueBuild_StaleClientBuildabilityDoesNotRejectAcceptedCommand_Headless()
+    {
+        const ulong Seed = 0xC0D7A501UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            authority.Planet.HasSpacePort = true;
+            client.Planet.HasSpacePort = true;
+            IShipDesign design = PickMobileBuildableShip(authority.Player);
+            Assert.IsTrue(client.Player.RemoveBuildableShip(design),
+                "The passive fixture must start one snapshot behind on ship buildability.");
+            Assert.IsFalse(client.Player.CanBuildShip(design));
+
+            var command = AuthoritativePlayerCommand.QueueBuild(101, authority.Player.Id,
+                authority.Planet.Id, design.Name);
+            var authorityRuntime = new Authoritative4XAuthority(authority.Screen);
+            (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) =
+                authorityRuntime.Process(command);
+            Assert.IsTrue(result.Accepted, result.Reason);
+
+            var staleApplicator = new Authoritative4XCommandApplicator(client.UState);
+            AuthoritativeCommandResult staleLocal = staleApplicator.Apply(command, result.Tick);
+            Assert.IsFalse(staleLocal.Accepted,
+                "The stale passive client should still fail the old buildability authorization gate.");
+            StringAssert.Contains(staleLocal.Reason, "cannot build design");
+
+            var replica = new Authoritative4XClientReplica(client.Screen, detectLocalMutation: false);
+            replica.ApplyAuthoritativeResult(command, result, snapshot);
+
+            Assert.IsTrue(client.Planet.Construction.ContainsShipDesignName(design.Name),
+                "Trusted replay should apply the queued ship before snapshot reconciliation.");
+            Assert.AreEqual(snapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                FirstPayloadDifferenceForTest(snapshot.Payload, replica.LastSnapshot.Payload));
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XTrustedQueueBuildingAndTroop_StalePlanetStateDoesNotRejectAcceptedCommands_Headless()
+    {
+        const ulong Seed = 0xC0D7A502UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            EnsureSingleBuildTile(authority.Planet);
+            EnsureSingleBuildTile(client.Planet);
+            authority.Planet.HasSpacePort = true;
+            client.Planet.HasSpacePort = true;
+            Building building = PickBuildableBuilding(authority.Planet);
+            Troop troop = PickBuildableTroop(authority.Player);
+            var authorityRuntime = new Authoritative4XAuthority(authority.Screen);
+            var replica = new Authoritative4XClientReplica(client.Screen, detectLocalMutation: false);
+
+            var buildingCommand = AuthoritativePlayerCommand.QueueBuilding(201,
+                authority.Player.Id, authority.Planet.Id, building.Name);
+            (AuthoritativeCommandResult buildingResult, AuthoritativeStateSnapshot buildingSnapshot) =
+                authorityRuntime.Process(buildingCommand);
+            Assert.IsTrue(buildingResult.Accepted, buildingResult.Reason);
+
+            client.Planet.SetOwner(client.Enemy);
+            var staleApplicator = new Authoritative4XCommandApplicator(client.UState);
+            AuthoritativeCommandResult staleBuilding = staleApplicator.Apply(buildingCommand, buildingResult.Tick);
+            Assert.IsFalse(staleBuilding.Accepted,
+                "The stale passive client should fail the old planet ownership gate.");
+            StringAssert.Contains(staleBuilding.Reason, "not owned");
+
+            replica.ApplyAuthoritativeResult(buildingCommand, buildingResult, buildingSnapshot);
+            LastQueuedBuilding(client.Planet, building.Name);
+            Assert.AreEqual(buildingSnapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                FirstPayloadDifferenceForTest(buildingSnapshot.Payload, replica.LastSnapshot.Payload));
+
+            var troopCommand = AuthoritativePlayerCommand.QueueTroop(202,
+                authority.Player.Id, authority.Planet.Id, troop.Name);
+            (AuthoritativeCommandResult troopResult, AuthoritativeStateSnapshot troopSnapshot) =
+                authorityRuntime.Process(troopCommand);
+            Assert.IsTrue(troopResult.Accepted, troopResult.Reason);
+
+            client.Planet.HasSpacePort = false;
+            AuthoritativeCommandResult staleTroop = staleApplicator.Apply(troopCommand, troopResult.Tick);
+            Assert.IsFalse(staleTroop.Accepted,
+                "The stale passive client should fail the old troop spaceport gate.");
+            StringAssert.Contains(staleTroop.Reason, "spaceport");
+
+            replica.ApplyAuthoritativeResult(troopCommand, troopResult, troopSnapshot);
+            LastQueuedTroop(client.Planet, troop.Name);
+            Assert.AreEqual(troopSnapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                FirstPayloadDifferenceForTest(troopSnapshot.Payload, replica.LastSnapshot.Payload));
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XTrustedColonizationGoal_StalePlanetOwnershipDoesNotRejectAcceptedCommand_Headless()
+    {
+        const ulong Seed = 0xC0D7A503UL;
+        BuiltWorld authority = BuildWorld(Seed, includeNeutralPlanet: true);
+        BuiltWorld client = BuildWorld(Seed, includeNeutralPlanet: true);
+
+        try
+        {
+            var command = AuthoritativePlayerCommand.SetColonizationGoal(301,
+                authority.Player.Id, authority.NeutralPlanet.Id, enabled: true);
+            var authorityRuntime = new Authoritative4XAuthority(authority.Screen);
+            (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) =
+                authorityRuntime.Process(command);
+            Assert.IsTrue(result.Accepted, result.Reason);
+
+            client.NeutralPlanet.SetOwner(client.Enemy);
+            var staleApplicator = new Authoritative4XCommandApplicator(client.UState);
+            AuthoritativeCommandResult staleLocal = staleApplicator.Apply(command, result.Tick);
+            Assert.IsFalse(staleLocal.Accepted,
+                "The stale passive client should fail the old colonization ownership gate.");
+            StringAssert.Contains(staleLocal.Reason, "already owned");
+
+            var replica = new Authoritative4XClientReplica(client.Screen);
+            replica.ApplyAuthoritativeResult(command, result, snapshot);
+
+            Assert.IsTrue(client.Player.AI.HasGoal(g => g.IsColonizationGoal(client.NeutralPlanet)));
+            Assert.AreEqual(snapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                FirstPayloadDifferenceForTest(snapshot.Payload, replica.LastSnapshot.Payload));
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XTrustedRushConstruction_StaleClientMoneyDoesNotRejectAcceptedCommand_Headless()
+    {
+        const ulong Seed = 0xC0D7A504UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            EnsureSingleBuildTile(authority.Planet);
+            EnsureSingleBuildTile(client.Planet);
+            Building building = PickBuildableBuilding(authority.Planet);
+            Assert.IsTrue(authority.Planet.Construction.Enqueue(building, where: null, playerAdded: true));
+            Assert.IsTrue(client.Planet.Construction.Enqueue(
+                ResourceManager.CreateBuilding(client.Planet, building.Name), where: null, playerAdded: true));
+            authority.Player.Money = 10_000f;
+            client.Player.Money = 0f;
+            authority.Planet.ProdHere = client.Planet.ProdHere = 100f;
+
+            var command = AuthoritativePlayerCommand.RushConstructionQueueItem(401,
+                authority.Player.Id, authority.Planet.Id, queueIndex: 0, maxAmount: 25f);
+            var authorityRuntime = new Authoritative4XAuthority(authority.Screen);
+            (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) =
+                authorityRuntime.Process(command);
+            Assert.IsTrue(result.Accepted, result.Reason);
+
+            var staleApplicator = new Authoritative4XCommandApplicator(client.UState);
+            AuthoritativeCommandResult staleLocal = staleApplicator.Apply(command, result.Tick);
+            Assert.IsFalse(staleLocal.Accepted,
+                "The stale passive client should fail the old affordability gate inside RushProduction.");
+            StringAssert.Contains(staleLocal.Reason, "could not rush");
+
+            var replica = new Authoritative4XClientReplica(client.Screen);
+            replica.ApplyAuthoritativeResult(command, result, snapshot);
+
+            Assert.AreEqual(BitConverter.SingleToUInt32Bits(authority.Player.Money),
+                BitConverter.SingleToUInt32Bits(client.Player.Money),
+                "Trusted rush replay must converge money from authoritative rows.");
+            Assert.AreEqual(snapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                FirstPayloadDifferenceForTest(snapshot.Payload, replica.LastSnapshot.Payload));
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XTrustedApply_MissingEntitySafelyNoOpsWithoutCorruption_Headless()
+    {
+        const ulong Seed = 0xC0D7A505UL;
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            int shipCount = System.Linq.Enumerable.Count(client.UState.Objects.GetShips());
+            var applicator = new Authoritative4XCommandApplicator(client.UState);
+            var command = AuthoritativePlayerCommand.MoveShip(501, client.Player.Id,
+                shipId: 9_999_999, client.Planet.Position, MoveOrder.Regular);
+
+            AuthoritativeCommandResult result = applicator.ApplyTrustedHostAccepted(command, tick: 12);
+
+            Assert.IsTrue(result.Accepted, result.Reason);
+            Assert.IsNull(client.UState.Objects.FindShip(9_999_999));
+            Assert.AreEqual(shipCount, System.Linq.Enumerable.Count(client.UState.Objects.GetShips()),
+                "Trusted missing-entity replay must not create or corrupt local scene objects.");
+        }
+        finally
+        {
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XColonizationGoal_MarksCancelsAndSyncs_Headless()
     {
         const ulong Seed = 0xC010412EUL;
