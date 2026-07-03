@@ -6,6 +6,7 @@ using System.Threading;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Ship_Game;
 using Ship_Game.Data;
+using Ship_Game.Multiplayer.Authoritative;
 using UnitTests.UI;
 
 namespace UnitTests
@@ -100,6 +101,8 @@ namespace UnitTests
 
         public static void Cleanup()
         {
+            Authoritative4XClientContext.ResetForTests();
+            AuthoritativeMutationGuard.ResetForTests();
             Parallel.ClearPool(); // Dispose all thread pool Threads
             Log.Close();
         }

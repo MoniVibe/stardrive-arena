@@ -28,7 +28,9 @@ public enum Authoritative4XUiCommandResult
 /// </summary>
 public sealed class Authoritative4XClientContext : IDisposable
 {
+    static readonly object ActiveLock = new();
     static Authoritative4XClientContext Active;
+    static int StateApplicationDepth;
 
     Authoritative4XClientContext Previous;
     readonly Action<AuthoritativePlayerCommand> SubmitCommand;
@@ -47,11 +49,25 @@ public sealed class Authoritative4XClientContext : IDisposable
         IsPassiveClient = isPassiveClient;
         NextSequence = firstSequence;
         SubmitCommand = submitCommand ?? throw new ArgumentNullException(nameof(submitCommand));
-        Previous = Active;
-        Active = this;
+        lock (ActiveLock)
+        {
+            Previous = Active;
+            Active = this;
+        }
     }
 
-    public static bool IsActive => Active != null;
+    static Authoritative4XClientContext CurrentActive => Volatile.Read(ref Active);
+
+    public static bool IsActive => CurrentActive != null;
+
+    public static void ResetForTests()
+    {
+#if DEBUG
+        lock (ActiveLock)
+            Active = null;
+        Volatile.Write(ref StateApplicationDepth, 0);
+#endif
+    }
 
     public static bool ShouldBlockLocalMutation(UniverseScreen universe)
         => IsActive || universe?.IsAuthoritative4XMultiplayer == true;
@@ -75,24 +91,44 @@ public sealed class Authoritative4XClientContext : IDisposable
         => IsActive || group?.Owner?.Universe?.Screen?.IsAuthoritative4XMultiplayer == true;
 
     public static bool ShouldTripMutationGuard(UniverseScreen universe)
-        => Active?.IsPassiveClient == true
-           || universe?.Authoritative4XMultiplayer is { IsHost: false };
+        => IsPassiveAuthoritativeUniverse(universe)
+           || ActivePassiveContextApplies(universe);
 
     public static bool ShouldTripMutationGuard(UniverseState universe)
-        => Active?.IsPassiveClient == true
-           || universe?.Screen?.Authoritative4XMultiplayer is { IsHost: false };
+        => ShouldTripMutationGuard(universe?.Screen);
 
     public static bool ShouldTripMutationGuard(Empire empire)
-        => Active?.IsPassiveClient == true
-           || empire?.Universe?.Screen?.Authoritative4XMultiplayer is { IsHost: false };
+        => ShouldTripMutationGuard(empire?.Universe);
 
     public static bool ShouldTripMutationGuard(Planet planet)
-        => Active?.IsPassiveClient == true
-           || planet?.Universe?.Screen?.Authoritative4XMultiplayer is { IsHost: false };
+        => ShouldTripMutationGuard(planet?.Universe);
 
     public static bool ShouldTripMutationGuard(Ship ship)
-        => Active?.IsPassiveClient == true
-           || ship?.Universe?.Screen?.Authoritative4XMultiplayer is { IsHost: false };
+        => ShouldTripMutationGuard(ship?.Universe);
+
+    public static bool ShouldGatePassiveClientSimulation(Planet planet)
+        => IsPassiveAuthoritativeUniverse(planet?.Universe?.Screen);
+
+    public static AuthoritativeMutationScope EnterStateApplication()
+    {
+#if DEBUG
+        Interlocked.Increment(ref StateApplicationDepth);
+        return new AuthoritativeMutationScope(static () => Interlocked.Decrement(ref StateApplicationDepth));
+#else
+        return default;
+#endif
+    }
+
+    static bool IsPassiveAuthoritativeUniverse(UniverseScreen universe)
+        => universe?.Authoritative4XMultiplayer is { IsHost: false };
+
+    static bool IsHostAuthoritativeUniverse(UniverseScreen universe)
+        => universe?.Authoritative4XMultiplayer is { IsHost: true };
+
+    static bool ActivePassiveContextApplies(UniverseScreen universe)
+        => Volatile.Read(ref StateApplicationDepth) == 0
+           && CurrentActive?.IsPassiveClient == true
+           && !IsHostAuthoritativeUniverse(universe);
 
     public static Authoritative4XClientContext Begin(int peerId, int empireId,
         Action<AuthoritativePlayerCommand> submitCommand, int firstSequence = 1,
@@ -103,10 +139,14 @@ public sealed class Authoritative4XClientContext : IDisposable
 
     public void Activate()
     {
-        if (Disposed || Active == this)
-            return;
-        Previous = Active;
-        Active = this;
+        lock (ActiveLock)
+        {
+            if (Disposed || Active == this)
+                return;
+            UnlinkFromActiveStack(this);
+            Previous = Active;
+            Active = this;
+        }
     }
 
     public static bool TrySubmitSetColonyType(Planet planet, Planet.ColonyType type)
@@ -1339,7 +1379,7 @@ public sealed class Authoritative4XClientContext : IDisposable
 
     static bool TryGetFor(Empire empire, out Authoritative4XClientContext context)
     {
-        context = Active;
+        context = CurrentActive;
         return context != null && empire != null && empire.Id == context.EmpireId;
     }
 
@@ -1347,14 +1387,15 @@ public sealed class Authoritative4XClientContext : IDisposable
     {
         context = null;
         ownedShips = Array.Empty<Ship>();
-        if (Active == null || ships == null || ships.Length == 0)
+        Authoritative4XClientContext active = CurrentActive;
+        if (active == null || ships == null || ships.Length == 0)
             return false;
 
-        ownedShips = ships.Where(s => s?.Loyalty != null && s.Loyalty.Id == Active.EmpireId).ToArray();
+        ownedShips = ships.Where(s => s?.Loyalty != null && s.Loyalty.Id == active.EmpireId).ToArray();
         if (ownedShips.Length == 0)
             return false;
 
-        context = Active;
+        context = active;
         return true;
     }
 
@@ -1692,10 +1733,36 @@ public sealed class Authoritative4XClientContext : IDisposable
 
     public void Dispose()
     {
-        if (Disposed)
+        lock (ActiveLock)
+        {
+            if (Disposed)
+                return;
+            Disposed = true;
+            UnlinkFromActiveStack(this);
+        }
+    }
+
+    static void UnlinkFromActiveStack(Authoritative4XClientContext context)
+    {
+        if (context == null || Active == null)
             return;
-        Disposed = true;
-        if (Active == this)
-            Active = Previous;
+        if (ReferenceEquals(Active, context))
+        {
+            Active = context.Previous;
+            context.Previous = null;
+            return;
+        }
+
+        Authoritative4XClientContext current = Active;
+        for (int guard = 0; current?.Previous != null && guard < 1024; ++guard)
+        {
+            if (ReferenceEquals(current.Previous, context))
+            {
+                current.Previous = context.Previous;
+                context.Previous = null;
+                return;
+            }
+            current = current.Previous;
+        }
     }
 }

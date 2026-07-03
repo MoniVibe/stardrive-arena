@@ -218,12 +218,20 @@ public static class Authoritative4XSessionSave
         if (saveFile == null)
             throw new ArgumentNullException(nameof(saveFile));
 
-        Authoritative4XSessionMetadata metadata = LoadMetadata(saveFile);
-        UniverseScreen universe = LoadGame.Load(saveFile, noErrorDialogs: true, startSimThread);
-        if (universe == null)
-            throw new InvalidOperationException($"Could not load authoritative 4X save: {saveFile.FullName}");
-        ApplyMetadata(universe, metadata);
-        return new Authoritative4XLoadedSession(universe, metadata);
+        AuthoritativeMutationScope stateApplication = Authoritative4XClientContext.EnterStateApplication();
+        try
+        {
+            Authoritative4XSessionMetadata metadata = LoadMetadata(saveFile);
+            UniverseScreen universe = LoadGame.Load(saveFile, noErrorDialogs: true, startSimThread);
+            if (universe == null)
+                throw new InvalidOperationException($"Could not load authoritative 4X save: {saveFile.FullName}");
+            ApplyMetadata(universe, metadata);
+            return new Authoritative4XLoadedSession(universe, metadata);
+        }
+        finally
+        {
+            stateApplication.Dispose();
+        }
     }
 
     public static void ApplyMetadata(UniverseScreen universe, Authoritative4XSessionMetadata metadata)

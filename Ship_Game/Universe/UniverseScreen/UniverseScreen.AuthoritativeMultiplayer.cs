@@ -377,7 +377,16 @@ public partial class UniverseScreen
 
     void DetachAuthoritative4XMultiplayer()
     {
-        Authoritative4XLive?.Dispose();
+        Authoritative4XLiveSession live = Authoritative4XLive;
+        ClearAuthoritative4XMultiplayerSession(live);
+        live?.Dispose();
+    }
+
+    internal void ClearAuthoritative4XMultiplayerSession(Authoritative4XLiveSession session)
+    {
+        if (session != null && !ReferenceEquals(Authoritative4XLive, session))
+            return;
+
         Authoritative4XLive = null;
         Authoritative4XLocalPlayer = null;
         AuthoritativeDiplomacyPopupOpen = false;

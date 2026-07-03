@@ -14,6 +14,7 @@ using Ship_Game.Data;
 using Ship_Game.Gameplay;
 using Ship_Game.GameScreens.Arena;
 using Ship_Game.GameScreens.NewGame;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Ship_Game.Universe;
 using Ship_Game.Universe.SolarBodies;
@@ -217,6 +218,8 @@ public partial class StarDriveTest : IDisposable
         CareerManager.SlotDirectoryOverride = SavedArenaSlotDirectoryOverride;
         CareerManager.TestSaveIsolationRoot = SavedArenaTestSaveIsolationRoot;
         CareerManager.ClearTestSaveIsolationAudit();
+        Authoritative4XClientContext.ResetForTests();
+        AuthoritativeMutationGuard.ResetForTests();
     }
 
     public void CreateCustomUniverseSandbox(int numOpponents, GalSize galSize, int numExtraShipsPerEmpire = 0)

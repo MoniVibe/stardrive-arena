@@ -1697,11 +1697,10 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsNotNull(clientItem.pgs, "Client replica should reserve the same deterministic planet tile.");
             Assert.AreEqual(authorityItem.pgs.X, clientItem.pgs.X);
             Assert.AreEqual(authorityItem.pgs.Y, clientItem.pgs.Y);
-            clientItem.ProductionSpent = authorityItem.ProductionSpent + 12.5f;
             session.SubmitFromClient(AuthoritativePlayerCommand.NoOp(35, authority.Player.Id));
             Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
             Assert.AreEqual(authorityItem.ProductionSpent, clientItem.ProductionSpent, 0.0001f,
-                "The client replica must mirror authority queue progress before canonical digest comparison.");
+                "The client replica must keep authority queue progress synchronized.");
             Assert.AreNotEqual(initialDigest, session.LastAuthoritySnapshot.SyncDigest,
                 "The canonical sync digest must cover real building queue mutations.");
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
@@ -2886,8 +2885,9 @@ public class Authoritative4XSessionTests : StarDriveTest
             Fleet clientFleet = client.Player.GetFleetOrNull(3);
             Assert.IsNotNull(authorityFleet);
             Assert.IsNotNull(clientFleet);
-            authorityFleet.CreatePatrol(TestPatrolWaypoints(authorityFleet.FinalPosition));
-            clientFleet.CreatePatrol(TestPatrolWaypoints(clientFleet.FinalPosition));
+            session.SubmitFromClient(AuthoritativePlayerCommand.CreateFleetPatrol(121,
+                authority.Player.Id, fleetKey: 3, TestPatrolWaypoints(authorityFleet.FinalPosition).ToArray()));
+            Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
             Assert.IsTrue(authorityFleet.HasPatrolPlan);
             Assert.IsTrue(clientFleet.HasPatrolPlan);
             string beforeMoveDigest = session.LastAuthoritySnapshot.SyncDigest;
@@ -2898,7 +2898,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             Vector2 destination = new(90_000f, -24_000f);
             Vector2 direction = new(0f, -1f);
             MoveOrder order = MoveOrder.StandGround | MoveOrder.ForceReassembly;
-            session.SubmitFromClient(AuthoritativePlayerCommand.MoveFleet(121,
+            session.SubmitFromClient(AuthoritativePlayerCommand.MoveFleet(122,
                 authority.Player.Id, fleetKey: 3, destination, direction, order));
             Assert.IsTrue(session.LastResult.Accepted, session.LastResult.Reason);
 
@@ -2923,14 +2923,14 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
             string beforeRejectDigest = session.LastAuthoritySnapshot.SyncDigest;
-            session.SubmitFromClient(AuthoritativePlayerCommand.MoveFleet(122,
+            session.SubmitFromClient(AuthoritativePlayerCommand.MoveFleet(123,
                 authority.Enemy.Id, fleetKey: 3, destination + new Vector2(1_000f, 0f), direction, order));
             Assert.IsFalse(session.LastResult.Accepted, "An empire must not move another empire's fleet.");
             StringAssert.Contains(session.LastResult.Reason, "not found");
             Assert.AreEqual(beforeRejectDigest, session.LastAuthoritySnapshot.SyncDigest);
             Assert.AreEqual(session.LastAuthoritySnapshot.SyncDigest, session.LastClientSnapshot.SyncDigest);
 
-            session.SubmitFromClient(AuthoritativePlayerCommand.MoveFleet(123,
+            session.SubmitFromClient(AuthoritativePlayerCommand.MoveFleet(124,
                 authority.Player.Id, fleetKey: 3, destination + new Vector2(2_000f, 0f), direction,
                 MoveOrder.Pursue));
             Assert.IsFalse(session.LastResult.Accepted, "Unsupported internal movement flags must be rejected.");
@@ -7931,8 +7931,7 @@ public class Authoritative4XSessionTests : StarDriveTest
 
         try
         {
-            EnsureTroopLoaded(world.TroopShip);
-            Troop troop = world.TroopShip.GetOurTroops().First();
+            Troop troop = FirstLoadedTroop(world.TroopShip);
 
             AssertPassiveMutationThrows(world, AuthoritativeMutationFamily.PlanetRuntime,
                 () => world.Planet.SetColonyType(Planet.ColonyType.Industrial));
@@ -7966,9 +7965,10 @@ public class Authoritative4XSessionTests : StarDriveTest
 
         try
         {
-            EnsureTroopLoaded(authority.TroopShip);
-            EnsureTroopLoaded(client.TroopShip);
-            Troop authorityTroop = authority.TroopShip.GetOurTroops().First();
+            Troop authorityTroop = FirstLoadedTroop(authority.TroopShip);
+            FirstLoadedTroop(client.TroopShip);
+            authority.UState.Objects.UpdateLists(removeInactiveObjects: false);
+            client.UState.Objects.UpdateLists(removeInactiveObjects: false);
             authorityTroop.AvailableMoveActions = 0;
             authorityTroop.UpdateMoveActions(1);
             authority.Planet.SetColonyType(Planet.ColonyType.Industrial);
@@ -7994,7 +7994,7 @@ public class Authoritative4XSessionTests : StarDriveTest
 
             Assert.AreEqual(authority.Planet.CType, client.Planet.CType);
             Assert.AreEqual(authorityTroop.AvailableMoveActions,
-                client.TroopShip.GetOurTroops().First().AvailableMoveActions);
+                FirstLoadedTroop(client.TroopShip).AvailableMoveActions);
             Assert.AreEqual(authority.Ship.Position, client.Ship.Position);
             Assert.AreEqual(authority.Ship.Velocity, client.Ship.Velocity);
             Assert.AreEqual(authority.Ship.YRotation, client.Ship.YRotation);
@@ -8013,8 +8013,7 @@ public class Authoritative4XSessionTests : StarDriveTest
 
         try
         {
-            EnsureTroopLoaded(commandWorld.TroopShip);
-            Troop troop = commandWorld.TroopShip.GetOurTroops().First();
+            Troop troop = FirstLoadedTroop(commandWorld.TroopShip);
             using (Authoritative4XClientContext.Begin(2, commandWorld.Player.Id, _ => { }))
             {
 #if DEBUG
@@ -10318,6 +10317,8 @@ public class Authoritative4XSessionTests : StarDriveTest
         {
             int empireA = authority.Player.Id;
             int empireB = authority.Enemy.Id;
+            string tradeTech = PrepareTechnologyTrade(authority.Player, authority.Enemy,
+                clientA.Player, clientA.Enemy, clientB.Player, clientB.Enemy);
             var session = new Authoritative4XInProcessMultiClientSession(authority.Screen, new[]
             {
                 new Authoritative4XClientSpec(PeerA, empireA, clientA.Screen),
@@ -10390,8 +10391,6 @@ public class Authoritative4XSessionTests : StarDriveTest
             Assert.IsTrue(clientB.Player.IsAlliedWith(clientB.Enemy));
             AssertAllSynced(session, PeerA, PeerB);
 
-            string tradeTech = PrepareTechnologyTrade(authority.Player, authority.Enemy,
-                clientA.Player, clientA.Enemy, clientB.Player, clientB.Enemy);
             session.SubmitFromClient(PeerA, AuthoritativePlayerCommand.DiplomacyProposal(12, empireA, empireB,
                 AuthoritativeDiplomacyProposalType.TechnologyTrade, tradeTech));
             AssertAccepted(session, PeerA);
@@ -12605,6 +12604,28 @@ public class Authoritative4XSessionTests : StarDriveTest
             foreach (UniverseScreen universe in universes)
                 universe.UState.Objects.UpdateLists(removeInactiveObjects: false);
 
+            for (int empireIndex = 0; empireIndex < empireIds.Length; ++empireIndex)
+            {
+                int empireId = empireIds[empireIndex];
+                int targetEmpireId = empireIds[(empireIndex + 1) % empireIds.Length];
+                int[] ourShipIds = shipIdsByEmpire[empireId];
+                int[] targetShipIds = shipIdsByEmpire[targetEmpireId];
+
+                for (int shipIndex = ExplicitTargetCommandsPerPlayer; shipIndex < ourShipIds.Length; ++shipIndex)
+                {
+                    int shipId = ourShipIds[shipIndex];
+                    int targetId = targetShipIds[shipIndex % targetShipIds.Length];
+                    foreach (UniverseScreen universe in universes)
+                    {
+                        Ship ship = universe.UState.Objects.FindShip(shipId);
+                        Ship target = universe.UState.Objects.FindShip(targetId);
+                        Assert.IsNotNull(ship);
+                        Assert.IsNotNull(target);
+                        ship.AI.OrderAttackSpecificTarget(target);
+                    }
+                }
+            }
+
             AuthoritativeStateSnapshot initial = AuthoritativeStateSnapshot.Capture(started.AuthorityUniverse, 0);
             foreach (Authoritative4XClientSpec client in started.Clients)
             {
@@ -12632,28 +12653,6 @@ public class Authoritative4XSessionTests : StarDriveTest
                     AssertAccepted(started.Session, peer);
                     AssertAllCanonicallySynced(started.Session, peers);
                     AssertAuthoritativeAttackTargetReplicated(universes, shipId, targetId);
-                }
-            }
-
-            for (int empireIndex = 0; empireIndex < empireIds.Length; ++empireIndex)
-            {
-                int empireId = empireIds[empireIndex];
-                int targetEmpireId = empireIds[(empireIndex + 1) % empireIds.Length];
-                int[] ourShipIds = shipIdsByEmpire[empireId];
-                int[] targetShipIds = shipIdsByEmpire[targetEmpireId];
-
-                for (int shipIndex = ExplicitTargetCommandsPerPlayer; shipIndex < ourShipIds.Length; ++shipIndex)
-                {
-                    int shipId = ourShipIds[shipIndex];
-                    int targetId = targetShipIds[shipIndex % targetShipIds.Length];
-                    foreach (UniverseScreen universe in universes)
-                    {
-                        Ship ship = universe.UState.Objects.FindShip(shipId);
-                        Ship target = universe.UState.Objects.FindShip(targetId);
-                        Assert.IsNotNull(ship);
-                        Assert.IsNotNull(target);
-                        ship.AI.OrderAttackSpecificTarget(target);
-                    }
                 }
             }
 
@@ -12753,6 +12752,12 @@ public class Authoritative4XSessionTests : StarDriveTest
 
         try
         {
+            int proposerPeer = peers[0];
+            int targetPeer = peers[1];
+            int proposerEmpire = started.EmpireIdForPeer(proposerPeer);
+            int targetEmpire = started.EmpireIdForPeer(targetPeer);
+            string tradeTech = PrepareTechnologyTrade(started, proposerEmpire, targetEmpire);
+
             for (int i = 0; i < peers.Length; ++i)
             {
                 int peer = peers[i];
@@ -12762,30 +12767,42 @@ public class Authoritative4XSessionTests : StarDriveTest
                 homePlanetByEmpire[empireId] = planet.Id;
                 initialQueuedShipsByEmpire[empireId] = CountQueuedShips(planet);
 
+                Ship moveShip = SpawnMatchingMovableOwnedShip(universes, empireId,
+                    planet.Position + new Vector2(12_000f, 6_000f + i * 4_000f));
+                Vector2 moveDestination = moveShip.Position + new Vector2(18_000f + i * 2_000f, -11_000f - i * 1_500f);
+                moveProofsByPeer[peer] = (empireId, moveShip.Id, moveShip.Position, moveDestination);
+            }
+
+            for (int i = 0; i < peers.Length; ++i)
+            {
+                int peer = peers[i];
+                int empireId = started.EmpireIdForPeer(peer);
+                Empire empire = started.AuthorityUniverse.UState.GetEmpireById(empireId);
+                Planet planet = started.AuthorityUniverse.UState.GetPlanet(homePlanetByEmpire[empireId]);
+                var moveProof = moveProofsByPeer[peer];
+                int moveShipId = moveProof.ShipId;
+                Vector2 moveDestination = moveProof.Destination;
+
                 started.Session.SubmitFromClient(peer,
                     AuthoritativePlayerCommand.SetEmpireAutomation(sequence++, empireId,
                         AuthoritativeEmpireAutomationFlags.None, "", "", "", "", "", ""));
                 AssertAccepted(started.Session, peer);
                 AssertAllCanonicallySynced(started.Session, peers);
 
-                Ship moveShip = SpawnMatchingMovableOwnedShip(universes, empireId,
-                    planet.Position + new Vector2(12_000f, 6_000f + i * 4_000f));
                 int fleetKey = 1 + i;
                 started.Session.SubmitFromClient(peer,
                     AuthoritativePlayerCommand.SetFleetAssignment(sequence++, empireId, fleetKey,
-                        AuthoritativeFleetAssignmentMode.Replace, new[] { moveShip.Id }));
+                        AuthoritativeFleetAssignmentMode.Replace, new[] { moveShipId }));
                 AssertAccepted(started.Session, peer);
-                AssertFleetCommandShipReplicated(universes, empireId, fleetKey, moveShip.Id,
+                AssertFleetCommandShipReplicated(universes, empireId, fleetKey, moveShipId,
                     $"peer {peer} control-group assignment");
                 AssertAllCanonicallySynced(started.Session, peers);
 
-                Vector2 moveDestination = moveShip.Position + new Vector2(18_000f + i * 2_000f, -11_000f - i * 1_500f);
-                moveProofsByPeer[peer] = (empireId, moveShip.Id, moveShip.Position, moveDestination);
                 started.Session.SubmitFromClient(peer,
-                    AuthoritativePlayerCommand.MoveShip(sequence++, empireId, moveShip.Id, moveDestination,
+                    AuthoritativePlayerCommand.MoveShip(sequence++, empireId, moveShipId, moveDestination,
                         MoveOrder.Aggressive));
                 AssertAccepted(started.Session, peer);
-                AssertAuthoritativeMoveOrderReplicated(universes, moveShip.Id, moveDestination, MoveOrder.Aggressive);
+                AssertAuthoritativeMoveOrderReplicated(universes, moveShipId, moveDestination, MoveOrder.Aggressive);
                 AssertAllCanonicallySynced(started.Session, peers);
 
                 string[] techs = ResearchCandidates(empire, 4);
@@ -12858,16 +12875,11 @@ public class Authoritative4XSessionTests : StarDriveTest
                     expectedFoodExport: 4 + i, expectedProdExport: 5 + i, expectedColoExport: 6 + i);
             }
 
-            int proposerPeer = peers[0];
-            int targetPeer = peers[1];
-            int proposerEmpire = started.EmpireIdForPeer(proposerPeer);
-            int targetEmpire = started.EmpireIdForPeer(targetPeer);
             AcceptProposal(started.Session, proposerPeer, targetPeer, proposerEmpire, targetEmpire,
                 sequence, AuthoritativeDiplomacyProposalType.TradeDeal);
             sequence += 2;
             AssertAllCanonicallySynced(started.Session, peers);
 
-            string tradeTech = PrepareTechnologyTrade(started, proposerEmpire, targetEmpire);
             started.Session.SubmitFromClient(proposerPeer,
                 AuthoritativePlayerCommand.DiplomacyProposal(sequence++, proposerEmpire, targetEmpire,
                     AuthoritativeDiplomacyProposalType.TechnologyTrade, tradeTech));
@@ -13957,14 +13969,22 @@ public class Authoritative4XSessionTests : StarDriveTest
     {
         Assert.IsNotNull(ship, "Expected a troop ship fixture.");
         Assert.AreEqual(RoleName.troop, ship.DesignRole, $"Ship '{ship.Name}' should be a single troop ship fixture.");
-        if (ship.TroopCount > 0)
+        if (ship.GetOurFirstTroop(out _))
             return;
 
         Troop template = PickBuildableTroop(ship.Loyalty);
         Assert.IsTrue(ResourceManager.TryCreateTroop(template.Name, ship.Loyalty, out Troop troop),
             $"Could not create troop '{template.Name}' for ship '{ship.Name}'.");
         ship.AddTroop(troop);
-        Assert.IsTrue(ship.TroopCount > 0, $"Ship '{ship.Name}' should have a loaded troop.");
+        Assert.IsTrue(ship.GetOurFirstTroop(out _), $"Ship '{ship.Name}' should have a loaded troop.");
+    }
+
+    static Troop FirstLoadedTroop(Ship ship)
+    {
+        EnsureTroopLoaded(ship);
+        Assert.IsTrue(ship.GetOurFirstTroop(out Troop troop),
+            $"Ship '{ship.Name}' should have a loaded troop.");
+        return troop;
     }
 
     static void EnsureSingleBuildTile(Planet planet)

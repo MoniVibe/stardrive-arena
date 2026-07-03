@@ -410,14 +410,14 @@ namespace Ship_Game
                 }
 
                 GameAudio.ResearchSelect();
-                Queue.ReloadResearchQueue();
+                Queue?.ReloadResearchQueue();
                 return;
             }
 
             if (Authoritative4XClientContext.TrySubmitSetResearchTopic(Player, tech.UID))
             {
                 GameAudio.ResearchSelect();
-                Queue.ReloadResearchQueue();
+                Queue?.ReloadResearchQueue();
                 return;
             }
 
@@ -449,8 +449,8 @@ namespace Ship_Game
                     Player.Research.RemoveTechFromQueue(tech.UID);
                 }
             }
-            
-            Queue.ReloadResearchQueue();
+
+            Queue?.ReloadResearchQueue();
         }
 
         Vector2 GridSize => new(GridWidth, GridHeight);

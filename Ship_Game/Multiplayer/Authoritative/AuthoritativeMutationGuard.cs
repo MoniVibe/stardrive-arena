@@ -57,6 +57,14 @@ public static class AuthoritativeMutationGuard
     static bool IsSanctionedPath => ReplayApplyDepth > 0 || AcceptedCommandDepth > 0;
 #endif
 
+    public static void ResetForTests()
+    {
+#if DEBUG
+        ReplayApplyDepth = 0;
+        AcceptedCommandDepth = 0;
+#endif
+    }
+
     [Conditional("DEBUG")]
     public static void AssertCanMutate(Planet planet, AuthoritativeMutationFamily family, string field)
     {
