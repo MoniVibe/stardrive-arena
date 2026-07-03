@@ -675,6 +675,26 @@ public sealed partial class AuthoritativeStateSnapshot
             planet.SetManualSpaceDefBudget(spaceBudget);
     }
 
+    internal static void ApplyPlanetTransformLine(UniverseState universe, string line)
+    {
+        string[] p = line.Split('|');
+        if (p.Length < 6
+            || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int planetId)
+            || !TryParseFloatBits(p[3], out float orbitalAngle)
+            || !TryParseFloatBits(p[4], out float x)
+            || !TryParseFloatBits(p[5], out float y))
+        {
+            return;
+        }
+
+        Planet planet = universe.GetPlanet(planetId);
+        if (planet == null)
+            return;
+
+        planet.OrbitalAngle = orbitalAngle;
+        planet.Position = new Vector2(x, y);
+    }
+
     static void ApplyShipPresencePayload(UniverseState universe, string[] lines)
     {
         universe.Objects.UpdateLists(removeInactiveObjects: false);

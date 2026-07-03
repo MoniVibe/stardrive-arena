@@ -1143,7 +1143,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             orbitAuthority.Ship.Position = orbitAuthority.Planet.Position + new Vector2(210_000f, 0f);
             orbitClient.Ship.Position = orbitClient.Planet.Position + new Vector2(210_000f, 0f);
             var session = new Authoritative4XInProcessSession(orbitAuthority.Screen, orbitClient.Screen);
-            float initialDistance = orbitClient.Ship.Position.Distance(orbitClient.Planet.Position);
+            Vector2 initialShipPosition = orbitClient.Ship.Position;
 
             session.SubmitFromClient(AuthoritativePlayerCommand.ShipPlanetOrder(1,
                 orbitAuthority.Player.Id, orbitAuthority.Ship.Id, orbitAuthority.Planet.Id,
@@ -1166,8 +1166,15 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "Authoritative no-op snapshots must not collapse a moving orbit order into a stationary durable goal.");
             Assert.AreEqual(durableSignature, AuthoritativeStateSnapshot.ShipOrderQueueSignatureForTest(orbitClient.Ship),
                 "Preserving local movement-solver goals must not change the canonical orbit signature.");
-            Assert.IsTrue(orbitClient.Ship.Position.Distance(orbitClient.Planet.Position) < initialDistance,
-                "The passive client ship should visibly advance toward the planet after accepted orbit snapshots.");
+            Assert.IsTrue(orbitClient.Ship.Position.Distance(initialShipPosition) > 10f,
+                "The passive client ship should visibly move from host-authored orbit snapshots.");
+            Assert.AreEqual(orbitAuthority.Ship.Position, orbitClient.Ship.Position,
+                "The passive orbiting ship presentation must match the host-authored SX position.");
+            Assert.AreEqual(orbitAuthority.Planet.Position, orbitClient.Planet.Position,
+                "The passive orbit target planet presentation must match the host-authored PX position.");
+            Assert.AreEqual(orbitAuthority.Ship.Position.Distance(orbitAuthority.Planet.Position),
+                orbitClient.Ship.Position.Distance(orbitClient.Planet.Position), 0.001f,
+                "Passive ship/planet visual spacing must match the host after PX replay.");
         }
         finally
         {
@@ -8974,6 +8981,78 @@ public class Authoritative4XSessionTests : StarDriveTest
                                  * Matrix.CreateTranslation(new Vector3(clientShip.Position, 0f));
             Assert.AreEqual(expectedWorld, sceneObject.World,
                 "The passive scene object must render the full host-authored orientation tuple.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientReplica_ReplaysHostPlanetTransformWithoutFatalDigest_Headless()
+    {
+        const ulong Seed = 0x504C414E45545058UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var replica = new Authoritative4XClientReplica(client.Screen, humanEmpireIds: new[] { client.Player.Id });
+            Planet authorityPlanet = authority.Planet;
+            Planet clientPlanet = client.UState.GetPlanet(authorityPlanet.Id);
+            Assert.IsNotNull(clientPlanet,
+                "The planet-transform proof needs the same planet id present on host and passive client.");
+
+            float initialAuthorityAngle = authorityPlanet.OrbitalAngle;
+            Vector2 initialAuthorityPosition = authorityPlanet.Position;
+            var step = new FixedSimTime(1f / 60f);
+            for (int i = 0; i < 420; ++i)
+                authority.Screen.SingleSimulationStep(step);
+
+            Assert.AreNotEqual(BitConverter.SingleToUInt32Bits(initialAuthorityAngle),
+                BitConverter.SingleToUInt32Bits(authorityPlanet.OrbitalAngle),
+                "The host planet must advance orbit during the regression setup.");
+            Assert.AreNotEqual(initialAuthorityPosition, authorityPlanet.Position,
+                "The host planet position must move so the passive stale-position repair is exercised.");
+            Assert.AreNotEqual(authorityPlanet.Position, clientPlanet.Position,
+                "The passive client should still be at the stale local planet position before replay.");
+
+            var command = AuthoritativePlayerCommand.NoOp(249, authority.Player.Id);
+            var result = new AuthoritativeCommandResult
+            {
+                Sequence = 249,
+                OriginPeer = 2,
+                Accepted = false,
+                Tick = 420,
+                Reason = "",
+            };
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 420);
+            StringAssert.Contains(authoritySnapshot.Payload, $"PX|{authorityPlanet.Id}|420|");
+
+            replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
+
+            Assert.AreEqual(authoritySnapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                "Planet orbital presentation must not participate in the fatal SyncDigest.");
+            Assert.AreEqual(authoritySnapshot.TransformDigest, replica.LastSnapshot.TransformDigest,
+                "The passive replica must match the host transform digest after applying PX rows.");
+            Assert.AreEqual(BitConverter.SingleToUInt32Bits(authorityPlanet.OrbitalAngle),
+                BitConverter.SingleToUInt32Bits(clientPlanet.OrbitalAngle),
+                "PX replay must copy the exact host orbital angle.");
+            Assert.AreEqual(BitConverter.SingleToUInt32Bits(authorityPlanet.Position.X),
+                BitConverter.SingleToUInt32Bits(clientPlanet.Position.X),
+                "PX replay must copy the exact host planet X position.");
+            Assert.AreEqual(BitConverter.SingleToUInt32Bits(authorityPlanet.Position.Y),
+                BitConverter.SingleToUInt32Bits(clientPlanet.Position.Y),
+                "PX replay must copy the exact host planet Y position.");
+
+            clientPlanet.OrbitalAngle = initialAuthorityAngle;
+            clientPlanet.Position = initialAuthorityPosition;
+            AuthoritativeStateSnapshot stalePresentation = AuthoritativeStateSnapshot.Capture(client.Screen, 420);
+            Assert.AreEqual(authoritySnapshot.SyncDigest, stalePresentation.SyncDigest,
+                "A stale passive planet presentation must not become a fatal sync mismatch.");
+            Assert.AreNotEqual(authoritySnapshot.TransformDigest, stalePresentation.TransformDigest,
+                "A stale passive planet presentation should remain visible as a transform-digest mismatch.");
         }
         finally
         {

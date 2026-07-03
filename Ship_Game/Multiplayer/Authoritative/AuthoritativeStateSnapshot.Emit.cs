@@ -258,6 +258,16 @@ public sealed partial class AuthoritativeStateSnapshot
           .AppendLine();
     }
 
+    internal static void EmitPlanetTransformRows(Planet p, uint tick, StringBuilder sb)
+    {
+        sb.Append("PX|").Append(p.Id)
+          .Append('|').Append(tick)
+          .Append('|').Append(FloatBits(p.OrbitalAngle))
+          .Append('|').Append(FloatBits(p.Position.X))
+          .Append('|').Append(FloatBits(p.Position.Y))
+          .AppendLine();
+    }
+
     internal static void EmitBlueprintRows(Planet p, uint tick, StringBuilder sb)
     {
         if (p.HasBlueprints)

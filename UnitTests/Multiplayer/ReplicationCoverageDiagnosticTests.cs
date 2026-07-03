@@ -380,6 +380,12 @@ public sealed class ReplicationCoverageDiagnosticTests
             "PlanetId|OwnerId|PopulationBillion|ConstructionQueue.Count",
             "PopulationBillion is raw-hashed but not payload/replay covered."),
 
+        Row("PX", "PlanetTransform",
+            "PlanetId|Tick|OrbitalAngle|Position.X|Position.Y",
+            "PlanetId|OrbitalAngle|Position.X|Position.Y",
+            "",
+            "Planet orbital presentation is excluded from SyncDigest and covered by TransformDigest instead."),
+
         Row("BP", "Blueprint",
             "PlanetId|BlueprintSignature",
             "",
