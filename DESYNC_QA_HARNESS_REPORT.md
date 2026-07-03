@@ -1,7 +1,7 @@
 # Desync QA Harness Report
 
-Worktree: `C:\dev\stardrive\StarDrive-qaharness`  
-Branch: `fix/qaharness`
+Worktree: `C:\dev\stardrive\StarDrive-qa2`
+Branch: `fix/qa2`
 
 ## Implemented Scenarios
 
@@ -35,11 +35,21 @@ Branch: `fix/qaharness`
    - Fix: pirate payment/raid director addition is idempotent by target empire; `Pirates.Init` no longer duplicate-adds payment/threat map entries after reload.
    - Result: green.
 
-## Deferred Scenarios
+7. Subspace projector: `QaSubspaceProjector_GameplayStateReplicatesBubbleIsRenderOnly_Headless`
+   - Reproduced: yes. `SC` rows materialized the passive-client projector ship, but replay did not rehydrate the owning empire's `OwnedProjectors` list, and the initial influence entry was inserted at `Vector2.Zero` before the `SX` row moved the ship to the host position.
+   - Fix: missing-ship replay now adds materialized ships to the owner ship/projector list and publishes it; projector `SX` replay removes/reinserts influence when authoritative position or active state changes.
+   - Classification: the original joiner issue was a gameplay replay gap. After the fix, the underlying projector ship, owner list, projection radius, and influence tree state replicate. The remaining bubble draw is render-only/overlay-gated (`ShowingFTLOverlay` and border-node rendering), not a digest desync.
+   - Result: green.
 
-7. Subspace projector: not implemented in this pass.
-8. Fog/exploration expected-behavior proof: not implemented in this pass.
-9. Full-game combined soak: not implemented in this pass.
+8. Fog/exploration expected-behavior proof: `QaFogExploration_UnknownEnemyPlanetsStayHiddenUntilContactWar_Headless`
+   - Reproduced: by-design hidden state plus one replay/UI gap. With no contact, enemy planet `P` rows exist but owner visibility stays hidden because the relationship row is `R|...|0|0|...`; this matches the live report that planets stay hidden until contact/war. When the host relationship becomes known/at-war, replay previously updated `Relationship.Known` but not the empire `KnownEmpires` bitset used by UI visibility.
+   - Fix: authoritative diplomacy replay now updates `KnownEmpires` through a guarded helper when applying `R` rows.
+   - Result: green; no-contact hidden is expected, contact/war visible is asserted.
+
+9. Full-game combined soak: `QaFullGameCombinedSoak_AllFamiliesStaySyncedThroughForcedResync_Headless`
+   - Reproduced: no new divergence after the projector and fog replay fixes.
+   - Coverage: seeded in-process host plus passive client, host-side colonization via `P` rows, building queue, tech-gated player design via `U/D` rows, ship queue, fleet formation/move, trade/freighter automation, fleet combat, ground invasion, pirate payment event, and forced authoritative replay/resync.
+   - Result: green end-to-end across fatal sync and transform digests.
 
 ## Authoritative4X Red-Test Disposition
 
@@ -65,8 +75,8 @@ Branch: `fix/qaharness`
 
 ## Verification
 
-- `dotnet build UnitTests/SDUnitTests.csproj -c Debug -p:Platform=x64 -p:GenerateDependencyFile=false -p:GenerateRuntimeConfigurationFiles=false`: passed. Later builds also passed; restore emitted `NU1900` warnings because the sandbox cannot reach NuGet vulnerability data.
-- `dotnet test UnitTests/SDUnitTests.csproj -c Debug -p:Platform=x64 --filter "FullyQualifiedName~AuthoritativeQaScenarioTests"`: passed, 6/6.
-- `dotnet test UnitTests/SDUnitTests.csproj -c Debug -p:Platform=x64 --filter "FullyQualifiedName~ArenaMultiplayerLockstepTests"`: passed, 13/13.
+- `dotnet test UnitTests/SDUnitTests.csproj -c Debug -p:Platform=x64 --filter "FullyQualifiedName~AuthoritativeQaScenarioTests"`: passed, 9/9.
+- `dotnet test UnitTests/SDUnitTests.csproj -c Debug -p:Platform=x64 --filter "FullyQualifiedName~Authoritative4X"`: passed, 180/180.
+- `dotnet test UnitTests/SDUnitTests.csproj -c Debug -p:Platform=x64 --filter "FullyQualifiedName~Arena"`: passed, 106/106.
 - `dotnet test UnitTests/SDUnitTests.csproj -c Debug -p:Platform=x64 --filter "FullyQualifiedName=UnitTests.Multiplayer.AuthoritativeSoakTests.Soak_Smoke"`: passed, 1/1.
-- `dotnet test UnitTests/SDUnitTests.csproj -c Debug -p:Platform=x64 --filter FullyQualifiedName~Authoritative4X`: passed, 180/180.
+- Restore emitted `NU1900` warnings because the sandbox cannot reach NuGet vulnerability data; all requested test gates still passed.

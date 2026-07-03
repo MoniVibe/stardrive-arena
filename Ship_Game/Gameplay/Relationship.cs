@@ -558,6 +558,7 @@ namespace Ship_Game.Gameplay
                 "RelationshipState");
 
             Known = known;
+            us.SetKnownEmpireForAuthoritativeSync(Them, known);
             AtWar = atWar;
             Treaty_NAPact = nap;
             Treaty_Trade = trade;

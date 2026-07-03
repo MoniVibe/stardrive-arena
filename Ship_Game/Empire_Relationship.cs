@@ -337,6 +337,16 @@ namespace Ship_Game
             KnownEmpires.Set(them.Id);
         }
 
+        internal void SetKnownEmpireForAuthoritativeSync(Empire them, bool known)
+        {
+            if (them == null || them == this)
+                return;
+
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.Diplomacy,
+                "KnownEmpires");
+            KnownEmpires.SetValue(them.Id, known);
+        }
+
         public static void SetRelationsAsKnown(Empire us, Empire them)
         {
             if (us == them)

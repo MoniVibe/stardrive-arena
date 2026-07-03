@@ -750,6 +750,24 @@ public sealed partial class AuthoritativeStateSnapshot
 
         BumpUniqueObjectIds(universe, shipId);
         universe.AddShip(ship);
+        AddShipToEmpireListsForAuthoritativeReplay(ship);
+    }
+
+    static void AddShipToEmpireListsForAuthoritativeReplay(Ship ship)
+    {
+        Empire empire = ship?.Loyalty;
+        if (empire == null)
+            return;
+
+        empire.EmpireShips.UpdatePublicLists();
+        bool alreadyListed = ship.IsSubspaceProjector
+            ? empire.OwnedProjectors.Contains(ship)
+            : empire.OwnedShips.Contains(ship);
+        if (alreadyListed)
+            return;
+
+        (empire as IEmpireShipLists)?.AddNewShipAtEndOfTurn(ship);
+        empire.EmpireShips.UpdatePublicLists();
     }
 
     static void BumpUniqueObjectIds(UniverseState universe, int objectId)
@@ -2385,8 +2403,19 @@ public sealed partial class AuthoritativeStateSnapshot
         if (uint.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out uint tick))
             ship.ObservePassiveAuthoritativeTransform(tick, rotation, active, dying);
 
+        bool refreshProjectorInfluence = ship.IsSubspaceProjector
+            && ship.Loyalty != null
+            && (BitConverter.SingleToInt32Bits(ship.Position.X) != BitConverter.SingleToInt32Bits(x)
+                || BitConverter.SingleToInt32Bits(ship.Position.Y) != BitConverter.SingleToInt32Bits(y)
+                || ship.Active != active);
+        if (refreshProjectorInfluence)
+            universe.Influence.Remove(ship.Loyalty, ship);
+
         ship.SetAuthoritativeTransform(new Vector2(x, y), new Vector2(vx, vy), rotation,
             system, active, dying, yRotation, xRotation);
+
+        if (refreshProjectorInfluence && ship.Active)
+            universe.Influence.Insert(ship.Loyalty, ship);
     }
 
     internal static void ApplyShipVisibilityLine(UniverseState universe, string line)

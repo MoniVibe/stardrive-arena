@@ -374,6 +374,216 @@ public class AuthoritativeQaScenarioTests : StarDriveTest
         }
     }
 
+    [TestMethod]
+    public void QaSubspaceProjector_GameplayStateReplicatesBubbleIsRenderOnly_Headless()
+    {
+        using Authoritative4XLobbyStartResult started = StartOnePassiveSession(0x4A0C007, pirates: false);
+        int empireId = started.EmpireIdForPeer(HostPeer);
+        int sequence = 7_000;
+
+        try
+        {
+            ConfigureScenarioUniverses(started, disableEvents: true);
+            Empire player = started.AuthorityUniverse.UState.GetEmpireById(empireId);
+            Planet home = player.GetPlanets().OrderBy(p => p.Id).First();
+            Vector2 projectorPosition = home.Position + new Vector2(player.GetProjectorRadius() * 2.5f, 0f);
+            Ship authorityProjector = CreateAuthorityOnlyShip(started.AuthorityUniverse,
+                empireId, "Subspace Projector", projectorPosition);
+            Assert.IsTrue(authorityProjector.IsSubspaceProjector,
+                "The fixture must build the real Subspace Projector design.");
+            Assert.IsTrue(player.GetProjectorRadius() > 0f,
+                "The Subspace Projector gameplay projection radius should be non-zero on the host.");
+
+            SubmitAccepted(started, HostPeer, AuthoritativePlayerCommand.NoOp(sequence++, empireId));
+
+            Empire clientPlayer = started.Clients[0].Universe.UState.GetEmpireById(empireId);
+            Ship clientProjector = started.Clients[0].Universe.UState.Objects.FindShip(authorityProjector.Id);
+            Assert.IsNotNull(clientProjector,
+                "SC rows must materialize the host-built projector ship on the passive client.");
+            Assert.IsTrue(clientProjector.IsSubspaceProjector);
+            Assert.AreEqual(empireId, clientProjector.Loyalty.Id);
+            Assert.AreEqual(BitConverter.SingleToInt32Bits(authorityProjector.InhibitionRadius),
+                BitConverter.SingleToInt32Bits(clientProjector.InhibitionRadius),
+                "The projector gameplay inhibition state must match after normal authoritative replay.");
+            Assert.IsTrue(clientPlayer.OwnedProjectors.Any(s => s.Id == authorityProjector.Id),
+                "The passive client's empire-owned projector list should contain the replayed projector.");
+
+            Assert.AreEqual(BitConverter.SingleToInt32Bits(player.GetProjectorRadius()),
+                BitConverter.SingleToInt32Bits(clientPlayer.GetProjectorRadius()),
+                "The passive client's projector projection radius must match the host.");
+            Assert.IsTrue(started.AuthorityUniverse.UState.Influence.IsInInfluenceOf(player, projectorPosition),
+                "The host influence tree should contain the projector's subspace projection node.");
+            Assert.IsTrue(started.Clients[0].Universe.UState.Influence.IsInInfluenceOf(clientPlayer, projectorPosition),
+                "The passive client's influence tree must contain the projector projection from host rows.");
+            AssertPayloadContains(started.Session.LastAuthoritySnapshot,
+                $"SC|{authorityProjector.Id}|{empireId}|Subspace Projector", "projector presence rows");
+            AssertPayloadContains(started.Session.LastAuthoritySnapshot,
+                $"S|{authorityProjector.Id}|{empireId}|", "projector runtime rows");
+            AssertPayloadContains(started.Session.LastAuthoritySnapshot,
+                $"SX|{authorityProjector.Id}|", "projector transform rows");
+            AssertPayloadContains(started.Session.LastAuthoritySnapshot,
+                $"SV|{authorityProjector.Id}|", "projector known-by visibility rows");
+
+            Assert.IsFalse(started.Clients[0].Universe.ShowingFTLOverlay,
+                "The missing joiner bubble is render-only: DrawFTLInhibitionNodes is gated by the client FTL overlay, while gameplay rows are synced.");
+        }
+        catch (Authoritative4XSyncMismatchException e)
+        {
+            Assert.Fail("Subspace projector QA scenario desynced: " + FirstFatalDiff(e));
+        }
+    }
+
+    [TestMethod]
+    public void QaFogExploration_UnknownEnemyPlanetsStayHiddenUntilContactWar_Headless()
+    {
+        using Authoritative4XLobbyStartResult started = StartOnePassiveSession(0x4A0C008, pirates: false);
+        int empireId = started.EmpireIdForPeer(HostPeer);
+        int sequence = 8_000;
+
+        try
+        {
+            ConfigureScenarioUniverses(started, disableEvents: true);
+            Empire player = started.AuthorityUniverse.UState.GetEmpireById(empireId);
+            Empire enemy = FirstEnemyMajor(started.AuthorityUniverse, player);
+            Planet enemyPlanet = enemy.GetPlanets()
+                .Where(p => !p.IsExploredBy(player))
+                .OrderBy(p => p.Id)
+                .FirstOrDefault()
+                ?? enemy.GetPlanets().OrderBy(p => p.Id).First();
+
+            foreach (UniverseScreen universe in AllUniverses(started))
+                SetBilateralDiplomacyForTest(universe, empireId, enemy.Id, known: false, atWar: false);
+
+            SubmitAccepted(started, HostPeer, AuthoritativePlayerCommand.NoOp(sequence++, empireId));
+            AssertPayloadContains(started.Session.LastAuthoritySnapshot,
+                $"P|{enemyPlanet.Id}|{enemy.Id}|", "enemy planet owner rows even while fog-hidden");
+            AssertPayloadContains(started.Session.LastAuthoritySnapshot,
+                $"R|{empireId}|{enemy.Id}|0|0|", "not-known diplomacy visibility rows");
+            AssertRelationshipKnownAndWar(started.Clients[0].Universe, empireId, enemy.Id,
+                known: false, atWar: false, "pre-contact passive client");
+            AssertEnemyPlanetFogState(started.Clients[0].Universe, empireId, enemy.Id,
+                enemyPlanet.Id, shouldBeHidden: true, "pre-contact passive client");
+
+            SetBilateralDiplomacyForTest(started.AuthorityUniverse, empireId, enemy.Id,
+                known: true, atWar: true);
+            SubmitAccepted(started, HostPeer, AuthoritativePlayerCommand.NoOp(sequence++, empireId));
+            AssertPayloadContains(started.Session.LastAuthoritySnapshot,
+                $"R|{empireId}|{enemy.Id}|1|1|", "known-at-war diplomacy visibility rows");
+            AssertRelationshipKnownAndWar(started.Clients[0].Universe, empireId, enemy.Id,
+                known: true, atWar: true, "post-contact passive client");
+            AssertEnemyPlanetFogState(started.Clients[0].Universe, empireId, enemy.Id,
+                enemyPlanet.Id, shouldBeHidden: false, "post-contact passive client");
+        }
+        catch (Authoritative4XSyncMismatchException e)
+        {
+            Assert.Fail("Fog/exploration QA scenario desynced: " + FirstFatalDiff(e));
+        }
+    }
+
+    [TestMethod]
+    public void QaFullGameCombinedSoak_AllFamiliesStaySyncedThroughForcedResync_Headless()
+    {
+        const string DesignName = "QA Combined Tech-Gated Design";
+        using Authoritative4XLobbyStartResult started = StartOnePassiveSession(0x4A0C009, pirates: true,
+            disableResearchStations: true, disableMiningOps: true, turnTimer: 1);
+        int empireId = started.EmpireIdForPeer(HostPeer);
+        int sequence = 9_000;
+
+        try
+        {
+            ConfigureScenarioUniverses(started, disableEvents: false);
+            ResourceManager.Ships.Delete(DesignName);
+            Empire player = started.AuthorityUniverse.UState.GetEmpireById(empireId);
+            Empire enemy = FirstEnemyMajor(started.AuthorityUniverse, player);
+            Planet home = player.GetPlanets().OrderBy(p => p.Id).First();
+            PrepareEconomyForCombinedSoak(started, home.Id);
+
+            Building building = PickBuildableBuilding(started.AuthorityUniverse.UState.GetPlanet(home.Id));
+            Empire authorityEmpire = started.AuthorityUniverse.UState.GetEmpireById(empireId);
+            (ShipDesign design, string techUid, string gatedModuleUid) =
+                BuildTechGatedPlayerDesign(authorityEmpire, DesignName);
+            authorityEmpire.UnlockTech(techUid, TechUnlockType.Normal, null);
+
+            IShipDesign fleetDesign = PickFleetBuildableShip(authorityEmpire);
+            int[] fleetShips = SpawnMatchingShips(started, empireId, fleetDesign.Name,
+                home.Position + new Vector2(55_000f, 8_000f), 3);
+            SpawnFleetCombatFixture(started, empireId, enemy.Id, shipsPerSide: 5, out _);
+            Planet playerPlanet = player.GetPlanets().OrderBy(p => p.Id).First();
+            Planet enemyPlanet = enemy.GetPlanets().OrderBy(p => p.Id).First();
+            PrepareGroundCombatFixture(started, empireId, enemy.Id, playerPlanet.Id, enemyPlanet.Id);
+
+            Planet colonyTarget = PickNeutralPlanetForCombinedSoak(started.AuthorityUniverse);
+            SetAuthorityPlanetOwner(started.AuthorityUniverse, colonyTarget.Id, empireId);
+            SubmitAccepted(started, HostPeer, AuthoritativePlayerCommand.DesignShip(sequence++,
+                empireId, design.GetBase64DesignString()));
+            Assert.AreEqual(empireId, started.Clients[0].Universe.UState.GetPlanet(colonyTarget.Id).Owner?.Id,
+                "The combined soak colonization step must replay P owner rows to the passive client.");
+            AssertDesignCostAndAvailabilityEqual(authorityEmpire,
+                started.Clients[0].Universe.UState.GetEmpireById(empireId), DesignName, gatedModuleUid);
+
+            SubmitAccepted(started, HostPeer, AuthoritativePlayerCommand.QueueBuilding(sequence++,
+                empireId, home.Id, building.Name));
+
+            SubmitAccepted(started, HostPeer, AuthoritativePlayerCommand.QueueBuild(sequence++,
+                empireId, home.Id, DesignName));
+
+            SubmitAccepted(started, HostPeer, AuthoritativePlayerCommand.SetFleetAssignment(sequence++,
+                empireId, fleetKey: 4, AuthoritativeFleetAssignmentMode.Replace, fleetShips));
+            SubmitAccepted(started, HostPeer, AuthoritativePlayerCommand.MoveFleet(sequence++,
+                empireId, fleetKey: 4, home.Position + new Vector2(70_000f, 12_000f), new Vector2(1f, 0f),
+                MoveOrder.Aggressive));
+
+            IShipDesign freighter = PickBuildableShip(authorityEmpire, d => d.IsFreighter,
+                "combined soak freighter");
+            SubmitAccepted(started, HostPeer, AuthoritativePlayerCommand.SetUniversePreferences(sequence++,
+                empireId, AuthoritativeUniversePreferenceFlags.AllowPlayerInterTrade));
+            SubmitAccepted(started, HostPeer, AuthoritativePlayerCommand.SetEmpireAutomation(sequence++,
+                empireId, AuthoritativeEmpireAutomationFlags.AutoFreighters,
+                freighter.Name, "", "", "", "", ""));
+            Assert.IsTrue(started.Clients[0].Universe.UState.P.AllowPlayerInterTrade,
+                "Trade-enable preference must replay to the passive client.");
+            Assert.AreEqual(freighter.Name,
+                started.Clients[0].Universe.UState.GetEmpireById(empireId).data.CurrentAutoFreighter);
+
+            ForceAuthoritativeReplay(started);
+
+            for (int i = 0; i < 210; ++i)
+                SubmitAccepted(started, HostPeer,
+                    AuthoritativePlayerCommand.NoOp(sequence++, empireId),
+                    assertEachClient: i % 30 == 0 || i == 209);
+
+            for (int i = 0; i < 180; ++i)
+                SubmitAccepted(started, HostPeer,
+                    AuthoritativePlayerCommand.NoOp(sequence++, empireId),
+                    assertEachClient: i % 30 == 0 || i == 179);
+
+            Empire pirate = FindPirateEmpire(started.AuthorityUniverse);
+            Assert.IsNotNull(pirate, "Combined soak requires a generated pirate faction.");
+            for (int i = 0; i < 240 && PiratePaymentDirectorCount(pirate, player) == 0; ++i)
+                SubmitAccepted(started, HostPeer,
+                    AuthoritativePlayerCommand.NoOp(sequence++, empireId),
+                    assertEachClient: i % 40 == 0);
+            Assert.AreEqual(1, PiratePaymentDirectorCount(pirate, player),
+                "The combined soak should exercise one pirate payment event without duplicate directors.");
+
+            ForceAuthoritativeReplay(started);
+            for (int i = 0; i < 120; ++i)
+                SubmitAccepted(started, HostPeer,
+                    AuthoritativePlayerCommand.NoOp(sequence++, empireId),
+                    assertEachClient: i % 30 == 0 || i == 119);
+
+            AssertAllCanonicallySynced(started.Session, HostPeer);
+        }
+        catch (Authoritative4XSyncMismatchException e)
+        {
+            Assert.Fail("Full-game combined QA soak desynced: " + FirstFatalDiff(e));
+        }
+        finally
+        {
+            ResourceManager.Ships.Delete(DesignName);
+        }
+    }
+
     Authoritative4XLobbyStartResult StartOnePassiveSession(int seed, bool pirates,
         bool disableResearchStations = true, bool disableMiningOps = true, int turnTimer = 5)
     {
@@ -489,6 +699,130 @@ public class AuthoritativeQaScenarioTests : StarDriveTest
     {
         StringAssert.Contains(snapshot.Payload, text,
             $"Authoritative snapshot should contain {label} ({text}).");
+    }
+
+    static void ForceAuthoritativeReplay(Authoritative4XLobbyStartResult started)
+    {
+        AuthoritativeStateSnapshot authority = started.Session.LastAuthoritySnapshot;
+        Assert.IsNotNull(authority, "Forced resync requires an existing authority snapshot.");
+        foreach (Authoritative4XClientSpec client in started.Clients)
+        {
+            authority.ApplyEmpireRuntimePayload(client.Universe.UState);
+            AuthoritativeStateSnapshot replica = AuthoritativeStateSnapshot.Capture(client.Universe, authority.Tick);
+            Assert.AreEqual(authority.SyncDigest, replica.SyncDigest,
+                AuthoritativeStateSnapshot.FirstFatalPayloadDifferenceForLog(authority.Payload, replica.Payload));
+            Assert.AreEqual(authority.TransformDigest, replica.TransformDigest,
+                AuthoritativeStateSnapshot.FirstFatalPayloadDifferenceForLog(authority.Payload, replica.Payload));
+        }
+    }
+
+    static Ship CreateAuthorityOnlyShip(UniverseScreen universe, int empireId, string design, Vector2 position)
+    {
+#if DEBUG
+        using (AuthoritativeMutationGuard.EnterAcceptedCommandApply())
+#endif
+        {
+            Empire empire = universe.UState.GetEmpireById(empireId);
+            Ship ship = Ship.CreateShipAtPoint(universe.UState, design, empire, position);
+            Assert.IsNotNull(ship, $"Could not create authority ship '{design}'.");
+            universe.UState.Objects.UpdateLists(removeInactiveObjects: false);
+            return ship;
+        }
+    }
+
+    static void SetAuthorityPlanetOwner(UniverseScreen universe, int planetId, int ownerEmpireId)
+    {
+#if DEBUG
+        using (AuthoritativeMutationGuard.EnterAcceptedCommandApply())
+#endif
+        {
+            Planet planet = universe.UState.GetPlanet(planetId);
+            Empire owner = universe.UState.GetEmpireById(ownerEmpireId);
+            Assert.IsNotNull(planet, $"Planet {planetId} not found.");
+            Assert.IsNotNull(owner, $"Empire {ownerEmpireId} not found.");
+            planet.SetOwner(owner);
+        }
+    }
+
+    static void SetBilateralDiplomacyForTest(UniverseScreen universe, int empireA, int empireB,
+        bool known, bool atWar)
+    {
+#if DEBUG
+        using (AuthoritativeMutationGuard.EnterAcceptedCommandApply())
+#endif
+        {
+            Empire a = universe.UState.GetEmpireById(empireA);
+            Empire b = universe.UState.GetEmpireById(empireB);
+            Assert.IsNotNull(a);
+            Assert.IsNotNull(b);
+            a.GetRelations(b).SetAuthoritativeDiplomacyState(a, known, atWar,
+                nap: false, trade: false, openBorders: false, alliance: false, peace: false);
+            b.GetRelations(a).SetAuthoritativeDiplomacyState(b, known, atWar,
+                nap: false, trade: false, openBorders: false, alliance: false, peace: false);
+            Empire.UpdateBilateralRelations(a, b);
+        }
+    }
+
+    static void AssertRelationshipKnownAndWar(UniverseScreen universe, int viewerEmpireId,
+        int otherEmpireId, bool known, bool atWar, string label)
+    {
+        Empire viewer = universe.UState.GetEmpireById(viewerEmpireId);
+        Empire other = universe.UState.GetEmpireById(otherEmpireId);
+        Relationship rel = viewer.GetRelations(other);
+        Assert.AreEqual(known, rel.Known, $"{label} relationship Known");
+        Assert.AreEqual(known, viewer.IsKnown(other), $"{label} Empire.IsKnown bitset");
+        Assert.AreEqual(atWar, rel.AtWar, $"{label} relationship AtWar");
+        Assert.AreEqual(atWar, viewer.IsAtWarWith(other), $"{label} IsAtWarWith");
+    }
+
+    static void AssertEnemyPlanetFogState(UniverseScreen universe, int viewerEmpireId,
+        int ownerEmpireId, int planetId, bool shouldBeHidden, string label)
+    {
+        Empire viewer = universe.UState.GetEmpireById(viewerEmpireId);
+        Empire owner = universe.UState.GetEmpireById(ownerEmpireId);
+        Planet planet = universe.UState.GetPlanet(planetId);
+        Assert.AreEqual(owner.Id, planet.Owner?.Id, $"{label} P row owner");
+        bool ownerKnownForUi = planet.Owner == viewer || viewer.IsKnown(planet.Owner);
+        Assert.AreEqual(!shouldBeHidden, ownerKnownForUi,
+            $"{label} enemy planet owner visibility should follow relationship knowledge, not P-row presence.");
+    }
+
+    static void PrepareEconomyForCombinedSoak(Authoritative4XLobbyStartResult started, int homePlanetId)
+    {
+        foreach (UniverseScreen universe in AllUniverses(started))
+        {
+            Planet home = universe.UState.GetPlanet(homePlanetId);
+            home.HasSpacePort = true;
+            home.Storage.Prod = 500f;
+            home.Storage.Food = 500f;
+            home.Owner.Money = 2_000f;
+            home.Owner.UpdateNetPlanetIncomes();
+        }
+    }
+
+    static Planet PickNeutralPlanetForCombinedSoak(UniverseScreen universe)
+    {
+        Planet planet = universe.UState.Planets
+            .Where(p => p.Owner == null && p.Habitable)
+            .OrderBy(p => p.Id)
+            .FirstOrDefault()
+            ?? universe.UState.Planets
+                .Where(p => p.Owner == null)
+                .OrderBy(p => p.Id)
+                .FirstOrDefault();
+        Assert.IsNotNull(planet, "Combined soak needs an unowned planet to colonize.");
+        return planet;
+    }
+
+    static IShipDesign PickBuildableShip(Empire empire, Func<IShipDesign, bool> predicate, string label)
+    {
+        IShipDesign ship = empire.ShipsWeCanBuildSnapshot
+            .Where(predicate)
+            .OrderBy(s => s.BaseCost)
+            .ThenBy(s => s.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(ship, $"Empire {empire.Id} needs a buildable {label}.");
+        return ship;
     }
 
     sealed class GroundFixture
@@ -608,7 +942,14 @@ public class AuthoritativeQaScenarioTests : StarDriveTest
     static void MakeAtWar(Empire a, Empire b)
     {
         if (!a.IsAtWarWith(b))
-            a.AI.DeclareWarOn(b, WarType.BorderConflict);
+        {
+#if DEBUG
+            using (AuthoritativeMutationGuard.EnterAcceptedCommandApply())
+#endif
+            {
+                a.AI.DeclareWarOn(b, WarType.BorderConflict);
+            }
+        }
         Assert.IsTrue(a.IsAtWarWith(b), $"Empire {a.Id} should be at war with {b.Id}.");
         Assert.IsTrue(b.IsAtWarWith(a), $"Empire {b.Id} should be at war with {a.Id}.");
     }
