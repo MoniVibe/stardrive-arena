@@ -124,8 +124,21 @@ namespace Ship_Game
         public bool Done => DefendingTroop?.Strength <= 0 || DefendingBuilding?.IsDestroyed == true
                                                           || AttackingBuilding?.IsDestroyed == true
                                                           || AttackingTroop?.Strength <= 0
+                                                          || TroopOffPlanet(AttackingTroop)
+                                                          || TroopOffPlanet(DefendingTroop)
                                                           || DefendingBuildingOrphaned
                                                           || AttackingBuildingOrphaned;
+
+        bool TroopOffPlanet(Troop troop)
+        {
+            if (troop == null || Planet == null)
+                return false;
+
+            foreach (PlanetGridSquare tile in Planet.TilesList)
+                if (tile.TroopsHere.Contains(troop))
+                    return false;
+            return true;
+        }
 
         private struct AttackerStats
         {

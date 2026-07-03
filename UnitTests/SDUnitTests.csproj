@@ -177,6 +177,7 @@
     <Compile Include="TestImpactPredictor.Scenario.cs" />
     <Compile Include="LinearAlgebra\TestMathExt.cs" />
     <Compile Include="Multiplayer\Authoritative4XSessionTests.cs" />
+    <Compile Include="Multiplayer\AuthoritativeQaScenarioTests.cs" />
     <Compile Include="Multiplayer\AuthoritativeSoakHarness.cs" />
     <Compile Include="Multiplayer\AuthoritativeSoakTests.cs" />
     <Compile Include="Multiplayer\ReplicationCoverageDiagnosticTests.cs" />

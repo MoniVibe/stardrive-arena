@@ -67,11 +67,17 @@ namespace Ship_Game
         int PaymentPeriodTurns                 => (int)(Owner.data.PiratePaymentPeriodTurns * Owner.Universe.ProductionPace);
         public bool PaidBy(Empire victim)      => !Owner.IsAtWarWith(victim);
 
-        public void AddGoalDirectorPayment(Empire victim) => 
-            AddGoal(victim, GoalType.PirateDirectorPayment, null);
+        public void AddGoalDirectorPayment(Empire victim)
+        {
+            if (!HasDirectorGoal(victim, GoalType.PirateDirectorPayment))
+                AddGoal(victim, GoalType.PirateDirectorPayment, null);
+        }
 
-        public void AddGoalDirectorRaid(Empire victim) => 
-            AddGoal(victim, GoalType.PirateDirectorRaid, null);
+        public void AddGoalDirectorRaid(Empire victim)
+        {
+            if (!HasDirectorGoal(victim, GoalType.PirateDirectorRaid))
+                AddGoal(victim, GoalType.PirateDirectorRaid, null);
+        }
 
         public void AddGoalBase(Ship ship, string sysName) => 
             AddGoal(null, GoalType.PirateBase, ship, sysName);
@@ -116,12 +122,21 @@ namespace Ship_Game
             Owner.AI.AddGoal(goal);
         }
 
+        bool HasDirectorGoal(Empire victim, GoalType type)
+        {
+            int victimId = victim?.Id ?? 0;
+            return victimId > 0
+                   && Owner.AI.HasGoal(g => g.Type == type && g.TargetEmpire?.Id == victimId);
+        }
+
         public void Init() // New Game
         {
             foreach (Empire empire in Universe.MajorEmpires)
             {
-                ThreatLevels.Add(empire.Id, -1);
-                PaymentTimers.Add(empire.Id, PaymentPeriodTurns);
+                if (!ThreatLevels.ContainsKey(empire.Id))
+                    ThreatLevels.Add(empire.Id, -1);
+                if (!PaymentTimers.ContainsKey(empire.Id))
+                    PaymentTimers.Add(empire.Id, PaymentPeriodTurns);
             }
 
             PopulateDefaultBasicShips(fromSave: false);

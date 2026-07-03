@@ -1233,10 +1233,10 @@ public sealed partial class AuthoritativeStateSnapshot
         {
             if (ReferenceEquals(tile.Building, building))
                 return string.Create(CultureInfo.InvariantCulture,
-                    $"{tile.X},{tile.Y},{building.Name},{FloatBits(building.Strength)}");
+                    $"{tile.X},{tile.Y},{building.Name},{FloatBits(building.Strength)},{building.CombatStrength}");
         }
         return string.Create(CultureInfo.InvariantCulture,
-            $"off,{building.Name},{FloatBits(building.Strength)}");
+            $"off,{building.Name},{FloatBits(building.Strength)},{building.CombatStrength}");
     }
 
     static string Digest(string payload)
@@ -1929,12 +1929,22 @@ public sealed partial class AuthoritativeStateSnapshot
         if (tile == null)
             return;
 
+        int strength = p.Length >= 9
+                       && int.TryParse(p[8], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedStrength)
+            ? parsedStrength
+            : int.MinValue;
+        int combatStrength = p.Length >= 10
+                             && int.TryParse(p[9], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedCombatStrength)
+            ? parsedCombatStrength
+            : int.MinValue;
+
         ApplyColonyTileState(planet, tile, p[4] ?? "", ParseFlag(p[5]),
-            ParseFlag(p[6]), ParseFlag(p[7]));
+            ParseFlag(p[6]), ParseFlag(p[7]), strength, combatStrength);
     }
 
     static void ApplyColonyTileState(Planet planet, PlanetGridSquare tile, string buildingName,
-        bool biosphere, bool habitable, bool terraformable)
+        bool biosphere, bool habitable, bool terraformable, int strength = int.MinValue,
+        int combatStrength = int.MinValue)
     {
         buildingName ??= "";
         if (tile.Building != null && !string.Equals(tile.Building.Name ?? "", buildingName, StringComparison.Ordinal))
@@ -1965,6 +1975,13 @@ public sealed partial class AuthoritativeStateSnapshot
 
         tile.SetHabitable(habitable);
         tile.Terraformable = terraformable;
+        if (tile.Building != null)
+        {
+            if (strength != int.MinValue)
+                tile.Building.Strength = strength;
+            if (combatStrength != int.MinValue)
+                tile.Building.CombatStrength = combatStrength;
+        }
         planet.UpdatePlanetStatsByRecalculation();
     }
 
@@ -2286,6 +2303,11 @@ public sealed partial class AuthoritativeStateSnapshot
         string[] p = reference.Split(',');
         if (p.Length >= 4 && TryParseFloatBits(p[3], out float strength))
             building.Strength = (int)Math.Round(strength, MidpointRounding.AwayFromZero);
+        if (p.Length >= 5
+            && int.TryParse(p[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int combatStrength))
+        {
+            building.CombatStrength = combatStrength;
+        }
         return building;
     }
 
@@ -2642,7 +2664,8 @@ public sealed class Authoritative4XAuthority
     (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) Advance(
         AuthoritativeCommandResult result, bool captureSnapshot)
     {
-        Universe.SingleSimulationStep(Step);
+        using (AuthoritativeMutationGuard.EnterAcceptedCommandApply())
+            Universe.SingleSimulationStep(Step);
         Tick++;
         return (result, captureSnapshot ? AuthoritativeStateSnapshot.Capture(Universe, Tick) : null);
     }
@@ -2755,7 +2778,8 @@ public sealed class Authoritative4XClientReplica
 
     static bool IsSnapshotOnlyReplay(AuthoritativePlayerCommandKind kind)
         => kind is AuthoritativePlayerCommandKind.DiplomacyProposal
-                   or AuthoritativePlayerCommandKind.DiplomacyResponse;
+                   or AuthoritativePlayerCommandKind.DiplomacyResponse
+                   or AuthoritativePlayerCommandKind.DesignShip;
 
     void AssertReplicaUnchangedSinceLastSnapshot(AuthoritativePlayerCommand command,
         AuthoritativeCommandResult result)

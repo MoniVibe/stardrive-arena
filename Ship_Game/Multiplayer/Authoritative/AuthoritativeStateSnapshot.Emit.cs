@@ -199,7 +199,7 @@ public sealed partial class AuthoritativeStateSnapshot
 
     internal static void EmitFleetRuntimeRows(Empire e, uint tick, StringBuilder sb)
     {
-        foreach (Fleet f in e.AllFleets.Where(f => f != null).OrderBy(f => f.Key).ThenBy(f => f.Id))
+        foreach (Fleet f in e.AllFleets.Where(IsReplayableFleetRuntimeRow).OrderBy(f => f.Key).ThenBy(f => f.Id))
             sb.Append("F|").Append(e.Id)
               .Append('|').Append(SnapshotFleetId(f))
               .Append('|').Append(f.Key)
@@ -215,6 +215,10 @@ public sealed partial class AuthoritativeStateSnapshot
               .Append('|').Append(FleetPatrolSignature(f))
               .AppendLine();
     }
+
+    static bool IsReplayableFleetRuntimeRow(Fleet fleet)
+        => fleet != null
+           && (fleet.Key > 0 || SnapshotFleetCommandShipId(fleet) > 0);
 
     internal static void EmitPlanetRuntimeRows(Planet p, uint tick, StringBuilder sb)
     {
@@ -276,6 +280,8 @@ public sealed partial class AuthoritativeStateSnapshot
               .Append('|').Append(tile.Biosphere ? 1 : 0)
               .Append('|').Append(tile.Habitable ? 1 : 0)
               .Append('|').Append(tile.Terraformable ? 1 : 0)
+              .Append('|').Append(tile.Building?.Strength ?? 0)
+              .Append('|').Append(tile.Building?.CombatStrength ?? 0)
               .AppendLine();
         }
     }
@@ -311,6 +317,16 @@ public sealed partial class AuthoritativeStateSnapshot
         for (int i = 0; i < p.ActiveCombats.Count; ++i)
         {
             Combat combat = p.ActiveCombats[i];
+            string attackingTroop = GroundTroopRef(p, combat.AttackingTroop);
+            string defendingTroop = GroundTroopRef(p, combat.DefendingTroop);
+            string attackingBuilding = GroundBuildingRef(p, combat.AttackingBuilding);
+            string defendingBuilding = GroundBuildingRef(p, combat.DefendingBuilding);
+            if (!GroundCombatRefsReplayable(attackingTroop, defendingTroop,
+                    attackingBuilding, defendingBuilding))
+            {
+                continue;
+            }
+
             sb.Append("GC|").Append(p.Id)
               .Append('|').Append(i)
               .Append('|').Append(combat.Phase)
@@ -318,13 +334,34 @@ public sealed partial class AuthoritativeStateSnapshot
               .Append('|').Append(combat.AttackerLoyalty?.Id ?? 0)
               .Append('|').Append(combat.DefenseTile?.X ?? -1)
               .Append('|').Append(combat.DefenseTile?.Y ?? -1)
-              .Append('|').Append(GroundTroopRef(p, combat.AttackingTroop))
-              .Append('|').Append(GroundTroopRef(p, combat.DefendingTroop))
-              .Append('|').Append(GroundBuildingRef(p, combat.AttackingBuilding))
-              .Append('|').Append(GroundBuildingRef(p, combat.DefendingBuilding))
+              .Append('|').Append(attackingTroop)
+              .Append('|').Append(defendingTroop)
+              .Append('|').Append(attackingBuilding)
+              .Append('|').Append(defendingBuilding)
               .AppendLine();
         }
     }
+
+    static bool GroundCombatRefsReplayable(string attackingTroop, string defendingTroop,
+        string attackingBuilding, string defendingBuilding)
+    {
+        if (IsOffGroundRef(attackingTroop) || IsOffGroundRef(defendingTroop)
+            || IsOffGroundRef(attackingBuilding) || IsOffGroundRef(defendingBuilding))
+        {
+            return false;
+        }
+
+        bool hasAttackingTroop = attackingTroop != "-";
+        bool hasDefendingTroop = defendingTroop != "-";
+        bool hasAttackingBuilding = attackingBuilding != "-";
+        bool hasDefendingBuilding = defendingBuilding != "-";
+        return hasAttackingTroop && hasDefendingTroop
+               || hasAttackingBuilding && hasDefendingTroop
+               || hasAttackingTroop && hasDefendingBuilding;
+    }
+
+    static bool IsOffGroundRef(string reference)
+        => reference?.StartsWith("off,", StringComparison.Ordinal) == true;
 
     internal static void EmitConstructionQueueRows(Planet p, uint tick, StringBuilder sb)
     {

@@ -4162,14 +4162,20 @@ public class Authoritative4XSessionTests : StarDriveTest
                     "Passive MP clients must not locally clear fleet patrols before host acceptance.");
                 Assert.AreSame(originalPatrol, fleet.Patrol);
 
-                Fleet empty = world.Player.CreateFleet(5, null);
+                Fleet empty;
+                using (Authoritative4XClientContext.EnterStateApplication())
+                    empty = world.Player.CreateFleet(5, null);
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitMoveFleet(empty, destination, direction, order));
                 Assert.AreEqual(1, submitted.Count);
 
-                Fleet enemyFleet = world.Enemy.CreateFleet(4, null);
-                enemyFleet.AddShips(new[] { world.EnemyShip });
-                enemyFleet.AutoArrange();
+                Fleet enemyFleet;
+                using (Authoritative4XClientContext.EnterStateApplication())
+                {
+                    enemyFleet = world.Enemy.CreateFleet(4, null);
+                    enemyFleet.AddShips(new[] { world.EnemyShip });
+                    enemyFleet.AutoArrange();
+                }
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitMoveFleet(enemyFleet, destination, direction, order));
                 Assert.AreEqual(1, submitted.Count);
@@ -4251,8 +4257,12 @@ public class Authoritative4XSessionTests : StarDriveTest
                     Authoritative4XClientContext.TrySubmitRenamePlanet(world.Planet, "Bad\nName"));
                 Assert.AreEqual(3, submitted.Count);
 
-                Fleet enemyFleet = world.Enemy.CreateFleet(4, null);
-                enemyFleet.AddShips(new[] { world.EnemyShip });
+                Fleet enemyFleet;
+                using (Authoritative4XClientContext.EnterStateApplication())
+                {
+                    enemyFleet = world.Enemy.CreateFleet(4, null);
+                    enemyFleet.AddShips(new[] { world.EnemyShip });
+                }
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitRenameFleet(enemyFleet, "Enemy Fleet"));
                 Assert.AreEqual(3, submitted.Count);
@@ -4301,13 +4311,19 @@ public class Authoritative4XSessionTests : StarDriveTest
                 Assert.AreEqual(originalOffset, fleet.DataNodes[0].RelativeFleetOffset,
                     "Passive MP clients must not locally auto-arrange fleets before host acceptance.");
 
-                Fleet empty = world.Player.CreateFleet(5, null);
+                Fleet empty;
+                using (Authoritative4XClientContext.EnterStateApplication())
+                    empty = world.Player.CreateFleet(5, null);
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitAutoArrangeFleet(empty));
                 Assert.AreEqual(1, submitted.Count);
 
-                Fleet enemyFleet = world.Enemy.CreateFleet(4, null);
-                enemyFleet.AddShips(new[] { world.EnemyShip });
+                Fleet enemyFleet;
+                using (Authoritative4XClientContext.EnterStateApplication())
+                {
+                    enemyFleet = world.Enemy.CreateFleet(4, null);
+                    enemyFleet.AddShips(new[] { world.EnemyShip });
+                }
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitAutoArrangeFleet(enemyFleet));
                 Assert.AreEqual(1, submitted.Count);
@@ -4478,8 +4494,12 @@ public class Authoritative4XSessionTests : StarDriveTest
                         new[] { new FleetDataNode { ShipName = "", RelativeFleetOffset = Vector2.Zero } }));
                 Assert.AreEqual(1, submitted.Count);
 
-                Fleet enemyFleet = world.Enemy.CreateFleet(4, null);
-                enemyFleet.AddShips(new[] { world.EnemyShip });
+                Fleet enemyFleet;
+                using (Authoritative4XClientContext.EnterStateApplication())
+                {
+                    enemyFleet = world.Enemy.CreateFleet(4, null);
+                    enemyFleet.AddShips(new[] { world.EnemyShip });
+                }
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitSetFleetLayout(enemyFleet, enemyFleet.DataNodes));
                 Assert.AreEqual(1, submitted.Count);
@@ -4649,8 +4669,12 @@ public class Authoritative4XSessionTests : StarDriveTest
                     Authoritative4XClientContext.TrySubmitLoadFleetDesign(fleet, missingShipDesign));
                 Assert.AreEqual(3, submitted.Count);
 
-                Fleet enemyFleet = world.Enemy.CreateFleet(4, null);
-                enemyFleet.AddShips(new[] { world.EnemyShip });
+                Fleet enemyFleet;
+                using (Authoritative4XClientContext.EnterStateApplication())
+                {
+                    enemyFleet = world.Enemy.CreateFleet(4, null);
+                    enemyFleet.AddShips(new[] { world.EnemyShip });
+                }
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitLoadFleetDesign(enemyFleet, design));
                 Assert.AreEqual(3, submitted.Count);
@@ -4693,15 +4717,22 @@ public class Authoritative4XSessionTests : StarDriveTest
                     "Passive MP clients must not locally load saved patrol plans before host acceptance.");
                 Assert.AreEqual(originalShipState, world.Ship.AI.State);
 
-                Fleet empty = world.Player.CreateFleet(5, null);
+                Fleet empty;
+                using (Authoritative4XClientContext.EnterStateApplication())
+                    empty = world.Player.CreateFleet(5, null);
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitLoadFleetPatrol(empty, patrol));
                 Assert.AreEqual(1, submitted.Count);
 
-                Fleet enemyFleet = world.Enemy.CreateFleet(4, null);
-                enemyFleet.AddShips(new[] { world.EnemyShip });
-                FleetPatrol enemyPatrol = world.Enemy.AddPatrolRoute(enemyFleet,
-                    TestPatrolWaypoints(enemyFleet.FinalPosition));
+                Fleet enemyFleet;
+                FleetPatrol enemyPatrol;
+                using (Authoritative4XClientContext.EnterStateApplication())
+                {
+                    enemyFleet = world.Enemy.CreateFleet(4, null);
+                    enemyFleet.AddShips(new[] { world.EnemyShip });
+                    enemyPatrol = world.Enemy.AddPatrolRoute(enemyFleet,
+                        TestPatrolWaypoints(enemyFleet.FinalPosition));
+                }
                 Assert.AreEqual(Authoritative4XUiCommandResult.Blocked,
                     Authoritative4XClientContext.TrySubmitLoadFleetPatrol(enemyFleet, enemyPatrol));
                 Assert.AreEqual(1, submitted.Count);
@@ -6033,6 +6064,7 @@ public class Authoritative4XSessionTests : StarDriveTest
             int originalStrength = defender.Strength;
             int originalMoveActions = invader.AvailableMoveActions;
             int originalAttackActions = invader.AvailableAttackActions;
+            world.UState.Objects.UpdateLists(removeInactiveObjects: false);
             AuthoritativeStateSnapshot before = AuthoritativeStateSnapshot.Capture(world.Screen, 0);
 
             world.UState.Objects.UpdatePassiveAuthoritativeView();
@@ -6047,7 +6079,8 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "Passive authoritative presentation refresh must not consume troop attack actions.");
             AuthoritativeStateSnapshot after = AuthoritativeStateSnapshot.Capture(world.Screen, 0);
             Assert.AreEqual(before.SyncDigest, after.SyncDigest,
-                "Passive authoritative presentation refresh must not alter canonical replicated state.");
+                "Passive authoritative presentation refresh must not alter canonical replicated state. "
+                + FirstPayloadDifferenceForTest(before.Payload, after.Payload));
         }
         finally
         {

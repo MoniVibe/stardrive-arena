@@ -489,7 +489,7 @@ namespace Ship_Game
         public void SetInGroundCombat(Empire empire, bool notify = false)
         {
             if (!RecentCombat && notify && Owner == Universe.Player && Owner.IsAtWarWith(empire))
-                Universe.Notifications.AddEnemyTroopsLandedNotification(this, empire);
+                Universe.Notifications?.AddEnemyTroopsLandedNotification(this, empire);
 
             Troops.SetInCombat();
         }
