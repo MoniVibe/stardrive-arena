@@ -252,10 +252,12 @@ namespace Ship_Game.Ships
         {
             // try to scale the icon so its size remains consistent when zooming in/out
             float size = ScaleIconSize(screenRadius, minSize, maxSize);
+            float width = size * PassiveAuthoritativeTacticalIconWidthScale;
+            float rotation = PassiveAuthoritativeTacticalIconRotation;
             TacticalIcon icon = TacticalIcon();
-            us.DrawTextureSized(icon.Primary, screenPos, Rotation, size, size, Loyalty.EmpireColor);
+            us.DrawTextureSized(icon.Primary, screenPos, rotation, width, size, Loyalty.EmpireColor);
             if (icon.Secondary != null)
-                us.DrawTextureSized(icon.Secondary, screenPos, Rotation, size, size, Loyalty.EmpireColor);
+                us.DrawTextureSized(icon.Secondary, screenPos, rotation, width, size, Loyalty.EmpireColor);
         }
 
         void DrawFlagIcons(UniverseScreen us, Vector2 screenPos, float screenRadius)
@@ -277,6 +279,8 @@ namespace Ship_Game.Ships
 
         public void DrawTacticalIcon(UniverseScreen us, UniverseScreen.UnivScreenState viewState)
         {
+            AdvancePassiveAuthoritativeVisualBank();
+
             float shipWorldRadius = Radius;
             us.ProjectToScreenCoords(Position, shipWorldRadius,
                                      out Vector2d screenPos, out double screenRadius);

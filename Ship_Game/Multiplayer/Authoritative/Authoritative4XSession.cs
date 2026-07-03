@@ -2235,15 +2235,19 @@ public sealed partial class AuthoritativeStateSnapshot
         SolarSystem system = ship.System;
         if (int.TryParse(p[8], NumberStyles.Integer, CultureInfo.InvariantCulture, out int systemId))
             system = systemId > 0 ? universe.Systems.FirstOrDefault(s => s.Id == systemId) : null;
+        bool active = ParseFlag(p[9]);
+        bool dying = ParseFlag(p[10]);
         float yRotation = ship.YRotation;
         if (p.Length > 11 && TryParseFloatBits(p[11], out float parsedYRotation))
             yRotation = parsedYRotation;
         float xRotation = ship.XRotation;
         if (p.Length > 12 && TryParseFloatBits(p[12], out float parsedXRotation))
             xRotation = parsedXRotation;
+        if (uint.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out uint tick))
+            ship.ObservePassiveAuthoritativeTransform(tick, rotation, active, dying);
 
         ship.SetAuthoritativeTransform(new Vector2(x, y), new Vector2(vx, vy), rotation,
-            system, ParseFlag(p[9]), ParseFlag(p[10]), yRotation, xRotation);
+            system, active, dying, yRotation, xRotation);
     }
 
     internal static void ApplyShipVisibilityLine(UniverseState universe, string line)

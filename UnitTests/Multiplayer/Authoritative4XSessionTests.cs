@@ -8588,6 +8588,152 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XPassiveVisualBank_IsRenderOnlyAndDigestNeutral_Headless()
+    {
+        const ulong Seed = 0x42414E4B564953UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var replica = new Authoritative4XClientReplica(client.Screen, humanEmpireIds: new[] { client.Player.Id });
+            Ship authorityShip = authority.Ship;
+
+            void RefreshSnapshotShipLists()
+            {
+                authority.UState.Objects.UpdateLists(removeInactiveObjects: false);
+                client.UState.Objects.UpdateLists(removeInactiveObjects: false);
+            }
+
+            Ship RequireClientShip(string message)
+            {
+                client.UState.Objects.UpdateLists(removeInactiveObjects: false);
+                Ship found = client.UState.Objects.FindShip(authorityShip.Id);
+                Assert.IsNotNull(found, message);
+                return found;
+            }
+
+            RefreshSnapshotShipLists();
+            Ship clientShip = RequireClientShip("The passive visual-bank proof needs the fixture ship on both host and client.");
+            AuthoritativeStateSnapshot previousHostSnapshot = null;
+
+            // Reobserve the captured SX pair after reconciliation so render-only bank follows the host delta.
+            void ReobserveClientShipTransformDelta(AuthoritativeStateSnapshot previous, AuthoritativeStateSnapshot current)
+            {
+                if (previous == null)
+                    return;
+
+                string previousRow = PayloadRowForTest(previous.Payload, $"SX|{authorityShip.Id}|");
+                string currentRow = PayloadRowForTest(current.Payload, $"SX|{authorityShip.Id}|");
+                Assert.AreNotEqual("<missing>", previousRow,
+                    "The previous host snapshot must include the fixture ship transform row.");
+                Assert.AreNotEqual("<missing>", currentRow,
+                    "The current host snapshot must include the fixture ship transform row.");
+
+                AuthoritativeStateSnapshot.ApplyShipTransformLine(client.UState, previousRow);
+                AuthoritativeStateSnapshot.ApplyShipTransformLine(client.UState, currentRow);
+            }
+
+            AuthoritativeStateSnapshot ApplyHostSnapshot(int sequence, uint tick)
+            {
+                var command = AuthoritativePlayerCommand.NoOp(sequence, authority.Player.Id);
+                var result = new AuthoritativeCommandResult
+                {
+                    Sequence = sequence,
+                    OriginPeer = 2,
+                    Accepted = false,
+                    Tick = tick,
+                    Reason = "",
+                };
+                RefreshSnapshotShipLists();
+                AuthoritativeStateSnapshot snapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, tick);
+                replica.ApplyAuthoritativeResult(command, result, snapshot);
+                ReobserveClientShipTransformDelta(previousHostSnapshot, snapshot);
+                previousHostSnapshot = snapshot;
+                return snapshot;
+            }
+
+            authorityShip.Rotation = 0.75f;
+            authorityShip.YRotation = 0f;
+            authorityShip.XRotation = 0f;
+            ApplyHostSnapshot(300, 10);
+            clientShip = RequireClientShip("The fixture ship must remain present after applying the initial host snapshot.");
+
+            const float PositiveHostHeadingDelta = 0.25f;
+            authorityShip.Rotation = (authorityShip.Rotation + PositiveHostHeadingDelta).AsNormalizedRadians();
+            authorityShip.YRotation = 0f;
+            authorityShip.XRotation = 0f;
+            AuthoritativeStateSnapshot turningSnapshot = ApplyHostSnapshot(301, 14);
+
+            clientShip = RequireClientShip("The transformed ship must remain present after applying the host snapshot.");
+            Assert.AreEqual(BitConverter.SingleToUInt32Bits(authorityShip.YRotation),
+                BitConverter.SingleToUInt32Bits(clientShip.YRotation),
+                "The passive visual bank must not write the replicated YRotation field.");
+            Assert.AreEqual(BitConverter.SingleToUInt32Bits(authorityShip.XRotation),
+                BitConverter.SingleToUInt32Bits(clientShip.XRotation),
+                "The passive visual bank must not write the replicated XRotation field.");
+            Assert.IsTrue(clientShip.PassiveAuthoritativeVisualBankTargetForTest < -0.01f,
+                "Positive host heading deltas should produce a negative passive visual bank target, matching host bank sign.");
+
+            var sceneObject = new SynapseGaming.LightingSystem.Rendering.SceneObject("passive-visual-bank-proof");
+            typeof(Ship).GetField("ShipSO",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                ?.SetValue(clientShip, sceneObject);
+            clientShip.InFrustum = true;
+            clientShip.KnownByEmpires.SetSeen(client.Player);
+            client.UState.ViewState = UniverseScreen.UnivScreenState.SystemView;
+            clientShip.SyncSceneObjectForPassiveAuthoritativeView(forceVisible: true);
+
+            float visualBank = clientShip.PassiveAuthoritativeVisualBankForTest;
+            Assert.IsTrue(visualBank < -0.001f,
+                "Passive scene-object refresh should ease a nonzero visual bank without touching authoritative fields.");
+            Matrix expectedWorld = Matrix.CreateTranslation(new Vector3(clientShip.ShipData.BaseHull.MeshOffset, 0f))
+                                 * Matrix.CreateRotationY(clientShip.PassiveAuthoritativeRenderYRotationForTest)
+                                 * Matrix.CreateRotationX(clientShip.XRotation)
+                                 * Matrix.CreateRotationZ(clientShip.Rotation)
+                                 * Matrix.CreateTranslation(new Vector3(clientShip.Position, 0f));
+            Assert.AreEqual(expectedWorld, sceneObject.World,
+                "The passive mesh matrix should include the render-only bank layer.");
+            Assert.AreNotEqual(clientShip.Rotation, clientShip.PassiveAuthoritativeTacticalIconRotationForTest,
+                "The tactical icon path should consume the same render-only passive visual bank.");
+            Assert.IsTrue(clientShip.PassiveAuthoritativeTacticalIconWidthScaleForTest < 1f,
+                "The tactical icon path should visibly lean during passive visual bank.");
+
+            RefreshSnapshotShipLists();
+            AuthoritativeStateSnapshot visualClientSnapshot =
+                AuthoritativeStateSnapshot.Capture(client.Screen, turningSnapshot.Tick);
+            Assert.AreEqual(turningSnapshot.SyncDigest, visualClientSnapshot.SyncDigest,
+                "Refreshing passive visual bank must not affect durable SyncDigest.");
+            Assert.AreEqual(turningSnapshot.TransformDigest, visualClientSnapshot.TransformDigest,
+                "Refreshing passive visual bank must not affect SX TransformDigest.");
+
+            authorityShip.Rotation = clientShip.Rotation;
+            AuthoritativeStateSnapshot stoppedSnapshot = ApplyHostSnapshot(302, 18);
+            clientShip = RequireClientShip("The transformed ship must remain present after applying the stopped host snapshot.");
+            Assert.AreEqual(0f, clientShip.PassiveAuthoritativeVisualBankTargetForTest,
+                "A stopped host heading delta should target zero visual bank.");
+            float bankBeforeDecay = Math.Abs(clientShip.PassiveAuthoritativeVisualBankForTest);
+            for (int i = 0; i < 20; ++i)
+                clientShip.SyncSceneObjectForPassiveAuthoritativeView(forceVisible: true);
+            Assert.IsTrue(Math.Abs(clientShip.PassiveAuthoritativeVisualBankForTest) < bankBeforeDecay,
+                "Passive visual bank should decay after authoritative rotation deltas stop.");
+
+            RefreshSnapshotShipLists();
+            AuthoritativeStateSnapshot decayedClientSnapshot =
+                AuthoritativeStateSnapshot.Capture(client.Screen, stoppedSnapshot.Tick);
+            Assert.AreEqual(stoppedSnapshot.SyncDigest, decayedClientSnapshot.SyncDigest,
+                "Visual-bank decay must not affect durable SyncDigest.");
+            Assert.AreEqual(stoppedSnapshot.TransformDigest, decayedClientSnapshot.TransformDigest,
+                "Visual-bank decay must not affect SX TransformDigest.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XPassiveClientViewRefresh_ReindexesHostTransforms_Headless()
     {
         const ulong Seed = 0x56495349424C4555UL;

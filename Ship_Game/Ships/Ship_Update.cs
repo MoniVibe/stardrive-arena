@@ -129,8 +129,9 @@ namespace Ship_Game.Ships
             }
 
             NotVisibleToPlayerTimer = 0f;
+            float renderYRotation = AdvancePassiveAuthoritativeVisualBank();
             ShipSO.World = Matrix.CreateTranslation(new Vector3(ShipData.BaseHull.MeshOffset, 0f))
-                         * Matrix.CreateRotationY(YRotation)
+                         * Matrix.CreateRotationY(renderYRotation)
                          * Matrix.CreateRotationX(XRotation)
                          * Matrix.CreateRotationZ(Rotation)
                          * Matrix.CreateTranslation(new Vector3(Position, 0f));
