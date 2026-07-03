@@ -132,10 +132,29 @@ public static class AuthoritativeMutationGuard
     }
 
 #if DEBUG
+    static readonly System.Collections.Generic.HashSet<string> LoggedLiveTrips = new();
+
     static void Throw(AuthoritativeMutationFamily family, string field)
     {
-        throw new InvalidOperationException(
-            $"Passive authoritative client attempted local replicated-state mutation: family={family} field={field ?? ""}");
+        string message =
+            $"Passive authoritative client attempted local replicated-state mutation: family={family} field={field ?? ""}";
+
+        // In the automated test suite a guard trip is a genuine defect: fail the test hard.
+        if (GlobalStats.IsUnitTest)
+            throw new InvalidOperationException(message);
+
+        // In the live game (Debug QA build) a guard trip is a DIAGNOSTIC signal, not a
+        // crash. The offending mutation is benign in a Release build (the next host
+        // snapshot reconciles it), so a false positive must not end the joiner's session.
+        // Log it once per unique family+field, with a stack trace so the source is as
+        // traceable as the old crash dump was, then let the game continue.
+        string key = $"{family}:{field}";
+        lock (LoggedLiveTrips)
+        {
+            if (!LoggedLiveTrips.Add(key))
+                return;
+        }
+        Log.Error($"{message}\n{new StackTrace(true)}");
     }
 #endif
 }
