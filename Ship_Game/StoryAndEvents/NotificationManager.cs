@@ -1086,8 +1086,11 @@ namespace Ship_Game
                 n.ClickRect.Y = (int) Math.Ceiling(n.ClickRect.Y.SmoothStep(n.DestinationRect.Y, amount));
                 // ADDED BY SHAHMATT (pause game when there are any notifications)
                 //fbedard : Add filter to pause
-                if (GlobalStats.PauseOnNotification && n.ClickRect.Y >= n.DestinationRect.Y && n.Pause)
+                if (GlobalStats.PauseOnNotification && n.ClickRect.Y >= n.DestinationRect.Y && n.Pause
+                    && Screen.CanLocalUiPauseSimulation)
+                {
                     Screen.UState.Paused = true;
+                }
             }
 
             // fbedard: remove excess notifications

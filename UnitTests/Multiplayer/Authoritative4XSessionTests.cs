@@ -7082,6 +7082,63 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XNotificationsAndMessageBoxes_DoNotPauseHostSimulation_Headless()
+    {
+        const ulong Seed = 0x4E5EACD1UL;
+        const int HostPeer = 2;
+        BuiltWorld world = BuildWorld(Seed);
+        bool pauseOnNotification = GlobalStats.PauseOnNotification;
+        TcpLockstepTransport transport = null;
+        Authoritative4XLiveSession live = null;
+
+        try
+        {
+            GlobalStats.PauseOnNotification = true;
+            world.Screen.NotificationManager ??= new NotificationManager(world.Screen.ScreenManager, world.Screen);
+
+            world.UState.Paused = false;
+            world.Screen.NotificationManager.Clear();
+            world.Screen.NotificationManager.AddNotification(new Notification
+            {
+                Message = "Single-player pause proof",
+                Pause = true,
+            });
+            world.Screen.NotificationManager.Update(1f);
+            Assert.IsTrue(world.UState.Paused,
+                "Single-player notification pause behavior must be preserved.");
+
+            int port = FreeTcpPort();
+            transport = TcpLockstepTransport.HostMulti(port);
+            live = Authoritative4XLiveSession.HostGame(world.Screen, transport, HostPeer,
+                new Dictionary<int, int> { [HostPeer] = world.Player.Id },
+                new[] { world.Player.Id });
+            world.Screen.AttachAuthoritative4XMultiplayer(live);
+
+            world.UState.Paused = false;
+            world.Screen.NotificationManager.Clear();
+            world.Screen.NotificationManager.AddNotification(new Notification
+            {
+                Message = "Authoritative host story dialogue pause proof",
+                Pause = true,
+            });
+            world.Screen.NotificationManager.Update(1f);
+            Assert.IsFalse(world.UState.Paused,
+                "Pause-on-notification must not locally pause the authoritative host simulation.");
+
+            using MessageBoxScreen message = new(world.Screen, "Authoritative host message pause proof");
+            Assert.IsFalse(world.UState.Paused,
+                "Message boxes/dialogue must use the authoritative pause guard instead of directly pausing the host.");
+        }
+        finally
+        {
+            live?.Dispose();
+            transport?.Dispose();
+            GlobalStats.PauseOnNotification = pauseOnNotification;
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XShipDesignResearch_SubmitsMissingTechsWithoutLocalMutation_Headless()
     {
         const ulong Seed = 0x4E5EACDUL;
@@ -11276,17 +11333,44 @@ public class Authoritative4XSessionTests : StarDriveTest
 
             int startSimTurn = authority.Screen.SimTurnId;
             float startSimTime = authority.Screen.CurrentSimTime;
+            float startStarDate = authority.UState.StarDate;
             uint startClientSnapshotTick = liveJoin.LastSnapshot?.Tick ?? 0;
 
+            authority.Screen.PreUpdate(new UpdateTimes(1f / 60f, 1f / 60f),
+                otherScreenHasFocus: true, coveredByOtherScreen: false);
+            Assert.IsTrue(authority.Screen.Visible,
+                "The live ShipList/dialogue failure leaves the universe visible under a popup.");
+            Assert.IsFalse(authority.Screen.IsActive,
+                "The popup must still take focus from the universe.");
+
+            bool anyDrawCompleted = false;
+            for (int i = 0; i < 4; ++i)
+                anyDrawCompleted |= authority.Screen.RunSimulationLoopOnceForTest();
+
+            Assert.IsFalse(anyDrawCompleted,
+                "The headless covered-popup proof should exercise the no-draw timeout path.");
+            Assert.IsTrue(authority.Screen.SimTurnId > startSimTurn,
+                "The authoritative host sim must keep processing turns while a visible popup covers the universe.");
+            Assert.IsTrue(authority.Screen.CurrentSimTime > startSimTime,
+                "The authoritative host sim must consume target time while a visible popup covers the universe.");
+            Assert.IsTrue(authority.UState.StarDate > startStarDate,
+                "The authoritative host must run empire turns and advance StarDate while a popup owns focus.");
+
+            startSimTurn = authority.Screen.SimTurnId;
+            startSimTime = authority.Screen.CurrentSimTime;
+            startStarDate = authority.UState.StarDate;
             authority.Screen.ForceCoveredByFullScreenForTest(covered: true);
             Assert.IsFalse(authority.Screen.IsActive,
                 "The regression must simulate a full-screen menu covering the host universe.");
 
-            authority.Screen.PumpSimulationForTest(0.25f);
+            for (int i = 0; i < 12 && authority.UState.StarDate <= startStarDate; ++i)
+                authority.Screen.PumpSimulationForTest(0.5f);
             Assert.IsTrue(authority.Screen.SimTurnId > startSimTurn,
                 "The authoritative host sim must keep processing turns while the universe screen is hidden.");
             Assert.IsTrue(authority.Screen.CurrentSimTime > startSimTime,
                 "The authoritative host sim must consume target time while the universe screen is hidden.");
+            Assert.IsTrue(authority.UState.StarDate > startStarDate,
+                "The authoritative host must keep advancing StarDate when a full-screen menu hides the universe.");
 
             int hiddenFrames = 0;
             DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);

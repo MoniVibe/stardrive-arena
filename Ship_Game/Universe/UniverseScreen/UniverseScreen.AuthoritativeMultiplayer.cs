@@ -22,6 +22,12 @@ public partial class UniverseScreen
     public Empire Authoritative4XLocalPlayerForUi => Authoritative4XLocalPlayer;
     public override bool KeepActiveWhenGameUnfocused => IsAuthoritative4XMultiplayer;
 
+    public bool CanLocalUiPauseSimulation
+        => !IsAuthoritative4XMultiplayer && !Authoritative4XClientContext.IsActive;
+
+    internal static UniverseScreen PauseTargetForLocalUi(UniverseScreen universe)
+        => universe?.CanLocalUiPauseSimulation == true ? universe : null;
+
     public void AttachAuthoritative4XMultiplayer(Authoritative4XLiveSession session)
     {
         DetachAuthoritative4XMultiplayer();

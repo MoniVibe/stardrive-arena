@@ -77,7 +77,7 @@ public sealed class Notification
         {
             GameAudio.SubBassWhoosh();
             // ADDED BY SHAHMATT (to unpause game on right clicking notification icon)
-            if (GlobalStats.PauseOnNotification && Pause)
+            if (GlobalStats.PauseOnNotification && Pause && m.Screen.CanLocalUiPauseSimulation)
                 m.Screen.UState.Paused = false;
 
             return true;

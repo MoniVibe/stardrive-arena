@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Threading;
 using SDGraphics;
 using SDUtils;
@@ -14,6 +15,7 @@ namespace Ship_Game
         readonly object SimTimeLock = new object();
         const int AuthoritativeHostSimWakeMs = 16;
         long LastAuthoritativeHostSimTargetTimestamp;
+        DateTime NextAuthoritativeHostCoveredSimPerfUtc;
 
         // Can be used in unit testing to prevent LoadContent() from launching sim thread
         public bool CreateSimThread = true;
@@ -84,7 +86,10 @@ namespace Ship_Game
                     if (SimThread == null)
                         break; // this thread is aborting
                     if (!drawCompleted)
+                    {
                         AdvanceAuthoritativeHostSimulationTargetTimeFromClock();
+                        RecordAuthoritativeHostCoveredSimPerfIfNeeded(drawCompleted);
+                    }
 
                     ProcessSimTurnsPerf.Start();
                     ProcessSimulationTurns();
@@ -115,7 +120,7 @@ namespace Ship_Game
 
         bool WaitForSimulationWake()
         {
-            if (!IsAuthoritative4XHost || Visible)
+            if (!IsAuthoritative4XHost || IsActive)
             {
                 DrawCompletedEvt.WaitOne();
                 return true;
@@ -137,6 +142,41 @@ namespace Ship_Game
             AdvanceSimulationTargetTime(ConsumeAuthoritativeHostSimulationDelta(1f / CurrentSimFPS));
         }
 
+        void RecordAuthoritativeHostCoveredSimPerfIfNeeded(bool drawCompleted)
+        {
+            if (!IsAuthoritative4XHost || drawCompleted || Authoritative4XLive == null)
+                return;
+
+            DateTime now = DateTime.UtcNow;
+            if (now < NextAuthoritativeHostCoveredSimPerfUtc)
+                return;
+            NextAuthoritativeHostCoveredSimPerfUtc = now.AddSeconds(2);
+
+            string F(float value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+            Authoritative4XLive.RecordViewPerf(
+                $"HOST_COVERED_SIM fallback=true drawCompleted={drawCompleted} "
+                + $"visible={Visible} isActive={IsActive} screenState={ScreenState} "
+                + $"topScreen={TopScreenNameForAuthoritativeHostSimDiagnostics()} "
+                + $"paused={UState.Paused} saving={IsSaving} starDate={F(UState.StarDate)} "
+                + $"simTurn={SimTurnId} currentSim={F(CurrentSimTime)} targetSim={F(TargetSimTime)} "
+                + $"simFps={ActualSimFPS}/{CurrentSimFPS}");
+        }
+
+        string TopScreenNameForAuthoritativeHostSimDiagnostics()
+        {
+            try
+            {
+                IReadOnlyList<GameScreen> screens = ScreenManager?.Screens;
+                return screens != null && screens.Count > 0
+                    ? screens[screens.Count - 1].GetType().GetTypeName()
+                    : "none";
+            }
+            catch
+            {
+                return "unavailable";
+            }
+        }
+
         void AdvanceSimulationTargetTimeFromDraw(float elapsedSeconds)
         {
             if (UState.Paused || IsSaving)
@@ -152,6 +192,8 @@ namespace Ship_Game
                 : elapsedSeconds;
             AdvanceSimulationTargetTime(delta);
         }
+
+        bool CanRunGameplaySimulation => IsActive || IsAuthoritative4XHost;
 
         float ConsumeAuthoritativeHostSimulationDelta(float fallbackSeconds)
         {
@@ -196,7 +238,7 @@ namespace Ship_Game
             }
             else
             {
-                if (IsActive || IsAuthoritative4XHost)
+                if (CanRunGameplaySimulation)
                 {
                     // Edge case: user manually edited global sim FPS
                     while (SimFPSModifier < 0 && CurrentSimFPS < 10)
@@ -293,6 +335,18 @@ namespace Ship_Game
             Visible = !covered;
         }
 
+        internal bool RunSimulationLoopOnceForTest()
+        {
+            bool drawCompleted = WaitForSimulationWake();
+            if (!drawCompleted)
+            {
+                AdvanceAuthoritativeHostSimulationTargetTimeFromClock();
+                RecordAuthoritativeHostCoveredSimPerfIfNeeded(drawCompleted);
+            }
+            ProcessSimulationTurns();
+            return drawCompleted;
+        }
+
         internal void PumpSimulationForTest(float targetDeltaSeconds)
         {
             AdvanceSimulationTargetTime(targetDeltaSeconds);
@@ -382,7 +436,7 @@ namespace Ship_Game
         Array<Empire> ProcessTurnEmpires(FixedSimTime timeStep)
         {
             Array<Empire> updated = null;
-            if (!UState.Paused && IsActive)
+            if (!UState.Paused && CanRunGameplaySimulation)
             {
                 EmpireUpdatePerf.Start();
                 updated = UpdateEmpires(timeStep);
@@ -410,7 +464,7 @@ namespace Ship_Game
                 return; // nothing to do
 
             PostEmpirePerf.Start();
-            if (IsActive)
+            if (CanRunGameplaySimulation)
             {
                 void PostEmpireUpdate(int start, int end)
                 {

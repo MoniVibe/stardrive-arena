@@ -1,7 +1,6 @@
 using Microsoft.Xna.Framework.Graphics;
 using Color = Microsoft.Xna.Framework.Color;
 using SDGraphics;
-using Ship_Game.Multiplayer.Authoritative;
 using Vector2 = SDGraphics.Vector2;
 using Rectangle = SDGraphics.Rectangle;
 
@@ -55,12 +54,7 @@ namespace Ship_Game
         }
 
         internal static UniverseScreen PauseTargetFor(GameScreen parent)
-        {
-            UniverseScreen universe = parent as UniverseScreen;
-            return universe?.IsAuthoritative4XMultiplayer == true || Authoritative4XClientContext.IsActive
-                ? null
-                : universe;
-        }
+            => UniverseScreen.PauseTargetForLocalUi(parent as UniverseScreen);
 
         public override void Draw(SpriteBatch batch, DrawTimes elapsed)
         {
