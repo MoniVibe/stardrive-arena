@@ -8371,6 +8371,92 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XClientReplica_ExcludesTransientEnvironmentMeteorsFromSyncContract_Headless()
+    {
+        LoadStarterShips("Meteor A");
+        const ulong Seed = 0x4D4554454F52UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+        EnsureUnknownEmpireForTest(authority);
+        EnsureUnknownEmpireForTest(client);
+
+        try
+        {
+            var replica = new Authoritative4XClientReplica(client.Screen,
+                humanEmpireIds: new[] { client.Player.Id, client.Enemy.Id });
+            var initialCommand = AuthoritativePlayerCommand.NoOp(246, authority.Player.Id);
+            var initialResult = new AuthoritativeCommandResult
+            {
+                Sequence = 246,
+                OriginPeer = 2,
+                Accepted = false,
+                Tick = 1,
+                Reason = "",
+            };
+            AuthoritativeStateSnapshot initialSnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 1);
+            replica.ApplyAuthoritativeResult(initialCommand, initialResult, initialSnapshot);
+            Assert.AreEqual(initialSnapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                "The meteor proof starts from an accepted clean authoritative snapshot.");
+
+            Ship hostMeteor = SpawnTransientMeteorForTest(authority,
+                authority.Planet.Position + new Vector2(24_000f, 3_000f));
+            Ship staleClientMeteor = SpawnTransientMeteorForTest(client,
+                client.Planet.Position + new Vector2(-24_000f, -3_000f));
+            Ship unknownShip = Ship.CreateShipAtPoint(authority.UState, "Vulcan Scout",
+                authority.UState.Unknown, authority.Planet.Position + new Vector2(30_000f, 5_000f));
+            Assert.IsNotNull(unknownShip,
+                "The over-exclusion guard needs a normal Unknown-loyalty ship.");
+            authority.UState.Objects.UpdateLists(removeInactiveObjects: false);
+            client.UState.Objects.UpdateLists(removeInactiveObjects: false);
+
+            Assert.IsTrue(AuthoritativeStateSnapshot.IsTransientEnvironmentShipForReplication(
+                    authority.UState, hostMeteor),
+                "Meteor shower ships must match the transient-environment predicate.");
+            Assert.IsFalse(AuthoritativeStateSnapshot.IsTransientEnvironmentShipForReplication(
+                    authority.UState, unknownShip),
+                "Normal Unknown-loyalty ships must remain in the authoritative replication contract.");
+
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 2);
+            Assert.AreEqual("<missing>", PayloadRowForTest(authoritySnapshot.Payload, $"SC|{hostMeteor.Id}|"));
+            Assert.AreEqual("<missing>", PayloadRowForTest(authoritySnapshot.Payload, $"S|{hostMeteor.Id}|"));
+            Assert.AreEqual("<missing>", PayloadRowForTest(authoritySnapshot.Payload, $"SX|{hostMeteor.Id}|"));
+            Assert.AreEqual("<missing>", PayloadRowForTest(authoritySnapshot.Payload, $"SV|{hostMeteor.Id}|"));
+            StringAssert.Contains(authoritySnapshot.Payload,
+                $"SC|{unknownShip.Id}|{authority.UState.Unknown.Id}|Vulcan Scout");
+
+            var command = AuthoritativePlayerCommand.NoOp(247, authority.Player.Id);
+            var result = new AuthoritativeCommandResult
+            {
+                Sequence = 247,
+                OriginPeer = 2,
+                Accepted = false,
+                Tick = 2,
+                Reason = "",
+            };
+            replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
+
+            Assert.IsNull(client.UState.Objects.FindShip(hostMeteor.Id),
+                "The passive client should not materialize host-only transient meteors.");
+            Assert.IsNull(client.UState.Objects.FindShip(staleClientMeteor.Id),
+                "A stale client-only transient meteor must not survive ship-presence reconciliation.");
+            Ship replicatedUnknown = client.UState.Objects.FindShip(unknownShip.Id);
+            Assert.IsNotNull(replicatedUnknown,
+                "Normal Unknown-loyalty ships must still materialize from authoritative SC rows.");
+            Assert.AreSame(client.UState.Unknown, replicatedUnknown.Loyalty);
+            Assert.AreEqual("Vulcan Scout", replicatedUnknown.ShipData?.Name);
+            Assert.AreEqual(authoritySnapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                "Host-only and client-only transient meteors must not affect the fatal sync digest.");
+            Assert.AreEqual(authoritySnapshot.TransformDigest, replica.LastSnapshot.TransformDigest,
+                "Host-only and client-only transient meteors must not affect the transform digest.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XClientReplica_ReplaysHostShipTransformWithoutLocalSimulation_Headless()
     {
         const ulong Seed = 0x5452414E53464F52UL;
@@ -13791,6 +13877,28 @@ public class Authoritative4XSessionTests : StarDriveTest
             .ThenBy(s => s.Name, StringComparer.Ordinal)
             .Select(s => s.Name)
             .FirstOrDefault() ?? "";
+    }
+
+    static Ship SpawnTransientMeteorForTest(BuiltWorld world, Vector2 position)
+    {
+        Assert.IsNotNull(world.UState.Unknown,
+            "The transient meteor proof needs the Unknown pseudo-empire present.");
+        Ship meteor = Ship.CreateShipAtPoint(world.UState, "Meteor A", world.UState.Unknown, position);
+        Assert.IsNotNull(meteor, "The transient meteor proof needs the mandatory Meteor A design loaded.");
+        Assert.IsTrue(meteor.IsMeteor, "Meteor A must be recognized by the existing semantic meteor marker.");
+        meteor.MarkAsTransientEnvironment();
+        meteor.AI.AddMeteorGoal(world.Planet, 0f, Vectors.Right, 600f);
+        world.UState.Objects.UpdateLists(removeInactiveObjects: false);
+        return meteor;
+    }
+
+    static void EnsureUnknownEmpireForTest(BuiltWorld world)
+    {
+        if (world.UState.Unknown != null)
+            return;
+
+        IEmpireData data = ResourceManager.AllRaces.First(e => e.Name == "Unknown");
+        world.UState.CreateEmpire(data, isPlayer: false);
     }
 
     static Ship SpawnMatchingMovableOwnedShip(UniverseScreen[] universes, int empireId, Vector2 position)

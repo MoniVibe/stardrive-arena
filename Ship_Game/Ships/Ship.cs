@@ -59,6 +59,7 @@ namespace Ship_Game.Ships
         [StarData] public ShipResupply Supply;
         public bool ShipStatusChanged;
         public bool IsMeteor { get; private set; }
+        [StarData] public bool IsTransientEnvironment { get; private set; }
 
         [StarData] Planet TetheredTo;
         [StarData] public Vector2 TetherOffset;
@@ -153,6 +154,8 @@ namespace Ship_Game.Ships
 
         /// TRUE if this ship is Active and not displaying its Dying animation
         public bool IsAlive => Active && !Dying;
+
+        public void MarkAsTransientEnvironment() => IsTransientEnvironment = true;
 
         public void SetAuthoritativeTransform(Vector2 position, Vector2 velocity, float rotation,
             SolarSystem system, bool active, bool dying, float yRotation, float xRotation)

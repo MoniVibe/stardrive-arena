@@ -184,6 +184,7 @@ namespace Ship_Game
                 if (meteor != null)
                 {
                     float speed = p.Random.Int(baseSpeed-100, baseSpeed+100);
+                    meteor.MarkAsTransientEnvironment();
                     meteor.AI.AddMeteorGoal(p, rotation, direction, speed);
                 }
                 else

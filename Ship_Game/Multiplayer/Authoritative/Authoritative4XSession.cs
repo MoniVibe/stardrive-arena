@@ -1098,10 +1098,15 @@ public sealed partial class AuthoritativeStateSnapshot
             .Concat(us.Empires.SelectMany(e => e.AllFleets
                 .Where(f => f != null)
                 .SelectMany(f => f.Ships)))
-            .Where(s => s?.Active == true)
+            .Where(s => s?.Active == true && !IsTransientEnvironmentShipForReplication(us, s))
             .Distinct()
             .OrderBy(s => s.Id)
             .ToArray();
+
+    internal static bool IsTransientEnvironmentShipForReplication(UniverseState us, Ship ship)
+        => ship != null
+           && (ship.IsTransientEnvironment
+               || (ship.IsMeteor && us?.Unknown != null && ReferenceEquals(ship.Loyalty, us.Unknown)));
 
     static int ShipKnownByMask(UniverseState us, Ship ship)
     {
