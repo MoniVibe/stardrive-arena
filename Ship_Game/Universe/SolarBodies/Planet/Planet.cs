@@ -609,6 +609,24 @@ namespace Ship_Game
                 Station = null;
         }
 
+        public void UpdatePassiveAuthoritativeView()
+        {
+            UpdatePresentationVisibilityOnly();
+
+            if (HasSpacePort && InFrustum)
+            {
+                Station ??= new SpaceStation();
+                Station.UpdateVisibleStation(this, FixedSimTime.Zero);
+            }
+            else
+            {
+                Station?.RemoveSceneObject();
+            }
+
+            if (!HasSpacePort)
+                Station = null;
+        }
+
         void UpdateHabitable(FixedSimTime timeStep)
         {
             // none of the code below requires an owner.

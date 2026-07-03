@@ -416,6 +416,19 @@ namespace Ship_Game
             }
         }
 
+        protected void UpdatePresentationVisibilityOnly()
+        {
+            bool visible = System.InFrustum;
+            if (visible && ShouldCreateSO)
+            {
+                CreatePlanetSceneObject();
+            }
+            else if (SO != null)
+            {
+                UpdateSO(visible);
+            }
+        }
+
         public Matrix ScaleMatrix => Matrix.CreateScale(PType.Types.PlanetScale * Scale);
 
         void UpdateSO(bool visible)

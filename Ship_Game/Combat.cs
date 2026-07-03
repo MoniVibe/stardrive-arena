@@ -1,4 +1,5 @@
 using Ship_Game.Audio;
+using Ship_Game.Multiplayer.Authoritative;
 
 namespace Ship_Game
 {
@@ -45,6 +46,8 @@ namespace Ship_Game
 
         public void ResolveDamage(bool isViewing = false)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(Planet, AuthoritativeMutationFamily.GroundCombat,
+                "ResolveDamage");
             int damage = RollDamage();
             DealDamage(damage, isViewing);
             Phase = 2;

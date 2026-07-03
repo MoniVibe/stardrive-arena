@@ -178,6 +178,42 @@ namespace Ship_Game
             }
         }
 
+        public void UpdatePassiveAuthoritativeView(UniverseScreen universe)
+        {
+            var player = universe.Player;
+
+            InFrustum = universe.IsInFrustum(Position, Radius)
+                    && universe.UState.IsSectorViewOrCloser
+                    && IsExploredBy(player);
+
+            if (InFrustum && universe.UState.IsSystemViewOrCloser)
+            {
+                WasVisibleLastFrame = true;
+                FixedSimTime zero = FixedSimTime.Zero;
+                for (int i = 0; i < AsteroidsList.Count; i++)
+                    AsteroidsList[i].UpdateVisibleAsteroid(Position, zero);
+                for (int i = 0; i < MoonList.Count; i++)
+                    MoonList[i].UpdateVisibleMoon(zero);
+
+                DysonSwarm?.UpdateDysonRings(zero);
+            }
+            else if (WasVisibleLastFrame)
+            {
+                WasVisibleLastFrame = false;
+                for (int i = 0; i < AsteroidsList.Count; i++)
+                    AsteroidsList[i].RemoveSceneObject();
+                for (int i = 0; i < MoonList.Count; i++)
+                    MoonList[i].RemoveSceneObject();
+            }
+
+            for (int i = 0; i < PlanetList.Count; i++)
+            {
+                Planet planet = PlanetList[i];
+                planet.InFrustum = InFrustum && universe.IsInFrustum(planet.Position3D, planet.Radius);
+                planet.UpdatePassiveAuthoritativeView();
+            }
+        }
+
         public void ActivateDysonSwarm(Empire empire)
         {
             DysonSwarm = new(this, empire);

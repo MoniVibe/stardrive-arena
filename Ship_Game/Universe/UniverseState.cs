@@ -7,6 +7,7 @@ using SDUtils;
 using Ship_Game.Data.Serialization;
 using Ship_Game.Debug;
 using Ship_Game.Gameplay;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Ship_Game.Spatial;
 using Ship_Game.Utils;
@@ -646,6 +647,8 @@ namespace Ship_Game.Universe
 
         public void AddShip(Ship ship)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.ShipPresence,
+                "AddShip");
             Objects.Add(ship);
         }
 

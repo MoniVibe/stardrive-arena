@@ -127,10 +127,8 @@ namespace Ship_Game
 
         public void Update(FixedSimTime timeStep)
         {
-#if DEBUG
             if (Authoritative4XClientContext.ShouldGatePassiveClientSimulation(Ground))
                 return;
-#endif
             if (Ground.Universe.Paused)
                 return;
 

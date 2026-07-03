@@ -859,6 +859,8 @@ namespace Ship_Game
 
         public static void StartCombat(Troop attacker, Troop defender, PlanetGridSquare defenseTile, Planet planet)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(planet, AuthoritativeMutationFamily.GroundCombat,
+                "ActiveCombats");
             Combat c = new(attacker, defender, defenseTile, planet);
             attacker.DoAttack();
             planet.ActiveCombats.Add(c);
@@ -866,6 +868,8 @@ namespace Ship_Game
 
         public static void StartCombat(Troop attacker, Building defender, PlanetGridSquare defenseTile, Planet planet)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(planet, AuthoritativeMutationFamily.GroundCombat,
+                "ActiveCombats");
             Combat c = new(attacker, defender, defenseTile, planet);
             attacker.DoAttack();
             planet.ActiveCombats.Add(c);
@@ -873,6 +877,8 @@ namespace Ship_Game
 
         public static void StartCombat(Building attacker, Troop defender, PlanetGridSquare defenseTile, Planet planet)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(planet, AuthoritativeMutationFamily.GroundCombat,
+                "ActiveCombats");
             Combat c = new(attacker, defender, defenseTile, planet);
             planet.ActiveCombats.Add(c);
         }

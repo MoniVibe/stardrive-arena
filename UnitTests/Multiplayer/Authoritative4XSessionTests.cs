@@ -6019,6 +6019,93 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XPassiveView_DoesNotTickGroundCombat_Headless()
+    {
+        const ulong Seed = 0x6700D10CUL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            MakeAtWar(world.Player, world.Enemy);
+            PlanetGridSquare[] tiles = PrepareGroundTroopTiles(world.Planet, columns: 2, rows: 1);
+            Building defender = PlaceCombatBuilding(world.Planet, tiles[0]);
+            Troop invader = PlaceGroundTroop(world.Planet, world.Enemy, tiles[1]);
+            int originalStrength = defender.Strength;
+            int originalMoveActions = invader.AvailableMoveActions;
+            int originalAttackActions = invader.AvailableAttackActions;
+            AuthoritativeStateSnapshot before = AuthoritativeStateSnapshot.Capture(world.Screen, 0);
+
+            world.UState.Objects.UpdatePassiveAuthoritativeView();
+
+            Assert.AreEqual(0, world.Planet.ActiveCombats.Count,
+                "Passive authoritative presentation refresh must not run TroopManager ground-combat decisions.");
+            Assert.AreEqual(originalStrength, defender.Strength,
+                "Passive authoritative presentation refresh must not damage or repair buildings.");
+            Assert.AreEqual(originalMoveActions, invader.AvailableMoveActions,
+                "Passive authoritative presentation refresh must not consume troop move actions.");
+            Assert.AreEqual(originalAttackActions, invader.AvailableAttackActions,
+                "Passive authoritative presentation refresh must not consume troop attack actions.");
+            AuthoritativeStateSnapshot after = AuthoritativeStateSnapshot.Capture(world.Screen, 0);
+            Assert.AreEqual(before.SyncDigest, after.SyncDigest,
+                "Passive authoritative presentation refresh must not alter canonical replicated state.");
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XGroundCombatReplay_RepairsBuildingHpAndClearsStaleCombats_Headless()
+    {
+        const ulong Seed = 0x6700D10DUL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            MakeAtWar(authority.Player, authority.Enemy);
+            MakeAtWar(client.Player, client.Enemy);
+            PlanetGridSquare[] authorityTiles = PrepareGroundTroopTiles(authority.Planet, columns: 2, rows: 1);
+            PlanetGridSquare[] clientTiles = PrepareGroundTroopTiles(client.Planet, columns: 2, rows: 1);
+            Building authorityDefender = PlaceCombatBuilding(authority.Planet, authorityTiles[0]);
+            Building clientDefender = PlaceCombatBuilding(client.Planet, clientTiles[0]);
+            Troop authorityInvader = PlaceGroundTroop(authority.Planet, authority.Enemy, authorityTiles[1]);
+            Troop clientInvader = PlaceGroundTroop(client.Planet, client.Enemy, clientTiles[1]);
+
+            CombatScreen.StartCombat(authorityInvader, authorityDefender, authorityTiles[0], authority.Planet);
+            CombatScreen.StartCombat(clientInvader, clientDefender, clientTiles[0], client.Planet);
+            CombatScreen.StartCombat(clientDefender, clientInvader, clientTiles[1], client.Planet);
+            authorityDefender.Strength = 8;
+            clientDefender.Strength = 10;
+            Assert.AreEqual(1, authority.Planet.ActiveCombats.Count);
+            Assert.AreEqual(2, client.Planet.ActiveCombats.Count,
+                "The client starts with an extra stale GC row matching the live joiner divergence.");
+
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 6);
+            StringAssert.Contains(authoritySnapshot.Payload, $"GC|{authority.Planet.Id}|0|");
+            AuthoritativeStateSnapshot staleClient = AuthoritativeStateSnapshot.Capture(client.Screen, 6);
+            Assert.AreNotEqual(authoritySnapshot.SyncDigest, staleClient.SyncDigest,
+                "The test must start with a real GC digest mismatch.");
+
+            authoritySnapshot.ApplyEmpireRuntimePayload(client.UState);
+
+            Assert.AreEqual(1, client.Planet.ActiveCombats.Count,
+                "GC batch replay must remove client-only combats absent from the host payload.");
+            Assert.AreEqual(authorityDefender.Strength, clientDefender.Strength,
+                "GC replay must apply the host building HP encoded in the combat building ref.");
+            AuthoritativeStateSnapshot repairedClient = AuthoritativeStateSnapshot.Capture(client.Screen, 6);
+            Assert.AreEqual(authoritySnapshot.SyncDigest, repairedClient.SyncDigest,
+                "Applying authoritative GC rows should repair building HP and stale-combat drift before digest compare.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XShipTroopReplay_MaterializesMissingAndClearsStaleTroops_Headless()
     {
         const ulong Seed = 0x5700D10BUL;
@@ -8030,6 +8117,10 @@ public class Authoritative4XSessionTests : StarDriveTest
         try
         {
             Troop troop = FirstLoadedTroop(world.TroopShip);
+            MakeAtWar(world.Player, world.Enemy);
+            PlanetGridSquare[] tiles = PrepareGroundTroopTiles(world.Planet, columns: 2, rows: 1);
+            Troop invader = PlaceGroundTroop(world.Planet, world.Enemy, tiles[1]);
+            Building defender = PlaceCombatBuilding(world.Planet, tiles[0]);
 
             AssertPassiveMutationThrows(world, AuthoritativeMutationFamily.PlanetRuntime,
                 () => world.Planet.SetColonyType(Planet.ColonyType.Industrial));
@@ -8044,6 +8135,16 @@ public class Authoritative4XSessionTests : StarDriveTest
                 () => world.Player.SetRelationsAsKnown(world.Player.GetRelations(world.Enemy), world.Enemy));
             AssertPassiveMutationThrows(world, AuthoritativeMutationFamily.EmpireAutomation,
                 () => world.Player.SwitchRushAllConstruction(!world.Player.RushAllConstruction));
+            AssertPassiveMutationThrows(world, AuthoritativeMutationFamily.GroundCombat,
+                () => CombatScreen.StartCombat(invader, defender, tiles[0], world.Planet));
+            AssertPassiveMutationThrows(world, AuthoritativeMutationFamily.EmpireRuntime,
+                () => world.Player.AddMoney(1f));
+            AssertPassiveMutationThrows(world, AuthoritativeMutationFamily.ConstructionQueue,
+                () => world.Planet.Construction.ClearQueue());
+            AssertPassiveMutationThrows(world, AuthoritativeMutationFamily.FleetRuntime,
+                () => world.Player.CreateFleet(6, null));
+            AssertPassiveMutationThrows(world, AuthoritativeMutationFamily.ShipPresence,
+                () => world.Ship.QueueTotalRemoval());
         }
         finally
         {
@@ -8112,6 +8213,10 @@ public class Authoritative4XSessionTests : StarDriveTest
         try
         {
             Troop troop = FirstLoadedTroop(commandWorld.TroopShip);
+            MakeAtWar(commandWorld.Player, commandWorld.Enemy);
+            PlanetGridSquare[] commandTiles = PrepareGroundTroopTiles(commandWorld.Planet, columns: 2, rows: 1);
+            Troop commandInvader = PlaceGroundTroop(commandWorld.Planet, commandWorld.Enemy, commandTiles[1]);
+            Building commandDefender = PlaceCombatBuilding(commandWorld.Planet, commandTiles[0]);
             using (Authoritative4XClientContext.Begin(2, commandWorld.Player.Id, _ => { }))
             {
 #if DEBUG
@@ -8129,6 +8234,13 @@ public class Authoritative4XSessionTests : StarDriveTest
                     commandWorld.Player.SetAuthoritativeAutomationState(
                         AuthoritativeEmpireAutomationFlags.AutoResearch, "", "", "", "", "", "",
                         updateRushQueues: true);
+                    CombatScreen.StartCombat(commandInvader, commandDefender, commandTiles[0],
+                        commandWorld.Planet);
+                    commandWorld.Player.AddMoney(1f);
+                    commandWorld.Planet.Construction.ClearQueue();
+                    Fleet fleet = commandWorld.Player.CreateFleet(8, null);
+                    fleet.AddShip(commandWorld.Ship);
+                    commandWorld.Ship.QueueTotalRemoval();
                 }
 #endif
 
@@ -8460,6 +8572,126 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "Passive replicas must prune client-only ships that are absent from the host snapshot before hashing.");
             Assert.AreEqual(authoritySnapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
                 "The host snapshot should repair a client-only ship row instead of desyncing.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XClientReplica_MaterializesHostAuthoredFreighterBeforeDigest_Headless()
+    {
+        const ulong Seed = 0x4E46524549474854UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var replica = new Authoritative4XClientReplica(client.Screen, humanEmpireIds: new[] { client.Player.Id });
+            var command = AuthoritativePlayerCommand.NoOp(248, authority.Player.Id);
+            var result = new AuthoritativeCommandResult
+            {
+                Sequence = 248,
+                OriginPeer = 2,
+                Accepted = false,
+                Tick = 2,
+                Reason = "",
+            };
+
+            IShipDesign freighterDesign = PickBuildableAutomationDesign(authority.Player, s => s.IsFreighter,
+                "freighter");
+            Ship authorityFreighter = Ship.CreateShipAtPoint(authority.UState, freighterDesign.Name,
+                authority.Player, authority.Planet.Position + new Vector2(12_000f, -4_000f));
+            Assert.IsNotNull(authorityFreighter,
+                "The regression needs a real host-authored freighter matching the live SC/S-row gap.");
+            Assert.IsTrue(authorityFreighter.IsFreighter);
+            authority.UState.Objects.UpdateLists(removeInactiveObjects: false);
+            client.UState.Objects.UpdateLists(removeInactiveObjects: false);
+            Assert.IsNull(client.UState.Objects.FindShip(authorityFreighter.Id),
+                "The client starts missing the host-authored freighter.");
+
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 2);
+            StringAssert.Contains(authoritySnapshot.Payload,
+                $"SC|{authorityFreighter.Id}|{authority.Player.Id}|{freighterDesign.Name}");
+
+            replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
+
+            Ship clientFreighter = client.UState.Objects.FindShip(authorityFreighter.Id);
+            Assert.IsNotNull(clientFreighter,
+                "Authoritative SC/S replay must materialize host-created freighters absent from the passive client.");
+            Assert.IsTrue(clientFreighter.IsFreighter);
+            Assert.AreEqual(authoritySnapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                "Host-authored freighter replay must repair the missing SC/S rows before digest comparison.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XPassiveReplica_NoLocalSimAcrossGcEconomyQueueFleetFreighterSoak_Headless()
+    {
+        const ulong Seed = 0x50415353495645UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            MakeAtWar(authority.Player, authority.Enemy);
+            MakeAtWar(client.Player, client.Enemy);
+            PlanetGridSquare[] authorityTiles = PrepareGroundTroopTiles(authority.Planet, columns: 2, rows: 1);
+            PrepareGroundTroopTiles(client.Planet, columns: 2, rows: 1);
+            Building defender = PlaceCombatBuilding(authority.Planet, authorityTiles[0]);
+            Troop invader = PlaceGroundTroop(authority.Planet, authority.Enemy, authorityTiles[1]);
+            CombatScreen.StartCombat(invader, defender, authorityTiles[0], authority.Planet);
+            defender.Strength = 9;
+
+            authority.Player.AddMoney(25f);
+            Building queued = PickBuildableBuilding(authority.Planet);
+            Assert.IsTrue(authority.Planet.Construction.Enqueue(queued, where: null, playerAdded: true),
+                "The soak fixture needs an active host construction queue.");
+
+            IShipDesign freighterDesign = PickBuildableAutomationDesign(authority.Player, s => s.IsFreighter,
+                "freighter");
+            Ship authorityFreighter = Ship.CreateShipAtPoint(authority.UState, freighterDesign.Name,
+                authority.Player, authority.Planet.Position + new Vector2(16_000f, -6_000f));
+            Assert.IsTrue(authorityFreighter.IsFreighter);
+            Fleet authorityFleet = authority.Player.CreateFleet(9, "First Fleet");
+            authorityFleet.AddShips(new[] { authority.Ship, authorityFreighter });
+            authorityFleet.SetCommandShip(authorityFreighter);
+            authorityFleet.FinalPosition = authority.Planet.Position + new Vector2(20_000f, 8_000f);
+            authorityFleet.FinalDirection = new Vector2(1f, 0f);
+            authority.UState.Objects.UpdateLists(removeInactiveObjects: false);
+            client.UState.Objects.UpdateLists(removeInactiveObjects: false);
+
+            var authorityRuntime = new Authoritative4XAuthority(authority.Screen,
+                humanEmpireIds: new[] { authority.Player.Id });
+            var replica = new Authoritative4XClientReplica(client.Screen,
+                humanEmpireIds: new[] { client.Player.Id }, detectLocalMutation: true);
+
+            for (int i = 0; i < 16; ++i)
+            {
+                AuthoritativePlayerCommand command = AuthoritativePlayerCommand.NoOp(700 + i,
+                    authority.Player.Id);
+                (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) =
+                    authorityRuntime.Process(command);
+                result.OriginPeer = 2;
+
+                replica.ApplyAuthoritativeResult(command, result, snapshot);
+                Assert.AreEqual(snapshot.SyncDigest, replica.LastSnapshot.SyncDigest,
+                    $"Passive replica diverged after authoritative apply at soak step {i}.");
+                Assert.IsNotNull(client.UState.Objects.FindShip(authorityFreighter.Id),
+                    "The passive replica must take the host-authored freighter from SC/S rows.");
+                Assert.IsNotNull(client.Player.GetFleetOrNull(9),
+                    "The passive replica must take the host-created fleet from F rows.");
+
+                for (int passiveRefresh = 0; passiveRefresh < 3; ++passiveRefresh)
+                    client.UState.Objects.UpdatePassiveAuthoritativeView();
+            }
         }
         finally
         {
@@ -11794,6 +12026,52 @@ public class Authoritative4XSessionTests : StarDriveTest
             AuthoritativeStateSnapshot repairedClient = AuthoritativeStateSnapshot.Capture(client.Screen, 0);
             Assert.AreEqual(authoritySnapshot.SyncDigest, repairedClient.SyncDigest,
                 "Applying authoritative fleet rows should repair the canonical payload mismatch seen after control groups.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XSnapshot_MaterializesMissingFleetRuntimeRows_Headless()
+    {
+        const ulong Seed = 0xF1EE7C45UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            Fleet authorityFleet = authority.Player.CreateFleet(5, "First Fleet");
+            authorityFleet.AddShips(new[] { authority.Ship, authority.WingShip });
+            authorityFleet.SetCommandShip(authority.Ship);
+            authorityFleet.FleetIconIndex = 7;
+            authorityFleet.FinalPosition = new Vector2(18_000f, 9_500f);
+            authorityFleet.FinalDirection = new Vector2(-0.25f, 0.75f);
+            authorityFleet.Update(FixedSimTime.Zero);
+            Assert.IsNull(client.Player.GetFleetOrNull(5),
+                "The client starts missing the host-created fleet from the live F-row divergence.");
+
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 0);
+            StringAssert.Contains(authoritySnapshot.Payload,
+                $"F|{authority.Player.Id}|5|5|First Fleet|7|{authority.Ship.Id}|");
+
+            authoritySnapshot.ApplyEmpireRuntimePayload(client.UState);
+
+            Fleet clientFleet = client.Player.GetFleetOrNull(5);
+            Assert.IsNotNull(clientFleet,
+                "Authoritative F| replay must materialize a host-created fleet absent from the passive client.");
+            Assert.AreEqual(client.Ship.Id, clientFleet.CommandShip?.Id);
+            Assert.AreSame(clientFleet, client.Ship.Fleet);
+            Assert.AreSame(clientFleet, client.WingShip.Fleet);
+            Assert.AreEqual(authorityFleet.FleetIconIndex, clientFleet.FleetIconIndex);
+            Assert.AreEqual(authorityFleet.FinalPosition, clientFleet.FinalPosition);
+            Assert.AreEqual(authorityFleet.FinalDirection, clientFleet.FinalDirection);
+            Assert.AreEqual(authorityFleet.Name, clientFleet.Name);
+            AuthoritativeStateSnapshot repairedClient = AuthoritativeStateSnapshot.Capture(client.Screen, 0);
+            Assert.AreEqual(authoritySnapshot.SyncDigest, repairedClient.SyncDigest,
+                "Applying authoritative F| rows should repair a missing host-created fleet before digest comparison.");
         }
         finally
         {

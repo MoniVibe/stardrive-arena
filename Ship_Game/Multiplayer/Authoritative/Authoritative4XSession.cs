@@ -95,12 +95,12 @@ public sealed partial class AuthoritativeStateSnapshot
         ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.UnlockedTech);
         ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.PlayerDesign);
         ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.ShipPresence);
+        ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.FleetRuntime);
         ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.ShipRuntime);
         ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.ShipTroop);
         ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.ColonyTile);
         ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.GroundTroop);
         ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.GroundCombat);
-        ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.FleetRuntime);
         ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.ConstructionQueue);
         ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.ColonizationGoal);
         ApplyReplayStage(universe, lines, AuthoritativeReplicationApplyStage.DeepSpaceGoal);
@@ -760,6 +760,7 @@ public sealed partial class AuthoritativeStateSnapshot
 
     static void ApplyFleetRuntimePayload(UniverseState universe, string[] lines)
     {
+        var desired = new Dictionary<int, List<string>>();
         foreach (string rawLine in lines)
         {
             string line = rawLine.TrimEnd('\r');
@@ -777,56 +778,126 @@ public sealed partial class AuthoritativeStateSnapshot
                 continue;
             }
 
-            Empire empire = universe.GetEmpireById(empireId);
-            if (empire == null)
-                continue;
-
-            int commandShipId = int.TryParse(p[6], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedCommandShipId)
-                ? parsedCommandShipId
-                : 0;
-            Fleet fleet = fleetKey > 0
-                ? empire.GetFleetOrNull(fleetKey)
-                : empire.AllFleets.FirstOrDefault(f => f != null && f.Id == fleetId);
-            Ship commandShip = commandShipId > 0
-                ? FindOrMaterializeShipForReplay(universe, lines, commandShipId)
-                : null;
-            fleet ??= commandShip?.Fleet;
-            if (fleet == null && commandShip != null)
-                fleet = empire.AllFleets.FirstOrDefault(f => f?.Ships.ContainsRef(commandShip) == true);
-            string authoritativeName = p[4] ?? "";
-            if (fleet == null && authoritativeName.NotEmpty())
-                fleet = empire.AllFleets.FirstOrDefault(f => f != null
-                                                             && string.Equals(f.Name ?? "", authoritativeName,
-                                                                 StringComparison.Ordinal));
-            if (fleet == null)
-                continue;
-            fleet.Key = fleetKey;
-
-            if (int.TryParse(p[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out int icon))
-                fleet.FleetIconIndex = icon;
-            if (commandShipId >= 0)
+            if (!desired.TryGetValue(empireId, out List<string> rows))
             {
-                if (commandShip != null && commandShip.Fleet != fleet && !fleet.Ships.ContainsRef(commandShip))
-                {
-                    commandShip.Fleet?.RemoveShip(commandShip, clearOrders: false);
-                    fleet.AddShip(commandShip);
-                }
-                fleet.SetCommandShip(commandShip);
+                rows = new List<string>();
+                desired[empireId] = rows;
             }
-            if (TryParseFloatBits(p[7], out float finalX)
-                && TryParseFloatBits(p[8], out float finalY))
-            {
-                fleet.FinalPosition = new Vector2(finalX, finalY);
-            }
-            if (TryParseFloatBits(p[9], out float dirX)
-                && TryParseFloatBits(p[10], out float dirY))
-            {
-                fleet.FinalDirection = new Vector2(dirX, dirY);
-            }
-
-            if (authoritativeName.NotEmpty() && !string.Equals(fleet.Name, authoritativeName, StringComparison.Ordinal))
-                fleet.Name = authoritativeName;
+            rows.Add(line);
         }
+
+        foreach (Empire empire in universe.Empires.OrderBy(e => e.Id))
+        {
+            desired.TryGetValue(empire.Id, out List<string> rows);
+            rows ??= new List<string>();
+            RemoveStaleAuthoritativeReplayFleets(empire, rows);
+
+            foreach (string line in rows
+                         .OrderBy(r => FleetReplaySortKey(r).Key)
+                         .ThenBy(r => FleetReplaySortKey(r).Id))
+            {
+                string[] p = line.Split('|');
+                if (p.Length < 14
+                    || !int.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int fleetId)
+                    || !int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int fleetKey))
+                {
+                    continue;
+                }
+
+                ApplyFleetRuntimeLine(universe, lines, empire, p, fleetId, fleetKey);
+            }
+        }
+    }
+
+    static void RemoveStaleAuthoritativeReplayFleets(Empire empire, List<string> rows)
+    {
+        var desiredKeys = new HashSet<int>();
+        var desiredIds = new HashSet<int>();
+        foreach (string row in rows)
+        {
+            string[] p = row.Split('|');
+            if (p.Length < 4)
+                continue;
+            if (int.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int fleetId))
+                desiredIds.Add(fleetId);
+            if (int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int fleetKey))
+                desiredKeys.Add(fleetKey);
+        }
+
+        Fleet[] stale = empire.AllFleets
+            .Where(f => f != null
+                        && (f.Key > 0
+                            ? !desiredKeys.Contains(f.Key)
+                            : !desiredIds.Contains(SnapshotFleetId(f))))
+            .ToArray();
+        for (int i = 0; i < stale.Length; ++i)
+        {
+            stale[i].RemoveAllShips(clearOrders: false, fleeIfInCombat: false);
+            empire.RemoveFleet(stale[i]);
+        }
+    }
+
+    static (int Key, int Id) FleetReplaySortKey(string line)
+    {
+        string[] p = line.Split('|');
+        int.TryParse(p.ElementAtOrDefault(2), NumberStyles.Integer, CultureInfo.InvariantCulture, out int id);
+        int.TryParse(p.ElementAtOrDefault(3), NumberStyles.Integer, CultureInfo.InvariantCulture, out int key);
+        return (key, id);
+    }
+
+    static void ApplyFleetRuntimeLine(UniverseState universe, string[] lines, Empire empire, string[] p,
+        int fleetId, int fleetKey)
+    {
+        int commandShipId = int.TryParse(p[6], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedCommandShipId)
+            ? parsedCommandShipId
+            : 0;
+        Fleet fleet = fleetKey > 0
+            ? empire.GetFleetOrNull(fleetKey)
+            : empire.AllFleets.FirstOrDefault(f => f != null && f.Id == fleetId);
+        Ship commandShip = commandShipId > 0
+            ? FindOrMaterializeShipForReplay(universe, lines, commandShipId)
+            : null;
+        fleet ??= commandShip?.Fleet;
+        if (fleet == null && commandShip != null)
+            fleet = empire.AllFleets.FirstOrDefault(f => f?.Ships.ContainsRef(commandShip) == true);
+        string authoritativeName = p[4] ?? "";
+        if (fleet == null && authoritativeName.NotEmpty())
+            fleet = empire.AllFleets.FirstOrDefault(f => f != null
+                                                         && string.Equals(f.Name ?? "", authoritativeName,
+                                                             StringComparison.Ordinal));
+        if (fleet == null)
+        {
+            int createKey = fleetKey > 0 ? fleetKey : fleetId;
+            if (createKey <= 0)
+                return;
+            fleet = empire.CreateFleet(createKey, authoritativeName.NotEmpty() ? authoritativeName : null);
+        }
+        fleet.Key = fleetKey;
+
+        if (int.TryParse(p[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out int icon))
+            fleet.FleetIconIndex = icon;
+        if (commandShipId >= 0)
+        {
+            if (commandShip != null && commandShip.Fleet != fleet && !fleet.Ships.ContainsRef(commandShip))
+            {
+                commandShip.Fleet?.RemoveShip(commandShip, clearOrders: false);
+                fleet.AddShip(commandShip);
+            }
+            fleet.SetCommandShip(commandShip);
+        }
+        if (TryParseFloatBits(p[7], out float finalX)
+            && TryParseFloatBits(p[8], out float finalY))
+        {
+            fleet.FinalPosition = new Vector2(finalX, finalY);
+        }
+        if (TryParseFloatBits(p[9], out float dirX)
+            && TryParseFloatBits(p[10], out float dirY))
+        {
+            fleet.FinalDirection = new Vector2(dirX, dirY);
+        }
+
+        if (authoritativeName.NotEmpty() && !string.Equals(fleet.Name, authoritativeName, StringComparison.Ordinal))
+            fleet.Name = authoritativeName;
     }
 
     static Ship FindOrMaterializeShipForReplay(UniverseState universe, string[] lines, int shipId)
@@ -2068,9 +2139,23 @@ public sealed partial class AuthoritativeStateSnapshot
 
     static void ApplyGroundCombatPayload(UniverseState universe, string[] lines)
     {
+        var desired = new Dictionary<int, List<string>>();
+        var planetIds = new HashSet<int>();
         foreach (string rawLine in lines)
         {
             string line = rawLine.TrimEnd('\r');
+            if (line.StartsWith("P|", StringComparison.Ordinal))
+            {
+                string[] planetParts = line.Split('|');
+                if (planetParts.Length >= 2
+                    && int.TryParse(planetParts[1], NumberStyles.Integer, CultureInfo.InvariantCulture,
+                        out int planetRowId))
+                {
+                    planetIds.Add(planetRowId);
+                }
+                continue;
+            }
+
             if (!line.StartsWith("GC|", StringComparison.Ordinal))
                 continue;
 
@@ -2078,42 +2163,62 @@ public sealed partial class AuthoritativeStateSnapshot
             if (p.Length < 12
                 || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int planetId)
                 || !int.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int index)
-                || !int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int phase)
-                || !TryParseFloatBits(p[4], out float timer))
+                || index < 0)
             {
                 continue;
             }
 
+            if (!desired.TryGetValue(planetId, out List<string> rows))
+            {
+                rows = new List<string>();
+                desired[planetId] = rows;
+            }
+            planetIds.Add(planetId);
+            rows.Add(line);
+        }
+
+        foreach (int planetId in planetIds.OrderBy(id => id))
+        {
             Planet planet = universe.GetPlanet(planetId);
-            if (planet == null || index < 0)
+            if (planet == null)
                 continue;
 
-            while (planet.ActiveCombats.Count <= index)
+            planet.ActiveCombats.Clear();
+            if (!desired.TryGetValue(planetId, out List<string> rows))
+                continue;
+
+            foreach (string row in rows
+                         .OrderBy(r => int.Parse(r.Split('|')[2], CultureInfo.InvariantCulture)))
             {
+                string[] p = row.Split('|');
                 Combat created = CreateGroundCombatFromRow(universe, planet, p);
                 if (created == null)
-                    break;
+                    continue;
+
+                ApplyGroundCombatRuntime(universe, planet, created, p);
                 planet.ActiveCombats.Add(created);
             }
-            if (index >= planet.ActiveCombats.Count)
-                continue;
-
-            Combat combat = planet.ActiveCombats[index];
-            combat.Phase = phase;
-            combat.Timer = timer;
-            if (int.TryParse(p[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out int attackerLoyaltyId))
-                combat.AttackerLoyalty = attackerLoyaltyId > 0 ? universe.GetEmpireById(attackerLoyaltyId) : null;
-            if (int.TryParse(p[6], NumberStyles.Integer, CultureInfo.InvariantCulture, out int tileX)
-                && int.TryParse(p[7], NumberStyles.Integer, CultureInfo.InvariantCulture, out int tileY))
-            {
-                combat.DefenseTile = planet.GetTileByCoordinates(tileX, tileY);
-            }
-            combat.AttackingTroop = ResolveGroundTroopRef(planet, p[8]);
-            combat.DefendingTroop = ResolveGroundTroopRef(planet, p[9]);
-            combat.AttackingBuilding = ResolveGroundBuildingRef(planet, p[10]);
-            combat.DefendingBuilding = ResolveGroundBuildingRef(planet, p[11]);
-            combat.Planet = planet;
         }
+    }
+
+    static void ApplyGroundCombatRuntime(UniverseState universe, Planet planet, Combat combat, string[] p)
+    {
+        if (int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int phase))
+            combat.Phase = phase;
+        if (TryParseFloatBits(p[4], out float timer))
+            combat.Timer = timer;
+        if (int.TryParse(p[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out int attackerLoyaltyId))
+            combat.AttackerLoyalty = attackerLoyaltyId > 0 ? universe.GetEmpireById(attackerLoyaltyId) : null;
+        if (int.TryParse(p[6], NumberStyles.Integer, CultureInfo.InvariantCulture, out int tileX)
+            && int.TryParse(p[7], NumberStyles.Integer, CultureInfo.InvariantCulture, out int tileY))
+        {
+            combat.DefenseTile = planet.GetTileByCoordinates(tileX, tileY);
+        }
+        combat.AttackingTroop = ResolveGroundTroopRef(planet, p[8]);
+        combat.DefendingTroop = ResolveGroundTroopRef(planet, p[9]);
+        combat.AttackingBuilding = ResolveAndApplyGroundBuildingRef(planet, p[10]);
+        combat.DefendingBuilding = ResolveAndApplyGroundBuildingRef(planet, p[11]);
+        combat.Planet = planet;
     }
 
     static Combat CreateGroundCombatFromRow(UniverseState universe, Planet planet, string[] p)
@@ -2126,8 +2231,8 @@ public sealed partial class AuthoritativeStateSnapshot
         }
         Troop attackingTroop = ResolveGroundTroopRef(planet, p[8]);
         Troop defendingTroop = ResolveGroundTroopRef(planet, p[9]);
-        Building attackingBuilding = ResolveGroundBuildingRef(planet, p[10]);
-        Building defendingBuilding = ResolveGroundBuildingRef(planet, p[11]);
+        Building attackingBuilding = ResolveAndApplyGroundBuildingRef(planet, p[10]);
+        Building defendingBuilding = ResolveAndApplyGroundBuildingRef(planet, p[11]);
 
         if (attackingTroop != null && defendingTroop != null)
             return new Combat(attackingTroop, defendingTroop, defenseTile, planet);
@@ -2170,6 +2275,18 @@ public sealed partial class AuthoritativeStateSnapshot
         }
 
         return planet.GetTileByCoordinates(x, y)?.Building;
+    }
+
+    static Building ResolveAndApplyGroundBuildingRef(Planet planet, string reference)
+    {
+        Building building = ResolveGroundBuildingRef(planet, reference);
+        if (building == null)
+            return null;
+
+        string[] p = reference.Split(',');
+        if (p.Length >= 4 && TryParseFloatBits(p[3], out float strength))
+            building.Strength = (int)Math.Round(strength, MidpointRounding.AwayFromZero);
+        return building;
     }
 
     static void ApplyShipTroopLine(UniverseState universe, string line)

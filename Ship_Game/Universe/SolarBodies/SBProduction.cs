@@ -8,6 +8,7 @@ using Vector2 = SDGraphics.Vector2;
 using SDUtils;
 using System.Linq;
 using Ship_Game.Data.Serialization;
+using Ship_Game.Multiplayer.Authoritative;
 
 namespace Ship_Game.Universe.SolarBodies
 {
@@ -77,6 +78,8 @@ namespace Ship_Game.Universe.SolarBodies
             if (P.IsCrippled || ConstructionQueue.IsEmpty || Owner == null)
                 return false;
 
+            AssertCanMutateQueue("RushProduction");
+
             // dont charge rush fees if in debug and the rush button was clicked
             bool rushFees = !P.Universe.Debug || !rushButton;
 
@@ -97,6 +100,8 @@ namespace Ship_Game.Universe.SolarBodies
         {
             float needed = q.ProductionNeeded;
             if (needed <= 0f) return true; // complete!
+
+            AssertCanMutateQueue(nameof(QueueItem.ProductionSpent));
 
             float spendMax = Math.Min(needed, max); // how much can we spend?
             float spend = spendMax;
@@ -264,6 +269,8 @@ namespace Ship_Game.Universe.SolarBodies
         public void AutoApplyProduction(float surplusFromPlanet)
         {
             // surplus will be reset every turn and consumed at first opportunity
+            if (surplusFromPlanet != 0f || ConstructionQueue.NotEmpty)
+                AssertCanMutateQueue("AutoApplyProduction");
             SurplusThisTurn = surplusFromPlanet;
             if (ConstructionQueue.IsEmpty || P.IsSabotaged)
                 return; // Massive sabotage to planetary facilities or no items
@@ -478,6 +485,7 @@ namespace Ship_Game.Universe.SolarBodies
 
         void AddToQueueAndPrioritize(QueueItem item)
         {
+            AssertCanMutateQueue("ConstructionQueueMembership");
             lock (ConstructionQueue)
             {
                 ConstructionQueue.Add(item);
@@ -514,6 +522,7 @@ namespace Ship_Game.Universe.SolarBodies
 
         void Finish(QueueItem q)
         {
+            AssertCanMutateQueue("Finish");
             lock (ConstructionQueue)
             {
                 ConstructionQueue.Remove(q);
@@ -523,6 +532,7 @@ namespace Ship_Game.Universe.SolarBodies
 
         public bool Cancel(Building b)
         {
+            AssertCanMutateQueue("CancelBuilding");
             lock (ConstructionQueue)
             {
                 QueueItem item = ConstructionQueue.Find(q => q.Building == b);
@@ -533,6 +543,7 @@ namespace Ship_Game.Universe.SolarBodies
 
         public bool Cancel(Goal g)
         {
+            AssertCanMutateQueue("CancelGoal");
             lock (ConstructionQueue)
             {
                 QueueItem item = ConstructionQueue.Find(q => q.Goal == g);
@@ -543,6 +554,7 @@ namespace Ship_Game.Universe.SolarBodies
 
         public void Cancel(QueueItem q, bool refund = true)
         {
+            AssertCanMutateQueue("CancelItem");
             if (refund)
                 P.ProdHere += q.ProductionSpent / 2;
 
@@ -573,6 +585,7 @@ namespace Ship_Game.Universe.SolarBodies
 
         public void PrioritizeProjector(Vector2 buildPos)
         {
+            AssertCanMutateQueue("PrioritizeProjector");
             for (int i = 0; i < ConstructionQueue.Count; ++i)
             {
                 QueueItem q = ConstructionQueue[i];
@@ -593,6 +606,7 @@ namespace Ship_Game.Universe.SolarBodies
         /// </summary>
         public void DePrioritizeTerraformer()
         {
+            AssertCanMutateQueue("DePrioritizeTerraformer");
             for (int i = 0; i < ConstructionQueue.Count; ++i)
             {
                 QueueItem q = ConstructionQueue[i];
@@ -611,6 +625,8 @@ namespace Ship_Game.Universe.SolarBodies
             if (P.GovernorOff)
                 return;
 
+            AssertCanMutateQueue("RemoveGovernorQueuedBuildingsTechUnlock");
+
             bool hasExclusiveBlueprints = P.Blueprints?.Exclusive == true;
             for (int i = ConstructionQueue.Count - 1; i >= 0; --i)
             {
@@ -627,6 +643,7 @@ namespace Ship_Game.Universe.SolarBodies
 
         public void RefitShipsBeingBuilt(Ship oldShip, IShipDesign newShip)
         {
+            AssertCanMutateQueue("RefitShipsBeingBuilt");
             float refitCost = oldShip.RefitCost(newShip);
             foreach (QueueItem q in ConstructionQueue)
             {
@@ -657,6 +674,7 @@ namespace Ship_Game.Universe.SolarBodies
 
         public void Reorder(QueueItem item, int relativeChange)
         {
+            AssertCanMutateQueue("Reorder");
             lock (ConstructionQueue)
             {
                 // When dragging an item, some items could be removed or moved
@@ -677,6 +695,7 @@ namespace Ship_Game.Universe.SolarBodies
 
         public void Swap(int swapTo, int currentIndex)
         {
+            AssertCanMutateQueue("Swap");
             var cq = ConstructionQueue;
             lock (cq)
             {
@@ -690,6 +709,7 @@ namespace Ship_Game.Universe.SolarBodies
 
         public void MoveTo(int moveTo, int currentIndex)
         {
+            AssertCanMutateQueue("MoveTo");
             lock (ConstructionQueue)
             {
                 QueueItem item = ConstructionQueue[currentIndex];
@@ -704,6 +724,7 @@ namespace Ship_Game.Universe.SolarBodies
             if (Empty)
                 return;
 
+            AssertCanMutateQueue("MoveToAndContinuousRushFirstItem");
             lock (ConstructionQueue)
             {
                 if (Count > 1)
@@ -715,6 +736,7 @@ namespace Ship_Game.Universe.SolarBodies
 
         public void SwitchRushAllConstruction(bool rush)
         {
+            AssertCanMutateQueue("SwitchRushAllConstruction");
             lock (ConstructionQueue)
                 for (int i = 0; i < ConstructionQueue.Count; ++i)
                      ConstructionQueue[i].Rush = rush;
@@ -722,6 +744,7 @@ namespace Ship_Game.Universe.SolarBodies
 
         public void ClearQueue()
         {
+            AssertCanMutateQueue("ClearQueue");
             lock (ConstructionQueue)
             {
                 ConstructionQueue.Clear();
@@ -733,6 +756,7 @@ namespace Ship_Game.Universe.SolarBodies
 
         public void ReplaceQueueForAuthoritativeSync(IEnumerable<QueueItem> items)
         {
+            AssertCanMutateQueue("ReplaceQueueForAuthoritativeSync");
             foreach (PlanetGridSquare tile in P.TilesList)
                 tile.RemoveQueueItem();
 
@@ -762,6 +786,11 @@ namespace Ship_Game.Universe.SolarBodies
                 return P.NonCybernetic && first.Building.ProducesFood
                     || P.IsCybernetic && first.Building.ProducesProduction;
             }
+        }
+
+        void AssertCanMutateQueue(string field)
+        {
+            AuthoritativeMutationGuard.AssertCanMutate(P, AuthoritativeMutationFamily.ConstructionQueue, field);
         }
     }
 }

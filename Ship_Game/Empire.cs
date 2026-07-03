@@ -389,6 +389,8 @@ namespace Ship_Game
 
         public void AddMoney(float moneyDiff)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.EmpireRuntime,
+                nameof(Money));
             Money += moneyDiff;
         }
 
@@ -1419,6 +1421,8 @@ namespace Ship_Game
 
         public void DoMoney()
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.EmpireRuntime,
+                nameof(DoMoney));
             MoneyLastTurn = Money;
             ++TurnCount;
 
@@ -2419,6 +2423,10 @@ namespace Ship_Game
             target.data.OwnedArtifacts.Clear();
             if (target.Money > 0.0)
             {
+                AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.EmpireRuntime,
+                    nameof(Money));
+                AuthoritativeMutationGuard.AssertCanMutate(target, AuthoritativeMutationFamily.EmpireRuntime,
+                    nameof(Money));
                 Money += target.Money;
                 target.Money = 0.0f;
             }
@@ -2738,6 +2746,8 @@ namespace Ship_Game
 
         void ChargeCredits(float cost, bool spendNow, bool rush = false)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.EmpireRuntime,
+                "ProductionCredits");
             float creditsToCharge = rush ? cost  * GlobalStats.Defaults.RushCostPercentage : ProductionCreditCost(cost);
             if (spendNow)
             {
@@ -2754,6 +2764,8 @@ namespace Ship_Game
 
         void RefundCredits(float cost, float percentOfAmount)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.EmpireRuntime,
+                "ProductionCreditRefund");
             float creditsToRefund = cost * DifficultyModifiers.CreditsMultiplier * percentOfAmount;
             MoneySpendOnProductionNow -= creditsToRefund;
             AddMoney(creditsToRefund);

@@ -241,15 +241,44 @@ namespace Ship_Game
 
             TotalTime.Start();
 
-            FixedSimTime zero = FixedSimTime.Zero;
             UpdateLists(removeInactiveObjects: false);
-            UpdateAllSystems(zero);
-            UpdateAllShips(zero);
-            UpdateAllProjectiles(zero);
+            UpdatePassiveSystemPresentation();
             Spatial.Update(Objects.GetItems());
             UpdateVisibleObjects();
+            SyncPassiveVisibleShipSceneObjects();
 
             TotalTime.Stop();
+        }
+
+        void UpdatePassiveSystemPresentation()
+        {
+            UpdatePassiveSolarSystemShipLists();
+
+            for (int i = 0; i < UState.Systems.Count; ++i)
+                UState.Systems[i].UpdatePassiveAuthoritativeView(Universe);
+
+            UState.PlanetsTree.UpdateAll(UState.Planets.ToArr());
+        }
+
+        void UpdatePassiveSolarSystemShipLists()
+        {
+            for (int i = 0; i < UState.Systems.Count; ++i)
+                UState.Systems[i].ShipList.Clear();
+
+            Ship[] allShips = Ships.GetItems();
+            for (int i = 0; i < allShips.Length; ++i)
+            {
+                Ship ship = allShips[i];
+                if (ship?.Active == true && ship.System != null)
+                    ship.System.ShipList.AddUniqueRef(ship);
+            }
+        }
+
+        void SyncPassiveVisibleShipSceneObjects()
+        {
+            Ship[] visibleShips = VisibleShips;
+            for (int i = 0; i < visibleShips.Length; ++i)
+                visibleShips[i]?.SyncSceneObjectForPassiveAuthoritativeView();
         }
 
         /// <summary>

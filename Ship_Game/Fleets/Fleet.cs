@@ -11,6 +11,7 @@ using Ship_Game.AI;
 using Ship_Game.Commands.Goals;
 using Ship_Game.Data.Serialization;
 using Ship_Game.Empires;
+using Ship_Game.Multiplayer.Authoritative;
 using Vector2 = SDGraphics.Vector2;
 using Ship_Game.Universe;
 using Microsoft.Xna.Framework;
@@ -109,6 +110,8 @@ namespace Ship_Game.Fleets
         /// FALSE if ship cannot be assigned to a fleet (already in fleet)
         public override bool AddShip(Ship newShip)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.FleetRuntime,
+                "AddShip");
             if (newShip == null) // Added ship should never be null
             {
                 Log.Error($"Ship Was Null for {Name}");
@@ -149,6 +152,8 @@ namespace Ship_Game.Fleets
 
         public void AddExistingShip(Ship ship, FleetDataNode node)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.FleetRuntime,
+                "AddExistingShip");
             node.Ship = ship;
             base.AddShip(ship);
             ship.Fleet = this;
@@ -2512,6 +2517,8 @@ namespace Ship_Game.Fleets
         /// <returns>TRUE if this ship was actually removed from this Fleet</returns>
         public bool RemoveShip(Ship ship, bool clearOrders)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.FleetRuntime,
+                "RemoveShip");
             if (ship == null)
             {
                 Log.Error($"Attempted to remove a null ship from Fleet {Name}");
@@ -2557,6 +2564,8 @@ namespace Ship_Game.Fleets
         /// </summary>
         public void Reset(bool fleeIfInCombat, bool clearOrders = true)
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.FleetRuntime,
+                "Reset");
             if (clearOrders)
                 ClearPatrol();
 

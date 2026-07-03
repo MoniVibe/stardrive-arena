@@ -7,6 +7,7 @@ using Ship_Game.Commands.Goals;
 using Ship_Game.Data.Serialization;
 using Ship_Game.Fleets;
 using Ship_Game.Gameplay;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using System;
 using System.Collections;
@@ -108,6 +109,8 @@ public sealed partial class Empire
     
     public void RemoveFleet(Fleet fleet)
     {
+        AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.FleetRuntime,
+            "RemoveFleet");
         Fleets.RemoveRef(fleet);
     }
 
@@ -146,6 +149,8 @@ public sealed partial class Empire
     // Adds a new fleet or Replaces an existing fleet at [fleetId]
     public void SetFleet(int fleetId, Fleet fleet)
     {
+        AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.FleetRuntime,
+            "SetFleet");
         if (fleet.Owner != this)
         {
             // this is a mandatory requirement, otherwise AI or Player could manipulate AI fleets
@@ -166,6 +171,8 @@ public sealed partial class Empire
     // Any existing fleets will be lost
     public Fleet CreateFleet(int fleetId, string name)
     {
+        AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.FleetRuntime,
+            "CreateFleet");
         Fleet fleet = new(Universe, this)
         {
             Name = name ?? Fleet.GetDefaultFleetName(fleetId)

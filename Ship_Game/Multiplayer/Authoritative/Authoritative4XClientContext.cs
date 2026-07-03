@@ -106,6 +106,9 @@ public sealed class Authoritative4XClientContext : IDisposable
     public static bool ShouldTripMutationGuard(Ship ship)
         => ShouldTripMutationGuard(ship?.Universe);
 
+    public static bool ShouldTripMutationGuard(Fleet fleet)
+        => ShouldTripMutationGuard(fleet?.Owner);
+
     public static bool ShouldGatePassiveClientSimulation(Planet planet)
         => IsPassiveAuthoritativeUniverse(planet?.Universe?.Screen);
 

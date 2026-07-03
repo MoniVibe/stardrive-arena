@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using Ship_Game.Fleets;
 using Ship_Game.Gameplay;
 using Ship_Game.Ships;
 using Ship_Game.Universe;
@@ -11,6 +12,11 @@ public enum AuthoritativeMutationFamily
     PlanetRuntime,
     TroopRuntime,
     ShipRuntime,
+    ShipPresence,
+    GroundCombat,
+    EmpireRuntime,
+    ConstructionQueue,
+    FleetRuntime,
     Diplomacy,
     EmpireAutomation,
 }
@@ -94,6 +100,16 @@ public static class AuthoritativeMutationGuard
     {
 #if DEBUG
         if (IsSanctionedPath || !Authoritative4XClientContext.ShouldTripMutationGuard(ship))
+            return;
+        Throw(family, field);
+#endif
+    }
+
+    [Conditional("DEBUG")]
+    public static void AssertCanMutate(Fleet fleet, AuthoritativeMutationFamily family, string field)
+    {
+#if DEBUG
+        if (IsSanctionedPath || !Authoritative4XClientContext.ShouldTripMutationGuard(fleet))
             return;
         Throw(family, field);
 #endif

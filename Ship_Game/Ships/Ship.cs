@@ -1825,6 +1825,8 @@ namespace Ship_Game.Ships
         /// </summary>
         public void QueueTotalRemoval()
         {
+            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.ShipPresence,
+                "QueueTotalRemoval");
             Active = false;
             TetheredTo?.RemoveFromOrbitalStations(this);
             AI.ClearOrdersAndWayPoints(); // This calls immediate Dispose() on Orders that require cleanup
