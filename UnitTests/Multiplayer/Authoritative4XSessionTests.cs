@@ -8154,6 +8154,47 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XClientReplica_RemovesClientOnlyPlayerDesignRows_Headless()
+    {
+        const ulong Seed = 0xD3516EUL;
+        const string StaleName = "Authoritative MP Client Only Design";
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            ResourceManager.Ships.Delete(StaleName);
+            ShipDesign stale = BuildLegalPlayerDesign(client.Player, StaleName);
+            Assert.IsTrue(client.Player.AddBuildableShip(stale));
+            StringAssert.Contains(AuthoritativeStateSnapshot.Capture(client.Screen, 0).Payload, StaleName);
+
+            var replica = new Authoritative4XClientReplica(client.Screen, humanEmpireIds: new[] { client.Player.Id });
+            var command = AuthoritativePlayerCommand.NoOp(3516, authority.Player.Id);
+            var result = new AuthoritativeCommandResult
+            {
+                Sequence = 3516,
+                OriginPeer = 2,
+                Accepted = true,
+                Tick = 1,
+                Reason = "",
+            };
+
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 1);
+            replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
+
+            Assert.IsFalse(client.Player.ShipsWeCanBuildSnapshot.Any(d => d.IsPlayerDesign && d.Name == StaleName),
+                "Passive D-row replay must remove client-only player designs that are absent from the authority payload.");
+            Assert.AreEqual(authoritySnapshot.SyncDigest, replica.LastSnapshot.SyncDigest);
+        }
+        finally
+        {
+            ResourceManager.Ships.Delete(StaleName);
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XShipyard_DesignAndQueueBuildCommandsSync_Headless()
     {
         const ulong Seed = 0x51F7A11UL;
@@ -11640,6 +11681,14 @@ public class Authoritative4XSessionTests : StarDriveTest
         Assert.IsFalse(hostEmpire.ShipsWeCanBuildSnapshot.Any(d => d.IsPlayerDesign));
         Assert.AreEqual(stockBuildableCount, hostEmpire.ShipsWeCanBuildSnapshot.Count(d => !d.IsPlayerDesign),
             "The scrubber must leave stock buildable designs intact.");
+
+        hostEmpire.RebuildUnlockCachesForAuthoritativeSync();
+
+        Assert.IsFalse(hostEmpire.ShipsWeCanBuildSnapshot.Any(d => ReferenceEquals(d, localOnlyDesign)),
+            "Authoritative cache rebuild must not resurrect scrubbed machine-local player designs.");
+        Assert.IsFalse(hostEmpire.ShipsWeCanBuildSnapshot.Any(d => d.IsPlayerDesign));
+        Assert.AreEqual(stockBuildableCount, hostEmpire.ShipsWeCanBuildSnapshot.Count(d => !d.IsPlayerDesign),
+            "Cache rebuild should preserve stock buildables without re-adding local player designs.");
     }
 
     [TestMethod]

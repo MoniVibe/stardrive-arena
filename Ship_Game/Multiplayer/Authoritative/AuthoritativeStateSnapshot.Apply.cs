@@ -8,7 +8,7 @@ public sealed partial class AuthoritativeStateSnapshot
         => ApplyUnlockedTechPayload(universe, lines);
 
     internal static void ReplayPlayerDesignPayload(UniverseState universe, string[] lines)
-        => ApplyLines(universe, lines, "D", ApplyPlayerDesignLine);
+        => ApplyPlayerDesignPayload(universe, lines);
 
     internal static void ReplayShipPresencePayload(UniverseState universe, string[] lines)
         => ApplyShipPresencePayload(universe, lines);

@@ -329,9 +329,58 @@ public sealed partial class AuthoritativeStateSnapshot
                 changed |= wasUnlocked != tech.Unlocked || wasLevel != tech.Level;
             }
 
-            if (changed)
+            if (changed || desired.Count > 0)
                 empire.RebuildUnlockCachesForAuthoritativeSync();
         }
+    }
+
+    static void ApplyPlayerDesignPayload(UniverseState universe, string[] lines)
+    {
+        var desiredByEmpire = new Dictionary<int, HashSet<string>>();
+        var designLines = new List<string>();
+        foreach (string rawLine in lines)
+        {
+            string line = rawLine.TrimEnd('\r');
+            if (!line.StartsWith("D|", StringComparison.Ordinal))
+                continue;
+
+            string[] p = line.Split('|');
+            if (p.Length < 3
+                || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int empireId)
+                || empireId <= 0
+                || empireId > universe.Empires.Count)
+            {
+                continue;
+            }
+
+            string designName = p[2] ?? "";
+            if (designName.IsEmpty())
+                continue;
+
+            if (!desiredByEmpire.TryGetValue(empireId, out HashSet<string> desired))
+            {
+                desired = new HashSet<string>(StringComparer.Ordinal);
+                desiredByEmpire[empireId] = desired;
+            }
+            desired.Add(designName);
+            designLines.Add(line);
+        }
+
+        foreach (Empire empire in universe.Empires)
+        {
+            if (empire == null)
+                continue;
+
+            desiredByEmpire.TryGetValue(empire.Id, out HashSet<string> desired);
+            foreach (IShipDesign design in empire.ShipsWeCanBuildSnapshot.Where(d => d.IsPlayerDesign).ToArray())
+            {
+                if (desired == null || !desired.Contains(design.Name))
+                    empire.RemoveBuildableShip(design);
+            }
+        }
+
+        foreach (string line in designLines)
+            ApplyPlayerDesignLine(universe, line);
     }
 
     internal static void ApplyPlayerDesignLine(UniverseState universe, string line)

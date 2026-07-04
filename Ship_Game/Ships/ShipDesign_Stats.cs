@@ -287,8 +287,8 @@ public partial class ShipDesign
             && Role != RoleName.disabled
             && Role != RoleName.supply
             && !ShipRole.Protected
-            && (empire.isPlayer || IsShipGoodForGoals(empire))
-            && (!IsPlayerDesign || empire.Universe.P.AIUsesPlayerDesigns || empire.isPlayer);
+            && (empire.IsHumanControlled || IsShipGoodForGoals(empire))
+            && (!IsPlayerDesign || empire.Universe.P.AIUsesPlayerDesigns || empire.IsHumanControlled);
     }
 
     public int GetCompletionPercent()

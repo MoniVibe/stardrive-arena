@@ -825,10 +825,32 @@ namespace Ship_Game
 
         public void RebuildUnlockCachesForAuthoritativeSync()
         {
+            string[] exactResearchQueue = data.ResearchQueue.ToArray();
+            IShipDesign[] authoritativePlayerDesigns = ShipsWeCanBuildSnapshot
+                .Where(d => d.IsPlayerDesign)
+                .ToArray();
+            var exactTechState = TechEntries
+                .Select(t => (Tech: t, t.Progress, t.Unlocked, t.Level))
+                .ToArray();
+
             ResetUnlocks();
-            InitEmpireUnlocks();
+            ApplyDataUnlocks();
             ResetTechsAndUnlocks();
-            UpdateShipsWeCanBuild();
+            UpdateShipsWeCanBuild(includePlayerDesigns: false);
+            foreach (IShipDesign design in authoritativePlayerDesigns)
+            {
+                if (WeCanBuildThis(design))
+                    AddBuildableShip(design);
+            }
+            foreach (var state in exactTechState)
+            {
+                state.Tech.Progress = state.Progress;
+                state.Tech.Unlocked = state.Unlocked;
+                state.Tech.Level = state.Level;
+            }
+            Research.SetQueueExact(exactResearchQueue);
+            foreach (Planet planet in OwnedPlanets)
+                planet.RefreshBuildingsWeCanBuildHere();
         }
 
         void CreateEmpireTechTree()
@@ -875,14 +897,7 @@ namespace Ship_Game
 
         void InitEmpireUnlocks()
         {
-            foreach (string building in data.unlockBuilding)
-                UnlockedBuildingsDict[building] = true;
-
-            foreach (string ship in data.unlockShips)
-            {
-                IShipDesign design = ResourceManager.Ships.GetDesign(ship);
-                AddBuildableShip(design);
-            }
+            ApplyDataUnlocks();
 
             foreach (TechEntry entry in TechEntries) // unlock racial techs
             {
@@ -910,6 +925,18 @@ namespace Ship_Game
                 if (ShipsWeCanBuild.Count == 0) Log.Error($"Empire ShipsWeCanBuild is empty! {this}");
                 if (SpaceStationsWeCanBuild.Count == 0 && ShipsWeCanBuild.Any(s => s.Role <= RoleName.station))
                     Log.Error($"Empire SpaceStationsWeCanBuild is empty! {this}");
+            }
+        }
+
+        void ApplyDataUnlocks()
+        {
+            foreach (string building in data.unlockBuilding)
+                UnlockedBuildingsDict[building] = true;
+
+            foreach (string ship in data.unlockShips)
+            {
+                IShipDesign design = ResourceManager.Ships.GetDesign(ship);
+                AddBuildableShip(design);
             }
         }
 

@@ -308,6 +308,101 @@ public class AuthoritativeQaScenarioTests : StarDriveTest
     }
 
     [TestMethod]
+    public void QaJoinerTechState_StartingTechsAndSubspaceBuildabilityReplay_Headless()
+    {
+        const int JoinPeer = 3;
+        const int Sequence = 10_000;
+        LoadAllGameData();
+
+        IEmpireData joinRace = ResourceManager.MajorRaces
+            .Where(r => !r.IsFactionOrMinorRace
+                        && r.Traits.PlayerTraitOptions.Contains("Militaristic"))
+            .OrderBy(RacePreference, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(joinRace, "The joiner tech repro needs a default militaristic race.");
+        IEmpireData hostRace = ResourceManager.MajorRaces
+            .Where(r => !r.IsFactionOrMinorRace && !string.Equals(RacePreference(r), RacePreference(joinRace),
+                StringComparison.OrdinalIgnoreCase))
+            .OrderBy(RacePreference, StringComparer.Ordinal)
+            .FirstOrDefault();
+        Assert.IsNotNull(hostRace, "The joiner tech repro needs a distinct host race.");
+
+        var settings = new Authoritative4XGameSettings
+        {
+            GenerationSeed = 0x4A0C00A,
+            GalaxySize = GalSize.Tiny,
+            StarsCount = RaceDesignScreen.StarsAbundance.Rare,
+            Mode = RaceDesignScreen.GameMode.Sandbox,
+            Difficulty = GameDifficulty.Normal,
+            NumOpponents = 1,
+            Pace = 1f,
+            TurnTimer = 5,
+            GameSpeed = 1f,
+            StartPaused = true,
+            DisablePirates = true,
+            DisableResearchStations = true,
+            DisableMiningOps = true,
+            DisableRemnantStory = true,
+        };
+
+        var lobby = new Authoritative4XLobby(HostPeer, "Host");
+        lobby.Join(JoinPeer, "Join");
+        Assert.IsTrue(lobby.SetSettings(HostPeer, settings).Valid);
+        Assert.IsTrue(lobby.SetPlayerSelection(HostPeer, RacePreference(hostRace), Array.Empty<string>()).Valid);
+        Assert.IsTrue(lobby.SetPlayerSelection(JoinPeer, RacePreference(joinRace), Array.Empty<string>()).Valid);
+        Assert.IsTrue(lobby.SetReady(HostPeer, true).Valid);
+        Assert.IsTrue(lobby.SetReady(JoinPeer, true).Valid);
+
+        using Authoritative4XLobbyStartResult started = lobby.StartInProcess();
+        int joinEmpireId = started.EmpireIdForPeer(JoinPeer);
+        Empire authorityJoiner = started.AuthorityUniverse.UState.GetEmpireById(joinEmpireId);
+        Authoritative4XClientSpec joinClient = started.Clients.First(c => c.PeerId == JoinPeer);
+        Empire clientJoiner = joinClient.Universe.UState.GetEmpireById(joinEmpireId);
+        Assert.IsNotNull(authorityJoiner);
+        Assert.IsNotNull(clientJoiner);
+
+        string[] authorityStartingTechs = StartingTechIds(authorityJoiner);
+        Assert.IsTrue(authorityStartingTechs.Length > 0,
+            "The host-authored joiner empire must receive its racial starting techs during generation.");
+        CollectionAssert.Contains(authorityStartingTechs, "Military",
+            "Default militaristic joiners should start with the Military tech.");
+        AssertUnlockedTechSetsEqual(authorityJoiner, clientJoiner, "generated joiner client");
+
+        Assert.IsTrue(ResourceManager.Ships.GetDesign("Subspace Projector", out IShipDesign projector),
+            "Loaded content must include the Subspace Projector design.");
+        Assert.IsTrue(projector.TechsNeeded.Count > 0,
+            "The Subspace Projector repro must be a tech-gated design.");
+        foreach (string techUid in projector.TechsNeeded.OrderBy(t => t, StringComparer.Ordinal))
+        {
+            if (!authorityJoiner.HasUnlocked(techUid))
+                authorityJoiner.UnlockTech(techUid, TechUnlockType.Normal, null);
+
+            TechEntry staleClientTech = clientJoiner.GetTechEntry(techUid);
+            staleClientTech.ForceFullyResearched();
+        }
+
+        Assert.IsTrue(authorityJoiner.CanBuildShip(projector),
+            "The authority joiner empire should build Subspace Projectors after the required tech chain is unlocked.");
+        foreach (string techUid in projector.TechsNeeded)
+            Assert.IsTrue(clientJoiner.HasUnlocked(techUid),
+                $"Passive joiner should have the raw tech flag for {techUid} before replay.");
+        clientJoiner.RemoveBuildableShip(projector);
+        Assert.IsFalse(clientJoiner.CanBuildShip(projector),
+            "The passive joiner repro must start with stale ShipsWeCanBuild despite matching tech flags.");
+
+        SubmitAccepted(started, JoinPeer, AuthoritativePlayerCommand.NoOp(Sequence, joinEmpireId));
+
+        AssertUnlockedTechSetsEqual(authorityJoiner, clientJoiner, "post U-row replay");
+        foreach (string techUid in projector.TechsNeeded)
+            Assert.IsTrue(clientJoiner.HasUnlocked(techUid),
+                $"Passive joiner should retain authoritative Subspace Projector tech {techUid}.");
+        Assert.IsTrue(clientJoiner.CanBuildShip(projector),
+            "Authoritative U-row replay must rebuild ShipsWeCanBuild for the passive joiner.");
+        Assert.IsTrue(clientJoiner.WeCanBuildThis(projector, debug: true),
+            "Passive joiner WeCanBuildThis should match its authoritative tech set after replay.");
+    }
+
+    [TestMethod]
     public void QaPirateEventResync_DirectorPaymentDoesNotDuplicateAfterReload_Headless()
     {
         using Authoritative4XLobbyStartResult started = StartOnePassiveSession(0x4A0C006, pirates: true,
@@ -922,6 +1017,7 @@ public class AuthoritativeQaScenarioTests : StarDriveTest
         troop.AvailableAttackActions = troop.MaxStoredActions;
         troop.MoveTimer = 0f;
         troop.AttackTimer = 0f;
+        troop.Strength = Math.Max(troop.Strength, 50f);
         return troop;
     }
 
@@ -1241,6 +1337,25 @@ public class AuthoritativeQaScenarioTests : StarDriveTest
         int victimId = victim?.Id ?? 0;
         return pirate?.AI?.Goals?.Count(g => g.Type == GoalType.PirateDirectorPayment
                                              && g.TargetEmpire?.Id == victimId) ?? 0;
+    }
+
+    static string[] StartingTechIds(Empire empire)
+        => empire.TechEntries
+            .Where(t => t?.Unlocked == true && !t.IsRoot && t.IsUnlockedAtGameStart(empire))
+            .Select(t => t.UID)
+            .OrderBy(t => t, StringComparer.Ordinal)
+            .ToArray();
+
+    static string[] UnlockedTechIds(Empire empire)
+        => empire.UnlockedTechs
+            .Select(t => t.UID)
+            .OrderBy(t => t, StringComparer.Ordinal)
+            .ToArray();
+
+    static void AssertUnlockedTechSetsEqual(Empire authority, Empire client, string label)
+    {
+        CollectionAssert.AreEqual(UnlockedTechIds(authority), UnlockedTechIds(client),
+            $"Unlocked tech exact set mismatch for {label}.");
     }
 
     static string RacePreference(IEmpireData race)

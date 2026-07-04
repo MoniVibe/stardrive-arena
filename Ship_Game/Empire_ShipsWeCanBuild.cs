@@ -169,7 +169,7 @@ public sealed partial class Empire
         }
     }
 
-    public void UpdateShipsWeCanBuild(Array<string> hulls = null, bool debug = false)
+    public void UpdateShipsWeCanBuild(Array<string> hulls = null, bool debug = false, bool includePlayerDesigns = true)
     {
         // validate all existing ship designs, in case some of them have become invalid
         RemoveInvalidShipDesigns();
@@ -183,6 +183,8 @@ public sealed partial class Empire
         foreach (IShipDesign sd in ResourceManager.Ships.Designs)
         {
             if (sd.Name == "Target Dummy")
+                continue;
+            if (!includePlayerDesigns && sd.IsPlayerDesign)
                 continue;
             if (hulls != null && !hulls.Contains(sd.Hull))
                 continue;
@@ -338,7 +340,7 @@ public sealed partial class Empire
         if (checkedTech.IsHidden(this))
             return false;
 
-        if (!checkedTech.IsOnlyShipTech() || isPlayer)
+        if (!checkedTech.IsOnlyShipTech() || IsHumanControlled)
             return true;
 
         return WeCanUseThisInDesigns(checkedTech, ourFactionShips);

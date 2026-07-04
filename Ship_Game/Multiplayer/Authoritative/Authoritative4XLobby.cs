@@ -271,7 +271,8 @@ public sealed class Authoritative4XLobby
         if (!Players.TryGetValue(peerId, out Authoritative4XLobbyPlayer player))
             return Authoritative4XLobbyValidation.Fail($"Peer {peerId} is not in the lobby.");
 
-        string[] traits = NormalizeTraitNames(traitOptions).ToArray();
+        IEmpireData race = FindRace(raceName);
+        string[] traits = EffectiveTraitOptions(race, traitOptions);
         Authoritative4XLobbyValidation validation = ValidateRaceAndTraits(raceName, traits, Settings);
         player.RaceName = ResolveRaceName(raceName);
         player.TraitOptions = traits;
@@ -543,6 +544,7 @@ public sealed class Authoritative4XLobby
         if (empire == null)
             return;
 
+        empire.RebuildUnlockCachesForAuthoritativeSync();
         ConfigureGeneratedHumanPlanets(empire);
         empire.Research?.Reset();
         RemoveMachineLocalPlayerDesigns(empire);
@@ -570,13 +572,14 @@ public sealed class Authoritative4XLobby
     static EmpireData CreateEmpireData(IEmpireData race, string[] traitOptions, bool player)
     {
         EmpireData data = race.CreateInstance(copyTraits: false);
-        data.Traits = CreateTraitSummary(race, traitOptions);
+        data.Traits = CreateTraitSummary(race, EffectiveTraitOptions(race, traitOptions),
+            applyTraitEffects: player);
         if (player)
             data.DiplomaticPersonality = new DTrait();
         return data;
     }
 
-    static RacialTrait CreateTraitSummary(IEmpireData race, string[] traitOptions)
+    static RacialTrait CreateTraitSummary(IEmpireData race, string[] traitOptions, bool applyTraitEffects)
     {
         RacialTrait source = race.Traits;
         var summary = new RacialTrait
@@ -600,10 +603,19 @@ public sealed class Authoritative4XLobby
             RacialTraitOption trait = FindTrait(traitName)
                                       ?? throw new InvalidOperationException($"Trait '{traitName}' was not found.");
             set.TraitOptions.Add(trait.TraitName);
-            ApplyTrait(summary, trait);
+            if (applyTraitEffects)
+                ApplyTrait(summary, trait);
         }
         summary.TraitSets.Add(set);
         return summary;
+    }
+
+    static string[] EffectiveTraitOptions(IEmpireData race, IEnumerable<string> traitOptions)
+    {
+        string[] selected = NormalizeTraitNames(traitOptions).ToArray();
+        return selected.Length > 0
+            ? selected
+            : NormalizeTraitNames(race?.Traits?.PlayerTraitOptions).ToArray();
     }
 
     static void ApplyTrait(RacialTrait summary, RacialTraitOption trait)

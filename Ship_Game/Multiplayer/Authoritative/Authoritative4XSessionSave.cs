@@ -329,6 +329,7 @@ public static class Authoritative4XSessionSave
         if (universe == null || states == null || states.Length == 0)
             return;
 
+        var touchedEmpires = new HashSet<Empire>();
         foreach (Authoritative4XEmpireTechSave state in states)
         {
             if (state.EmpireId <= 0 || state.EmpireId > universe.Empires.Count || string.IsNullOrEmpty(state.TechUid))
@@ -339,7 +340,11 @@ public static class Authoritative4XSessionSave
                 continue;
 
             ApplyUnlockedTech(empire, tech, state.Level);
+            touchedEmpires.Add(empire);
         }
+
+        foreach (Empire empire in touchedEmpires)
+            empire.RebuildUnlockCachesForAuthoritativeSync();
     }
 
     public static void ApplyUnlockedTech(Empire empire, TechEntry tech, int authoritativeLevel)
