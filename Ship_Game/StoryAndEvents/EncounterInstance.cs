@@ -96,6 +96,9 @@ namespace Ship_Game.StoryAndEvents
 
             if (CurrentDialog.SetFactionContactStep > 0)
                 rel.FactionContactStep = CurrentDialog.SetFactionContactStep;
+
+            if (CurrentDialog.EndTransmission && TargetEmpire.WeArePirates)
+                TargetEmpire.Pirates.ClearPaymentDemandPendingFor(Player);
         }
 
         int NetMoneyDemand(int demandFromMessage)

@@ -47,11 +47,15 @@ namespace Ship_Game.Commands.Goals
 
         GoalStep UpdatePirateActivity()
         {
+            if (Pirates.PaymentDemandPendingFor(TargetEmpire))
+                return GoalStep.TryAgain;
+
             if (Pirates.PaidBy(TargetEmpire))
             {
                 // Ah, so they paid us,  we can use this money to expand our business 
                 Pirates.TryLevelUp(TargetEmpire.Universe);
                 Pirates.ResetThreatLevelFor(TargetEmpire);
+                Pirates.ResetPaymentTimerFor(TargetEmpire);
                 Pirates.Owner.SignTreatyWith(TargetEmpire, Gameplay.TreatyType.NonAggression);
             }
             else
@@ -67,7 +71,11 @@ namespace Ship_Game.Commands.Goals
 
         bool RequestPayment()
         {
-            if (GlobalStats.RestrictAIPlayerInteraction && TargetEmpire.isPlayer)
+            bool targetIsHuman = TargetEmpire.IsHumanControlled;
+            if (GlobalStats.RestrictAIPlayerInteraction && targetIsHuman)
+                return false;
+
+            if (Pirates.PaymentDemandPendingFor(TargetEmpire))
                 return false;
 
             // If the timer is done, the pirates will demand new payment or immediately if the threat level is -1 (initial)
@@ -79,7 +87,7 @@ namespace Ship_Game.Commands.Goals
 
             // If the player did not pay, don't ask for another payment, let them crawl to
             // us when they are ready to pay and increase out threat level to them
-            if (!Pirates.PaidBy(TargetEmpire) && TargetEmpire.isPlayer && Pirates.ThreatLevelFor(TargetEmpire) > -1)
+            if (!Pirates.PaidBy(TargetEmpire) && targetIsHuman && Pirates.ThreatLevelFor(TargetEmpire) > -1)
             {
                 Pirates.IncreaseThreatLevelFor(TargetEmpire);
                 Pirates.ResetPaymentTimerFor(TargetEmpire);
@@ -92,8 +100,12 @@ namespace Ship_Game.Commands.Goals
             if (!Pirates.Owner.IsKnown(TargetEmpire))
                 Empire.SetRelationsAsKnown(Pirates.Owner, TargetEmpire);
 
-            if (TargetEmpire.isPlayer)
-                Encounter.ShowEncounterPopUpFactionInitiated(Pirates.Owner, Owner.Universe.Screen);
+            if (targetIsHuman)
+            {
+                Pirates.MarkPaymentDemandPendingFor(TargetEmpire);
+                if (TargetEmpire.isPlayer)
+                    Encounter.ShowEncounterPopUpFactionInitiated(Pirates.Owner, Owner.Universe.Screen);
+            }
             else
                 DemandMoneyFromAI();
 
@@ -104,7 +116,7 @@ namespace Ship_Game.Commands.Goals
                 if (TargetEmpire.NewEspionageEnabled)
                 {
                     TargetEmpire.GetRelations(Owner).Espionage.IncreaseInfiltrationLevelTo(1);
-                    if (TargetEmpire.isPlayer)
+                    if (targetIsHuman)
                         TargetEmpire.Universe.Notifications.AddPiratesAbleToScan(Owner);
                 }
             }

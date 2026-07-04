@@ -46,6 +46,7 @@ namespace Ship_Game
 
         [StarData] public Map<int, int> ThreatLevels { get; private set; }    = new();  // Empire IDs are used here
         [StarData] public Map<int, int> PaymentTimers { get; private set; }   = new(); // Empire IDs are used here
+        [StarData] public Map<int, bool> PaymentDemandPending { get; private set; } = new(); // Empire IDs are used here
         [StarData] public Array<int> SpawnedShips { get; private set; }       = new();
         [StarData] public Array<string> ShipsWeCanSpawn { get; private set; } = new();
         [StarData] public int Level { get; private set; }
@@ -137,6 +138,8 @@ namespace Ship_Game
                     ThreatLevels.Add(empire.Id, -1);
                 if (!PaymentTimers.ContainsKey(empire.Id))
                     PaymentTimers.Add(empire.Id, PaymentPeriodTurns);
+                if (!PaymentDemandPending.ContainsKey(empire.Id))
+                    PaymentDemandPending.Add(empire.Id, false);
             }
 
             PopulateDefaultBasicShips(fromSave: false);
@@ -145,12 +148,48 @@ namespace Ship_Game
         [StarDataDeserialized]
         void OnDeserialized()
         {
+            PaymentDemandPending ??= new Map<int, bool>();
+            foreach (Empire empire in Universe.MajorEmpires)
+                if (!PaymentDemandPending.ContainsKey(empire.Id))
+                    PaymentDemandPending.Add(empire.Id, false);
+
             PopulateDefaultBasicShips(fromSave: true);
         }
 
         public int PaymentTimerFor(Empire victim)          => PaymentTimers[victim.Id];
         public void DecreasePaymentTimerFor(Empire victim) => PaymentTimers[victim.Id] -= 1;
-        public void ResetPaymentTimerFor(Empire victim)    => PaymentTimers[victim.Id] = PaymentPeriodTurns;
+        public void ResetPaymentTimerFor(Empire victim)
+        {
+            PaymentTimers[victim.Id] = PaymentPeriodTurns;
+            ClearPaymentDemandPendingFor(victim);
+        }
+
+        public bool PaymentDemandPendingFor(Empire victim)
+            => victim != null
+               && PaymentDemandPending.TryGetValue(victim.Id, out bool pending)
+               && pending;
+
+        public void MarkPaymentDemandPendingFor(Empire victim)
+        {
+            if (victim == null)
+                return;
+
+            if (!PaymentDemandPending.ContainsKey(victim.Id))
+                PaymentDemandPending.Add(victim.Id, true);
+            else
+                PaymentDemandPending[victim.Id] = true;
+        }
+
+        public void ClearPaymentDemandPendingFor(Empire victim)
+        {
+            if (victim == null)
+                return;
+
+            if (!PaymentDemandPending.ContainsKey(victim.Id))
+                PaymentDemandPending.Add(victim.Id, false);
+            else
+                PaymentDemandPending[victim.Id] = false;
+        }
 
         public void IncreaseThreatLevelFor(Empire victim) => SetThreatLevelFor(victim, ThreatLevels[victim.Id] + 1);
         public void DecreaseThreatLevelFor(Empire victim) => SetThreatLevelFor(victim,  ThreatLevels[victim.Id] - 1);

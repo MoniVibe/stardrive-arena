@@ -13,9 +13,11 @@ using Ship_Game.Ships.AI;
 using Ship_Game.Universe;
 using Ship_Game.Universe.SolarBodies;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 
 namespace UnitTests.Multiplayer;
 
@@ -576,6 +578,129 @@ public class AuthoritativeQaScenarioTests : StarDriveTest
     }
 
     [TestMethod]
+    public void QaFogExploration_HostExploredSystemMasksReplayToPassiveJoiner_Headless()
+    {
+        using Authoritative4XLobbyStartResult started = StartOnePassiveSession(0x4A0C00A, pirates: false);
+        int empireId = started.EmpireIdForPeer(HostPeer);
+        int sequence = 8_500;
+
+        try
+        {
+            ConfigureScenarioUniverses(started, disableEvents: true);
+            Empire authorityPlayer = started.AuthorityUniverse.UState.GetEmpireById(empireId);
+            Empire clientPlayer = started.Clients[0].Universe.UState.GetEmpireById(empireId);
+            SolarSystem revealSystem = started.AuthorityUniverse.UState.Systems
+                .Where(s => !s.IsExploredBy(authorityPlayer) && !s.IsStartingSystem)
+                .OrderBy(s => s.Id)
+                .FirstOrDefault();
+            SolarSystem hiddenSystem = started.AuthorityUniverse.UState.Systems
+                .Where(s => s != revealSystem && !s.IsExploredBy(authorityPlayer) && !s.IsStartingSystem)
+                .OrderBy(s => s.Id)
+                .FirstOrDefault();
+            Assert.IsNotNull(revealSystem, "Exploration replay needs an initially hidden non-starting system.");
+            Assert.IsNotNull(hiddenSystem, "Exploration replay needs a second hidden system as fog control.");
+            Assert.IsFalse(started.Clients[0].Universe.UState.Systems.First(s => s.Id == revealSystem.Id)
+                .IsExploredBy(clientPlayer));
+
+            IShipDesign scoutDesign = PickMobileBuildableShip(authorityPlayer);
+            Ship authorityScout = CreateAuthorityOnlyShip(started.AuthorityUniverse, empireId,
+                scoutDesign.Name, revealSystem.Position + new Vector2(1_500f, 0f));
+            SetAuthorityShipInSystem(authorityScout, revealSystem);
+            SetAuthoritySystemExplored(started.AuthorityUniverse, revealSystem.Id, empireId);
+
+            SubmitAccepted(started, HostPeer, AuthoritativePlayerCommand.NoOp(sequence++, empireId));
+
+            SolarSystem clientReveal = started.Clients[0].Universe.UState.Systems
+                .First(s => s.Id == revealSystem.Id);
+            SolarSystem clientHidden = started.Clients[0].Universe.UState.Systems
+                .First(s => s.Id == hiddenSystem.Id);
+            Ship clientScout = started.Clients[0].Universe.UState.Objects.FindShip(authorityScout.Id);
+            Assert.IsNotNull(clientScout, "SC/SX rows should materialize the host scout on the passive client.");
+            Assert.AreEqual(revealSystem.Id, clientScout.System?.Id,
+                "The passive client should have the joiner ship in the host-authored system.");
+            Assert.IsTrue(clientReveal.IsExploredBy(clientPlayer),
+                "Passive client must reveal systems from host-authored exploration masks.");
+            Assert.IsFalse(clientHidden.IsExploredBy(clientPlayer),
+                "Exploration replay must not reveal unrelated hidden systems.");
+            AssertPayloadContains(started.Session.LastAuthoritySnapshot, $"XS|{revealSystem.Id}|",
+                "system exploration rows");
+            AssertPayloadContains(started.Session.LastAuthoritySnapshot, $"XP|",
+                "planet exploration rows");
+            AssertAllCanonicallySynced(started.Session, HostPeer);
+        }
+        catch (Authoritative4XSyncMismatchException e)
+        {
+            Assert.Fail("Exploration replay QA scenario desynced: " + FirstFatalDiff(e));
+        }
+    }
+
+    [TestMethod]
+    public void QaPirateRenewalDemand_RaisesOnceWhilePending_Headless()
+    {
+        using Authoritative4XLobbyStartResult started = StartOnePassiveSession(0x4A0C00B, pirates: true,
+            disableResearchStations: true, disableMiningOps: true, turnTimer: 1);
+        int empireId = started.EmpireIdForPeer(HostPeer);
+        int sequence = 8_700;
+
+        try
+        {
+            ConfigureScenarioUniverses(started, disableEvents: false);
+            Empire victim = started.AuthorityUniverse.UState.GetEmpireById(empireId);
+            Empire pirate = FindPirateEmpire(started.AuthorityUniverse);
+            Assert.IsNotNull(pirate, "Pirate renewal QA requires a generated pirate faction.");
+
+            for (int i = 0; i < 240 && PiratePaymentDirectorCount(pirate, victim) == 0; ++i)
+                SubmitAccepted(started, HostPeer,
+                    AuthoritativePlayerCommand.NoOp(sequence++, empireId),
+                    assertEachClient: i % 30 == 0);
+            Assert.AreEqual(1, PiratePaymentDirectorCount(pirate, victim),
+                "Pirate setup should create one payment director for the victim.");
+
+            PrepareAuthorityPirateRenewalDemand(pirate, victim);
+            int initialPopups = PirateRenewalPopupCount(pirate.Id, victim.Id);
+            for (int i = 0; i < 600
+                            && !pirate.Pirates.PaymentDemandPendingFor(victim)
+                            && PirateRenewalPopupCount(pirate.Id, victim.Id) == initialPopups; ++i)
+            {
+                SubmitAccepted(started, HostPeer,
+                    AuthoritativePlayerCommand.NoOp(sequence++, empireId),
+                    assertEachClient: i % 30 == 0);
+            }
+
+            Assert.IsTrue(pirate.Pirates.PaymentDemandPendingFor(victim),
+                "The renewal demand must stay pending until the player answers. "
+                + $"victim.isPlayer={victim.isPlayer} human={victim.IsHumanControlled} "
+                + $"timer={pirate.Pirates.PaymentTimerFor(victim)} threat={pirate.Pirates.ThreatLevelFor(victim)} "
+                + $"steps={PiratePaymentDirectorSteps(pirate, victim)} "
+                + $"popupsBefore={initialPopups} popupsAfter={PirateRenewalPopupCount(pirate.Id, victim.Id)}");
+            Assert.AreEqual(initialPopups + 1, PirateRenewalPopupCount(pirate.Id, victim.Id),
+                "The first renewal tick should raise exactly one popup.");
+
+            for (int i = 0; i < 90; ++i)
+                SubmitAccepted(started, HostPeer,
+                    AuthoritativePlayerCommand.NoOp(sequence++, empireId),
+                    assertEachClient: i % 30 == 0 || i == 89);
+
+            Assert.IsTrue(pirate.Pirates.PaymentDemandPendingFor(victim),
+                "The unanswered renewal should remain pending.");
+            Assert.AreEqual(initialPopups + 1, PirateRenewalPopupCount(pirate.Id, victim.Id),
+                "Unanswered renewal demand must not re-fire every tick.");
+
+            ForceAuthoritativeReplay(started);
+            for (int i = 0; i < 30; ++i)
+                SubmitAccepted(started, HostPeer,
+                    AuthoritativePlayerCommand.NoOp(sequence++, empireId),
+                    assertEachClient: i == 29);
+            Assert.AreEqual(initialPopups + 1, PirateRenewalPopupCount(pirate.Id, victim.Id),
+                "Forced replay plus more ticks must not duplicate the pending renewal.");
+        }
+        catch (Authoritative4XSyncMismatchException e)
+        {
+            Assert.Fail("Pirate renewal QA scenario desynced: " + FirstFatalDiff(e));
+        }
+    }
+
+    [TestMethod]
     public void QaFullGameCombinedSoak_AllFamiliesStaySyncedThroughForcedResync_Headless()
     {
         const string DesignName = "QA Combined Tech-Gated Design";
@@ -822,6 +947,34 @@ public class AuthoritativeQaScenarioTests : StarDriveTest
             Assert.IsNotNull(ship, $"Could not create authority ship '{design}'.");
             universe.UState.Objects.UpdateLists(removeInactiveObjects: false);
             return ship;
+        }
+    }
+
+    static void SetAuthorityShipInSystem(Ship ship, SolarSystem system)
+    {
+#if DEBUG
+        using (AuthoritativeMutationGuard.EnterAcceptedCommandApply())
+#endif
+        {
+            Assert.IsNotNull(ship);
+            Assert.IsNotNull(system);
+            ship.SetSystem(system);
+            if (!system.ShipList.ContainsRef(ship))
+                system.ShipList.Add(ship);
+        }
+    }
+
+    static void SetAuthoritySystemExplored(UniverseScreen universe, int systemId, int empireId)
+    {
+#if DEBUG
+        using (AuthoritativeMutationGuard.EnterAcceptedCommandApply())
+#endif
+        {
+            Empire empire = universe.UState.GetEmpireById(empireId);
+            SolarSystem system = universe.UState.Systems.FirstOrDefault(s => s.Id == systemId);
+            Assert.IsNotNull(empire, $"Empire {empireId} not found.");
+            Assert.IsNotNull(system, $"System {systemId} not found.");
+            system.SetExploredBy(empire);
         }
     }
 
@@ -1356,6 +1509,75 @@ public class AuthoritativeQaScenarioTests : StarDriveTest
     {
         CollectionAssert.AreEqual(UnlockedTechIds(authority), UnlockedTechIds(client),
             $"Unlocked tech exact set mismatch for {label}.");
+    }
+
+    static string PiratePaymentDirectorSteps(Empire pirate, Empire victim)
+    {
+        int victimId = victim?.Id ?? 0;
+        return string.Join(",",
+            pirate?.AI?.Goals?
+                .Where(g => g.Type == GoalType.PirateDirectorPayment && g.TargetEmpire?.Id == victimId)
+                .Select(g => $"{g.Step}:{g.StepName}") ?? Enumerable.Empty<string>());
+    }
+
+    static void PrepareAuthorityPirateRenewalDemand(Empire pirate, Empire victim)
+    {
+#if DEBUG
+        using (AuthoritativeMutationGuard.EnterAcceptedCommandApply())
+#endif
+        {
+            Assert.IsNotNull(pirate);
+            Assert.IsNotNull(victim);
+            pirate.Pirates.ClearPaymentDemandPendingFor(victim);
+            pirate.data.MinimumColoniesForStartPayment = -1;
+            pirate.Pirates.PaymentTimers[victim.Id] = 0;
+            pirate.Pirates.ThreatLevels[victim.Id] = 1;
+            foreach (Goal goal in pirate.AI.Goals.Where(g => g.Type == GoalType.PirateDirectorPayment
+                                                           && g.TargetEmpire?.Id == victim.Id))
+                SetGoalStepForTest(goal, 0);
+            Relationship victimToPirate = victim.GetRelations(pirate);
+            victimToPirate.FactionContactStep = 2;
+            victimToPirate.PlayerContactStep = 2;
+            victimToPirate.AtWar = false;
+            pirate.GetRelations(victim).AtWar = false;
+            Empire.SetRelationsAsKnown(pirate, victim);
+            pirate.SignTreatyWith(victim, TreatyType.NonAggression);
+            Empire.UpdateBilateralRelations(pirate, victim);
+        }
+    }
+
+    static void SetGoalStepForTest(Goal goal, int step)
+    {
+        PropertyInfo property = typeof(Goal).GetProperty(nameof(Goal.Step),
+            BindingFlags.Instance | BindingFlags.Public);
+        Assert.IsNotNull(property, "Goal.Step property should exist for QA fixture setup.");
+        property.GetSetMethod(nonPublic: true)?.Invoke(goal, new object[] { step });
+        Assert.AreEqual(step, goal.Step, "QA fixture failed to set goal step.");
+    }
+
+    static int PirateRenewalPopupCount(int pirateId, int victimId)
+        => ScreenManagerScreensForTest()
+            .OfType<EncounterPopup>()
+            .Count(p => p.Encounter?.Step == 2
+                        && p.Instance?.TargetEmpire?.Id == pirateId
+                        && p.Instance?.Player?.Id == victimId);
+
+    static IEnumerable<object> ScreenManagerScreensForTest()
+    {
+        ScreenManager sm = ScreenManager.Instance;
+        if (sm == null)
+            yield break;
+
+        foreach (object screen in sm.Screens)
+            yield return screen;
+
+        FieldInfo pending = typeof(ScreenManager).GetField("PendingScreens",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        if (pending?.GetValue(sm) is not IEnumerable pendingScreens)
+            yield break;
+
+        foreach (object screen in pendingScreens)
+            yield return screen;
     }
 
     static string RacePreference(IEmpireData race)

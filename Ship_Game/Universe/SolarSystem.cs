@@ -487,6 +487,8 @@ namespace Ship_Game
         }
 
         public bool IsFullyExploredBy(Empire empire) => FullyExplored.IsSet(empire.Id);
+        public uint FullyExploredByMask => FullyExplored.Values;
+        public void SetFullyExploredByMask(uint mask) => FullyExplored.Values = mask;
 
         public void UpdateFullyExploredBy(Empire empire)
         {

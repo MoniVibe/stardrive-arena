@@ -17,6 +17,8 @@ namespace Ship_Game.Universe
 
         public void SetExploredBy(Empire empire) => ExploredBy.Set(empire.Id);
         public bool IsExploredBy(Empire empire)  => ExploredBy.IsSet(empire.Id);
+        public uint ExploredByMask => ExploredBy.Values;
+        public void SetExploredByMask(uint mask) => ExploredBy.Values = mask;
 
         public void SetResearchable(bool value, UniverseState universe)
         {

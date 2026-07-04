@@ -356,6 +356,12 @@ public sealed class ReplicationCoverageDiagnosticTests
             "",
             "Relationship state is fatal payload-digest covered and replayed, but absent from the raw hash."),
 
+        Row("XS", "Exploration",
+            "SystemId|ExploredByMask|FullyExploredByMask",
+            "SystemId|ExploredByMask|FullyExploredByMask",
+            "",
+            "System exploration state is host-authored and fatal payload-digest covered for passive clients."),
+
         Row("G", "EmpireGoal",
             "EmpireId|GoalKind|MarkForColonization.TargetPlanetId|MarkForColonization.IsManual|MarkForColonization.FinishedShipId|Refit.Step|Refit.OldShipId|Refit.ToBuildName|Refit.PlanetBuildingAtId|Refit.Rush|Refit.FleetId|Refit.FleetKey|FleetRequisition.Step|FleetRequisition.FleetId|FleetRequisition.FleetKey|FleetRequisition.NodeIndex|FleetRequisition.TemplateName|FleetRequisition.PlanetBuildingAtId|FleetRequisition.Rush|DeepSpace.GoalType|DeepSpace.Step|DeepSpace.ToBuildName|DeepSpace.TargetPlanetId|DeepSpace.TargetSystemId|DeepSpace.TargetShipId|DeepSpace.PlanetBuildingAtId|DeepSpace.BuildPosition.X|DeepSpace.BuildPosition.Y|DeepSpace.MovePosition.X|DeepSpace.MovePosition.Y",
             "EmpireId|GoalKind|MarkForColonization.TargetPlanetId|MarkForColonization.IsManual|MarkForColonization.FinishedShipId|DeepSpace.GoalType|DeepSpace.Step|DeepSpace.ToBuildName|DeepSpace.TargetPlanetId|DeepSpace.TargetSystemId|DeepSpace.TargetShipId|DeepSpace.PlanetBuildingAtId|DeepSpace.BuildPosition.X|DeepSpace.BuildPosition.Y|DeepSpace.MovePosition.X|DeepSpace.MovePosition.Y",
@@ -385,6 +391,12 @@ public sealed class ReplicationCoverageDiagnosticTests
             "PlanetId|OrbitalAngle|Position.X|Position.Y",
             "",
             "Planet orbital presentation is excluded from SyncDigest and covered by TransformDigest instead."),
+
+        Row("XP", "Exploration",
+            "PlanetId|ExploredByMask",
+            "PlanetId|ExploredByMask",
+            "",
+            "Planet exploration state is host-authored and fatal payload-digest covered for passive clients."),
 
         Row("BP", "Blueprint",
             "PlanetId|BlueprintSignature",

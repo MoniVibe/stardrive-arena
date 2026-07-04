@@ -102,6 +102,22 @@ public sealed partial class AuthoritativeStateSnapshot
         }
     }
 
+    internal static void EmitSystemExplorationRows(UniverseState us, uint tick, StringBuilder sb)
+    {
+        foreach (SolarSystem system in us.Systems.OrderBy(s => s.Id))
+            sb.Append("XS|").Append(system.Id)
+              .Append('|').Append(system.ExploredByMask)
+              .Append('|').Append(system.FullyExploredByMask)
+              .AppendLine();
+    }
+
+    internal static void EmitPlanetExplorationRows(Planet p, uint tick, StringBuilder sb)
+    {
+        sb.Append("XP|").Append(p.Id)
+          .Append('|').Append(p.ExploredByMask)
+          .AppendLine();
+    }
+
     internal static void EmitMarkForColonizationRows(Empire e, uint tick, StringBuilder sb)
     {
         foreach (MarkForColonization goal in e.AI.FindGoals<MarkForColonization>()

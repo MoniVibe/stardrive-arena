@@ -1196,6 +1196,38 @@ public sealed partial class AuthoritativeStateSnapshot
             ParseFlag(p[7]), ParseFlag(p[8]), ParseFlag(p[9]));
     }
 
+    internal static void ApplySystemExplorationLine(UniverseState universe, string line)
+    {
+        string[] p = line.Split('|');
+        if (p.Length < 4
+            || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int systemId)
+            || !uint.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out uint exploredMask)
+            || !uint.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out uint fullyExploredMask))
+        {
+            return;
+        }
+
+        SolarSystem system = universe.Systems.FirstOrDefault(s => s.Id == systemId);
+        if (system == null)
+            return;
+
+        system.SetExploredByMask(exploredMask);
+        system.SetFullyExploredByMask(fullyExploredMask);
+    }
+
+    internal static void ApplyPlanetExplorationLine(UniverseState universe, string line)
+    {
+        string[] p = line.Split('|');
+        if (p.Length < 3
+            || !int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int planetId)
+            || !uint.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out uint exploredMask))
+        {
+            return;
+        }
+
+        universe.GetPlanet(planetId)?.SetExploredByMask(exploredMask);
+    }
+
     static bool ParseFlag(string value)
         => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int flag) && flag != 0;
 
