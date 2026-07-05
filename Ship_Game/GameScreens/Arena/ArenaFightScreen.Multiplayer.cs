@@ -234,6 +234,19 @@ public sealed partial class ArenaFightScreen
         if (!MultiplayerPvPMode)
             return;
 
+        // LAYER-2 TRIPWIRE: the MP spawn path (SpawnMultiplayerFleet) deliberately does NOT call
+        // ReapplyVeterancy/ApplyPilotTraits, so MP ships are Level 0 with no pilot traits — that is
+        // the deterministic default both peers agree on. Pilot traits must NOT enter an MP match
+        // until the pilot loadout is serialized into the fleet manifest AND folded into the match
+        // fingerprint (PilotTraitV0.CatalogHash + per-slot level/trait ids), or the peers desync
+        // Level-0-vs-veteran. Fail loud if someone flips the MP flag before that Layer-2 wiring lands.
+        if (GlobalStats.Defaults.EnableArenaPilotTraitsInMultiplayer)
+            throw new InvalidOperationException(
+                "EnableArenaPilotTraitsInMultiplayer is set, but MP pilot-trait fingerprinting "
+                + "(Layer 2) is not implemented. Enabling pilot traits in MP without hashing the "
+                + "pilot loadout into the match fingerprint would desync the peers. Keep it false "
+                + "until Layer 2 lands.");
+
         Round = 1;
         AdvanceRoundOnNextFight = false;
         Phase = RunPhase.Fighting;

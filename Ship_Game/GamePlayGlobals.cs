@@ -99,6 +99,16 @@ public class GamePlayGlobals
     // ADDITIVE per-Ship bonus channel on top of the existing crew-Level veterancy (composed in
     // ArenaFightScreen.ReapplyVeterancy). Default false = zero behavior change (a true no-op).
     [StarData] public bool EnablePilotTraits;
+    // Which record supplies the pilot Level that traits are auto-granted from. false (default) =
+    // Captain: the transferable pilot keeps its skill across hulls (an ace who ejects re-crews at
+    // level). true = Vessel: ship-bound veterancy. Escape hatch per the advisor ruling; only read
+    // when EnablePilotTraits is true. (Primitive bool because this base assembly cannot reference
+    // the arena plugin's PilotTraitScope enum.)
+    [StarData] public bool PilotTraitScopeVessel;
+    // Layer-2 guard: pilot traits must NOT enter an MP lockstep match until the pilot loadout is
+    // serialized into the fleet manifest and hashed into the match fingerprint (else the two peers
+    // desync on Level-0-vs-veteran). Default false; the MP spawn path asserts on this.
+    [StarData] public bool EnableArenaPilotTraitsInMultiplayer;
 
     // visual modifiers
     [StarData] public float SpaceportScale = 0.5f;

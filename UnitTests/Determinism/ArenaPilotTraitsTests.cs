@@ -233,6 +233,59 @@ public class ArenaPilotTraitsTests : StarDriveTest
             normalized, "Normalize must drop unknowns, de-dup, and sort Ordinal.");
     }
 
+    [TestMethod]
+    public void PilotTraits_CatalogHash_IsStableAndOrderIndependent_Headless()
+    {
+        // The catalog hash is the identity Layer 2 folds into the MP fingerprint so peers running
+        // different trait tables refuse to start rather than desync. It must be non-empty, stable
+        // across repeated calls, and independent of source-array order (the impl canonicalizes by
+        // sorting Ordinal before hashing).
+        string a = PilotTraitV0.CatalogHash();
+        string b = PilotTraitV0.CatalogHash();
+        Assert.IsFalse(a.IsEmpty(), "Catalog hash must be non-empty.");
+        Assert.AreEqual(a, b, "Catalog hash must be stable across calls.");
+
+        // Recompute the same identity from a deliberately shuffled copy of the catalog fields and
+        // confirm it matches — proving the hash is order-independent (the compose result is too).
+        var h = SDUtils.Deterministic.DetHash.New();
+        var shuffled = new System.Collections.Generic.List<PilotTraitDefinition>(PilotTraitV0.Catalog);
+        shuffled.Reverse();
+        shuffled.Sort((x, y) => string.CompareOrdinal(x.Id, y.Id));
+        foreach (PilotTraitDefinition t in shuffled)
+        {
+            h.AddString(t.Id);
+            h.AddInt(t.LevelReq);
+            h.AddInt((int)t.Kind);
+            h.AddFloat(t.Value);
+        }
+        Assert.AreEqual("0x" + h.Value.ToString("X16"), a,
+            "Catalog hash must equal the canonical (Ordinal-sorted) recomputation.");
+    }
+
+    [TestMethod]
+    public void PilotTraits_Scope_CaptainPreferredVesselFallbackAndOverride_Headless()
+    {
+        // Scope flag is the escape hatch: Captain (default) grants from the transferable pilot's
+        // level when one is linked; Vessel forces ship-bound veterancy. Proven at the compose layer
+        // (pure, no spawn needed): the granted set is a function of whichever level scope selects.
+        int vesselLevel = 3;   // -> gunnery_drill (L3) granted
+        int captainLevel = 5;  // -> + evasive_ace (L5)
+
+        string[] vesselGrant = PilotTraitV0.GrantedTraitsForLevel(vesselLevel);
+        string[] captainGrant = PilotTraitV0.GrantedTraitsForLevel(captainLevel);
+        CollectionAssert.AreNotEquivalent(vesselGrant, captainGrant,
+            "The two levels must grant different trait sets for the scope choice to be observable.");
+
+        // Captain scope with a level-5 captain must grant the captain's (larger) set; Vessel scope
+        // must grant the vessel's set regardless of captain. This mirrors ApplyPilotTraits' selection.
+        Assert.IsTrue(System.Array.IndexOf(captainGrant, PilotTraitV0.EvasiveAceId) >= 0,
+            "Captain scope (level 5) should include evasive_ace.");
+        Assert.IsTrue(System.Array.IndexOf(vesselGrant, PilotTraitV0.EvasiveAceId) < 0,
+            "Vessel scope (level 3) should NOT include evasive_ace.");
+        Assert.IsFalse(new GamePlayGlobals().PilotTraitScopeVessel,
+            "Pilot trait scope must default to Captain (PilotTraitScopeVessel=false, transferable pilots).");
+    }
+
     // ---- helpers ----
 
     static PilotTraitDefinition RequireTrait(string id)

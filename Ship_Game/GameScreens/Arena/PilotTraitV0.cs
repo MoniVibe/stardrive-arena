@@ -109,6 +109,28 @@ public static class PilotTraitV0
             levelReq: 4, PilotTraitKind.Tracking, 1f),
     };
 
+    /// <summary>
+    /// A stable content hash of the catalog — the identity Layer 2 folds into the MP match
+    /// fingerprint so two peers running different trait tables (a mod, a tuning edit) refuse to
+    /// start rather than desync. Order-independent: the catalog is canonicalized (sorted Ordinal by
+    /// Id) before hashing, and each field that affects a composed effect is included. Pure; no
+    /// culture/format dependence (invariant, fixed field order).
+    /// </summary>
+    public static string CatalogHash()
+    {
+        PilotTraitDefinition[] sorted = (PilotTraitDefinition[])Catalog.Clone();
+        Array.Sort(sorted, (a, b) => string.CompareOrdinal(a.Id, b.Id));
+        var h = SDUtils.Deterministic.DetHash.New();
+        foreach (PilotTraitDefinition t in sorted)
+        {
+            h.AddString(t.Id);
+            h.AddInt(t.LevelReq);
+            h.AddInt((int)t.Kind);
+            h.AddFloat(t.Value); // exact bit pattern -> portable across peers
+        }
+        return "0x" + h.Value.ToString("X16");
+    }
+
     public static bool TryGet(string id, out PilotTraitDefinition definition)
     {
         if (id.NotEmpty())

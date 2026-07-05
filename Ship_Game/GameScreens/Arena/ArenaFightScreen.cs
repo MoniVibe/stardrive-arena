@@ -1396,8 +1396,19 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         if (s == null || v == null || !GlobalStats.Defaults.EnablePilotTraits)
             return;
 
-        ArenaCaptain captain = Career?.CaptainForVessel(v);
-        int pilotLevel = captain?.Level > 0 ? captain.Level : v.Level;
+        // PilotTraitScope selects which record supplies the crew Level traits grant from: Captain
+        // (default) = transferable pilot skill (an ace who ejects re-crews at level); Vessel = ship-
+        // bound veterancy. Falls back to the vessel Level when no captain is linked.
+        int pilotLevel;
+        if (GlobalStats.Defaults.PilotTraitScopeVessel)
+        {
+            pilotLevel = v.Level;
+        }
+        else
+        {
+            ArenaCaptain captain = Career?.CaptainForVessel(v);
+            pilotLevel = captain?.Level > 0 ? captain.Level : v.Level;
+        }
         ShipTraitEffect effect = PilotTraitV0.ComposeForLevel(pilotLevel);
         PilotTraitV0.ApplyToShip(s, effect);
     }
