@@ -2502,7 +2502,7 @@ public sealed partial class AuthoritativeStateSnapshot
         if (p.Length > 12 && TryParseFloatBits(p[12], out float parsedXRotation))
             xRotation = parsedXRotation;
         if (uint.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out uint tick))
-            ship.ObservePassiveAuthoritativeTransform(tick, rotation, active, dying);
+            ship.ObservePassiveAuthoritativeTransform(tick, new Vector2(x, y), rotation, active, dying);
 
         bool refreshProjectorInfluence = ship.IsSubspaceProjector
             && ship.Loyalty != null

@@ -15,12 +15,27 @@ namespace Ship_Game.Ships
         const float PassiveAuthoritativeVisualBankEase = 0.35f;
         const float PassiveAuthoritativeVisualBankEpsilon = 0.0001f;
         const int PassiveAuthoritativeVisualHoldRefreshes = 12;
+        const float PassiveAuthoritativeInterpolationDefaultFrameSeconds = 1f / PassiveAuthoritativeVisualTicksPerSecond;
+        const float PassiveAuthoritativeInterpolationMaxFrameSeconds = 0.25f;
+        const float PassiveAuthoritativeInterpolationSnapDistance = 25_000f;
+        const uint PassiveAuthoritativeInterpolationMaxTickGap = 60u;
         float PassiveAuthoritativeLastRotation;
         uint PassiveAuthoritativeLastTransformTick;
         bool PassiveAuthoritativeHasLastTransform;
         float PassiveAuthoritativeVisualBank;
         float PassiveAuthoritativeVisualBankTarget;
         int PassiveAuthoritativeRefreshesSinceTarget;
+        Vector2 PassiveAuthoritativePreviousPosition;
+        Vector2 PassiveAuthoritativeCurrentPosition;
+        Vector2 PassiveAuthoritativeRenderPosition;
+        float PassiveAuthoritativePreviousRotation;
+        float PassiveAuthoritativeCurrentRotation;
+        float PassiveAuthoritativeRenderRotation;
+        uint PassiveAuthoritativePreviousTransformTick;
+        uint PassiveAuthoritativeCurrentTransformTick;
+        float PassiveAuthoritativeInterpolationElapsedSeconds;
+        float PassiveAuthoritativeInterpolationDurationSeconds;
+        bool PassiveAuthoritativeHasCurrentTransform;
 
         public void MarkAsTransientEnvironment() => IsTransientEnvironment = true;
 
@@ -42,9 +57,72 @@ namespace Ship_Game.Ships
             XRotation = xRotation;
         }
 
-        internal void ObservePassiveAuthoritativeTransform(uint tick, float rotation, bool active, bool dying)
+        internal void ObservePassiveAuthoritativeTransform(uint tick, Vector2 position, float rotation,
+            bool active, bool dying)
+        {
+            bool snapped = ObservePassiveAuthoritativeInterpolation(tick, position, rotation, active, dying);
+            ObservePassiveAuthoritativeVisualBank(tick, rotation, active, dying, snapped);
+        }
+
+        bool ObservePassiveAuthoritativeInterpolation(uint tick, Vector2 position, float rotation,
+            bool active, bool dying)
         {
             if (!active || dying)
+            {
+                ResetPassiveAuthoritativeInterpolation(tick, position, rotation);
+                return true;
+            }
+
+            if (!PassiveAuthoritativeHasCurrentTransform)
+            {
+                ResetPassiveAuthoritativeInterpolation(tick, position, rotation);
+                return true;
+            }
+
+            if (tick <= PassiveAuthoritativeCurrentTransformTick)
+                return false;
+
+            PassiveAuthoritativePreviousPosition = PassiveAuthoritativeCurrentPosition;
+            PassiveAuthoritativePreviousRotation = PassiveAuthoritativeCurrentRotation;
+            PassiveAuthoritativePreviousTransformTick = PassiveAuthoritativeCurrentTransformTick;
+            PassiveAuthoritativeCurrentPosition = position;
+            PassiveAuthoritativeCurrentRotation = rotation;
+            PassiveAuthoritativeCurrentTransformTick = tick;
+
+            uint elapsedTicks = tick - PassiveAuthoritativePreviousTransformTick;
+            PassiveAuthoritativeInterpolationDurationSeconds = SnapshotDurationSeconds(elapsedTicks);
+            bool shouldSnap = elapsedTicks > PassiveAuthoritativeInterpolationMaxTickGap
+                           || PassiveAuthoritativePreviousPosition.Distance(position)
+                              > PassiveAuthoritativeInterpolationSnapDistance;
+
+            PassiveAuthoritativeInterpolationElapsedSeconds = shouldSnap
+                ? PassiveAuthoritativeInterpolationDurationSeconds
+                : 0f;
+            UpdatePassiveAuthoritativeRenderTransform();
+            return shouldSnap;
+        }
+
+        void ResetPassiveAuthoritativeInterpolation(uint tick, Vector2 position, float rotation)
+        {
+            PassiveAuthoritativePreviousPosition = position;
+            PassiveAuthoritativeCurrentPosition = position;
+            PassiveAuthoritativeRenderPosition = position;
+            PassiveAuthoritativePreviousRotation = rotation;
+            PassiveAuthoritativeCurrentRotation = rotation;
+            PassiveAuthoritativeRenderRotation = rotation;
+            PassiveAuthoritativePreviousTransformTick = tick;
+            PassiveAuthoritativeCurrentTransformTick = tick;
+            PassiveAuthoritativeInterpolationElapsedSeconds = 0f;
+            PassiveAuthoritativeInterpolationDurationSeconds = 0f;
+            PassiveAuthoritativeHasCurrentTransform = true;
+        }
+
+        static float SnapshotDurationSeconds(uint elapsedTicks)
+            => Math.Max(1u, elapsedTicks) / PassiveAuthoritativeVisualTicksPerSecond;
+
+        void ObservePassiveAuthoritativeVisualBank(uint tick, float rotation, bool active, bool dying, bool snapped)
+        {
+            if (!active || dying || snapped)
             {
                 PassiveAuthoritativeLastRotation = rotation;
                 PassiveAuthoritativeLastTransformTick = tick;
@@ -62,6 +140,9 @@ namespace Ship_Game.Ships
                 PassiveAuthoritativeRefreshesSinceTarget = 0;
                 return;
             }
+
+            if (tick <= PassiveAuthoritativeLastTransformTick)
+                return;
 
             uint elapsedTicks = tick > PassiveAuthoritativeLastTransformTick
                 ? tick - PassiveAuthoritativeLastTransformTick
@@ -94,6 +175,9 @@ namespace Ship_Game.Ships
             return delta;
         }
 
+        static float LerpRotationShortestArc(float previous, float current, float amount)
+            => (previous + SignedRotationDelta(previous, current) * amount).AsNormalizedRadians();
+
         void ResetPassiveAuthoritativeVisualBank()
         {
             PassiveAuthoritativeVisualBank = 0f;
@@ -124,11 +208,63 @@ namespace Ship_Game.Ships
             return PassiveAuthoritativeRenderYRotation;
         }
 
+        void AdvancePassiveAuthoritativeInterpolation(float elapsedSeconds)
+        {
+            if (!Active || Dying || !PassiveAuthoritativeHasCurrentTransform)
+            {
+                PassiveAuthoritativeRenderPosition = Position;
+                PassiveAuthoritativeRenderRotation = Rotation;
+                return;
+            }
+
+            PassiveAuthoritativeInterpolationElapsedSeconds = (
+                PassiveAuthoritativeInterpolationElapsedSeconds + SanitizedPassiveAuthoritativeFrameSeconds(elapsedSeconds))
+                .Clamped(0f, PassiveAuthoritativeInterpolationDurationSeconds);
+            UpdatePassiveAuthoritativeRenderTransform();
+        }
+
+        void UpdatePassiveAuthoritativeRenderTransform()
+        {
+            if (!PassiveAuthoritativeHasCurrentTransform
+                || PassiveAuthoritativeInterpolationDurationSeconds <= PassiveAuthoritativeVisualBankEpsilon)
+            {
+                PassiveAuthoritativeRenderPosition = PassiveAuthoritativeHasCurrentTransform
+                    ? PassiveAuthoritativeCurrentPosition
+                    : Position;
+                PassiveAuthoritativeRenderRotation = PassiveAuthoritativeHasCurrentTransform
+                    ? PassiveAuthoritativeCurrentRotation
+                    : Rotation;
+                return;
+            }
+
+            float amount = (PassiveAuthoritativeInterpolationElapsedSeconds
+                            / PassiveAuthoritativeInterpolationDurationSeconds).Clamped(0f, 1f);
+            PassiveAuthoritativeRenderPosition =
+                PassiveAuthoritativePreviousPosition.LerpTo(PassiveAuthoritativeCurrentPosition, amount);
+            PassiveAuthoritativeRenderRotation =
+                LerpRotationShortestArc(PassiveAuthoritativePreviousRotation, PassiveAuthoritativeCurrentRotation, amount);
+        }
+
+        static float SanitizedPassiveAuthoritativeFrameSeconds(float elapsedSeconds)
+        {
+            if (!float.IsFinite(elapsedSeconds) || elapsedSeconds < 0f)
+            {
+                elapsedSeconds = GameBase.Base?.Elapsed?.RealTime.Seconds
+                              ?? PassiveAuthoritativeInterpolationDefaultFrameSeconds;
+            }
+
+            return elapsedSeconds.Clamped(0f, PassiveAuthoritativeInterpolationMaxFrameSeconds);
+        }
+
         float PassiveAuthoritativeRenderYRotation
             => (YRotation + PassiveAuthoritativeVisualBank).Clamped(-MaxBank, MaxBank);
 
+        Vector2 PassiveAuthoritativeTacticalIconPosition
+            => PassiveAuthoritativeHasCurrentTransform ? PassiveAuthoritativeRenderPosition : Position;
+
         float PassiveAuthoritativeTacticalIconRotation
-            => Rotation + PassiveAuthoritativeVisualBank * 0.35f;
+            => (PassiveAuthoritativeHasCurrentTransform ? PassiveAuthoritativeRenderRotation : Rotation)
+               + PassiveAuthoritativeVisualBank * 0.35f;
 
         float PassiveAuthoritativeTacticalIconWidthScale
         {
@@ -142,16 +278,28 @@ namespace Ship_Game.Ships
 
         internal float PassiveAuthoritativeVisualBankForTest => PassiveAuthoritativeVisualBank;
         internal float PassiveAuthoritativeVisualBankTargetForTest => PassiveAuthoritativeVisualBankTarget;
+        internal Vector2 PassiveAuthoritativeRenderPositionForTest => PassiveAuthoritativeRenderPosition;
+        internal float PassiveAuthoritativeRenderRotationForTest => PassiveAuthoritativeRenderRotation;
+        internal float PassiveAuthoritativeInterpolationDurationForTest => PassiveAuthoritativeInterpolationDurationSeconds;
+        internal float PassiveAuthoritativeInterpolationElapsedForTest => PassiveAuthoritativeInterpolationElapsedSeconds;
         internal float PassiveAuthoritativeRenderYRotationForTest => PassiveAuthoritativeRenderYRotation;
         internal float PassiveAuthoritativeTacticalIconRotationForTest => PassiveAuthoritativeTacticalIconRotation;
         internal float PassiveAuthoritativeTacticalIconWidthScaleForTest => PassiveAuthoritativeTacticalIconWidthScale;
 
-        public void SyncSceneObjectForPassiveAuthoritativeView(bool forceVisible = false)
+        public void SyncSceneObjectForPassiveAuthoritativeView(bool forceVisible = false, float elapsedSeconds = -1f)
         {
             if (!Active || Dying)
                 return;
             if (!forceVisible && !IsVisibleToPlayer)
                 return;
+
+            AdvancePassiveAuthoritativeInterpolation(elapsedSeconds);
+            Vector2 renderPosition = PassiveAuthoritativeHasCurrentTransform
+                ? PassiveAuthoritativeRenderPosition
+                : Position;
+            float renderRotation = PassiveAuthoritativeHasCurrentTransform
+                ? PassiveAuthoritativeRenderRotation
+                : Rotation;
 
             if (ShipSO == null)
             {
@@ -164,8 +312,8 @@ namespace Ship_Game.Ships
             ShipSO.World = Matrix.CreateTranslation(new Vector3(ShipData.BaseHull.MeshOffset, 0f))
                          * Matrix.CreateRotationY(renderYRotation)
                          * Matrix.CreateRotationX(XRotation)
-                         * Matrix.CreateRotationZ(Rotation)
-                         * Matrix.CreateTranslation(new Vector3(Position, 0f));
+                         * Matrix.CreateRotationZ(renderRotation)
+                         * Matrix.CreateTranslation(new Vector3(renderPosition, 0f));
             ShipSO.Visibility = GlobalStats.ShipVisibility;
         }
     }

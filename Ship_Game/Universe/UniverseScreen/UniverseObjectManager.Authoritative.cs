@@ -21,7 +21,7 @@ namespace Ship_Game
             UpdatePassiveSystemPresentation();
             Spatial.Update(Objects.GetItems());
             UpdateVisibleObjects();
-            SyncPassiveVisibleShipSceneObjects();
+            SyncPassiveVisibleShipSceneObjects(PassiveAuthoritativeFrameDeltaSeconds());
 
             TotalTime.Stop();
         }
@@ -50,11 +50,14 @@ namespace Ship_Game
             }
         }
 
-        void SyncPassiveVisibleShipSceneObjects()
+        static float PassiveAuthoritativeFrameDeltaSeconds()
+            => GameBase.Base?.Elapsed?.RealTime.Seconds ?? -1f;
+
+        void SyncPassiveVisibleShipSceneObjects(float elapsedSeconds)
         {
             Ship[] visibleShips = VisibleShips;
             for (int i = 0; i < visibleShips.Length; ++i)
-                visibleShips[i]?.SyncSceneObjectForPassiveAuthoritativeView();
+                visibleShips[i]?.SyncSceneObjectForPassiveAuthoritativeView(elapsedSeconds: elapsedSeconds);
         }
     }
 }

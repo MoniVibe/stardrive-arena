@@ -9420,10 +9420,10 @@ public class Authoritative4XSessionTests : StarDriveTest
             Matrix expectedWorld = Matrix.CreateTranslation(new Vector3(clientShip.ShipData.BaseHull.MeshOffset, 0f))
                                  * Matrix.CreateRotationY(clientShip.PassiveAuthoritativeRenderYRotationForTest)
                                  * Matrix.CreateRotationX(clientShip.XRotation)
-                                 * Matrix.CreateRotationZ(clientShip.Rotation)
-                                 * Matrix.CreateTranslation(new Vector3(clientShip.Position, 0f));
+                                 * Matrix.CreateRotationZ(clientShip.PassiveAuthoritativeRenderRotationForTest)
+                                 * Matrix.CreateTranslation(new Vector3(clientShip.PassiveAuthoritativeRenderPositionForTest, 0f));
             Assert.AreEqual(expectedWorld, sceneObject.World,
-                "The passive mesh matrix should include the render-only bank layer.");
+                "The passive mesh matrix should include render-only interpolation and bank layers.");
             Assert.AreNotEqual(clientShip.Rotation, clientShip.PassiveAuthoritativeTacticalIconRotationForTest,
                 "The tactical icon path should consume the same render-only passive visual bank.");
             Assert.IsTrue(clientShip.PassiveAuthoritativeTacticalIconWidthScaleForTest < 1f,
@@ -9455,6 +9455,185 @@ public class Authoritative4XSessionTests : StarDriveTest
                 "Visual-bank decay must not affect durable SyncDigest.");
             Assert.AreEqual(stoppedSnapshot.TransformDigest, decayedClientSnapshot.TransformDigest,
                 "Visual-bank decay must not affect SX TransformDigest.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XPassiveSnapshotInterpolation_RendersMidIntervalAndSnapsLargeJump_Headless()
+    {
+        const ulong Seed = 0x494E544552504DUL;
+        BuiltWorld world = BuildWorld(Seed);
+
+        try
+        {
+            world.UState.Objects.UpdateLists(removeInactiveObjects: false);
+            Ship ship = world.Ship;
+            var sceneObject = new SynapseGaming.LightingSystem.Rendering.SceneObject("passive-interp-math-proof");
+            typeof(Ship).GetField("ShipSO",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                ?.SetValue(ship, sceneObject);
+            ship.InFrustum = true;
+            ship.KnownByEmpires.SetSeen(world.Player);
+            world.UState.ViewState = UniverseScreen.UnivScreenState.SystemView;
+
+            Vector2 startPosition = new Vector2(100f, 200f);
+            Vector2 endPosition = new Vector2(500f, 220f);
+            float startRotation = 6.0f;
+            float endRotation = 0.1f;
+
+            AuthoritativeStateSnapshot.ApplyShipTransformLine(world.UState,
+                ShipTransformRowForTest(ship, tick: 10, startPosition, Vector2.Zero, startRotation));
+            ship.SyncSceneObjectForPassiveAuthoritativeView(forceVisible: true, elapsedSeconds: 0f);
+            AssertVector2Near(startPosition, ship.PassiveAuthoritativeRenderPositionForTest,
+                "The first passive transform should render at the authoritative position.");
+            Assert.AreEqual(startRotation, ship.PassiveAuthoritativeRenderRotationForTest, 0.0001f,
+                "The first passive transform should render at the authoritative rotation.");
+
+            AuthoritativeStateSnapshot.ApplyShipTransformLine(world.UState,
+                ShipTransformRowForTest(ship, tick: 14, endPosition, Vector2.Zero, endRotation));
+            float halfInterval = ship.PassiveAuthoritativeInterpolationDurationForTest * 0.5f;
+            ship.SyncSceneObjectForPassiveAuthoritativeView(forceVisible: true, elapsedSeconds: halfInterval);
+
+            Vector2 expectedMidPosition = new Vector2(
+                startPosition.X + (endPosition.X - startPosition.X) * 0.5f,
+                startPosition.Y + (endPosition.Y - startPosition.Y) * 0.5f);
+            float expectedMidRotation = LerpRotationShortestArcForTest(startRotation, endRotation, 0.5f);
+            AssertVector2Near(expectedMidPosition, ship.PassiveAuthoritativeRenderPositionForTest,
+                "Passive interpolation should render halfway between adjacent SX transforms mid-interval.");
+            Assert.AreEqual(expectedMidRotation, ship.PassiveAuthoritativeRenderRotationForTest, 0.0001f,
+                "Passive interpolation should lerp 2D rotation over the shortest arc.");
+            Assert.AreEqual(FloatBitsForTest(endPosition.X), FloatBitsForTest(ship.Position.X),
+                "Interpolation must not move the authoritative gameplay position.");
+            Assert.AreEqual(FloatBitsForTest(endPosition.Y), FloatBitsForTest(ship.Position.Y),
+                "Interpolation must not move the authoritative gameplay position.");
+            Assert.AreEqual(FloatBitsForTest(endRotation), FloatBitsForTest(ship.Rotation),
+                "Interpolation must not move the authoritative gameplay rotation.");
+
+            Matrix expectedWorld = Matrix.CreateTranslation(new Vector3(ship.ShipData.BaseHull.MeshOffset, 0f))
+                                 * Matrix.CreateRotationY(ship.PassiveAuthoritativeRenderYRotationForTest)
+                                 * Matrix.CreateRotationX(ship.XRotation)
+                                 * Matrix.CreateRotationZ(expectedMidRotation)
+                                 * Matrix.CreateTranslation(new Vector3(expectedMidPosition, 0f));
+            Assert.AreEqual(expectedWorld, sceneObject.World,
+                "The passive scene object should consume interpolated render transform values.");
+
+            Vector2 jumpPosition = new Vector2(80_000f, -75_000f);
+            float jumpRotation = 2.25f;
+            AuthoritativeStateSnapshot.ApplyShipTransformLine(world.UState,
+                ShipTransformRowForTest(ship, tick: 18, jumpPosition, Vector2.Zero, jumpRotation));
+            ship.SyncSceneObjectForPassiveAuthoritativeView(forceVisible: true, elapsedSeconds: 0f);
+            AssertVector2Near(jumpPosition, ship.PassiveAuthoritativeRenderPositionForTest,
+                "Large passive transform gaps should snap instead of sliding across the map.");
+            Assert.AreEqual(jumpRotation, ship.PassiveAuthoritativeRenderRotationForTest, 0.0001f,
+                "Large passive transform gaps should snap rotation to the latest authoritative sample.");
+        }
+        finally
+        {
+            world.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void Authoritative4XPassiveSnapshotInterpolation_IsRenderOnlyAndDigestNeutral_Headless()
+    {
+        const ulong Seed = 0x494E5445525044UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            var replica = new Authoritative4XClientReplica(client.Screen, humanEmpireIds: new[] { client.Player.Id });
+            Ship authorityShip = authority.Ship;
+
+            void RefreshSnapshotShipLists()
+            {
+                authority.UState.Objects.UpdateLists(removeInactiveObjects: false);
+                client.UState.Objects.UpdateLists(removeInactiveObjects: false);
+            }
+
+            Ship RequireClientShip(string message)
+            {
+                client.UState.Objects.UpdateLists(removeInactiveObjects: false);
+                Ship found = client.UState.Objects.FindShip(authorityShip.Id);
+                Assert.IsNotNull(found, message);
+                return found;
+            }
+
+            AuthoritativeStateSnapshot ApplyHostSnapshot(int sequence, uint tick)
+            {
+                var command = AuthoritativePlayerCommand.NoOp(sequence, authority.Player.Id);
+                var result = new AuthoritativeCommandResult
+                {
+                    Sequence = sequence,
+                    OriginPeer = 2,
+                    Accepted = false,
+                    Tick = tick,
+                    Reason = "",
+                };
+                RefreshSnapshotShipLists();
+                AuthoritativeStateSnapshot snapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, tick);
+                replica.ApplyAuthoritativeResult(command, result, snapshot);
+                return snapshot;
+            }
+
+            authorityShip.Position = new Vector2(1_000f, -500f);
+            authorityShip.Velocity = new Vector2(20f, -10f);
+            authorityShip.Rotation = 0.5f;
+            authorityShip.YRotation = 0f;
+            authorityShip.XRotation = 0f;
+            authorityShip.ReinsertSpatial = true;
+            ApplyHostSnapshot(330, 10);
+
+            Vector2 previousPosition = authorityShip.Position;
+            float previousRotation = authorityShip.Rotation;
+            authorityShip.Position = previousPosition + new Vector2(600f, 300f);
+            authorityShip.Velocity = new Vector2(120f, 60f);
+            authorityShip.Rotation = (previousRotation + 0.3f).AsNormalizedRadians();
+            authorityShip.YRotation = 0f;
+            authorityShip.XRotation = 0f;
+            authorityShip.ReinsertSpatial = true;
+            AuthoritativeStateSnapshot movingSnapshot = ApplyHostSnapshot(331, 14);
+
+            Ship clientShip = RequireClientShip("The passive interpolation proof needs the fixture ship on the client.");
+            var sceneObject = new SynapseGaming.LightingSystem.Rendering.SceneObject("passive-interp-digest-proof");
+            typeof(Ship).GetField("ShipSO",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                ?.SetValue(clientShip, sceneObject);
+            clientShip.InFrustum = true;
+            clientShip.KnownByEmpires.SetSeen(client.Player);
+            client.UState.ViewState = UniverseScreen.UnivScreenState.SystemView;
+
+            float halfInterval = clientShip.PassiveAuthoritativeInterpolationDurationForTest * 0.5f;
+            clientShip.SyncSceneObjectForPassiveAuthoritativeView(forceVisible: true, elapsedSeconds: halfInterval);
+
+            Vector2 expectedRenderPosition = new Vector2(
+                previousPosition.X + (authorityShip.Position.X - previousPosition.X) * 0.5f,
+                previousPosition.Y + (authorityShip.Position.Y - previousPosition.Y) * 0.5f);
+            float expectedRenderRotation =
+                LerpRotationShortestArcForTest(previousRotation, authorityShip.Rotation, 0.5f);
+            AssertVector2Near(expectedRenderPosition, clientShip.PassiveAuthoritativeRenderPositionForTest,
+                "The passive render transform should sit between the previous and current authoritative samples.");
+            Assert.AreEqual(expectedRenderRotation, clientShip.PassiveAuthoritativeRenderRotationForTest, 0.0001f,
+                "The passive render transform should interpolate heading without changing Ship.Rotation.");
+            Assert.AreEqual(FloatBitsForTest(authorityShip.Position.X), FloatBitsForTest(clientShip.Position.X),
+                "Authoritative gameplay position X must remain at the last applied SX value.");
+            Assert.AreEqual(FloatBitsForTest(authorityShip.Position.Y), FloatBitsForTest(clientShip.Position.Y),
+                "Authoritative gameplay position Y must remain at the last applied SX value.");
+            Assert.AreEqual(FloatBitsForTest(authorityShip.Rotation), FloatBitsForTest(clientShip.Rotation),
+                "Authoritative gameplay rotation must remain at the last applied SX value.");
+
+            RefreshSnapshotShipLists();
+            AuthoritativeStateSnapshot visualClientSnapshot =
+                AuthoritativeStateSnapshot.Capture(client.Screen, movingSnapshot.Tick);
+            Assert.AreEqual(movingSnapshot.SyncDigest, visualClientSnapshot.SyncDigest,
+                "Passive interpolation must not affect durable SyncDigest.");
+            Assert.AreEqual(movingSnapshot.TransformDigest, visualClientSnapshot.TransformDigest,
+                "Passive interpolation must not affect SX TransformDigest.");
         }
         finally
         {
@@ -9525,22 +9704,56 @@ public class Authoritative4XSessionTests : StarDriveTest
                     System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
                 ?.SetValue(client.UState.Objects, Array.Empty<Ship>());
             clientShip.InFrustum = false;
+            Vector2 previousAuthoritativePosition = authorityShip.Position;
+            float previousAuthoritativeRotation = authorityShip.Rotation;
+            authorityShip.Position += new Vector2(5_000f, -1_250f);
             authorityShip.Rotation = 2.125f;
             authorityShip.YRotation = 0.25f;
             authorityShip.XRotation = -0.125f;
             authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, 9);
             replica.ApplyAuthoritativeResult(command, result, authoritySnapshot);
+            clientShip = client.UState.Objects.FindShip(authorityShip.Id);
+            Assert.IsNotNull(clientShip, "The local ship must still exist after the second host transform replay.");
+            Assert.AreEqual(FloatBitsForTest(authorityShip.Position.X), FloatBitsForTest(clientShip.Position.X),
+                "Passive gameplay position X must remain at the latest host SX value.");
+            Assert.AreEqual(FloatBitsForTest(authorityShip.Position.Y), FloatBitsForTest(clientShip.Position.Y),
+                "Passive gameplay position Y must remain at the latest host SX value.");
+            Assert.AreEqual(FloatBitsForTest(authorityShip.Rotation), FloatBitsForTest(clientShip.Rotation),
+                "Passive gameplay rotation must remain at the latest host SX value.");
+
+            float halfInterval = clientShip.PassiveAuthoritativeInterpolationDurationForTest * 0.5f;
+            clientShip.SyncSceneObjectForPassiveAuthoritativeView(forceVisible: true, elapsedSeconds: halfInterval);
+            AssertVector2BetweenInclusive(previousAuthoritativePosition, authorityShip.Position,
+                clientShip.PassiveAuthoritativeRenderPositionForTest,
+                "The passive render position should stay between adjacent host SX samples mid-interval.");
+            Assert.AreEqual(LerpRotationShortestArcForTest(previousAuthoritativeRotation, authorityShip.Rotation, 0.5f),
+                clientShip.PassiveAuthoritativeRenderRotationForTest, 0.0001f,
+                "The passive render rotation should interpolate while gameplay rotation stays authoritative.");
+
+            client.Screen.RefreshAuthoritative4XPassiveClientView();
+            var authoritativeNearby = client.UState.Spatial.FindNearby(GameObjectType.Ship,
+                clientShip.Position, 128f, 32);
+            Assert.IsTrue(authoritativeNearby.Any(o => o is Ship ship && ship.Id == clientShip.Id),
+                "Passive spatial reindexing must use the authoritative gameplay position, not render interpolation.");
+            typeof(UniverseObjectManager).GetField("<VisibleShips>k__BackingField",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                ?.SetValue(client.UState.Objects, Array.Empty<Ship>());
+            clientShip.InFrustum = false;
 
             int synced = client.Screen.SyncAuthoritative4XPassiveShipSceneObjectsForHeadless();
             Assert.IsTrue(synced > 0,
                 "Passive scene-object sync must scan local/known ships, not only the potentially stale VisibleShips cache.");
+            AssertVector2BetweenInclusive(previousAuthoritativePosition, authorityShip.Position,
+                clientShip.PassiveAuthoritativeRenderPositionForTest,
+                "The passive render position should remain clamped between adjacent host SX samples.");
             Matrix expectedWorld = Matrix.CreateTranslation(new Vector3(clientShip.ShipData.BaseHull.MeshOffset, 0f))
-                                 * Matrix.CreateRotationY(clientShip.YRotation)
+                                 * Matrix.CreateRotationY(clientShip.PassiveAuthoritativeRenderYRotationForTest)
                                  * Matrix.CreateRotationX(clientShip.XRotation)
-                                 * Matrix.CreateRotationZ(clientShip.Rotation)
-                                 * Matrix.CreateTranslation(new Vector3(clientShip.Position, 0f));
+                                 * Matrix.CreateRotationZ(clientShip.PassiveAuthoritativeRenderRotationForTest)
+                                 * Matrix.CreateTranslation(
+                                     new Vector3(clientShip.PassiveAuthoritativeRenderPositionForTest, 0f));
             Assert.AreEqual(expectedWorld, sceneObject.World,
-                "Passive clients should update the 3D hull orientation even when the visible-object cache lags.");
+                "Passive clients should update the 3D hull with render-only interpolation even when the visible-object cache lags.");
             Assert.AreEqual(GlobalStats.ShipVisibility, sceneObject.Visibility,
                 "A stale frustum bit must not leave the joined-client hull scene object hidden.");
         }
@@ -14776,6 +14989,41 @@ public class Authoritative4XSessionTests : StarDriveTest
     {
         string prefix = $"S|{shipId}|";
         return PayloadRowForTest(payload, prefix);
+    }
+
+    static string ShipTransformRowForTest(Ship ship, uint tick, Vector2 position, Vector2 velocity, float rotation)
+        => $"SX|{ship.Id}|{tick}|{FloatBitsForTest(position.X)}|{FloatBitsForTest(position.Y)}|"
+           + $"{FloatBitsForTest(velocity.X)}|{FloatBitsForTest(velocity.Y)}|{FloatBitsForTest(rotation)}|"
+           + $"{ship.System?.Id ?? 0}|{(ship.Active ? 1 : 0)}|{(ship.Dying ? 1 : 0)}|"
+           + $"{FloatBitsForTest(ship.YRotation)}|{FloatBitsForTest(ship.XRotation)}";
+
+    static uint FloatBitsForTest(float value) => BitConverter.SingleToUInt32Bits(value);
+
+    static void AssertVector2Near(Vector2 expected, Vector2 actual, string message)
+    {
+        Assert.AreEqual(expected.X, actual.X, 0.001f, message + " (X)");
+        Assert.AreEqual(expected.Y, actual.Y, 0.001f, message + " (Y)");
+    }
+
+    static void AssertVector2BetweenInclusive(Vector2 a, Vector2 b, Vector2 actual, string message)
+    {
+        const float Epsilon = 0.001f;
+        Assert.IsTrue(actual.X >= Math.Min(a.X, b.X) - Epsilon
+                   && actual.X <= Math.Max(a.X, b.X) + Epsilon,
+            $"{message} (X actual={actual.X} a={a.X} b={b.X})");
+        Assert.IsTrue(actual.Y >= Math.Min(a.Y, b.Y) - Epsilon
+                   && actual.Y <= Math.Max(a.Y, b.Y) + Epsilon,
+            $"{message} (Y actual={actual.Y} a={a.Y} b={b.Y})");
+    }
+
+    static float LerpRotationShortestArcForTest(float previous, float current, float amount)
+    {
+        float delta = current - previous;
+        while (delta > RadMath.PI)
+            delta -= RadMath.TwoPI;
+        while (delta < -RadMath.PI)
+            delta += RadMath.TwoPI;
+        return (previous + delta * amount).AsNormalizedRadians();
     }
 
     static string PayloadRowForTest(string payload, string prefix)

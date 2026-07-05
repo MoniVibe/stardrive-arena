@@ -1,0 +1,521 @@
+{
+  "format": 1,
+  "restore": {
+    "C:\\dev\\stardrive\\StarDrive-interp\\UnitTests\\SDUnitTests.csproj": {}
+  },
+  "projects": {
+    "C:\\dev\\stardrive\\StarDrive-interp\\SDGraphics\\SDGraphics.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\dev\\stardrive\\StarDrive-interp\\SDGraphics\\SDGraphics.csproj",
+        "projectName": "SDGraphics",
+        "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\SDGraphics\\SDGraphics.csproj",
+        "packagesPath": "C:\\Users\\CodexSandboxOffline\\.nuget\\packages\\",
+        "outputPath": "C:\\dev\\stardrive\\StarDrive-interp\\SDGraphics\\.codex-obj\\",
+        "projectStyle": "PackageReference",
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\shonh\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0-windows"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0-windows7.0": {
+            "targetAlias": "net8.0-windows",
+            "projectReferences": {
+              "C:\\dev\\stardrive\\StarDrive-interp\\SDUtils\\SDUtils.csproj": {
+                "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\SDUtils\\SDUtils.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "9.0.300"
+      },
+      "frameworks": {
+        "net8.0-windows7.0": {
+          "targetAlias": "net8.0-windows",
+          "dependencies": {
+            "MonoGame.Content.Builder.Task": {
+              "target": "Package",
+              "version": "[3.8.1.303, )"
+            },
+            "MonoGame.Framework.WindowsDX": {
+              "target": "Package",
+              "version": "[3.8.1.303, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.301/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "C:\\dev\\stardrive\\StarDrive-interp\\SDLockstep\\SDLockstep.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\dev\\stardrive\\StarDrive-interp\\SDLockstep\\SDLockstep.csproj",
+        "projectName": "SDLockstep",
+        "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\SDLockstep\\SDLockstep.csproj",
+        "packagesPath": "C:\\Users\\CodexSandboxOffline\\.nuget\\packages\\",
+        "outputPath": "C:\\dev\\stardrive\\StarDrive-interp\\SDLockstep\\.codex-obj\\",
+        "projectStyle": "PackageReference",
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\shonh\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0-windows"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0-windows7.0": {
+            "targetAlias": "net8.0-windows",
+            "projectReferences": {
+              "C:\\dev\\stardrive\\StarDrive-interp\\SDUtils\\SDUtils.csproj": {
+                "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\SDUtils\\SDUtils.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "9.0.300"
+      },
+      "frameworks": {
+        "net8.0-windows7.0": {
+          "targetAlias": "net8.0-windows",
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.301/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "C:\\dev\\stardrive\\StarDrive-interp\\SDUtils\\SDUtils.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\dev\\stardrive\\StarDrive-interp\\SDUtils\\SDUtils.csproj",
+        "projectName": "SDUtils",
+        "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\SDUtils\\SDUtils.csproj",
+        "packagesPath": "C:\\Users\\CodexSandboxOffline\\.nuget\\packages\\",
+        "outputPath": "C:\\dev\\stardrive\\StarDrive-interp\\SDUtils\\.codex-obj\\",
+        "projectStyle": "PackageReference",
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\shonh\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0-windows"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0-windows7.0": {
+            "targetAlias": "net8.0-windows",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "9.0.300"
+      },
+      "frameworks": {
+        "net8.0-windows7.0": {
+          "targetAlias": "net8.0-windows",
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.301/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "C:\\dev\\stardrive\\StarDrive-interp\\StarDrive.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\dev\\stardrive\\StarDrive-interp\\StarDrive.csproj",
+        "projectName": "StarDrive",
+        "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\StarDrive.csproj",
+        "packagesPath": "C:\\Users\\CodexSandboxOffline\\.nuget\\packages\\",
+        "outputPath": "C:\\dev\\stardrive\\StarDrive-interp\\.codex-obj\\",
+        "projectStyle": "PackageReference",
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\shonh\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0-windows"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0-windows7.0": {
+            "targetAlias": "net8.0-windows",
+            "projectReferences": {
+              "C:\\dev\\stardrive\\StarDrive-interp\\SDGraphics\\SDGraphics.csproj": {
+                "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\SDGraphics\\SDGraphics.csproj"
+              },
+              "C:\\dev\\stardrive\\StarDrive-interp\\SDLockstep\\SDLockstep.csproj": {
+                "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\SDLockstep\\SDLockstep.csproj"
+              },
+              "C:\\dev\\stardrive\\StarDrive-interp\\SDUtils\\SDUtils.csproj": {
+                "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\SDUtils\\SDUtils.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "9.0.300"
+      },
+      "frameworks": {
+        "net8.0-windows7.0": {
+          "targetAlias": "net8.0-windows",
+          "dependencies": {
+            "LargeAddressAware": {
+              "target": "Package",
+              "version": "[1.0.6, )"
+            },
+            "MonoGame.Content.Builder.Task": {
+              "target": "Package",
+              "version": "[3.8.1.303, )"
+            },
+            "MonoGame.Framework.WindowsDX": {
+              "target": "Package",
+              "version": "[3.8.1.303, )"
+            },
+            "NAudio": {
+              "target": "Package",
+              "version": "[2.2.1, )"
+            },
+            "Sentry": {
+              "target": "Package",
+              "version": "[3.41.4, )"
+            },
+            "SharpDX": {
+              "target": "Package",
+              "version": "[4.0.1, )"
+            },
+            "SharpDX.DXGI": {
+              "target": "Package",
+              "version": "[4.0.1, )"
+            },
+            "SharpDX.Direct3D11": {
+              "target": "Package",
+              "version": "[4.0.1, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            },
+            "Microsoft.WindowsDesktop.App.WindowsForms": {
+              "privateAssets": "none"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.301/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "C:\\dev\\stardrive\\StarDrive-interp\\StarDriveArena.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\dev\\stardrive\\StarDrive-interp\\StarDriveArena.csproj",
+        "projectName": "StarDriveArena",
+        "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\StarDriveArena.csproj",
+        "packagesPath": "C:\\Users\\CodexSandboxOffline\\.nuget\\packages\\",
+        "outputPath": "C:\\dev\\stardrive\\StarDrive-interp\\.codex-obj\\",
+        "projectStyle": "PackageReference",
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\shonh\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0-windows"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0-windows7.0": {
+            "targetAlias": "net8.0-windows",
+            "projectReferences": {
+              "C:\\dev\\stardrive\\StarDrive-interp\\SDGraphics\\SDGraphics.csproj": {
+                "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\SDGraphics\\SDGraphics.csproj"
+              },
+              "C:\\dev\\stardrive\\StarDrive-interp\\SDLockstep\\SDLockstep.csproj": {
+                "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\SDLockstep\\SDLockstep.csproj"
+              },
+              "C:\\dev\\stardrive\\StarDrive-interp\\SDUtils\\SDUtils.csproj": {
+                "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\SDUtils\\SDUtils.csproj"
+              },
+              "C:\\dev\\stardrive\\StarDrive-interp\\StarDrive.csproj": {
+                "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\StarDrive.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "9.0.300"
+      },
+      "frameworks": {
+        "net8.0-windows7.0": {
+          "targetAlias": "net8.0-windows",
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            },
+            "Microsoft.WindowsDesktop.App.WindowsForms": {
+              "privateAssets": "none"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.301/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "C:\\dev\\stardrive\\StarDrive-interp\\UnitTests\\SDUnitTests.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\dev\\stardrive\\StarDrive-interp\\UnitTests\\SDUnitTests.csproj",
+        "projectName": "UnitTests",
+        "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\UnitTests\\SDUnitTests.csproj",
+        "packagesPath": "C:\\Users\\CodexSandboxOffline\\.nuget\\packages\\",
+        "outputPath": "C:\\dev\\stardrive\\StarDrive-interp\\UnitTests\\.codex-obj\\",
+        "projectStyle": "PackageReference",
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\shonh\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0-windows"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0-windows7.0": {
+            "targetAlias": "net8.0-windows",
+            "projectReferences": {
+              "C:\\dev\\stardrive\\StarDrive-interp\\SDGraphics\\SDGraphics.csproj": {
+                "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\SDGraphics\\SDGraphics.csproj"
+              },
+              "C:\\dev\\stardrive\\StarDrive-interp\\SDUtils\\SDUtils.csproj": {
+                "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\SDUtils\\SDUtils.csproj"
+              },
+              "C:\\dev\\stardrive\\StarDrive-interp\\StarDrive.csproj": {
+                "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\StarDrive.csproj"
+              },
+              "C:\\dev\\stardrive\\StarDrive-interp\\StarDriveArena.csproj": {
+                "projectPath": "C:\\dev\\stardrive\\StarDrive-interp\\StarDriveArena.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "9.0.300"
+      },
+      "frameworks": {
+        "net8.0-windows7.0": {
+          "targetAlias": "net8.0-windows",
+          "dependencies": {
+            "LargeAddressAware": {
+              "target": "Package",
+              "version": "[1.0.6, )"
+            },
+            "MSTest.TestAdapter": {
+              "target": "Package",
+              "version": "[3.11.1, )"
+            },
+            "MSTest.TestFramework": {
+              "target": "Package",
+              "version": "[3.11.1, )"
+            },
+            "Microsoft.NET.Test.Sdk": {
+              "target": "Package",
+              "version": "[17.14.1, )"
+            },
+            "MonoGame.Content.Builder.Task": {
+              "target": "Package",
+              "version": "[3.8.1.303, )"
+            },
+            "MonoGame.Framework.WindowsDX": {
+              "target": "Package",
+              "version": "[3.8.1.303, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            },
+            "Microsoft.WindowsDesktop.App.WindowsForms": {
+              "privateAssets": "none"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.301/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

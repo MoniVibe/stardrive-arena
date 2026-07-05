@@ -282,7 +282,7 @@ namespace Ship_Game.Ships
             AdvancePassiveAuthoritativeVisualBank();
 
             float shipWorldRadius = Radius;
-            us.ProjectToScreenCoords(Position, shipWorldRadius,
+            us.ProjectToScreenCoords(PassiveAuthoritativeTacticalIconPosition, shipWorldRadius,
                                      out Vector2d screenPos, out double screenRadius);
             Vector2 pos = screenPos.ToVec2f();
             float radius = (float)screenRadius;
