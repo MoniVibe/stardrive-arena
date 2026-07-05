@@ -21,14 +21,32 @@ public sealed class ArenaMultiplayerTelemetry : IDisposable
     {
         SessionPath = sessionPath;
         LastSessionPath = lastSessionPath;
-        SessionWriter = new StreamWriter(new FileStream(sessionPath, FileMode.Create, FileAccess.Write, FileShare.Read))
+        SessionWriter = TryOpen(sessionPath);
+        // The shared last-session log can be held by another telemetry instance
+        // (lobby vs fight screen) or a second local process; losing it must never
+        // crash the session.
+        LastWriter = TryOpen(lastSessionPath);
+    }
+
+    static StreamWriter TryOpen(string path)
+    {
+        try
         {
-            AutoFlush = true
-        };
-        LastWriter = new StreamWriter(new FileStream(lastSessionPath, FileMode.Create, FileAccess.Write, FileShare.Read))
+            return new StreamWriter(new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
+            {
+                AutoFlush = true
+            };
+        }
+        catch (IOException e)
         {
-            AutoFlush = true
-        };
+            Log.Warning($"ArenaMultiplayerTelemetry: could not open '{path}': {e.Message}");
+            return null;
+        }
+        catch (UnauthorizedAccessException e)
+        {
+            Log.Warning($"ArenaMultiplayerTelemetry: could not open '{path}': {e.Message}");
+            return null;
+        }
     }
 
     public static ArenaMultiplayerTelemetry Start(string role, string surface, ArenaMultiplayerSettings settings)
@@ -100,8 +118,8 @@ public sealed class ArenaMultiplayerTelemetry : IDisposable
     public void Dispose()
     {
         Write("END", $"utc={DateTime.UtcNow:O}");
-        SessionWriter.Dispose();
-        LastWriter.Dispose();
+        SessionWriter?.Dispose();
+        LastWriter?.Dispose();
     }
 
     void Write(string name, string details)
@@ -109,8 +127,15 @@ public sealed class ArenaMultiplayerTelemetry : IDisposable
         string line = $"{DateTime.UtcNow:O} {name} {details ?? ""}".TrimEnd();
         lock (Sync)
         {
-            SessionWriter.WriteLine(line);
-            LastWriter.WriteLine(line);
+            try
+            {
+                SessionWriter?.WriteLine(line);
+                LastWriter?.WriteLine(line);
+            }
+            catch (Exception e)
+            {
+                Log.Warning($"ArenaMultiplayerTelemetry: write failed: {e.Message}");
+            }
         }
     }
 

@@ -1003,6 +1003,43 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         }
     }
 
+    [TestMethod]
+    public void ArenaMultiplayerTelemetrySurvivesLastSessionLogContention_Headless()
+    {
+        // Live crash 2026-07-05: lobby telemetry still held the shared
+        // arena-multiplayer-last-session.log when the fight screen started its own
+        // telemetry, and the exclusive re-open crashed both peers at match launch.
+        // Overlapping instances must degrade (skip the shared log), never throw.
+        LoadAllGameData();
+        string dir = Path.Combine(Path.GetTempPath(), $"arena_mp_telemetry_contention_{Guid.NewGuid():N}");
+        string savedDir = ArenaMultiplayerTelemetry.OutputDirectoryOverride;
+
+        try
+        {
+            Directory.CreateDirectory(dir);
+            ArenaMultiplayerTelemetry.OutputDirectoryOverride = dir;
+            ArenaMultiplayerSettings settings = ArenaMultiplayerLobbyScreen.CreateDefaultSettings(90).WithResolvedFleets();
+
+            // The lobby's open writer is the contention: starting the match
+            // telemetry re-creates the same shared log while it is still held.
+            using ArenaMultiplayerTelemetry lobby = ArenaMultiplayerTelemetry.Start("Host", "lobby", settings);
+            string liveSessionPath;
+            using (ArenaMultiplayerTelemetry live = ArenaMultiplayerTelemetry.Start("Host", "match", settings))
+            {
+                live.Event("PROOF", "contended");
+                liveSessionPath = live.SessionPath;
+            }
+            lobby.Event("PROOF", "lobby-still-alive");
+            Assert.IsTrue(File.Exists(liveSessionPath), "Unique session artifact must still be written under contention.");
+            StringAssert.Contains(File.ReadAllText(liveSessionPath), "PROOF contended");
+        }
+        finally
+        {
+            ArenaMultiplayerTelemetry.OutputDirectoryOverride = savedDir;
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
     static string[] FleetNames(ArenaStartArchetype archetype, ulong seed)
         => CareerManager.StartingRosterDesigns(archetype, seed)
             .Select(d => d.Name)

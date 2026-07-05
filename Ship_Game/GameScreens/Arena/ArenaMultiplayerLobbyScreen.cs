@@ -1010,12 +1010,15 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         Transport = null;
         LobbyTelemetry?.Event("LAUNCH_VISIBLE_ARENA",
             $"role={role} {StartTelemetrySummary(start)}");
+        // Dispose lobby telemetry BEFORE arming the live session: both write the
+        // shared last-session log, and the lobby's open handle collides with the
+        // fight screen's telemetry (mirrors the 4X launch path ordering).
+        LobbyTelemetry?.Dispose();
+        LobbyTelemetry = null;
 
         ArenaFightScreen screen = ArenaFightScreen.Create(settings.HostRacePreference,
             settings.MatchSeed, startAtHub: false, opponentPreference: settings.JoinRacePreference);
         screen.ArmMultiplayerLive(new ArenaMultiplayerLiveSession(role, transport, settings));
-        LobbyTelemetry?.Dispose();
-        LobbyTelemetry = null;
         ScreenManager.GoToScreen(screen, clear3DObjects: true);
     }
 
