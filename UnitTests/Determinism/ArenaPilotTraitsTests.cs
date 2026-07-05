@@ -338,6 +338,52 @@ public class ArenaPilotTraitsTests : StarDriveTest
             "An all-invalid/empty input yields an empty catalog (the fallback signal).");
     }
 
+    // ---- Readout: the in-fight HUD line is a pure, level-derived summary of the granted traits. ----
+
+    [TestMethod]
+    public void PilotTraits_Readout_ListsGrantedTraitNamesForLevel_Headless()
+    {
+        // The in-fight readout (ArenaFightScreen.DrawPilotTraitReadouts) shows exactly the NAMES of
+        // the traits GrantedTraitsForLevel returns, in the same canonical order, plus the crew level.
+        // NamesForLevel must be a pure, reproducible function of level and mirror the granted-id set.
+
+        // Below the first threshold (eagle_eye @ L2): no trait names, and the readout says so.
+        Assert.AreEqual(0, PilotTraitV0.NamesForLevel(0).Length, "L0 grants no trait names.");
+        Assert.AreEqual(0, PilotTraitV0.NamesForLevel(1).Length, "L1 is still below the first threshold.");
+        Assert.AreEqual("Lv 1 — no traits yet", PilotTraitV0.DescribeForLevel(1),
+            "Below the first threshold the readout reports the level and 'no traits yet'.");
+
+        // L2 grants exactly Eagle Eye (the name for eagle_eye).
+        CollectionAssertEquals(new[] { "Eagle Eye" }, PilotTraitV0.NamesForLevel(2),
+            "L2 grants exactly the Eagle Eye trait name.");
+        Assert.AreEqual("Lv 2 — Eagle Eye", PilotTraitV0.DescribeForLevel(2),
+            "L2 readout lists the single granted trait name.");
+
+        // L6 crosses all four thresholds -> all four names in the canonical (Ordinal-by-id) order:
+        // eagle_eye, evasive_ace, gunnery_drill, predictive_tracking.
+        CollectionAssertEquals(
+            new[] { "Eagle Eye", "Evasive Ace", "Gunnery Drill", "Predictive Tracking" },
+            PilotTraitV0.NamesForLevel(6),
+            "L6 lists all four v0 trait names in Ordinal-by-id order.");
+        Assert.AreEqual("Lv 6 — Eagle Eye, Evasive Ace, Gunnery Drill, Predictive Tracking",
+            PilotTraitV0.DescribeForLevel(6),
+            "L6 readout is the level plus the four granted trait names, comma-separated.");
+
+        // The name list is exactly the granted-id set mapped to Catalog names (same length, same order).
+        string[] ids = PilotTraitV0.GrantedTraitsForLevel(6);
+        string[] names = PilotTraitV0.NamesForLevel(6);
+        Assert.AreEqual(ids.Length, names.Length, "Names must line up 1:1 with the granted ids.");
+        for (int i = 0; i < ids.Length; ++i)
+        {
+            Assert.IsTrue(PilotTraitV0.TryGet(ids[i], out PilotTraitDefinition def), $"id {ids[i]} known");
+            Assert.AreEqual(def.Name, names[i], $"name for {ids[i]} must be its Catalog Name.");
+        }
+
+        // Pure + reproducible: same level -> byte-identical readout.
+        Assert.AreEqual(PilotTraitV0.DescribeForLevel(4), PilotTraitV0.DescribeForLevel(4),
+            "DescribeForLevel must be a pure, reproducible function of level.");
+    }
+
     // ---- helpers ----
 
     static PilotTraitDefinition RequireTrait(string id)

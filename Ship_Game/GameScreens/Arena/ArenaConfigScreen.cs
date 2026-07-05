@@ -25,7 +25,11 @@ public sealed class ArenaConfigScreen : GameScreen
         RemoveAll();
 
         Vector2 c = ScreenCenter;
-        var panel = new RectF(c.X - 300, c.Y - 220, 600, 440);
+        // Master pilot-traits toggle always adds one row; the scope selector row only shows when the
+        // master is ON, so the panel grows by one extra row in that case to keep the footer clear.
+        bool pilotTraitsOn = Arena?.CurrentEnablePilotTraits ?? false;
+        float panelH = pilotTraitsOn ? 580 : 510;
+        var panel = new RectF(c.X - 300, c.Y - panelH / 2, 600, panelH);
         Add(ArenaTheme.Panel(panel));
 
         Add(ArenaTheme.ScreenTitle(new Vector2(panel.X + 24, panel.Y + 18), "CONFIG"));
@@ -42,6 +46,18 @@ public sealed class ArenaConfigScreen : GameScreen
             _ => ToggleHardLoss());
         y += 70;
         AddChanceRow(panel, y);
+
+        // PILOT TRAITS PLAYTEST TOGGLE (Layer 1, SP-only). Master on/off; the Pilot/Ship scope
+        // selector only appears (and is only meaningful) when the master is ON.
+        y += 70;
+        AddToggleRow(panel, y, "Pilot Traits (veteran perks)",
+            pilotTraitsOn,
+            _ => TogglePilotTraits());
+        if (pilotTraitsOn)
+        {
+            y += 70;
+            AddPilotScopeRow(panel, y);
+        }
 
         UIList footer = AddList(new Vector2(c.X - 54, panel.Bottom - 62), new Vector2(108, 40));
         footer.Padding = new Vector2(2f, 12f);
@@ -69,6 +85,31 @@ public sealed class ArenaConfigScreen : GameScreen
         UIList buttons = AddList(new Vector2(row.Right - 118, row.Y + 11));
         buttons.LayoutStyle = ListLayoutStyle.ResizeList;
         ArenaTheme.AddPillButton(buttons, text, _ => CycleContenderPermadeath(), 94f);
+    }
+
+    // Scope selector: a single pill that cycles Pilot <-> Ship, mirroring the chance-row idiom (a
+    // labelled pill on the right of a card). false = Pilot (Captain-carried), true = Ship (ship-bound).
+    void AddPilotScopeRow(RectF panel, float y)
+    {
+        bool shipBound = Arena?.CurrentPilotTraitScopeVessel ?? false;
+        var row = new RectF(panel.X + 24, y, panel.W - 48, 52);
+        Add(ArenaTheme.Card(row));
+        Add(ArenaTheme.Body(new Vector2(row.X + 14, row.Y + 15), "Trait level source"));
+        UIList buttons = AddList(new Vector2(row.Right - 118, row.Y + 11));
+        buttons.LayoutStyle = ListLayoutStyle.ResizeList;
+        ArenaTheme.AddPillButton(buttons, shipBound ? "SHIP" : "PILOT", _ => TogglePilotScope(), 94f);
+    }
+
+    void TogglePilotTraits()
+    {
+        bool next = !(Arena?.CurrentEnablePilotTraits ?? false);
+        Save(Arena != null && Arena.SetEnablePilotTraits(next));
+    }
+
+    void TogglePilotScope()
+    {
+        bool next = !(Arena?.CurrentPilotTraitScopeVessel ?? false);
+        Save(Arena != null && Arena.SetPilotTraitScopeVessel(next));
     }
 
     void TogglePlayerPermadeath()

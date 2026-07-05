@@ -103,15 +103,16 @@ public readonly struct PilotTraitDefinition
 }
 
 /// <summary>
-/// The v0 pilot-trait catalog (Layer 1). Mirrors the <see cref="ArenaPerks"/> static-array idiom —
-/// content is a hardcoded, Ordinal-sorted catalog rather than an external file, matching how the
-/// sibling arena content (perks) already loads. Four traits, ONE per already-live mechanical channel
-/// (accuracy / damage / tracking / evade) so each is independently headless-verifiable. Auto-granted
-/// at level thresholds; point-buy / branching / mutual-exclusion are DEFERRED to Layer 3.
+/// The v0 pilot-trait catalog (Layer 1). Loaded from Content/PilotTraits.yaml (data-driven, mod-
+/// overridable via the standard mod-or-vanilla path) with an embedded 4-trait fallback when the file
+/// is missing/malformed — see <see cref="Catalog"/>. Four traits, ONE per already-live mechanical
+/// channel (accuracy / damage / tracking / evade) so each is independently headless-verifiable.
+/// Auto-granted at level thresholds; point-buy / branching / mutual-exclusion are DEFERRED to Layer 3.
 ///
-/// Determinism: the catalog is sorted by Id (Ordinal); grant + compose are pure functions of the
-/// pilot's Level and the static catalog — no empire state, RNG, or wall-clock. Values are placeholders
-/// per the director's no-locked-balance mandate.
+/// Determinism: the effective catalog is canonicalized Ordinal by Id; grant + compose are pure
+/// functions of the pilot's Level and the loaded catalog — no empire state, RNG, or wall-clock. The
+/// catalog is fingerprinted (<see cref="CatalogHash"/>) so MP peers on divergent yaml refuse to start.
+/// Values are placeholders per the director's no-locked-balance mandate.
 /// </summary>
 public static class PilotTraitV0
 {
@@ -314,6 +315,37 @@ public static class PilotTraitV0
         string[] result = granted.ToArray();
         Array.Sort(result, StringComparer.Ordinal);
         return result;
+    }
+
+    /// <summary>
+    /// The DISPLAY NAMES of the traits auto-granted at the given crew level, in the same canonical
+    /// (Ordinal-by-id) order as <see cref="GrantedTraitsForLevel"/>. Pure function of (level, static
+    /// catalog) — used by the read-only in-fight readout. Unknown ids are skipped (defensive).
+    /// </summary>
+    public static string[] NamesForLevel(int level)
+    {
+        string[] ids = GrantedTraitsForLevel(level);
+        if (ids.Length == 0)
+            return Empty<string>.Array;
+
+        var names = new Array<string>();
+        foreach (string id in ids)
+            if (TryGet(id, out PilotTraitDefinition trait) && trait.Name.NotEmpty())
+                names.Add(trait.Name);
+        return names.Count == 0 ? Empty<string>.Array : names.ToArray();
+    }
+
+    /// <summary>
+    /// A single, human-legible read-only summary of a pilot's crew level and its active trait names,
+    /// for the in-fight HUD readout. Pure function of (level, static catalog); no I/O, no RNG. Format:
+    /// "Lv N — Trait A, Trait B" or "Lv N — no traits yet" when the level has crossed no threshold.
+    /// This is the exact string a headless proof asserts, so any wording change is caught.
+    /// </summary>
+    public static string DescribeForLevel(int level)
+    {
+        string[] names = NamesForLevel(level);
+        string traits = names.Length == 0 ? "no traits yet" : string.Join(", ", names);
+        return $"Lv {level} — {traits}";
     }
 
     /// <summary>

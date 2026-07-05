@@ -1227,6 +1227,16 @@ public sealed partial class ArenaFightScreen : UniverseScreen
 
         // Banked cash becomes the run's starting cash.
         Cash = Career.Cash;
+
+        // PILOT TRAITS PLAYTEST TOGGLE (Layer 1, SP-only): re-apply the career's persisted choice onto
+        // the live GamePlayGlobals flags the fight reads, so a re-opened career restores its setting.
+        // A fresh career never reaches here (early-out above), so the default stays today's OFF no-op.
+        if (GlobalStats.Defaults != null)
+        {
+            GlobalStats.Defaults.EnablePilotTraits    = Career.EnablePilotTraits;
+            GlobalStats.Defaults.PilotTraitScopeVessel = Career.PilotTraitScopeVessel;
+        }
+
         if (!CareerPerksApplied)
         {
             ArenaPerks.ApplyToEmpire(ArenaPlayer, Career.Perks);
@@ -2125,6 +2135,74 @@ public sealed partial class ArenaFightScreen : UniverseScreen
     {
         base.Draw(batch, elapsed);
         DrawArenaModuleOverlayFallback(batch);
+        DrawPilotTraitReadouts(batch);
+    }
+
+    /// <summary>
+    /// IN-FIGHT PILOT-TRAIT READOUT (Layer 1, SP-only, read-only display). When
+    /// <see cref="GamePlayGlobals.EnablePilotTraits"/> is ON, draw each managed arena ship's crew
+    /// Level and its active pilot-trait NAMES as a small line under the hull, so the flag-gated
+    /// mechanic is legible during playtest. When the flag is OFF this is a pure no-op — zero extra
+    /// draw calls, zero visual change. Purely a display of already-computed state (the same
+    /// level-derived trait set ApplyPilotTraits composes); it never mutates the sim.
+    /// </summary>
+    void DrawPilotTraitReadouts(SpriteBatch batch)
+    {
+        if (GlobalStats.Defaults?.EnablePilotTraits != true)
+            return; // OFF = true no-op: nothing new is drawn.
+        if (LookingAtPlanet || viewState > UnivScreenState.DetailView)
+            return;
+
+        Font font = Fonts.Arial12Bold;
+        bool began = false;
+        DrawPilotTraitReadouts(batch, PlayerShips, font, ref began);
+        DrawPilotTraitReadouts(batch, EnemyShips, font, ref began);
+        if (began)
+            batch.SafeEnd();
+    }
+
+    void DrawPilotTraitReadouts(SpriteBatch batch, List<Ship> ships, Font font, ref bool began)
+    {
+        if (ships == null)
+            return;
+
+        foreach (Ship ship in ships)
+        {
+            if (!ShouldDrawArenaModuleOverlayFallback(ship))
+                continue;
+
+            int level = ResolvePilotDisplayLevel(ship);
+            string readout = PilotTraitV0.DescribeForLevel(level);
+
+            // Project the hull's world position to screen and place the line just under it, centered.
+            Vector2 screen = ProjectToScreenPosition(ship.Position).ToVec2f();
+            float radius = ship.Radius > 0 ? ship.Radius : 64f;
+            var pos = new Vector2(screen.X - font.TextWidth(readout) / 2f, screen.Y + radius * 0.35f + 6f);
+
+            if (!began)
+            {
+                batch.SafeBegin();
+                began = true;
+            }
+            batch.DrawString(font, readout, pos, ArenaTheme.TextPrimary);
+        }
+    }
+
+    // Resolve the pilot Level the readout shows, mirroring ApplyPilotTraits' scope selection so the
+    // displayed level matches the level the effect was composed from. Player ships resolve their
+    // OwnedVessel (captain vs vessel per the scope flag); enemy/wingman ships fall back to Ship.Level.
+    int ResolvePilotDisplayLevel(Ship ship)
+    {
+        if (ship == null)
+            return 0;
+        if (FleetShipVessel.TryGetValue(ship, out OwnedVessel v) && v != null)
+        {
+            if (GlobalStats.Defaults?.PilotTraitScopeVessel == true)
+                return v.Level;
+            ArenaCaptain captain = Career?.CaptainForVessel(v);
+            return captain?.Level > 0 ? captain.Level : v.Level;
+        }
+        return ship.Level;
     }
 
     public bool WouldDrawArenaModuleOverlay(Ship ship)
@@ -2549,6 +2627,30 @@ public sealed partial class ArenaFightScreen : UniverseScreen
     {
         Career ??= new ArenaCareer();
         Career.PermadeathChance = Math.Clamp(chance, 0f, 1f);
+        return ManualSaveCareer();
+    }
+
+    // PILOT TRAITS PLAYTEST TOGGLE (Layer 1, SP-only). The live flag the fight reads is
+    // GlobalStats.Defaults.EnablePilotTraits; the career persists the choice so it survives save/load
+    // like the other run settings (ApplyCareer re-applies it on load). Both are written together here.
+    public bool CurrentEnablePilotTraits => GlobalStats.Defaults?.EnablePilotTraits ?? false;
+    public bool CurrentPilotTraitScopeVessel => GlobalStats.Defaults?.PilotTraitScopeVessel ?? false;
+
+    public bool SetEnablePilotTraits(bool enabled)
+    {
+        Career ??= new ArenaCareer();
+        Career.EnablePilotTraits = enabled;
+        if (GlobalStats.Defaults != null)
+            GlobalStats.Defaults.EnablePilotTraits = enabled;
+        return ManualSaveCareer();
+    }
+
+    public bool SetPilotTraitScopeVessel(bool shipBound)
+    {
+        Career ??= new ArenaCareer();
+        Career.PilotTraitScopeVessel = shipBound;
+        if (GlobalStats.Defaults != null)
+            GlobalStats.Defaults.PilotTraitScopeVessel = shipBound;
         return ManualSaveCareer();
     }
 

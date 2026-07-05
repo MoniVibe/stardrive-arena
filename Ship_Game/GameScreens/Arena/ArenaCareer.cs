@@ -127,6 +127,14 @@ public sealed class ArenaCareer
     // open-ended via HardLossEndsRun=false; this controls ship ownership, not career end.
     [StarData] public bool PlayerShipsPermadeath = true;
 
+    // PILOT TRAITS PLAYTEST TOGGLE (Layer 1, SP-only) — persists the career's choice of whether the
+    // flag-gated pilot-trait channel is active and which record supplies the pilot Level. Mirrors the
+    // in-memory GamePlayGlobals flags (GlobalStats.Defaults.EnablePilotTraits / PilotTraitScopeVessel):
+    // ArenaConfigScreen writes both, and ApplyCareer re-applies these onto GlobalStats.Defaults at load
+    // so a re-opened career restores its playtest setting. Default false = today's exact behavior.
+    [StarData] public bool EnablePilotTraits;
+    [StarData] public bool PilotTraitScopeVessel;
+
     // BETTING — an open wager on the exact queued next fight option. The stake is deducted
     // immediately; resolving the chosen bout clears this slip and pays only on a win.
     [StarData] public ArenaBetSlip PendingBet;
