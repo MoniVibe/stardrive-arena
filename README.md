@@ -31,6 +31,16 @@ Multiplayer correctness is backed by a substantial, headless test surface:
 
 ---
 
+## Download & install (players)
+
+The mod ships as a small **overlay** on top of a normal BlackBox install — we distribute only our DLLs, never game content.
+
+1. Install **[BlackBox Jupiter 1.60](https://stardriveteam.itch.io/jupiter-160)** from itch.io (the official free installer, ~690 MB).
+2. Download the latest `stardrive-arena-*.zip` from this repo's **[Releases](https://github.com/MoniVibe/stardrive-arena/releases)** page.
+3. Extract the zip **over the game folder** (where `StarDrive.exe` lives). Back up the five DLLs it replaces first if you want a clean uninstall path.
+
+That's it — launch `StarDrive.exe` and pick **`4X Multiplayer`** from the main menu (default TCP port `47377`; everyone must run the **same release**, mismatched versions refuse to join). Full step‑by‑step details, hosting/joining instructions, firewall/VPN notes, and known limitations are in **[INSTALL.md](INSTALL.md)** — a copy is also inside every release zip, alongside a `manifest.json` with SHA‑256 hashes so you can verify your download.
+
 ## System requirements
 
 - **OS**: Windows 10 (build 1803 / April 2018 Update) or later, including Windows 11. Older Windows 10 builds lack the per‑thread DPI APIs MonoGame 3.8 requires.
