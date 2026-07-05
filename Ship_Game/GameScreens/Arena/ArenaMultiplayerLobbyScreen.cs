@@ -201,6 +201,19 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     public bool HasTurnsFieldForHeadless => false;
     public Authoritative4XGameSettings Current4XSettingsForHeadless => Build4XSettings();
     public ArenaMultiplayerSettings CurrentArenaSettingsForHeadless => BuildArenaSettings();
+    // Headless proof seam: captures the launched fight/universe screen instead of swapping the
+    // shared ScreenManager stack (GoToScreen exits ALL screens, which would tear down the other
+    // in-process peer in a two-peer headless test). Everything up to and including screen
+    // construction + ArmMultiplayerLive runs the REAL live path.
+    public Action<GameScreen> LaunchScreenOverrideForHeadless;
+    public void StartHostForHeadless() => StartHost();
+    public void StartJoinForHeadless() => StartJoin();
+    public void ToggleReadyForHeadless() => ToggleReady();
+    public void LaunchAsHostForHeadless() => LaunchAsHost();
+    public bool JoinInProgressForHeadless => JoinInProgress;
+    public bool LocalReadyForHeadless => LocalPeer.Ready;
+    public int RemotePeerCountForHeadless => RemotePeers.Count;
+    public bool RemoteReadyForHeadless => RemotePeers.Values.Any(p => p.Ready);
     public SessionStartMessage Build4XStartForHeadless() => Build4XStartMessage();
     public SessionStartMessage BuildArenaStartForHeadless() => BuildArenaStartMessage();
     public string ValidateArenaStartForHeadless(SessionStartMessage start) => ValidateArenaStart(start);
@@ -1008,6 +1021,23 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         AcceptedStartPeers.Clear();
         TcpLockstepTransport transport = Transport;
         Transport = null;
+
+        // The lobby transport speaks the lobby peer-id space (authority=1, joiner=slot N) but the
+        // fight-screen lockstep driver speaks lockstepHost=0 / hostPlayer=1 / joinPlayer=2.
+        // Without explicit routes every fight-side send to an unmapped peer id is parked in
+        // PendingRemote forever — the 2026-07-05 live arm-handshake deadlock (both peers "waiting
+        // to arm" with ZERO deliveries either way, on the SAME transport that had just carried the
+        // lobby handshake fine). Route the fight peer ids over the live lobby connections.
+        if (role == ArenaMultiplayerRole.Host)
+        {
+            int joinerSlot = RemotePeers.Count > 0 ? RemotePeers.Keys.Min() : DefaultJoinPeerSlot;
+            transport.MapPeerRoute(ArenaMultiplayerSession.JoinPlayerPeerId, joinerSlot);
+        }
+        else
+        {
+            transport.MapPeerRoute(LockstepHost.HostPeerId, AuthorityPeerId);
+        }
+
         LobbyTelemetry?.Event("LAUNCH_VISIBLE_ARENA",
             $"role={role} {StartTelemetrySummary(start)}");
         // Dispose lobby telemetry BEFORE arming the live session: both write the
@@ -1019,7 +1049,10 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         ArenaFightScreen screen = ArenaFightScreen.Create(settings.HostRacePreference,
             settings.MatchSeed, startAtHub: false, opponentPreference: settings.JoinRacePreference);
         screen.ArmMultiplayerLive(new ArenaMultiplayerLiveSession(role, transport, settings));
-        ScreenManager.GoToScreen(screen, clear3DObjects: true);
+        if (LaunchScreenOverrideForHeadless != null)
+            LaunchScreenOverrideForHeadless(screen);
+        else
+            ScreenManager.GoToScreen(screen, clear3DObjects: true);
     }
 
     ArenaMultiplayerSettings BuildArenaSettings()

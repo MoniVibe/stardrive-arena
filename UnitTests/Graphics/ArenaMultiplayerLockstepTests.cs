@@ -1426,6 +1426,241 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             "Legacy titleless plugin actions must not create visible buttons unless the layout defines them.");
     }
 
+    [TestMethod]
+    public void ArenaMultiplayerRealLobbyLaunch_TwoLobbies_MatchArmsAndTicks_Headless()
+    {
+        // Live QA round 2 proof (2026-07-05): the earlier headless driver proofs constructed the
+        // transports directly (TcpLockstepTransport.Host/Join, peer space 0/1/2), but the REAL
+        // lobby builds them differently (HostMulti + JoinAsPeer, peer space authority=1/joiner=3).
+        // On the live 2-machine run the arm handshake deadlocked BOTH ways with zero deliveries:
+        // every fight-side send addressed peers 0/2, which the lobby-built transports had no
+        // routes for — silently parked in PendingRemote forever. This proof drives TWO REAL
+        // ArenaMultiplayerLobbyScreen instances through the actual Host/Join/Ready/Launch flow
+        // over real loopback TCP, through LaunchVisibleArena into the fight screens, and asserts
+        // the match arms and Sim.Tick advances on BOTH peers.
+        LoadAllGameData();
+        string dir = Path.Combine(Path.GetTempPath(), $"arena_mp_lobbylive_{Guid.NewGuid():N}");
+        string savedConfigPath = ArenaMultiplayerLobbyConfig.ConfigPathOverride;
+        string tempCareer = Path.Combine(Path.GetTempPath(), $"arena_mp_lobbylive_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempCareer;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+        ArenaMultiplayerLobbyScreen hostLobby = null;
+        ArenaMultiplayerLobbyScreen joinLobby = null;
+        ArenaFightScreen hostFight = null;
+        ArenaFightScreen joinFight = null;
+
+        try
+        {
+            Directory.CreateDirectory(dir);
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = Path.Combine(dir, "mp-lobby-config.yaml");
+            int port = FreeTcpPort();
+            Assert.IsTrue(ArenaMultiplayerLobbyConfig.Save(new ArenaMultiplayerLobbyConfig
+            {
+                Host = "127.0.0.1",
+                Port = port,
+                PeerSlot = ArenaMultiplayerLobbyScreen.DefaultJoinPeerSlot,
+            }), "Lobby config must save to the temp override path.");
+
+            (hostLobby, joinLobby, hostFight, joinFight) = DriveRealLobbiesToLaunchedFight();
+
+            // The launch must arm both fight screens and the lockstep sim must strictly advance
+            // on BOTH peers — the exact liveness the 2026-07-05 live run never reached.
+            bool live = false;
+            for (int frame = 0; frame < 1800 && !live; ++frame)
+            {
+                hostFight.Update(1f / 60f);
+                joinFight.Update(1f / 60f);
+                live = hostFight.MultiplayerLiveSimTickForHeadless > 0
+                       && joinFight.MultiplayerLiveSimTickForHeadless > 0;
+            }
+            Assert.IsTrue(live,
+                "REAL-LOBBY launch deadlocked: the fight lockstep never advanced on both peers "
+                + "over the lobby-built transports. "
+                + $"hostTick={hostFight.MultiplayerLiveSimTickForHeadless} hostStatus='{hostFight.MultiplayerLiveStatusText}' "
+                + $"joinTick={joinFight.MultiplayerLiveSimTickForHeadless} joinStatus='{joinFight.MultiplayerLiveStatusText}'");
+            Assert.IsFalse(hostFight.MultiplayerLiveResultForHeadless?.Disconnected == true,
+                "A healthy real-lobby launch must not halt: "
+                + hostFight.MultiplayerLiveResultForHeadless?.DisconnectReason);
+            Assert.IsFalse(joinFight.MultiplayerLiveResultForHeadless?.Disconnected == true,
+                "A healthy real-lobby launch must not halt on the join peer: "
+                + joinFight.MultiplayerLiveResultForHeadless?.DisconnectReason);
+        }
+        finally
+        {
+            try { hostFight?.ExitScreen(); } catch { }
+            try { joinFight?.ExitScreen(); } catch { }
+            DisposeLobbyTransport(hostLobby);
+            DisposeLobbyTransport(joinLobby);
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = savedConfigPath;
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+            try { if (File.Exists(tempCareer)) File.Delete(tempCareer); } catch { }
+        }
+    }
+
+    [TestMethod]
+    public void ArenaMultiplayerRealLobbyRematch_BothPeers_SecondMatchArmsAndTicks_Headless()
+    {
+        // Live QA round 2, bug 2: after the first match completes (including a voided one), the
+        // REMATCH button on the match-end panel must actually produce a second armed, ticking
+        // match on both peers — on the live run it did nothing on either end.
+        LoadAllGameData();
+        string dir = Path.Combine(Path.GetTempPath(), $"arena_mp_rematch_{Guid.NewGuid():N}");
+        string savedConfigPath = ArenaMultiplayerLobbyConfig.ConfigPathOverride;
+        string tempCareer = Path.Combine(Path.GetTempPath(), $"arena_mp_rematch_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempCareer;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+        ArenaMultiplayerLobbyScreen hostLobby = null;
+        ArenaMultiplayerLobbyScreen joinLobby = null;
+        ArenaFightScreen hostFight = null;
+        ArenaFightScreen joinFight = null;
+        ArenaFightScreen hostRematch = null;
+        ArenaFightScreen joinRematch = null;
+
+        try
+        {
+            Directory.CreateDirectory(dir);
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = Path.Combine(dir, "mp-lobby-config.yaml");
+            int port = FreeTcpPort();
+            Assert.IsTrue(ArenaMultiplayerLobbyConfig.Save(new ArenaMultiplayerLobbyConfig
+            {
+                Host = "127.0.0.1",
+                Port = port,
+                PeerSlot = ArenaMultiplayerLobbyScreen.DefaultJoinPeerSlot,
+            }), "Lobby config must save to the temp override path.");
+
+            (hostLobby, joinLobby, hostFight, joinFight) = DriveRealLobbiesToLaunchedFight();
+
+            // Run the first match to completion (elimination, draw, or turn limit all count —
+            // the live QA rematch was pressed on a VOID result, so any completed state must work).
+            for (int frame = 0; frame < 60000; ++frame)
+            {
+                hostFight.Update(1f / 60f);
+                joinFight.Update(1f / 60f);
+                if (hostFight.MultiplayerLiveResultForHeadless?.MatchEnded == true
+                    && joinFight.MultiplayerLiveResultForHeadless?.MatchEnded == true)
+                    break;
+            }
+            Assert.IsTrue(hostFight.MultiplayerEndPanelVisibleForHeadless,
+                $"First match must complete on the host. status='{hostFight.MultiplayerLiveStatusText}' "
+                + $"tick={hostFight.MultiplayerLiveSimTickForHeadless}");
+            Assert.IsTrue(joinFight.MultiplayerEndPanelVisibleForHeadless,
+                $"First match must complete on the join. status='{joinFight.MultiplayerLiveStatusText}' "
+                + $"tick={joinFight.MultiplayerLiveSimTickForHeadless}");
+
+            // Press REMATCH on both peers through the real match-end panel button.
+            GameScreen hostNext = null;
+            GameScreen joinNext = null;
+            hostFight.MultiplayerGoToScreenOverrideForHeadless = s => hostNext = s;
+            joinFight.MultiplayerGoToScreenOverrideForHeadless = s => joinNext = s;
+            Assert.IsTrue(hostFight.Find("arena_mp_end_rematch", out UIButton hostRematchButton),
+                "The host match-end panel must expose the REMATCH button.");
+            Assert.IsTrue(joinFight.Find("arena_mp_end_rematch", out UIButton joinRematchButton),
+                "The join match-end panel must expose the REMATCH button.");
+            hostRematchButton.OnClick?.Invoke(hostRematchButton);
+            joinRematchButton.OnClick?.Invoke(joinRematchButton);
+            hostRematch = hostNext as ArenaFightScreen;
+            joinRematch = joinNext as ArenaFightScreen;
+            Assert.IsNotNull(hostRematch, "REMATCH on the host must produce a new armed fight screen.");
+            Assert.IsNotNull(joinRematch, "REMATCH on the join must produce a new armed fight screen.");
+            hostRematch.LoadContent();
+            joinRematch.LoadContent();
+
+            bool live = false;
+            for (int frame = 0; frame < 1800 && !live; ++frame)
+            {
+                hostRematch.Update(1f / 60f);
+                joinRematch.Update(1f / 60f);
+                live = hostRematch.MultiplayerLiveSimTickForHeadless > 0
+                       && joinRematch.MultiplayerLiveSimTickForHeadless > 0;
+            }
+            Assert.IsTrue(live,
+                "REMATCH must produce a second armed, ticking match on both peers. "
+                + $"hostTick={hostRematch.MultiplayerLiveSimTickForHeadless} hostStatus='{hostRematch.MultiplayerLiveStatusText}' "
+                + $"joinTick={joinRematch.MultiplayerLiveSimTickForHeadless} joinStatus='{joinRematch.MultiplayerLiveStatusText}'");
+        }
+        finally
+        {
+            try { hostRematch?.ExitScreen(); } catch { }
+            try { joinRematch?.ExitScreen(); } catch { }
+            try { if (hostRematch == null) hostFight?.ExitScreen(); } catch { }
+            try { if (joinRematch == null) joinFight?.ExitScreen(); } catch { }
+            DisposeLobbyTransport(hostLobby);
+            DisposeLobbyTransport(joinLobby);
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = savedConfigPath;
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+            try { if (File.Exists(tempCareer)) File.Delete(tempCareer); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// Drives TWO REAL ArenaMultiplayerLobbyScreen instances through the actual
+    /// Host/Join/Ready/Launch flow over real loopback TCP — the exact transport construction the
+    /// live lobby uses (HostMulti + JoinAsPeer) — through LaunchVisibleArena into loaded fight
+    /// screens on both peers. The lobby config override must already point at a temp file with
+    /// Host=127.0.0.1 and a free port.
+    /// </summary>
+    (ArenaMultiplayerLobbyScreen hostLobby, ArenaMultiplayerLobbyScreen joinLobby,
+        ArenaFightScreen hostFight, ArenaFightScreen joinFight) DriveRealLobbiesToLaunchedFight()
+    {
+        var hostLobby = new ArenaMultiplayerLobbyScreen(ArenaMultiplayerLobbySurface.StarGladiator);
+        var joinLobby = new ArenaMultiplayerLobbyScreen(ArenaMultiplayerLobbySurface.StarGladiator);
+        GameScreen hostLaunched = null;
+        GameScreen joinLaunched = null;
+        hostLobby.LaunchScreenOverrideForHeadless = s => hostLaunched = s;
+        joinLobby.LaunchScreenOverrideForHeadless = s => joinLaunched = s;
+
+        hostLobby.StartHostForHeadless();
+        joinLobby.StartJoinForHeadless();
+        PumpLobbies(hostLobby, joinLobby,
+            () => !joinLobby.JoinInProgressForHeadless && hostLobby.RemotePeerCountForHeadless > 0,
+            "join handshake (hello) did not complete");
+
+        joinLobby.ToggleReadyForHeadless();
+        hostLobby.ToggleReadyForHeadless();
+        PumpLobbies(hostLobby, joinLobby,
+            () => hostLobby.RemoteReadyForHeadless && hostLobby.LocalReadyForHeadless,
+            "ready state did not propagate to the host");
+
+        hostLobby.LaunchAsHostForHeadless();
+        PumpLobbies(hostLobby, joinLobby,
+            () => hostLaunched != null && joinLaunched != null,
+            $"launch did not reach both peers (hostStatus='{hostLobby.CurrentStatus}' joinStatus='{joinLobby.CurrentStatus}')");
+
+        var hostFight = (ArenaFightScreen)hostLaunched;
+        var joinFight = (ArenaFightScreen)joinLaunched;
+        hostFight.LoadContent();
+        joinFight.LoadContent();
+        return (hostLobby, joinLobby, hostFight, joinFight);
+    }
+
+    static void PumpLobbies(ArenaMultiplayerLobbyScreen hostLobby, ArenaMultiplayerLobbyScreen joinLobby,
+        Func<bool> done, string failure)
+    {
+        for (int i = 0; i < 600; ++i)
+        {
+            hostLobby.Update(1f / 60f);
+            joinLobby.Update(1f / 60f);
+            if (done())
+                return;
+            Thread.Sleep(5);
+        }
+        Assert.Fail($"Real-lobby flow stalled: {failure}. "
+                    + $"hostStatus='{hostLobby.CurrentStatus}' joinStatus='{joinLobby.CurrentStatus}'");
+    }
+
+    static void DisposeLobbyTransport(ArenaMultiplayerLobbyScreen lobby)
+    {
+        if (lobby == null)
+            return;
+        try
+        {
+            FieldInfo field = typeof(ArenaMultiplayerLobbyScreen).GetField("Transport",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            (field?.GetValue(lobby) as TcpLockstepTransport)?.Dispose();
+        }
+        catch { }
+    }
+
     static void SetPrivateField(object target, string name, object value)
     {
         FieldInfo field = target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);

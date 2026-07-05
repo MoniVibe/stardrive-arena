@@ -96,6 +96,12 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
     readonly Queue<RemoteEnvelope> InboundRemote = new();
     readonly List<RemoteConnection> Connections = new();
     readonly Dictionary<int, RemoteConnection> ConnectionsByPeer = new();
+    // Explicit peer-id routing aliases: sends addressed to KEY travel over the connection
+    // currently mapped for VALUE. Needed when two protocol layers share one transport with
+    // different peer-id address spaces (e.g. the Arena lobby speaks authority=1/joiner=slotN
+    // while the Arena fight lockstep speaks host=0/player1=1/player2=2).
+    readonly Dictionary<int, int> PeerRoutes = new();
+    readonly HashSet<int> UnroutablePeersAlarmed = new();
     readonly object Gate = new();
     readonly ManualResetEventSlim ConnectedEvent = new(false);
 
@@ -116,6 +122,13 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
     public int PendingRemoteCount { get { lock (Gate) return PendingRemote.Count; } }
     public int InboundRemoteCount { get { lock (Gate) return InboundRemote.Count; } }
     public Action<string> AuthoritativeFrameTrace { get; set; }
+    /// <summary>
+    /// Fired (once per destination peer) when a message addressed to a peer cannot be routed to
+    /// any live connection even though the transport IS connected — i.e. a silent send-to-nowhere.
+    /// Also fired when a registered observer throws during delivery. Diagnostics only; never
+    /// treated as a transport error.
+    /// </summary>
+    public Action<string> RoutingAlarm { get; set; }
     public TcpLockstepHazardProfile HazardProfile { get; set; }
     public TcpLockstepHazardStats HazardStats { get; } = new();
 
@@ -218,6 +231,23 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
             }
             list.Add(onReceive);
         }
+    }
+
+    /// <summary>
+    /// Routes future sends addressed to <paramref name="peerId"/> over the connection mapped for
+    /// <paramref name="viaPeerId"/>. Use when a session protocol addresses peers by different ids
+    /// than the ids the underlying connections were announced with (Arena fight lockstep over a
+    /// lobby transport). Idempotent; safe to call before the connection exists.
+    /// </summary>
+    public void MapPeerRoute(int peerId, int viaPeerId)
+    {
+        lock (Gate)
+        {
+            PeerRoutes[peerId] = viaPeerId;
+            UnroutablePeersAlarmed.Remove(peerId);
+        }
+        // A route can make previously parked messages deliverable.
+        FlushPendingRemote();
     }
 
     public void Send(int toPeer, LockstepMessage message)
@@ -424,9 +454,40 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
         if (pending)
         {
             TraceAuthoritativeFrame("send-remote-pending", envelope.ToPeer, envelope.Message);
+            AlarmIfUnroutable(envelope.ToPeer, envelope.Message);
             return;
         }
         QueueRemoteWrite(envelope, connection);
+    }
+
+    // A pending send while the transport already has live connections means the destination
+    // peer id has no route — under the old code this was a SILENT send-to-nowhere (the exact
+    // failure mode of the 2026-07-05 live arm-handshake deadlock). Alarm loudly, once per peer.
+    void AlarmIfUnroutable(int toPeer, LockstepMessage message)
+    {
+        Action<string> alarm = RoutingAlarm;
+        bool fire;
+        lock (Gate)
+        {
+            fire = Connections.Any(c => c.Connected)
+                   && !ConnectionsByPeer.ContainsKey(toPeer)
+                   && !PeerRoutes.ContainsKey(toPeer)
+                   && RemotePeerId != toPeer
+                   && UnroutablePeersAlarmed.Add(toPeer);
+        }
+        if (!fire || alarm == null)
+            return;
+        try
+        {
+            alarm($"Lockstep send to peer {toPeer} ({message?.GetType().Name}) has no routable "
+                  + "connection: the transport is connected but no connection is mapped for that "
+                  + "peer id and no MapPeerRoute alias exists. The message is parked in "
+                  + "PendingRemote and will never reach the wire until a route appears.");
+        }
+        catch
+        {
+            // Diagnostics must never perturb the transport.
+        }
     }
 
     void FlushPendingRemote()
@@ -605,6 +666,12 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
         if (ConnectionsByPeer.TryGetValue(peerId, out connection) && connection.Connected)
             return true;
 
+        // Explicit peer route: the session layer addresses this peer by a different id than
+        // the id the connection was announced with.
+        if (PeerRoutes.TryGetValue(peerId, out int viaPeer)
+            && ConnectionsByPeer.TryGetValue(viaPeer, out connection) && connection.Connected)
+            return true;
+
         connection = null;
         if (RemotePeerId == peerId)
             connection = Connections.FirstOrDefault(c => c.Connected);
@@ -632,8 +699,23 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
             DeliveredMessageCount++;
         TraceAuthoritativeFrame($"deliver receiver={hasReceiver} observers={observerCount}", peerId, message);
         if (observers != null)
+        {
             foreach (Action<LockstepMessage> observer in observers)
-                observer(message);
+            {
+                try
+                {
+                    observer(message);
+                }
+                catch (Exception ex)
+                {
+                    // A throwing observer (e.g. one registered by an already-exited screen that
+                    // shares this transport) must not break later observers or the receiver.
+                    try { RoutingAlarm?.Invoke($"Lockstep observer for peer {peerId} threw during "
+                        + $"delivery of {message?.GetType().Name}: {ex.Message}"); }
+                    catch { }
+                }
+            }
+        }
         receiver?.Invoke(message);
     }
 

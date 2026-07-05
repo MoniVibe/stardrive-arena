@@ -127,6 +127,11 @@ public sealed partial class ArenaFightScreen
 
     public bool HasPendingMultiplayerPvPSetup => MultiplayerPvPMode;
 
+    // Headless proof seam (mirrors ArenaMultiplayerLobbyScreen.LaunchScreenOverrideForHeadless):
+    // captures the rematch fight screen instead of swapping the shared ScreenManager stack, which
+    // would tear down the other in-process peer in a two-peer headless test.
+    public Action<GameScreen> MultiplayerGoToScreenOverrideForHeadless;
+
     public override bool HandleInput(InputState input)
     {
         if (!MultiplayerLiveActive)
@@ -163,6 +168,13 @@ public sealed partial class ArenaFightScreen
         ArenaMultiplayerSettings settings = session.Settings.WithResolvedFleets();
         MultiplayerTelemetry?.Dispose();
         MultiplayerTelemetry = ArenaMultiplayerTelemetry.Start(session.Role.ToString(), "live-arena", settings);
+        // A silent send-to-nowhere must never again be silent: surface transport routing
+        // failures (unroutable destination peer, throwing observer) in telemetry and the log.
+        session.Transport.RoutingAlarm = warning =>
+        {
+            MultiplayerTelemetry?.Event("TRANSPORT_ROUTING_ALARM", warning);
+            Log.Warning($"Arena MP transport routing alarm role={session.Role}: {warning}");
+        };
         ConfigureMultiplayerPvP(settings);
         CreateSimThread = false;
         ArenaEngineCapabilities.TrySetParallelUpdate(UState.Objects, false);
@@ -836,8 +848,12 @@ public sealed partial class ArenaFightScreen
 
         ArenaFightScreen screen = Create(settings.HostRacePreference, settings.MatchSeed,
             startAtHub: false, opponentPreference: settings.JoinRacePreference);
+        screen.MultiplayerGoToScreenOverrideForHeadless = MultiplayerGoToScreenOverrideForHeadless;
         screen.ArmMultiplayerLive(new ArenaMultiplayerLiveSession(role, transport, settings));
-        ScreenManager.GoToScreen(screen, clear3DObjects: true);
+        if (MultiplayerGoToScreenOverrideForHeadless != null)
+            MultiplayerGoToScreenOverrideForHeadless(screen);
+        else
+            ScreenManager.GoToScreen(screen, clear3DObjects: true);
     }
 
     bool HasBothInputsForTurn(uint turn)
