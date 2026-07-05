@@ -331,6 +331,25 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
             try { connection.Client?.Close(); } catch { }
         }
         try { Listener?.Stop(); } catch { }
+
+        // Join the background loops before returning. Closing the sockets/listener above unblocks
+        // every loop (WriteLoop via CompleteAdding, ReadLoop via the disposed stream, AcceptLoop via
+        // the stopped listener), so this waits milliseconds. Not joining leaks live socket threads
+        // that keep running after Dispose — across a long test run those accumulate and race the
+        // shared process teardown; in the game a churned transport leaks a thread per session.
+        var loops = new List<Task>();
+        if (AcceptTask != null) loops.Add(AcceptTask);
+        foreach (RemoteConnection connection in connections)
+        {
+            if (connection.WriteTask != null) loops.Add(connection.WriteTask);
+            if (connection.ReadTask != null) loops.Add(connection.ReadTask);
+        }
+        if (loops.Count > 0)
+        {
+            try { Task.WaitAll(loops.ToArray(), TimeSpan.FromSeconds(2)); }
+            catch { /* loops swallow their own shutdown exceptions; a timeout is non-fatal */ }
+        }
+
         ConnectedEvent.Dispose();
     }
 
@@ -365,7 +384,8 @@ public sealed class TcpLockstepTransport : ILockstepTransport, IDisposable
             IsConnected = true;
             LastError = "";
         }
-        ConnectedEvent.Set();
+        // A connection can be accepted concurrently with Dispose(); the event may already be gone.
+        try { ConnectedEvent.Set(); } catch (ObjectDisposedException) { }
         connection.WriteTask = StartLongRunning(() => WriteLoop(connection));
         FlushPendingRemote();
         connection.ReadTask = StartLongRunning(() => ReadLoop(connection));
