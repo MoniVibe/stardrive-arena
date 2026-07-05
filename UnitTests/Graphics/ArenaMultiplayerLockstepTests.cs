@@ -1040,6 +1040,327 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         }
     }
 
+    [TestMethod]
+    public void ArenaMultiplayerLiveDriver_TwoScreensReachElimination_Headless()
+    {
+        // Live-driver proof (advisor plan A.4): the ONLY code path a live duel runs is
+        // ArenaFightScreen.Update -> UpdateMultiplayerLive -> AdvanceMultiplayerLiveTurn, and it
+        // had zero headless coverage — "fleets spawn, then nothing happens" lived exactly there.
+        // This drives TWO REAL fight screens through the real Update loop over real loopback TCP,
+        // including the live handoff hazard: the join peer's transport gets polled (by the lobby
+        // in the live game) BEFORE the fight screen registers its lockstep receiver, so anything
+        // the host commits early is consumed by Deliver() with no receiver and lost forever.
+        LoadAllGameData();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_mp_live_driver_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempPath;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+        TcpLockstepTransport hostTransport = null;
+        TcpLockstepTransport joinTransport = null;
+        ArenaFightScreen hostScreen = null;
+        ArenaFightScreen joinScreen = null;
+
+        try
+        {
+            IShipDesign weak = LegalPvPDesigns().First();
+            IShipDesign strong = LegalPvPDesigns().Last();
+            var settings = new ArenaMultiplayerSettings
+            {
+                MatchSeed = 0x6EED,
+                RngSeed = 0xB12EA000u,
+                InputDelay = 3,
+                MaxTurns = 900,
+                CommandEveryTurns = 1,
+                HostFleetDesignNames = new[] { strong.Name, strong.Name },
+                JoinFleetDesignNames = new[] { weak.Name },
+            }.WithResolvedFleets();
+
+            int port = FreeTcpPort();
+            hostTransport = TcpLockstepTransport.Host(port, ArenaMultiplayerSession.JoinPlayerPeerId);
+            joinTransport = TcpLockstepTransport.Join("127.0.0.1", port, LockstepHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(5)),
+                "Loopback TCP host did not accept the join peer.");
+
+            hostScreen = ArenaFightScreen.Create(settings.HostRacePreference, settings.MatchSeed,
+                startAtHub: false, opponentPreference: settings.JoinRacePreference);
+            hostScreen.ArmMultiplayerLive(new ArenaMultiplayerLiveSession(
+                ArenaMultiplayerRole.Host, hostTransport, settings));
+            hostScreen.LoadContent();
+
+            // Live handoff hazard window: the host screen is running while the join machine is
+            // still loading; the join transport is polled without any registered receiver
+            // (exactly what the live lobby's Update does during GoToScreen). Under the broken
+            // driver the host commits ticks 0..InputDelay-1 here and those frames are dropped.
+            for (int i = 0; i < 30; ++i)
+            {
+                hostScreen.Update(1f / 60f);
+                joinTransport.Poll();
+            }
+
+            joinScreen = ArenaFightScreen.Create(settings.HostRacePreference, settings.MatchSeed,
+                startAtHub: false, opponentPreference: settings.JoinRacePreference);
+            joinScreen.ArmMultiplayerLive(new ArenaMultiplayerLiveSession(
+                ArenaMultiplayerRole.Join, joinTransport, settings));
+            joinScreen.LoadContent();
+
+            ArenaMultiplayerShipSnapshot hostSnapshot = hostScreen.MultiplayerSnapshot();
+            ArenaMultiplayerShipSnapshot joinSnapshot = joinScreen.MultiplayerSnapshot();
+            CollectionAssert.AreEqual(hostSnapshot.PlayerShipIds, joinSnapshot.PlayerShipIds,
+                "Both live peers must spawn identical player ship IDs from the shared match seed.");
+            CollectionAssert.AreEqual(hostSnapshot.EnemyShipIds, joinSnapshot.EnemyShipIds,
+                "Both live peers must spawn identical enemy ship IDs from the shared match seed.");
+            int enemyShipsAtSpawn = hostSnapshot.EnemyShipIds.Length;
+            Assert.IsTrue(enemyShipsAtSpawn > 0, "The live duel must spawn the join fleet.");
+
+            // (a) LIVENESS: within a bounded number of rendered frames, BOTH peers' sims must
+            // strictly advance past tick 0. This is the assertion that makes "spawns but idles"
+            // un-shippable.
+            bool live = false;
+            for (int frame = 0; frame < 1200 && !live; ++frame)
+            {
+                hostScreen.Update(1f / 60f);
+                joinScreen.Update(1f / 60f);
+                live = hostScreen.MultiplayerLiveSimTickForHeadless > 0
+                       && joinScreen.MultiplayerLiveSimTickForHeadless > 0;
+            }
+            Assert.IsTrue(live,
+                "Live lockstep driver starved: neither rendered frame advanced both sims past tick 0. "
+                + $"hostTick={hostScreen.MultiplayerLiveSimTickForHeadless} hostStatus='{hostScreen.MultiplayerLiveStatusText}' "
+                + $"joinTick={joinScreen.MultiplayerLiveSimTickForHeadless} joinStatus='{joinScreen.MultiplayerLiveStatusText}'");
+
+            // (b)+(c): drive the real Update loop to elimination — at least one ship must die and
+            // the asymmetric matchup must complete with the host (strong fleet) as winner on BOTH peers.
+            for (int frame = 0; frame < 30000; ++frame)
+            {
+                hostScreen.Update(1f / 60f);
+                joinScreen.Update(1f / 60f);
+                if (hostScreen.MultiplayerLiveResultForHeadless?.MatchEnded == true
+                    && joinScreen.MultiplayerLiveResultForHeadless?.MatchEnded == true)
+                    break;
+            }
+
+            ArenaMultiplayerRunResult hostResult = hostScreen.MultiplayerLiveResultForHeadless;
+            ArenaMultiplayerRunResult joinResult = joinScreen.MultiplayerLiveResultForHeadless;
+            Assert.IsNotNull(hostResult, "Host live result missing.");
+            Assert.IsNotNull(joinResult, "Join live result missing.");
+            Assert.IsFalse(hostResult.Desynced,
+                $"Live driver desynced at turn {hostResult.DesyncTurn}: {hostResult.DesyncReason}");
+            Assert.IsFalse(hostResult.Disconnected,
+                $"Live driver reported disconnect/stall: {hostResult.DisconnectReason}");
+            Assert.IsTrue(hostResult.MatchEnded,
+                $"Host live match did not end. status='{hostScreen.MultiplayerLiveStatusText}' "
+                + $"tick={hostScreen.MultiplayerLiveSimTickForHeadless}");
+            Assert.IsTrue(joinResult.MatchEnded,
+                $"Join live match did not end. status='{joinScreen.MultiplayerLiveStatusText}' "
+                + $"tick={joinScreen.MultiplayerLiveSimTickForHeadless}");
+            Assert.AreEqual(ArenaMultiplayerSession.HostPlayerPeerId, hostResult.WinnerPeerId,
+                "The stronger host fleet should win on the host peer.");
+            Assert.AreEqual(ArenaMultiplayerSession.HostPlayerPeerId, joinResult.WinnerPeerId,
+                "The stronger host fleet should win on the join peer too (symmetric completion).");
+            ArenaMultiplayerMatchStatus hostStatus = hostScreen.MultiplayerMatchStatus();
+            Assert.IsTrue(hostStatus.EnemyAlive < enemyShipsAtSpawn,
+                "At least one ship must actually die in a live duel — combat must happen, not just ticks.");
+            Assert.IsTrue(hostScreen.MultiplayerEndPanelVisibleForHeadless,
+                "The host must surface the visible match-complete panel.");
+            Assert.IsTrue(joinScreen.MultiplayerEndPanelVisibleForHeadless,
+                "The join must surface the visible match-complete panel.");
+        }
+        finally
+        {
+            try { hostScreen?.ExitScreen(); } catch { }
+            try { joinScreen?.ExitScreen(); } catch { }
+            try { hostTransport?.Dispose(); } catch { }
+            try { joinTransport?.Dispose(); } catch { }
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+        }
+    }
+
+    [TestMethod]
+    public void ArenaMultiplayer_RenderedFightScreen_PumpsLockstepFrames()
+    {
+        // Layer (a) of the ruling-2 proof pair: two REAL rendered fight screens, driven only by
+        // the real per-frame Update path over loopback TCP (including the lobby handoff hazard
+        // window), must pump lockstep frames — Sim.Tick strictly advances on BOTH peers.
+        LoadAllGameData();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_mp_pump_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempPath;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+        TcpLockstepTransport hostTransport = null;
+        TcpLockstepTransport joinTransport = null;
+        ArenaFightScreen hostScreen = null;
+        ArenaFightScreen joinScreen = null;
+
+        try
+        {
+            ArenaMultiplayerSettings settings = ArenaMultiplayerLobbyScreen.CreateDefaultSettings(300).WithResolvedFleets();
+            (hostScreen, joinScreen) = BuildLiveLoopbackScreens(settings, out hostTransport, out joinTransport);
+
+            bool pumped = false;
+            for (int frame = 0; frame < 1200 && !pumped; ++frame)
+            {
+                hostScreen.Update(1f / 60f);
+                joinScreen.Update(1f / 60f);
+                pumped = hostScreen.MultiplayerLiveSimTickForHeadless > 0
+                         && joinScreen.MultiplayerLiveSimTickForHeadless > 0;
+            }
+
+            Assert.IsTrue(pumped,
+                "The rendered live driver must pump lockstep frames on both peers. "
+                + $"hostTick={hostScreen.MultiplayerLiveSimTickForHeadless} hostStatus='{hostScreen.MultiplayerLiveStatusText}' "
+                + $"joinTick={joinScreen.MultiplayerLiveSimTickForHeadless} joinStatus='{joinScreen.MultiplayerLiveStatusText}'");
+        }
+        finally
+        {
+            try { hostScreen?.ExitScreen(); } catch { }
+            try { joinScreen?.ExitScreen(); } catch { }
+            try { hostTransport?.Dispose(); } catch { }
+            try { joinTransport?.Dispose(); } catch { }
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+        }
+    }
+
+    [TestMethod]
+    public void ArenaMultiplayer_Duel_LiveLoopbackTcp_DoesNotIdleAfterSpawn()
+    {
+        // Layer (b) of the ruling-2 proof pair: engagement must actually START within the bounded
+        // post-spawn window — a target is acquired / a ship enters combat / a weapon fires — and
+        // the ARENA_LIVENESS_FAIL halt must NOT trip on a healthy duel.
+        LoadAllGameData();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_mp_noidle_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempPath;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+        TcpLockstepTransport hostTransport = null;
+        TcpLockstepTransport joinTransport = null;
+        ArenaFightScreen hostScreen = null;
+        ArenaFightScreen joinScreen = null;
+
+        try
+        {
+            ArenaMultiplayerSettings settings = ArenaMultiplayerLobbyScreen.CreateDefaultSettings(600).WithResolvedFleets();
+            (hostScreen, joinScreen) = BuildLiveLoopbackScreens(settings, out hostTransport, out joinTransport);
+
+            bool engaged = false;
+            for (int frame = 0; frame < 1800 && !engaged; ++frame)
+            {
+                hostScreen.Update(1f / 60f);
+                joinScreen.Update(1f / 60f);
+                engaged = hostScreen.MultiplayerEngagementSeenForHeadless
+                          && joinScreen.MultiplayerEngagementSeenForHeadless;
+            }
+
+            Assert.IsTrue(engaged,
+                "A live duel must start engaging within the bounded post-spawn window on both peers. "
+                + $"hostTick={hostScreen.MultiplayerLiveSimTickForHeadless} hostStatus='{hostScreen.MultiplayerLiveStatusText}' "
+                + $"joinTick={joinScreen.MultiplayerLiveSimTickForHeadless} joinStatus='{joinScreen.MultiplayerLiveStatusText}'");
+            Assert.IsFalse(hostScreen.MultiplayerLiveResultForHeadless?.Disconnected == true,
+                "A healthy duel must not trip the engagement/no-progress halt: "
+                + hostScreen.MultiplayerLiveResultForHeadless?.DisconnectReason);
+            Assert.IsFalse(joinScreen.MultiplayerLiveResultForHeadless?.Disconnected == true,
+                "A healthy duel must not trip the engagement/no-progress halt on the join peer: "
+                + joinScreen.MultiplayerLiveResultForHeadless?.DisconnectReason);
+        }
+        finally
+        {
+            try { hostScreen?.ExitScreen(); } catch { }
+            try { joinScreen?.ExitScreen(); } catch { }
+            try { hostTransport?.Dispose(); } catch { }
+            try { joinTransport?.Dispose(); } catch { }
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// Builds a host+join live fight-screen pair over real loopback TCP through the real
+    /// arm/LoadContent path, including the live handoff hazard window: the host screen runs and
+    /// the join transport is polled with no registered receiver before the join screen loads.
+    /// </summary>
+    (ArenaFightScreen host, ArenaFightScreen join) BuildLiveLoopbackScreens(
+        ArenaMultiplayerSettings settings,
+        out TcpLockstepTransport hostTransport, out TcpLockstepTransport joinTransport,
+        int handoffHazardFrames = 30)
+    {
+        int port = FreeTcpPort();
+        hostTransport = TcpLockstepTransport.Host(port, ArenaMultiplayerSession.JoinPlayerPeerId);
+        joinTransport = TcpLockstepTransport.Join("127.0.0.1", port, LockstepHost.HostPeerId);
+        Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(5)),
+            "Loopback TCP host did not accept the join peer.");
+
+        ArenaFightScreen hostScreen = ArenaFightScreen.Create(settings.HostRacePreference, settings.MatchSeed,
+            startAtHub: false, opponentPreference: settings.JoinRacePreference);
+        hostScreen.ArmMultiplayerLive(new ArenaMultiplayerLiveSession(
+            ArenaMultiplayerRole.Host, hostTransport, settings));
+        hostScreen.LoadContent();
+
+        for (int i = 0; i < handoffHazardFrames; ++i)
+        {
+            hostScreen.Update(1f / 60f);
+            joinTransport.Poll();
+        }
+
+        ArenaFightScreen joinScreen = ArenaFightScreen.Create(settings.HostRacePreference, settings.MatchSeed,
+            startAtHub: false, opponentPreference: settings.JoinRacePreference);
+        joinScreen.ArmMultiplayerLive(new ArenaMultiplayerLiveSession(
+            ArenaMultiplayerRole.Join, joinTransport, settings));
+        joinScreen.LoadContent();
+        return (hostScreen, joinScreen);
+    }
+
+    [TestMethod]
+    public void ArenaMultiplayerLiveDriver_NoProgressWatchdogHaltsInsteadOfSilentFreeze_Headless()
+    {
+        // Match-flow contract rule 4 (advisor plan A.3): if no turn commits within the watchdog
+        // window, the live match must surface a visible halt with a void result — never idle
+        // silently. Here the peer connects at the transport level but never arms a fight screen,
+        // which under the broken driver produced an eternal silent "waiting" state.
+        LoadAllGameData();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_mp_live_watchdog_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempPath;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+        TcpLockstepTransport hostTransport = null;
+        TcpLockstepTransport joinTransport = null;
+        ArenaFightScreen hostScreen = null;
+
+        try
+        {
+            ArenaMultiplayerSettings settings = ArenaMultiplayerLobbyScreen.CreateDefaultSettings(900).WithResolvedFleets();
+            int port = FreeTcpPort();
+            hostTransport = TcpLockstepTransport.Host(port, ArenaMultiplayerSession.JoinPlayerPeerId);
+            joinTransport = TcpLockstepTransport.Join("127.0.0.1", port, LockstepHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(5)),
+                "Loopback TCP host did not accept the join peer.");
+
+            hostScreen = ArenaFightScreen.Create(settings.HostRacePreference, settings.MatchSeed,
+                startAtHub: false, opponentPreference: settings.JoinRacePreference);
+            hostScreen.ArmMultiplayerLive(new ArenaMultiplayerLiveSession(
+                ArenaMultiplayerRole.Host, hostTransport, settings));
+            hostScreen.LoadContent();
+
+            // The joined peer stays silent (never arms). Feed the host well past the hard
+            // no-progress deadline; it must halt visibly instead of freezing forever.
+            for (int frame = 0; frame < 100 && hostScreen.MultiplayerLiveResultForHeadless?.MatchEnded != true
+                 && !hostScreen.MultiplayerEndPanelVisibleForHeadless; ++frame)
+            {
+                hostScreen.Update(0.5f);
+                joinTransport.Poll();
+            }
+
+            Assert.IsTrue(hostScreen.MultiplayerEndPanelVisibleForHeadless,
+                "A stalled live match must surface the visible halt panel instead of silently idling. "
+                + $"status='{hostScreen.MultiplayerLiveStatusText}'");
+            ArenaMultiplayerRunResult result = hostScreen.MultiplayerLiveResultForHeadless;
+            Assert.IsNotNull(result, "The halted match must still carry a result object.");
+            Assert.IsTrue(result.Disconnected,
+                "A no-progress halt must void the match (disconnected/void result), not award a winner.");
+            Assert.AreEqual(0, result.WinnerPeerId, "A stalled match must not declare a winner.");
+        }
+        finally
+        {
+            try { hostScreen?.ExitScreen(); } catch { }
+            try { hostTransport?.Dispose(); } catch { }
+            try { joinTransport?.Dispose(); } catch { }
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+        }
+    }
+
     static string[] FleetNames(ArenaStartArchetype archetype, ulong seed)
         => CareerManager.StartingRosterDesigns(archetype, seed)
             .Select(d => d.Name)

@@ -90,6 +90,26 @@ public sealed partial class ArenaFightScreen
     uint MultiplayerLiveTurn;
     float MultiplayerLiveAccumulator;
     long MultiplayerRemoteChecksumTick = -1;
+    // Live arm/ack gate (advisor plan A.3 rule 1): the host must not commit ANY command frame
+    // until the join peer has registered its lockstep receiver and said so, because the transport
+    // drops messages delivered while no receiver is registered and CommitTick never retransmits.
+    bool MultiplayerRemoteArmed;   // host: join's live armed ack observed
+    bool MultiplayerHostSeen;      // join: any host message observed since arming
+    float MultiplayerHandshakeResendTimer;
+    // No-progress watchdog (advisor plan A.3 rule 4): a live match must surface a visible halt
+    // instead of silently idling when the lockstep barrier never clears.
+    float MultiplayerNoProgressSeconds;
+    long MultiplayerLastProgressTurn = -1;
+    long MultiplayerLastProgressSimTick = -1;
+    long MultiplayerLastSubmitTurn = -1;
+    // Engagement liveness (ruling 2): frame-pump liveness alone is not enough — within a bounded
+    // sim-tick window after spawn at least one engagement signal (target acquired, ship in combat,
+    // weapon fire attempted) must occur, else halt with ARENA_LIVENESS_FAIL instead of idling.
+    bool MultiplayerEngagementSeen;
+    const float MultiplayerHandshakeResendInterval = 0.5f;
+    const float MultiplayerStallWarnSeconds = 5f;
+    public const float MultiplayerStallHaltSeconds = 30f;
+    public const uint MultiplayerEngagementWindowTicks = 300; // 5 sim-seconds after spawn
     bool MultiplayerLivePaused;
     float MultiplayerLiveSpeed = 1f;
     string MultiplayerLiveStatus = "";
@@ -102,6 +122,8 @@ public sealed partial class ArenaFightScreen
     public string MultiplayerLiveStatusText => MultiplayerLiveStatus ?? "";
     public bool MultiplayerEndPanelVisibleForHeadless => MultiplayerEndPanel?.Visible == true;
     public ArenaMultiplayerRunResult MultiplayerLiveResultForHeadless => MultiplayerLiveResult;
+    public long MultiplayerLiveSimTickForHeadless => MultiplayerLiveSim != null ? MultiplayerLiveSim.Tick : -1;
+    public bool MultiplayerEngagementSeenForHeadless => MultiplayerEngagementSeen;
 
     public bool HasPendingMultiplayerPvPSetup => MultiplayerPvPMode;
 
@@ -180,6 +202,10 @@ public sealed partial class ArenaFightScreen
             MultiplayerLiveClient = new LockstepClient(MultiplayerLiveSession.Transport,
                 ArenaMultiplayerSession.JoinPlayerPeerId, MultiplayerLiveSim);
             MultiplayerLiveSession.Transport.AddObserver(ArenaMultiplayerSession.JoinPlayerPeerId, OnMultiplayerJoinMessage);
+            // Receiver is registered NOW, so it is safe for the host to start committing frames.
+            // Re-sent periodically until the host is heard from (the first ack can be consumed by
+            // a transport poll that happens before the host screen registers its observer).
+            SendMultiplayerLiveArmedAck();
         }
 
         BuildMultiplayerLiveHud();
@@ -262,7 +288,11 @@ public sealed partial class ArenaFightScreen
             return;
         }
 
+        MaintainMultiplayerLiveHandshake(Math.Max(0f, dt));
+
         MultiplayerLiveAccumulator += Math.Max(0f, dt) * MultiplayerLiveSpeed;
+        // Clamp so a long barrier stall doesn't turn into a catch-up spiral afterwards.
+        MultiplayerLiveAccumulator = Math.Min(MultiplayerLiveAccumulator, 0.25f);
         int steps = 0;
         while (MultiplayerLiveAccumulator >= 1f / 60f && steps++ < 8 && !MultiplayerLiveComplete)
         {
@@ -270,7 +300,133 @@ public sealed partial class ArenaFightScreen
                 break;
             MultiplayerLiveAccumulator -= 1f / 60f;
         }
+        CheckMultiplayerEngagementLiveness();
+        UpdateMultiplayerLiveWatchdog(Math.Max(0f, dt));
         UState.Paused = MultiplayerLivePaused;
+    }
+
+    // Ruling 2 liveness predicate: once the sim is ticking, at least one of {target acquired,
+    // ship in combat, weapon fire attempted} must occur within the bounded post-spawn window,
+    // else the match halts visibly (void result) and telemetry records ARENA_LIVENESS_FAIL with
+    // a deterministic cannot-engage reason. Frame-pump starvation before the first tick is the
+    // no-progress watchdog's job, not this predicate's.
+    void CheckMultiplayerEngagementLiveness()
+    {
+        if (MultiplayerEngagementSeen || MultiplayerLiveComplete)
+            return;
+        long simTick = MultiplayerLiveSimTickForHeadless;
+        if (simTick <= 0)
+            return;
+
+        if (AnyMultiplayerEngagementEvidence())
+        {
+            MultiplayerEngagementSeen = true;
+            MultiplayerTelemetry?.Event("ENGAGEMENT_SEEN", $"simTick={simTick}");
+            return;
+        }
+
+        if (simTick >= MultiplayerEngagementWindowTicks)
+        {
+            ArenaMultiplayerMatchStatus status = MultiplayerMatchStatus();
+            string reason = $"No engagement within {MultiplayerEngagementWindowTicks} sim ticks of spawn: "
+                            + "no target acquired, no ship in combat, no weapon fire "
+                            + $"(playerAlive={status.PlayerAlive} enemyAlive={status.EnemyAlive}).";
+            MultiplayerTelemetry?.Event("ARENA_LIVENESS_FAIL", reason);
+            MultiplayerLiveResult.Disconnected = true;
+            MultiplayerLiveResult.DisconnectReason = reason;
+            CompleteMultiplayerLive("LIVENESS: " + reason);
+        }
+    }
+
+    bool AnyMultiplayerEngagementEvidence()
+    {
+        if (HasEngagedShip(PlayerShips) || HasEngagedShip(EnemyShips))
+            return true;
+
+        Projectile[] projectiles = UState?.Objects?.GetProjectiles() ?? Array.Empty<Projectile>();
+        for (int i = 0; i < projectiles.Length; ++i)
+            if (projectiles[i] != null && projectiles[i].Active)
+                return true; // weapon fire attempted
+        return false;
+    }
+
+    static bool HasEngagedShip(List<Ship> ships)
+    {
+        if (ships == null)
+            return false;
+        for (int i = 0; i < ships.Count; ++i)
+        {
+            Ship s = ships[i];
+            if (s != null && s.Active && s.IsAlive && (s.InCombat || s.AI?.Target != null))
+                return true;
+        }
+        return false;
+    }
+
+    // Advisor plan A.3 rule 1: retransmit the arm handshake until both sides have seen each
+    // other. The host's SessionControlMessage and the join's armed ack each have exactly one
+    // in-flight copy otherwise, and either can be consumed by a transport poll that runs before
+    // the other peer's fight screen registers its observer (the live lobby polls the shared
+    // transport during the launch handoff).
+    void MaintainMultiplayerLiveHandshake(float dt)
+    {
+        bool waiting = MultiplayerLiveSession.Role == ArenaMultiplayerRole.Host
+            ? !MultiplayerRemoteArmed
+            : !MultiplayerHostSeen;
+        if (!waiting)
+            return;
+
+        MultiplayerHandshakeResendTimer -= dt;
+        if (MultiplayerHandshakeResendTimer > 0f)
+            return;
+        MultiplayerHandshakeResendTimer = MultiplayerHandshakeResendInterval;
+        if (MultiplayerLiveSession.Role == ArenaMultiplayerRole.Host)
+            SendMultiplayerControl();
+        else
+            SendMultiplayerLiveArmedAck();
+    }
+
+    void SendMultiplayerLiveArmedAck()
+        => MultiplayerLiveSession?.Transport?.Send(LockstepHost.HostPeerId,
+            new SessionReadyMessage
+            {
+                FromPeer = ArenaMultiplayerSession.JoinPlayerPeerId,
+                PeerId = ArenaMultiplayerSession.JoinPlayerPeerId,
+                Ready = true,
+                BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
+                BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
+            });
+
+    // Advisor plan A.3 rule 4: liveness or explicit halt. If neither the local turn counter nor
+    // the sim tick moves within the watchdog window, surface a visible stalled status and, past
+    // the hard deadline, halt with a void result — never silently idle.
+    void UpdateMultiplayerLiveWatchdog(float dt)
+    {
+        if (MultiplayerLiveComplete)
+            return;
+
+        long simTick = MultiplayerLiveSimTickForHeadless;
+        if (MultiplayerLiveTurn != MultiplayerLastProgressTurn || simTick != MultiplayerLastProgressSimTick)
+        {
+            MultiplayerLastProgressTurn = MultiplayerLiveTurn;
+            MultiplayerLastProgressSimTick = simTick;
+            MultiplayerNoProgressSeconds = 0f;
+            return;
+        }
+
+        MultiplayerNoProgressSeconds += dt;
+        if (MultiplayerNoProgressSeconds >= MultiplayerStallHaltSeconds)
+        {
+            MultiplayerLiveResult.Disconnected = true;
+            MultiplayerLiveResult.DisconnectReason =
+                $"No lockstep progress for {(int)MultiplayerNoProgressSeconds}s (peer stalled or unreachable).";
+            MultiplayerTelemetry?.NetworkError(MultiplayerLiveResult.DisconnectReason);
+            CompleteMultiplayerLive("STALLED: " + MultiplayerLiveResult.DisconnectReason);
+        }
+        else if (MultiplayerNoProgressSeconds >= MultiplayerStallWarnSeconds)
+        {
+            MultiplayerLiveStatus = $"STALLED {(int)MultiplayerNoProgressSeconds}s — {MultiplayerLiveStatus}";
+        }
     }
 
     bool AdvanceMultiplayerLiveTurn()
@@ -286,13 +442,32 @@ public sealed partial class ArenaFightScreen
             return false;
         }
 
+        // ARM before frames (advisor plan A.3 rule 1). The host must not commit tick 0 until the
+        // join peer's lockstep receiver is registered and acknowledged; the join must not submit
+        // input until the host has been heard from. Frames/submits sent before the far side is
+        // armed are dropped by the transport with no retransmit — the live "spawns then idles"
+        // deadlock. Both sides keep pumping the handshake via MaintainMultiplayerLiveHandshake.
+        if (MultiplayerLiveSession.Role == ArenaMultiplayerRole.Host && !MultiplayerRemoteArmed)
+        {
+            MultiplayerLiveStatus = "waiting for peer to arm";
+            return false;
+        }
+        if (MultiplayerLiveSession.Role == ArenaMultiplayerRole.Join && !MultiplayerHostSeen)
+        {
+            MultiplayerLiveStatus = "waiting for host to arm";
+            return false;
+        }
+
         int peerId = MultiplayerLiveSession.Role == ArenaMultiplayerRole.Host
             ? ArenaMultiplayerSession.HostPlayerPeerId
             : ArenaMultiplayerSession.JoinPlayerPeerId;
-        if (ShouldSubmitMultiplayer(settings, turn))
+        // Submit exactly once per turn: a turn blocked on the lockstep barrier re-enters this
+        // method every rendered frame, and re-submitting piles duplicate commands into the frame.
+        if (ShouldSubmitMultiplayer(settings, turn) && MultiplayerLastSubmitTurn < turn)
         {
             MultiplayerLiveClient.Submit(BuildMultiplayerFocusCommand(peerId,
                 turn + (uint)Math.Max(0, settings.InputDelay), turn));
+            MultiplayerLastSubmitTurn = turn;
             MultiplayerLiveResult.CommandsSubmitted++;
         }
 
@@ -302,9 +477,15 @@ public sealed partial class ArenaFightScreen
         {
             if (ShouldHaveSubmittedForExecTick(settings, turn) && !HasBothInputsForTurn(turn))
             {
-                MultiplayerLiveStatus = $"waiting for turn {turn} input";
-                MultiplayerTelemetry?.Event("WAIT_INPUT", $"turn={turn}");
-                return false;
+                // Drain-before-starve (A.3 rule 3): the peer's submit may already be sitting in
+                // the transport; drain once more before yielding to the next rendered frame.
+                MultiplayerLiveSession.Transport.Poll();
+                if (!HasBothInputsForTurn(turn))
+                {
+                    MultiplayerLiveStatus = $"waiting for turn {turn} input";
+                    MultiplayerTelemetry?.Event("WAIT_INPUT", $"turn={turn}");
+                    return false;
+                }
             }
 
             MultiplayerLiveHost.CommitTick(turn);
@@ -322,6 +503,13 @@ public sealed partial class ArenaFightScreen
             MultiplayerLiveClient.Pump();
             StabilizeMultiplayerArenaViewAndVisibility();
             MultiplayerLiveSession.Transport.Poll();
+            if (MultiplayerLiveSim.Tick <= turn)
+            {
+                // Drain-before-starve: the host frame may have arrived on the poll above.
+                StabilizeMultiplayerArenaViewAndVisibility();
+                MultiplayerLiveClient.Pump();
+                StabilizeMultiplayerArenaViewAndVisibility();
+            }
             if (MultiplayerLiveSim.Tick <= turn)
             {
                 MultiplayerLiveStatus = $"waiting for host turn {turn}";
@@ -357,6 +545,16 @@ public sealed partial class ArenaFightScreen
     {
         if (MultiplayerLiveSession == null || MultiplayerLiveComplete)
             return;
+        if (message is SessionReadyMessage armed
+            && armed.PeerId == ArenaMultiplayerSession.JoinPlayerPeerId && armed.Ready)
+        {
+            if (!MultiplayerRemoteArmed)
+                MultiplayerTelemetry?.Event("REMOTE_ARMED", $"peer={armed.PeerId}");
+            MultiplayerRemoteArmed = true;
+            // Answer every ack: the join keeps re-arming until it hears the host, and the host's
+            // initial SessionControlMessage may have been consumed before the join registered.
+            SendMultiplayerControl();
+        }
         if (message is ChecksumMessage c && c.FromPeer == ArenaMultiplayerSession.JoinPlayerPeerId)
         {
             MultiplayerRemoteChecksumTick = Math.Max(MultiplayerRemoteChecksumTick, c.Tick);
@@ -382,6 +580,13 @@ public sealed partial class ArenaFightScreen
     {
         if (MultiplayerLiveSession == null || MultiplayerLiveComplete)
             return;
+        if (!MultiplayerHostSeen)
+        {
+            // Any observed host message (control, command frame, error) proves the host's live
+            // session is armed; the join may start submitting/advancing turns.
+            MultiplayerHostSeen = true;
+            MultiplayerTelemetry?.Event("HOST_SEEN", message.GetType().Name);
+        }
         if (message is SessionControlMessage c)
         {
             MultiplayerLivePaused = c.Paused;
