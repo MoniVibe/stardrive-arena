@@ -13024,6 +13024,111 @@ public class Authoritative4XSessionTests : StarDriveTest
     }
 
     [TestMethod]
+    public void Authoritative4XSnapshot_WeaponFireRowsSpawnRenderOnlyVisualsAndStayDigestNeutral_Headless()
+    {
+        const ulong Seed = 0xF17E515UL;
+        BuiltWorld authority = BuildWorld(Seed);
+        BuiltWorld client = BuildWorld(Seed);
+
+        try
+        {
+            MakeAtWar(authority.Player, authority.Enemy);
+            MakeAtWar(client.Player, client.Enemy);
+
+            authority.UState.Objects.UpdateLists();
+            client.UState.Objects.UpdateLists();
+
+            Weapon[] candidates = authority.Ship.Weapons
+                .Where(w => w != null && !w.TruePD && !w.IsRepairBeam && !w.IsRepairDrone)
+                .OrderBy(w => w.IsBeam ? 1 : 0)
+                .ToArray();
+            Assert.IsTrue(candidates.Length > 0, "The fire-visual regression needs a ship weapon fixture.");
+
+            authority.Ship.PowerCurrent = authority.Ship.PowerStoreMax;
+            authority.Ship.ChangeOrdnance(authority.Ship.OrdinanceMax);
+
+            Weapon fired = null;
+            Vector2 firedTarget = Vector2.Zero;
+            Vector2[] fireTargets =
+            {
+                authority.Ship.Position + Vector2.Right * 2_000f,
+                authority.Ship.Position + Vector2.Left * 2_000f,
+                authority.Ship.Position + Vector2.Up * 2_000f,
+                authority.Ship.Position + Vector2.Down * 2_000f,
+            };
+            uint fireTick = 77;
+            authority.UState.AuthoritativeWeaponFire.BeginHostTick(fireTick);
+            try
+            {
+                foreach (Vector2 fireTarget in fireTargets)
+                {
+                    authority.EnemyShip.Position = fireTarget;
+                    authority.Ship.Rotation = authority.Ship.Position.DirectionToTarget(fireTarget).ToRadians();
+                    foreach (Weapon weapon in candidates)
+                    {
+                        weapon.CooldownTimer = 0f;
+                        if (weapon.ManualFireTowardsPos(fireTarget))
+                        {
+                            fired = weapon;
+                            firedTarget = fireTarget;
+                            break;
+                        }
+                    }
+                    if (fired != null)
+                        break;
+                }
+            }
+            finally
+            {
+                authority.UState.AuthoritativeWeaponFire.EndHostTick(fireTick);
+            }
+
+            client.EnemyShip.Position = firedTarget;
+            client.Ship.Rotation = authority.Ship.Rotation;
+
+            Assert.IsNotNull(fired, "The authoritative weapon hook must record a real fired weapon.");
+            Assert.IsTrue(authority.UState.AuthoritativeWeaponFire.PendingHostEventCount > 0,
+                "Firing through Weapon.cs should buffer a transient WF event.");
+
+            AuthoritativeStateSnapshot authoritySnapshot = AuthoritativeStateSnapshot.Capture(authority.Screen, fireTick);
+            StringAssert.Contains(authoritySnapshot.Payload, "WF|");
+
+            int clientGameplayProjectilesBefore = client.UState.Objects.NumProjectiles;
+            authoritySnapshot.ApplyEmpireRuntimePayload(client.UState);
+
+            Assert.AreEqual(clientGameplayProjectilesBefore, client.UState.Objects.NumProjectiles,
+                "Applying WF must not create gameplay Projectile/Beam objects on the passive client.");
+            Assert.IsTrue(client.UState.Objects.RenderOnlyWeaponFireVisualCount > 0,
+                "Applying WF should spawn a render-only cosmetic weapon-fire visual.");
+
+            AuthoritativeStateSnapshot clientSnapshot = AuthoritativeStateSnapshot.Capture(client.Screen, fireTick);
+            Assert.AreEqual(authoritySnapshot.SyncDigest, clientSnapshot.SyncDigest,
+                "Render-only WF visuals must be invisible to the fatal payload capture.");
+            Assert.AreEqual(authoritySnapshot.TransformDigest, clientSnapshot.TransformDigest,
+                "The client should echo the same transient WF row on its immediate recapture.");
+
+            AuthoritativeStateSnapshot authorityDrained = AuthoritativeStateSnapshot.Capture(authority.Screen, fireTick + 1);
+            AuthoritativeStateSnapshot clientDrained = AuthoritativeStateSnapshot.Capture(client.Screen, fireTick + 1);
+            Assert.IsFalse(authorityDrained.Payload.Contains("WF|", StringComparison.Ordinal),
+                "Host WF rows must be fire-and-forget after the snapshot that carries them.");
+            Assert.IsFalse(clientDrained.Payload.Contains("WF|", StringComparison.Ordinal),
+                "Client WF echo rows must not replay after the digest-neutral recapture.");
+            Assert.AreEqual(authorityDrained.SyncDigest, clientDrained.SyncDigest,
+                "Active render-only visuals must remain invisible to later capture/digests.");
+
+            int visualsAfterFirstApply = client.UState.Objects.RenderOnlyWeaponFireVisualCount;
+            authoritySnapshot.ApplyEmpireRuntimePayload(client.UState);
+            Assert.AreEqual(visualsAfterFirstApply, client.UState.Objects.RenderOnlyWeaponFireVisualCount,
+                "Replaying the same snapshot during resync must not duplicate stale cosmetic fire visuals.");
+        }
+        finally
+        {
+            authority.Screen.Dispose();
+            client.Screen.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void Authoritative4XSnapshot_AppliesShipRuntimeRowsBeforeDigestCompare_Headless()
     {
         LoadAllGameData();

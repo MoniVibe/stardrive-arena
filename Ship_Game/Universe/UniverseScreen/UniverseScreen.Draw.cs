@@ -910,6 +910,8 @@ namespace Ship_Game
                     proj.Draw(batch, this);
                 }
 
+                UState.Objects.DrawRenderOnlyWeaponFireVisuals(batch, this);
+
                 if (beams.Length > 0)
                     Beam.UpdateBeamEffect(this);
 

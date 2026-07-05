@@ -2519,6 +2519,9 @@ public sealed partial class AuthoritativeStateSnapshot
             universe.Influence.Insert(ship.Loyalty, ship);
     }
 
+    internal static void ApplyWeaponFireLine(UniverseState universe, string line)
+        => universe.AuthoritativeWeaponFire.ApplyLine(universe, line);
+
     internal static void ApplyShipVisibilityLine(UniverseState universe, string line)
     {
         string[] p = line.Split('|');
@@ -2794,8 +2797,17 @@ public sealed class Authoritative4XAuthority
     (AuthoritativeCommandResult result, AuthoritativeStateSnapshot snapshot) Advance(
         AuthoritativeCommandResult result, bool captureSnapshot)
     {
-        using (AuthoritativeMutationGuard.EnterAcceptedCommandApply())
-            Universe.SingleSimulationStep(Step);
+        uint nextTick = Tick + 1;
+        Universe.UState.AuthoritativeWeaponFire.BeginHostTick(nextTick);
+        try
+        {
+            using (AuthoritativeMutationGuard.EnterAcceptedCommandApply())
+                Universe.SingleSimulationStep(Step);
+        }
+        finally
+        {
+            Universe.UState.AuthoritativeWeaponFire.EndHostTick(nextTick);
+        }
         Tick++;
         return (result, captureSnapshot ? AuthoritativeStateSnapshot.Capture(Universe, Tick) : null);
     }

@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
+using Microsoft.Xna.Framework.Graphics;
 using SDUtils;
 using Ship_Game.Gameplay;
+using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Ship_Game.Spatial;
 using Ship_Game.Universe;
@@ -42,6 +44,7 @@ namespace Ship_Game
         /// All projectiles: projectiles, beams
         /// </summary>
         readonly GameObjectList<Projectile> Projectiles = new();
+        readonly List<RenderOnlyWeaponFireVisual> WeaponFireVisuals = new();
 
         public readonly AggregatePerfTimer TotalTime = new();
         public readonly AggregatePerfTimer ListTime = new();
@@ -67,6 +70,7 @@ namespace Ship_Game
         /// Number of currently tracked projectiles
         /// </summary>
         public int NumProjectiles => Projectiles.NumBackingItems;
+        public int RenderOnlyWeaponFireVisualCount => WeaponFireVisuals.Count;
 
         /// <summary>
         /// Currently submitted objects (excludes pending)
@@ -132,6 +136,16 @@ namespace Ship_Game
             Objects.Add(projectile);
         }
 
+        public void AddRenderOnlyWeaponFireVisual(RenderOnlyWeaponFireVisual visual)
+        {
+            if (visual == null)
+                return;
+
+            if (WeaponFireVisuals.Count >= AuthoritativeWeaponFireReplication.MaxEventsPerSnapshot * 2)
+                WeaponFireVisuals.RemoveAt(0);
+            WeaponFireVisuals.Add(visual);
+        }
+
         /// <summary>Thread-safely Adds Ships to the Universe</summary>
         public void AddRange(IReadOnlyList<Ship> ships)
         {
@@ -163,6 +177,7 @@ namespace Ship_Game
             Ships.ClearAndApplyChanges();
             Projectiles.ClearAndApplyChanges();
             Objects.ClearAndApplyChanges();
+            WeaponFireVisuals.Clear();
 
             Spatial.Clear();
         }
@@ -192,6 +207,7 @@ namespace Ship_Game
             UpdateAllSystems(timeStep);
             UpdateAllShips(timeStep);
             UpdateAllProjectiles(timeStep);
+            UpdateRenderOnlyWeaponFireVisuals(timeStep);
 
             if (isRunning)
             {
@@ -242,6 +258,7 @@ namespace Ship_Game
             }
             UpdateAllSensors(FixedSimTime.Zero);
             UpdateAllEmpireContactsAndBorders(FixedSimTime.Zero);
+            UpdateRenderOnlyWeaponFireVisuals(FixedSimTime.Zero);
             UpdateVisibleObjects();
         }
 
@@ -517,6 +534,23 @@ namespace Ship_Game
                 UpdateAI(0, allShips.Length);
 
             ShipAiPerf.Stop();
+        }
+
+        void UpdateRenderOnlyWeaponFireVisuals(FixedSimTime timeStep)
+        {
+            for (int i = WeaponFireVisuals.Count - 1; i >= 0; --i)
+            {
+                RenderOnlyWeaponFireVisual visual = WeaponFireVisuals[i];
+                visual.Update(UState, timeStep);
+                if (!visual.Active)
+                    WeaponFireVisuals.RemoveAt(i);
+            }
+        }
+
+        public void DrawRenderOnlyWeaponFireVisuals(SpriteBatch batch, UniverseScreen screen)
+        {
+            for (int i = 0; i < WeaponFireVisuals.Count; ++i)
+                WeaponFireVisuals[i].Draw(batch, screen);
         }
 
         void UpdateVisibleObjects()

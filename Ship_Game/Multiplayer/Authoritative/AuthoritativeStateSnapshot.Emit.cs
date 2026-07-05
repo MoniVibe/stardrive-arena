@@ -483,6 +483,9 @@ public sealed partial class AuthoritativeStateSnapshot
               .AppendLine();
     }
 
+    internal static void EmitWeaponFireRows(UniverseState us, uint tick, StringBuilder sb)
+        => us.AuthoritativeWeaponFire.EmitRows(tick, sb);
+
     internal static void EmitShipVisibilityRows(UniverseState us, uint tick, StringBuilder sb)
     {
         foreach (Ship s in SnapshotShips(us))

@@ -80,6 +80,12 @@ namespace Ship_Game.Universe
         public UniverseObjectManager Objects;
 
         /// <summary>
+        /// Transient authoritative weapon-fire rows for passive-client presentation.
+        /// Not serialized and not included in authoritative state capture.
+        /// </summary>
+        public readonly AuthoritativeWeaponFireReplication AuthoritativeWeaponFire = new();
+
+        /// <summary>
         /// Spatial search interface for Universe Ships/Projectiles/Beams, updated once per frame
         /// </summary>
         public SpatialManager Spatial;

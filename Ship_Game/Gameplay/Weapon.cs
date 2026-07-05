@@ -76,6 +76,7 @@ namespace Ship_Game.Gameplay
             {
                 PrepareToFire();
                 Projectile.Create(this, Owner, Module.Position, direction, null, playSound: true);
+                Universe.AuthoritativeWeaponFire.RecordProjectile(this, Owner, Module.Position, direction, null);
             }
         }
 
@@ -134,6 +135,7 @@ namespace Ship_Game.Gameplay
             foreach (FireSource fireSource in EnumFireSources(origin, direction))
             {
                 Projectile.Create(this, Owner, fireSource.Origin, fireSource.Direction, target, playSound);
+                Universe.AuthoritativeWeaponFire.RecordProjectile(this, Owner, fireSource.Origin, fireSource.Direction, target);
                 playSound = false; // only play sound once per fire cone
             }
         }
@@ -528,6 +530,7 @@ namespace Ship_Game.Gameplay
 
             // NOTE: beam is automatically added to this.Owner.Universe
             var _ = new Beam(Owner.Universe.CreateId(), this, source, destination, target);
+            Universe.AuthoritativeWeaponFire.RecordBeam(this, Owner, source, destination, target);
             return true;
         }
 

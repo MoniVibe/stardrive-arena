@@ -446,6 +446,12 @@ public sealed class ReplicationCoverageDiagnosticTests
             "ShipId|Position.X|Position.Y|Velocity.X|Velocity.Y|Rotation",
             "SX is excluded from SyncDigest and covered by TransformDigest instead."),
 
+        Row("WF", "WeaponFire",
+            "Tick|Sequence|ShooterShipId|WeaponUid|ModuleGridX|ModuleGridY|TargetShipId|Source.X|Source.Y|Direction.X|Direction.Y|IsBeam|Destination.X|Destination.Y",
+            "Tick|Sequence|ShooterShipId|WeaponUid|ModuleGridX|ModuleGridY|TargetShipId|Source.X|Source.Y|Direction.X|Direction.Y|IsBeam|Destination.X|Destination.Y|RenderOnlyVisualSpawn",
+            "",
+            "WF is a transient cosmetic-only event row excluded from SyncDigest and covered by TransformDigest for same-snapshot echo."),
+
         Row("SV", "ShipVisibility",
             "ShipId|KnownByMask",
             "ShipId|KnownByMask",

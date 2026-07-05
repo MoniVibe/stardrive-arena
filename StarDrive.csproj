@@ -771,6 +771,7 @@
      <Compile Include="Ship_Game\Multiplayer\Authoritative\AuthoritativeMutationGuard.cs" />
      <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XClientContext.cs" />
      <Compile Include="Ship_Game\Multiplayer\Authoritative\AuthoritativeReplicationManifest.cs" />
+     <Compile Include="Ship_Game\Multiplayer\Authoritative\AuthoritativeWeaponFireReplication.cs" />
      <Compile Include="Ship_Game\Multiplayer\Authoritative\Authoritative4XSession.cs" />
      <Compile Include="Ship_Game\Multiplayer\Authoritative\AuthoritativeStateSnapshot.Apply.cs" />
      <Compile Include="Ship_Game\Multiplayer\Authoritative\AuthoritativeStateSnapshot.Emit.cs" />

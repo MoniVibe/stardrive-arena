@@ -20,6 +20,7 @@ namespace Ship_Game
             UpdateLists(removeInactiveObjects: false);
             UpdatePassiveSystemPresentation();
             Spatial.Update(Objects.GetItems());
+            UpdateRenderOnlyWeaponFireVisuals(new FixedSimTime(1f / 60f));
             UpdateVisibleObjects();
             SyncPassiveVisibleShipSceneObjects(PassiveAuthoritativeFrameDeltaSeconds());
 
