@@ -135,31 +135,6 @@ namespace Ship_Game
         // guarded by `isPlayer && OracleSidekickEnabled` (+ the relevant Auto* slice flag).
         [StarData] public bool OracleSidekickEnabled;
 
-        public bool IsHumanControlled => AuthoritativeHumanPlayers.IsHumanControlled(this);
-        public bool IsAIControlled => !IsHumanControlled || AISidekickEnabled;
-
-        // Hand this empire fully over to the AI (every slice). For per-slice control, set the individual
-        // Auto* flags instead (e.g. AutoMilitary / AutoSpy / AutoResearch) and leave AISidekickEnabled off.
-        public void EnableAISidekick(bool enableOracle = false)
-        {
-            AISidekickEnabled           = true;
-            if (enableOracle && isPlayer) OracleSidekickEnabled = true; // player-only cheat layer (opt-in)
-            AutoResearch                = true;
-            AutoColonize                = true;
-            AutoExplore                 = true;
-            AutoTaxes                   = true;
-            AutoMilitary                = true;
-            AutoSpy                     = true;
-            AutoBuildSpaceRoads         = true;
-            AutoBuildResearchStations   = true;
-            AutoBuildMiningStations     = true;
-            AutoPickBestColonizer       = true;
-            AutoPickConstructors        = true;
-            AutoPickBestResearchStation = true;
-            AutoPickBestMiningStation   = true;
-            AutoBuildTerraformers       = true;
-        }
-
         [StarData] public int TotalScore;
         [StarData] public float TechScore;
         [StarData] public float ExpansionScore;
@@ -263,19 +238,6 @@ namespace Ship_Game
 
         // per-faction pseudo-random source
         public RandomBase Random { get; private set; } = new ThreadSafeRandom();
-
-        // Determinism (VS2/RC7): switch this empire to a reproducible per-entity RNG stream derived from
-        // the world root seed + this empire's stable Id. Used for lockstep/replay; normal play keeps the
-        // default clock-seeded ThreadSafeRandom.
-        public void UseDeterministicRandom(ulong rootSeed)
-            => Random = Determinism.DeterministicStreams.For(rootSeed, Determinism.RngStreamKind.Empire, (ulong)Id);
-
-        // Determinism: put this empire's RNG on its reproducible per-empire stream DURING generation,
-        // before the Id is assigned, so personality-trait draws made at creation time are deterministic.
-        // Keyed by the predicted stable Id (EmpireList.Count at Add time) so it matches the topology that
-        // UseDeterministicRandom uses once the global re-seed runs.
-        public void SeedPersonalityRandom(ulong rootSeed, ulong predictedId)
-            => Random = Determinism.DeterministicStreams.For(rootSeed, Determinism.RngStreamKind.Empire, predictedId);
 
         /// <summary>
         /// Empire unique ID. If this is 0, then this empire is invalid!
@@ -821,36 +783,6 @@ namespace Ship_Game
             {
                 entry.UnlockFromSave(this, unlockBonuses: false);
             }
-        }
-
-        public void RebuildUnlockCachesForAuthoritativeSync()
-        {
-            string[] exactResearchQueue = data.ResearchQueue.ToArray();
-            IShipDesign[] authoritativePlayerDesigns = ShipsWeCanBuildSnapshot
-                .Where(d => d.IsPlayerDesign)
-                .ToArray();
-            var exactTechState = TechEntries
-                .Select(t => (Tech: t, t.Progress, t.Unlocked, t.Level))
-                .ToArray();
-
-            ResetUnlocks();
-            ApplyDataUnlocks();
-            ResetTechsAndUnlocks();
-            UpdateShipsWeCanBuild(includePlayerDesigns: false);
-            foreach (IShipDesign design in authoritativePlayerDesigns)
-            {
-                if (WeCanBuildThis(design))
-                    AddBuildableShip(design);
-            }
-            foreach (var state in exactTechState)
-            {
-                state.Tech.Progress = state.Progress;
-                state.Tech.Unlocked = state.Unlocked;
-                state.Tech.Level = state.Level;
-            }
-            Research.SetQueueExact(exactResearchQueue);
-            foreach (Planet planet in OwnedPlanets)
-                planet.RefreshBuildingsWeCanBuildHere();
         }
 
         void CreateEmpireTechTree()
@@ -1812,49 +1744,6 @@ namespace Ship_Game
                 nameof(RushAllConstruction));
             foreach (Planet planet in OwnedPlanets)
                 planet.Construction.SwitchRushAllConstruction(rush);
-        }
-
-        public void SetAuthoritativeAutomationState(AuthoritativeEmpireAutomationFlags flags,
-            string freighter = null, string colony = null, string scout = null, string constructor = null,
-            string researchStation = null, string miningStation = null, bool updateRushQueues = false)
-        {
-            AuthoritativeMutationGuard.AssertCanMutate(this, AuthoritativeMutationFamily.EmpireAutomation,
-                "AutomationFlags");
-
-            flags &= AuthoritativeEmpireAutomationFlags.All;
-            AutoPickConstructors = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickConstructors);
-            AutoPickBestColonizer = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestColonizer);
-            AutoPickBestFreighter = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestFreighter);
-            AutoResearch = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoResearch);
-            AutoBuildTerraformers = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildTerraformers);
-            AutoTaxes = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoTaxes);
-            AutoPickBestResearchStation = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestResearchStation);
-            AutoPickBestMiningStation = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoPickBestMiningStation);
-            AutoExplore = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoExplore);
-            AutoColonize = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoColonize);
-            AutoBuildSpaceRoads = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildSpaceRoads);
-            AutoFreighters = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoFreighters);
-            AutoBuildResearchStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildResearchStations);
-            AutoBuildMiningStations = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoBuildMiningStations);
-            AutoMilitary = flags.HasFlag(AuthoritativeEmpireAutomationFlags.AutoMilitary);
-
-            bool rushAll = flags.HasFlag(AuthoritativeEmpireAutomationFlags.RushAllConstruction);
-            RushAllConstruction = rushAll;
-            if (updateRushQueues)
-                SwitchRushAllConstruction(rushAll);
-
-            if (freighter != null)
-                data.CurrentAutoFreighter = freighter;
-            if (colony != null)
-                data.CurrentAutoColony = colony;
-            if (scout != null)
-                data.CurrentAutoScout = scout;
-            if (constructor != null)
-                data.CurrentConstructor = constructor;
-            if (researchStation != null)
-                data.CurrentResearchStation = researchStation;
-            if (miningStation != null)
-                data.CurrentMiningStation = miningStation;
         }
 
         public Planet.ColonyType AssessColonyNeeds2(Planet p)

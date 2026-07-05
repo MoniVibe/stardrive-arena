@@ -360,11 +360,6 @@ namespace Ship_Game
             }
         }
 
-        void SeedDeterministicBodyRandom(SolarSystem system)
-        {
-            if (system?.Universe?.IsDeterministicRng == true)
-                UseDeterministicRandom(system.Universe.DeterministicRootSeed);
-        }
         public void AddCrippledTurns(int value)
         {
             CrippledTurns += value;
@@ -599,24 +594,6 @@ namespace Ship_Game
             {
                 Station ??= new SpaceStation();
                 Station.UpdateVisibleStation(this, timeStep);
-            }
-            else
-            {
-                Station?.RemoveSceneObject();
-            }
-
-            if (!HasSpacePort)
-                Station = null;
-        }
-
-        public void UpdatePassiveAuthoritativeView()
-        {
-            UpdatePresentationVisibilityOnly();
-
-            if (HasSpacePort && InFrustum)
-            {
-                Station ??= new SpaceStation();
-                Station.UpdateVisibleStation(this, FixedSimTime.Zero);
             }
             else
             {

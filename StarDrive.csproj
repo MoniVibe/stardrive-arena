@@ -155,6 +155,7 @@
     <Compile Include="Ship_Game\Commands\Goals\ProcessResearchStation.cs" />
     <Compile Include="Ship_Game\Commands\Goals\ProjectorBridge.cs" />
     <Compile Include="Ship_Game\Commands\Goals\DeepSpaceBuildGoal.cs" />
+    <Compile Include="Ship_Game\Commands\Goals\DeepSpaceBuildGoal.Authoritative.cs" />
     <Compile Include="Ship_Game\Commands\Goals\FleetGoal.cs" />
     <Compile Include="Ship_Game\Data\Binary\BinarySerializerReader.cs" />
     <Compile Include="Ship_Game\Data\Binary\BinarySerializerWriter.cs" />
@@ -715,6 +716,7 @@
     <Compile Include="Ship_Game\Universe\SolarBodies\Planet\Planet_WeCanAffordThis.cs" />
     <Compile Include="Ship_Game\Universe\SolarBodies\Planet\Planet_WorkDistribution.cs" />
     <Compile Include="Ship_Game\Universe\SolarBodies\SBProduction.cs" />
+    <Compile Include="Ship_Game\Universe\SolarBodies\SBProduction.Authoritative.cs" />
     <Compile Include="Ship_Game\Universe\SolarBodies\SunType.cs" />
     <Compile Include="Ship_Game\Universe\SolarBodies\TroopManager.cs" />
     <Compile Include="Ship_Game\Universe\SolarBodies\Moon.cs" />
@@ -726,9 +728,11 @@
     <Compile Include="Ship_Game\UI\UILabel.cs" />
     <Compile Include="Ship_Game\GameScreens\DeveloperSandbox.cs" />
     <Compile Include="Ship_Game\Universe\SolarBodies\SolarSystemBody.cs" />
+    <Compile Include="Ship_Game\Universe\SolarBodies\SolarSystemBody.Authoritative.cs" />
     <Compile Include="Ship_Game\Universe\UniverseScreen\ShipGroupProject.cs" />
     <Compile Include="Ship_Game\Universe\UniverseScreen\ShipMoveCommands.cs" />
     <Compile Include="Ship_Game\Universe\UniverseScreen\UniverseObjectManager.cs" />
+    <Compile Include="Ship_Game\Universe\UniverseScreen\UniverseObjectManager.Authoritative.cs" />
     <Compile Include="Ship_Game\Universe\UniverseScreen\UniverseScreen.Camera.cs" />
     <Compile Include="Ship_Game\Universe\UniverseScreen\UniverseScreen.Draw.cs" />
     <Compile Include="Ship_Game\Universe\UniverseScreen\UniverseScreen.DrawDebugInfo.cs" />
@@ -807,6 +811,7 @@
     <Compile Include="Ship_Game\Header.cs" />
     <Compile Include="Ship_Game\GameScreens\Universe\BudgetScreen.cs" />
     <Compile Include="Ship_Game\Gameplay\Relationship.cs" />
+    <Compile Include="Ship_Game\Gameplay\Relationship.Authoritative.cs" />
     <Compile Include="Ship_Game\GameScreens\DiplomacyScreen\ItemToOffer.cs" />
     <Compile Include="Ship_Game\ToolTip.cs" />
     <Compile Include="Ship_Game\GameScreens\DiplomacyScreen\DialogOption.cs" />
@@ -875,7 +880,9 @@
     <Compile Include="Ship_Game\StoryAndEvents\Anomaly.cs" />
     <Compile Include="Ship_Game\ReplayElement.cs" />
     <Compile Include="Ship_Game\Universe\SolarBodies\Planet\Planet.cs" />
+    <Compile Include="Ship_Game\Universe\SolarBodies\Planet\Planet.Authoritative.cs" />
     <Compile Include="Ship_Game\Empire.cs" />
+    <Compile Include="Ship_Game\Empire.Authoritative.cs" />
     <Compile Include="Ship_Game\GameScreens\ColonyScreen\QueueItem.cs" />
     <Compile Include="Ship_Game\Node.cs" />
     <Compile Include="Ship_Game\Troops\TroopInfoUIElement.cs" />
@@ -893,6 +900,7 @@
     <Compile Include="Ship_Game\Universe\SolarSystem.cs" />
     <Compile Include="Ship_Game\GameScreens\NewGame\RaceDesignScreen.cs" />
     <Compile Include="Ship_Game\Ships\Ship.cs" />
+    <Compile Include="Ship_Game\Ships\Ship.Authoritative.cs" />
     <Compile Include="Ship_Game\GameScreens\Universe\EmpireManagementScreen.cs" />
     <Compile Include="Ship_Game\AI\ShipAI\ShipAI.cs" />
     <Compile Include="Ship_Game\UI\Submenu.cs" />

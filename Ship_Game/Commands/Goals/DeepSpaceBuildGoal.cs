@@ -6,7 +6,7 @@ using Ship_Game.Ships;
 namespace Ship_Game.Commands.Goals
 {
     [StarDataType]
-    public class DeepSpaceBuildGoal : Goal
+    public partial class DeepSpaceBuildGoal : Goal
     {
         [StarData] public sealed override BuildableShip Build { get; set; }
         [StarData] public Vector2 StaticBuildPos;
@@ -88,12 +88,6 @@ namespace Ship_Game.Commands.Goals
                     return targetPlanet.Position + TetherOffset;
                 return BuildPosition;
             }
-        }
-
-        public void SetAuthoritativeReplayMovePosition(Vector2 movePosition)
-        {
-            HasAuthoritativeReplayMovePosition = true;
-            AuthoritativeReplayMovePosition = movePosition;
         }
 
         public Vector2 GetThrustTarget(Vector2 shipPosition)

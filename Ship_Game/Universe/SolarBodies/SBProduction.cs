@@ -14,7 +14,7 @@ namespace Ship_Game.Universe.SolarBodies
 {
     // Production facilities
     [StarDataType]
-    public class SBProduction
+    public partial class SBProduction
     {
         [StarData] readonly Planet P;
         Empire Owner => P.Owner;
@@ -754,27 +754,6 @@ namespace Ship_Game.Universe.SolarBodies
                 tile.RemoveQueueItem(); // Clear all planned buildings from tiles
         }
 
-        public void ReplaceQueueForAuthoritativeSync(IEnumerable<QueueItem> items)
-        {
-            AssertCanMutateQueue("ReplaceQueueForAuthoritativeSync");
-            foreach (PlanetGridSquare tile in P.TilesList)
-                tile.RemoveQueueItem();
-
-            lock (ConstructionQueue)
-            {
-                ConstructionQueue.Clear();
-                foreach (QueueItem item in items ?? Enumerable.Empty<QueueItem>())
-                {
-                    if (item == null)
-                        continue;
-                    item.Planet = P;
-                    ConstructionQueue.Add(item);
-                    item.pgs?.SetQueueItem(item);
-                }
-                QueueSnapshotDirty = true;
-            }
-        }
-
         public bool FirstItemCanFeedUs()
         {
             lock (ConstructionQueue)
@@ -786,11 +765,6 @@ namespace Ship_Game.Universe.SolarBodies
                 return P.NonCybernetic && first.Building.ProducesFood
                     || P.IsCybernetic && first.Building.ProducesProduction;
             }
-        }
-
-        void AssertCanMutateQueue(string field)
-        {
-            AuthoritativeMutationGuard.AssertCanMutate(P, AuthoritativeMutationFamily.ConstructionQueue, field);
         }
     }
 }

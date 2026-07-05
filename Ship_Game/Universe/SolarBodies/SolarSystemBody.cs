@@ -145,7 +145,7 @@ namespace Ship_Game
     }
 
     [StarDataType]
-    public class SolarSystemBody : ExplorableGameObject
+    public partial class SolarSystemBody : ExplorableGameObject
     {
         public Vector3 Position3D => new(Position, 2500);
 
@@ -205,7 +205,6 @@ namespace Ship_Game
                 return Owner.isPlayer || Owner == screen?.Player;
             }
         }
-        public bool OwnerIsHumanControlled => AuthoritativeHumanPlayers.IsHumanControlled(Owner);
         [StarData] public float OrbitalAngle; // OrbitalAngle in DEGREES
         [StarData] public float OrbitalRadius { get; protected set; }
         [StarData] public bool HasRings;
@@ -258,16 +257,6 @@ namespace Ship_Game
         
         // per-planet pseudo-random source
         public RandomBase Random { get; private set; } = new ThreadSafeRandom();
-
-        // Determinism: switch this solar body to a reproducible per-entity RNG stream derived from the
-        // world root seed + this body's stable Id. Generation-time consumers (moon counts, tile events,
-        // random commodities/volcanoes) then draw reproducibly, so the generated universe is bit-identical
-        // run-to-run. seed==0 (normal play) keeps the default clock-seeded ThreadSafeRandom.
-        public void UseDeterministicRandom(ulong rootSeed)
-        {
-            if (rootSeed != 0)
-                Random = Determinism.DeterministicStreams.For(rootSeed, Determinism.RngStreamKind.SolarBody, (ulong)Id);
-        }
 
         public SolarSystemBody(int id, GameObjectType type) : base(id, type)
         {
@@ -406,19 +395,6 @@ namespace Ship_Game
                 Zrotate += ZrotateAmount * timeStep.FixedTime;
             }
 
-            if (visible && ShouldCreateSO)
-            {
-                CreatePlanetSceneObject();
-            }
-            else if (SO != null)
-            {
-                UpdateSO(visible);
-            }
-        }
-
-        protected void UpdatePresentationVisibilityOnly()
-        {
-            bool visible = System.InFrustum;
             if (visible && ShouldCreateSO)
             {
                 CreatePlanetSceneObject();
