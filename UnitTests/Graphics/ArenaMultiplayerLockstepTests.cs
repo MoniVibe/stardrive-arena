@@ -284,11 +284,24 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             Assert.IsFalse(defaultSettings.StartPaused,
                 "The lobby default settings should include the synchronized pause state.");
 
+            SessionStartMessage arenaStart = lobby.BuildArenaStartForHeadless();
+            Assert.IsFalse(arenaStart.IsAuthoritative4X,
+                "The Star Gladiator lobby must build an Arena lockstep start payload for its own launch path.");
+            Assert.IsTrue(ArenaMultiplayerSettings.DecodeFleet(arenaStart.HostFleet).Length > 0,
+                "The Arena start must carry host fleet design names.");
+            Assert.IsTrue(ArenaMultiplayerSettings.DecodeFleet(arenaStart.JoinFleet).Length > 0,
+                "The Arena start must carry join fleet design names.");
+            Assert.AreEqual("", lobby.ValidateArenaStartForHeadless(arenaStart),
+                "A locally built Arena start should pass the same SettingsHash/session validation the joiner runs.");
+            arenaStart.SettingsHash = "0xBADBADBADBADBAD";
+            string mismatchError = lobby.ValidateArenaStartForHeadless(arenaStart);
+            StringAssert.Contains(mismatchError, "Arena multiplayer settings mismatch");
+
             ArenaMultiplayerRunResult result = ArenaMultiplayerLobbyScreen.RunLocalSelfTestForHeadless(60);
             Assert.IsFalse(result.Desynced,
-                $"Lobby local self-test desynced at turn {result.DesyncTurn}: {result.DesyncReason}");
+                $"Lobby loopback TCP self-test desynced at turn {result.DesyncTurn}: {result.DesyncReason}");
             Assert.AreEqual(60, result.TurnsCompleted,
-                "The lobby self-test must run through the requested turn count.");
+                "The lobby self-test must run through the requested turn count over loopback TCP.");
             Assert.IsTrue(result.TurnHashes.All(h => h.Match),
                 "The lobby self-test must preserve identical peer hashes.");
             Assert.IsFalse(string.IsNullOrWhiteSpace(result.FinalHash),

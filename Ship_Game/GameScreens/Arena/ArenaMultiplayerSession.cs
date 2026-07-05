@@ -2,7 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using System.Threading;
+using System.Threading.Tasks;
 using SDLockstep;
 using SDUtils.Deterministic;
 using Ship_Game.Determinism;
@@ -103,6 +106,81 @@ public sealed class ArenaMultiplayerSettings
             JoinFleetDesignNames = DecodeFleet(message.JoinFleet),
         };
 
+    public static string StartFingerprint(SessionStartMessage start)
+    {
+        if (start == null)
+            return "";
+
+        var h = DetHash.New();
+        h.AddInt(start.ProtocolVersion);
+        h.AddInt(start.MatchSeed);
+        h.AddUInt(start.RngSeed);
+        h.AddInt(start.InputDelay);
+        h.AddInt(start.MaxTurns);
+        h.AddInt(start.CommandEveryTurns);
+        h.AddFloat(start.GameSpeed);
+        h.AddBool(start.StartPaused);
+        h.AddString(start.SettingsHash ?? "");
+        h.AddString(start.BuildHash ?? "");
+        h.AddString(start.BuildSummary ?? "");
+        h.AddString(start.HostRacePreference ?? "");
+        h.AddString(start.JoinRacePreference ?? "");
+        h.AddString(start.HostLoadoutTrait ?? "");
+        h.AddString(start.JoinLoadoutTrait ?? "");
+        h.AddString(start.HostFleet ?? "");
+        h.AddString(start.JoinFleet ?? "");
+        return "0x" + h.Value.ToString("X16", CultureInfo.InvariantCulture);
+    }
+
+    public static string ValidateStartMessage(SessionStartMessage start,
+        out ArenaMultiplayerSettings settings)
+    {
+        settings = null;
+        if (start == null)
+            return "Arena multiplayer start payload was missing.";
+        if (start.IsAuthoritative4X)
+            return "Received an authoritative 4X start while waiting for an Arena duel.";
+        if (start.ProtocolVersion != ProtocolVersion)
+            return $"Arena multiplayer protocol mismatch. Local {ProtocolVersion}, host {start.ProtocolVersion}.";
+
+        settings = FromStartMessage(start).WithResolvedFleets();
+        if (!string.Equals(start.SettingsHash, settings.SettingsHash, StringComparison.Ordinal))
+            return $"Arena multiplayer settings mismatch. Host {start.SettingsHash}, local {settings.SettingsHash}.";
+        if (settings.HostFleetDesignNames.Length == 0 || settings.JoinFleetDesignNames.Length == 0)
+            return "Arena multiplayer start did not include legal fleet design names for both sides.";
+        string unavailable = FirstUnavailableFleetDesign(settings.HostFleetDesignNames
+            .Concat(settings.JoinFleetDesignNames)
+            .ToArray());
+        if (unavailable.NotEmpty())
+            return $"Arena multiplayer fleet design '{unavailable}' is not available or legal on this machine.";
+
+        string buildError = ArenaMultiplayerPeerSignature.ValidateSession(
+            start.BuildHash, start.BuildSummary, settings, "host");
+        return buildError;
+    }
+
+    public ArenaMultiplayerSettings WithRematchSeed()
+    {
+        int nextSeed = MatchSeed == int.MaxValue ? 1 : MatchSeed + 1;
+        return new ArenaMultiplayerSettings
+        {
+            MatchSeed = nextSeed,
+            RngSeed = (uint)nextSeed ^ 0xA12EA000u,
+            InputDelay = InputDelay,
+            MaxTurns = MaxTurns,
+            CommandEveryTurns = CommandEveryTurns,
+            PlayerPreference = PlayerPreference,
+            HostRacePreference = HostRacePreference,
+            JoinRacePreference = JoinRacePreference,
+            HostLoadoutTrait = HostLoadoutTrait,
+            JoinLoadoutTrait = JoinLoadoutTrait,
+            GameSpeed = GameSpeed,
+            StartPaused = StartPaused,
+            HostFleetDesignNames = NormalizeFleet(HostFleetDesignNames),
+            JoinFleetDesignNames = NormalizeFleet(JoinFleetDesignNames),
+        }.WithResolvedFleets();
+    }
+
     public ArenaMultiplayerSettings WithResolvedFleets()
     {
         var copy = new ArenaMultiplayerSettings
@@ -185,6 +263,15 @@ public sealed class ArenaMultiplayerSettings
         hash.AddInt(normalized.Length);
         for (int i = 0; i < normalized.Length; ++i)
             hash.AddString(normalized[i]);
+    }
+
+    static string FirstUnavailableFleetDesign(string[] names)
+    {
+        foreach (string name in NormalizeFleet(names))
+            if (!ResourceManager.Ships.GetDesign(name, out IShipDesign design)
+                || !ArenaFightScreen.IsLegalCombatCraft(design))
+                return name;
+        return "";
     }
 }
 
@@ -286,6 +373,8 @@ public sealed class ArenaMultiplayerRunResult
     public bool MatchEnded;
     public int WinnerPeerId;
     public long MatchEndedTurn = -1;
+    public bool Disconnected;
+    public string DisconnectReason = "";
     public string FinalHash = "";
     public ArenaMultiplayerShipSnapshot HostSnapshot;
     public ArenaMultiplayerShipSnapshot JoinSnapshot;
@@ -303,6 +392,7 @@ public static class ArenaMultiplayerSession
     public const int HostPlayerPeerId = 1;
     public const int JoinPlayerPeerId = 2;
     public const int DefaultPort = 47377;
+    static readonly object PeerScreenBuildGate = new();
 
     public static ArenaMultiplayerRunResult RunInProcess(ArenaMultiplayerSettings settings,
         int forceDesyncAfterTurn = -1)
@@ -311,6 +401,62 @@ public static class ArenaMultiplayerSession
         ArenaFightScreen hostScreen = BuildPeerScreen(settings);
         ArenaFightScreen joinScreen = BuildPeerScreen(settings);
         return RunTwoPeerLockstep(settings, hostScreen, joinScreen, new FakeTransport(), forceDesyncAfterTurn);
+    }
+
+    public static ArenaMultiplayerRunResult RunLoopbackTcpSelfTest(ArenaMultiplayerSettings settings,
+        Action<string> log = null)
+    {
+        settings = (settings ?? new ArenaMultiplayerSettings()).WithResolvedFleets();
+        int port = FreeTcpPort();
+        using var listening = new ManualResetEventSlim(false);
+        ArenaMultiplayerRunResult hostResult = null;
+        ArenaMultiplayerRunResult joinResult = null;
+
+        Task hostTask = Task.Run(() =>
+        {
+            hostResult = RunNetworkHost(settings, port, line =>
+            {
+                if (line.StartsWith("HOST listening", StringComparison.Ordinal))
+                    listening.Set();
+                log?.Invoke(line);
+            });
+        });
+
+        if (!listening.Wait(TimeSpan.FromSeconds(10)))
+            throw new TimeoutException("Arena loopback host did not start listening.");
+
+        Task joinTask = Task.Run(() =>
+        {
+            joinResult = RunNetworkJoin("127.0.0.1", port, log);
+        });
+
+        if (!Task.WaitAll(new[] { hostTask, joinTask }, TimeSpan.FromSeconds(120)))
+            throw new TimeoutException("Arena loopback TCP self-test timed out.");
+
+        if (hostTask.Exception != null)
+            throw hostTask.Exception.GetBaseException();
+        if (joinTask.Exception != null)
+            throw joinTask.Exception.GetBaseException();
+        if (hostResult == null || joinResult == null)
+            throw new InvalidOperationException("Arena loopback TCP self-test did not produce both peer results.");
+
+        if (!string.Equals(hostResult.FinalHash, joinResult.FinalHash, StringComparison.Ordinal))
+        {
+            hostResult.Desynced = true;
+            hostResult.DesyncTurn = Math.Max(hostResult.TurnsCompleted, joinResult.TurnsCompleted) - 1;
+            hostResult.DesyncReason =
+                $"loopback final hash mismatch host={hostResult.FinalHash} join={joinResult.FinalHash}";
+        }
+        if (hostResult.MatchEnded != joinResult.MatchEnded || hostResult.WinnerPeerId != joinResult.WinnerPeerId)
+        {
+            hostResult.Desynced = true;
+            hostResult.DesyncReason =
+                $"loopback match outcome mismatch hostEnded={hostResult.MatchEnded} joinEnded={joinResult.MatchEnded} "
+                + $"hostWinner={hostResult.WinnerPeerId} joinWinner={joinResult.WinnerPeerId}";
+        }
+
+        hostResult.JoinSnapshot = joinResult.JoinSnapshot;
+        return hostResult;
     }
 
     public static string DesyncSummary(DesyncDetector desync)
@@ -422,17 +568,9 @@ public static class ArenaMultiplayerSession
         if (start == null)
             throw new TimeoutException("Host did not send Arena multiplayer start settings.");
 
-        ArenaMultiplayerSettings settings = ArenaMultiplayerSettings.FromStartMessage(start).WithResolvedFleets();
-        if (start.ProtocolVersion != ArenaMultiplayerSettings.ProtocolVersion)
-            throw new InvalidOperationException(
-                $"Arena multiplayer protocol mismatch. Local {ArenaMultiplayerSettings.ProtocolVersion}, host {start.ProtocolVersion}.");
-        if (!string.Equals(start.SettingsHash, settings.SettingsHash, StringComparison.Ordinal))
-            throw new InvalidOperationException(
-                $"Arena multiplayer settings mismatch. Host {start.SettingsHash}, local {settings.SettingsHash}.");
-        string buildError = ArenaMultiplayerPeerSignature.ValidateSession(
-            start.BuildHash, start.BuildSummary, settings, "host");
-        if (buildError.NotEmpty())
-            throw new InvalidOperationException(buildError);
+        string startError = ArenaMultiplayerSettings.ValidateStartMessage(start, out ArenaMultiplayerSettings settings);
+        if (startError.NotEmpty())
+            throw new InvalidOperationException(startError);
 
         ArenaFightScreen screen = BuildPeerScreen(settings);
         return RunJoinNetworkLoop(settings, screen, transport, log);
@@ -440,16 +578,19 @@ public static class ArenaMultiplayerSession
 
     static ArenaFightScreen BuildPeerScreen(ArenaMultiplayerSettings settings)
     {
-        settings = (settings ?? new ArenaMultiplayerSettings()).WithResolvedFleets();
-        ArenaFightScreen screen = ArenaFightScreen.Create(settings.HostRacePreference, settings.MatchSeed,
-            startAtHub: false, opponentPreference: settings.JoinRacePreference);
-        screen.ConfigureMultiplayerPvP(settings);
-        screen.CreateSimThread = false;
-        screen.UState.Objects.EnableParallelUpdate = false;
-        ArenaEngineCapabilities.TryEnableSeededRng(screen.UState, settings.RngSeed);
-        screen.LoadContent();
-        screen.PrepareForMultiplayerLockstep(settings.RngSeed);
-        return screen;
+        lock (PeerScreenBuildGate)
+        {
+            settings = (settings ?? new ArenaMultiplayerSettings()).WithResolvedFleets();
+            ArenaFightScreen screen = ArenaFightScreen.Create(settings.HostRacePreference, settings.MatchSeed,
+                startAtHub: false, opponentPreference: settings.JoinRacePreference);
+            screen.ConfigureMultiplayerPvP(settings);
+            screen.CreateSimThread = false;
+            screen.UState.Objects.EnableParallelUpdate = false;
+            ArenaEngineCapabilities.TryEnableSeededRng(screen.UState, settings.RngSeed);
+            screen.LoadContent();
+            screen.PrepareForMultiplayerLockstep(settings.RngSeed);
+            return screen;
+        }
     }
 
     static ArenaMultiplayerRunResult RunTwoPeerLockstep(ArenaMultiplayerSettings settings,
@@ -727,5 +868,14 @@ public static class ArenaMultiplayerSession
         }
         if (sim.Tick <= turn)
             throw new TimeoutException(error);
+    }
+
+    static int FreeTcpPort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
     }
 }

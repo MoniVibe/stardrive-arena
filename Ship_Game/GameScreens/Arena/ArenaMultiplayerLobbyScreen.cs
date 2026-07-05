@@ -10,6 +10,7 @@ using Ship_Game.Audio;
 using Ship_Game.Data;
 using Ship_Game.Gameplay;
 using Ship_Game.Multiplayer.Authoritative;
+using Ship_Game.Ships;
 using Ship_Game.UI;
 using Ship_Game.Universe;
 using Vector2 = SDGraphics.Vector2;
@@ -118,6 +119,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     readonly HashSet<int> AcceptedStartPeers = new();
     int JoinPeerSlot = DefaultJoinPeerSlot;
     SessionStartMessage Pending4XStart;
+    SessionStartMessage PendingArenaStart;
     SessionStartMessage PendingHostStart;
     Action PendingLobbyAction;
     ArenaMultiplayerRunResult LastResult;
@@ -198,7 +200,10 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     public string SlotModesForHeadless => EncodeSlotModes();
     public bool HasTurnsFieldForHeadless => false;
     public Authoritative4XGameSettings Current4XSettingsForHeadless => Build4XSettings();
+    public ArenaMultiplayerSettings CurrentArenaSettingsForHeadless => BuildArenaSettings();
     public SessionStartMessage Build4XStartForHeadless() => Build4XStartMessage();
+    public SessionStartMessage BuildArenaStartForHeadless() => BuildArenaStartMessage();
+    public string ValidateArenaStartForHeadless(SessionStartMessage start) => ValidateArenaStart(start);
     public Authoritative4XGeneratedGameStart CreateGenerated4XGameForHeadless(SessionStartMessage start)
         => CreateGenerated4XGame(start);
 
@@ -501,10 +506,21 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             return;
         }
 
-        LastResult = RunLocalSelfTestForHeadless(ParseTurns());
-        Last4XSelfTestResult = null;
-        SetStatus(Summarize(LastResult));
-        GameAudio.AffirmativeClick();
+        try
+        {
+            LastResult = RunLocalSelfTestForHeadless(ParseTurns());
+            Last4XSelfTestResult = null;
+            SetStatus(Summarize(LastResult));
+            GameAudio.AffirmativeClick();
+        }
+        catch (Exception ex)
+        {
+            LastResult = null;
+            Last4XSelfTestResult = null;
+            SetStatus($"SELF TEST failed: {ex.Message}");
+            LobbyTelemetry?.Event("SELF_TEST_FAIL", ex.Message);
+            GameAudio.NegativeClick();
+        }
     }
 
     void StartHost()
@@ -705,13 +721,19 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             GameAudio.NegativeClick();
             return;
         }
-        if (!Transport.IsConnected && AISlotCount() == 0)
+        if (Surface == ArenaMultiplayerLobbySurface.StarGladiator && RemotePeers.Count != 1)
+        {
+            SetStatus("Arena duel launch needs exactly one connected joiner.");
+            GameAudio.NegativeClick();
+            return;
+        }
+        if (!Transport.IsConnected && (Surface == ArenaMultiplayerLobbySurface.StarGladiator || AISlotCount() == 0))
         {
             SetStatus("Waiting for a client connection.");
             GameAudio.NegativeClick();
             return;
         }
-        if (EffectiveOpponentCountForStart() == 0)
+        if (Surface == ArenaMultiplayerLobbySurface.Authoritative4X && EffectiveOpponentCountForStart() == 0)
         {
             SetStatus("Open at least one human or AI slot before launch.");
             GameAudio.NegativeClick();
@@ -742,11 +764,14 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         try
         {
             SavePersistentConfig();
-            start = Build4XStartMessage();
+            start = Surface == ArenaMultiplayerLobbySurface.Authoritative4X
+                ? Build4XStartMessage()
+                : BuildArenaStartMessage();
         }
         catch (Exception e)
         {
-            string startError = $"4X start failed: {e.Message}\n{Build4XStartDiagnostics()}";
+            string mode = Surface == ArenaMultiplayerLobbySurface.Authoritative4X ? "4X" : "Arena";
+            string startError = $"{mode} start failed: {e.Message}\n{BuildStartDiagnostics()}";
             foreach (int peer in RemotePeers.Keys.OrderBy(p => p))
                 Transport.Send(peer, new SessionErrorMessage { FromPeer = AuthorityPeerId, Error = startError });
             SetStatus(startError);
@@ -754,13 +779,12 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             GameAudio.NegativeClick();
             return;
         }
-        LobbyTelemetry?.Event("LAUNCH_HOST",
-            $"mode=4x {Authoritative4XLobbyNetworkFlow.StartTelemetrySummary(start)}");
+        LobbyTelemetry?.Event("LAUNCH_HOST", StartTelemetrySummary(start));
         PendingHostStart = start;
         AcceptedStartPeers.Clear();
         foreach (int peer in RemotePeers.Keys.OrderBy(p => p))
             Transport.Send(peer, start);
-        if (RemotePeers.Count == 0)
+        if (RemotePeers.Count == 0 && start.IsAuthoritative4X)
         {
             LaunchVisible4X(Authoritative4XLiveRole.Host, start);
             return;
@@ -829,7 +853,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     {
         if (PendingHostStart == null)
             return;
-        string expected = Authoritative4XLobbyNetworkFlow.StartFingerprint(PendingHostStart);
+        string expected = StartFingerprint(PendingHostStart);
         if (!string.Equals(ack.StartFingerprint, expected, StringComparison.Ordinal))
         {
             string error = $"P{ack.PeerId} acknowledged a different start payload.";
@@ -852,8 +876,13 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         {
             SessionStartMessage start = PendingHostStart;
             PendingHostStart = null;
-            SetStatus("All clients accepted launch. Starting authoritative game.");
-            LaunchVisible4X(Authoritative4XLiveRole.Host, start);
+            SetStatus(start.IsAuthoritative4X
+                ? "All clients accepted launch. Starting authoritative game."
+                : "Client accepted launch. Starting Arena duel.");
+            if (start.IsAuthoritative4X)
+                LaunchVisible4X(Authoritative4XLiveRole.Host, start);
+            else
+                LaunchVisibleArena(ArenaMultiplayerRole.Host, start);
         }
         else
         {
@@ -867,8 +896,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             RemotePeer = LobbyPeer.From(lobby, "Host");
         if (message is SessionStartMessage start)
         {
-            string fingerprint = Authoritative4XLobbyNetworkFlow.StartFingerprint(start);
-            string error = Validate4XStart(start);
+            string fingerprint = StartFingerprint(start);
+            string error = start.IsAuthoritative4X ? Validate4XStart(start) : ValidateArenaStart(start);
             if (error.NotEmpty())
             {
                 SetStatus(error);
@@ -883,8 +912,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                 });
                 return;
             }
-            LobbyTelemetry?.Event("START_RECEIVED",
-                $"mode=4x {Authoritative4XLobbyNetworkFlow.StartTelemetrySummary(start)}");
+            LobbyTelemetry?.Event("START_RECEIVED", StartTelemetrySummary(start));
             Transport?.Send(AuthorityPeerId, new SessionStartAckMessage
             {
                 FromPeer = JoinPeerSlot,
@@ -892,7 +920,10 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                 Accepted = true,
                 StartFingerprint = fingerprint,
             });
-            Pending4XStart = start;
+            if (start.IsAuthoritative4X)
+                Pending4XStart = start;
+            else
+                PendingArenaStart = start;
         }
         if (message is SessionErrorMessage e)
         {
@@ -912,6 +943,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     {
         if (Transport == null || LocalRole == null)
             return;
+        ApplyLocalSelection();
         int peerId = LocalRole == ArenaMultiplayerRole.Host
             ? HostPlayerPeerId4X
             : JoinPeerSlot;
@@ -927,6 +959,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             RacePreference = LocalPeer.RacePreference,
             LoadoutTrait = LocalPeer.LoadoutTrait,
             TraitOptions = LocalPeer.TraitOptions,
+            Fleet = ArenaMultiplayerSettings.EncodeFleet(LocalPeer.FleetDesignNames),
             BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
             BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
         };
@@ -958,13 +991,48 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         ScreenManager.GoToScreen(generated.AuthorityUniverse, clear3DObjects: true);
     }
 
-    ArenaMultiplayerSettings BuildHostSettings()
-        => new()
+    void LaunchVisibleArena(ArenaMultiplayerRole role, SessionStartMessage start)
+    {
+        if (Transport == null)
+            return;
+        string error = ArenaMultiplayerSettings.ValidateStartMessage(start, out ArenaMultiplayerSettings settings);
+        if (error.NotEmpty())
         {
-            MatchSeed = ParseSeed(),
-            RngSeed = (uint)ParseSeed() ^ 0xA12EA000u,
+            SetStatus(error);
+            LobbyTelemetry?.Event("ARENA_LAUNCH_REJECT", error);
+            return;
+        }
+
+        Launching = true;
+        PendingHostStart = null;
+        AcceptedStartPeers.Clear();
+        TcpLockstepTransport transport = Transport;
+        Transport = null;
+        LobbyTelemetry?.Event("LAUNCH_VISIBLE_ARENA",
+            $"role={role} {StartTelemetrySummary(start)}");
+
+        ArenaFightScreen screen = ArenaFightScreen.Create(settings.HostRacePreference,
+            settings.MatchSeed, startAtHub: false, opponentPreference: settings.JoinRacePreference);
+        screen.ArmMultiplayerLive(new ArenaMultiplayerLiveSession(role, transport, settings));
+        LobbyTelemetry?.Dispose();
+        LobbyTelemetry = null;
+        ScreenManager.GoToScreen(screen, clear3DObjects: true);
+    }
+
+    ArenaMultiplayerSettings BuildArenaSettings()
+    {
+        ApplyLocalSelection();
+        int seed = ParseSeed();
+        string[] hostFleet = ArenaFleetOrFallback(LocalPeer.FleetDesignNames,
+            seed, LocalPeer.LoadoutTrait, hostSide: true);
+        string[] joinFleet = ArenaFleetOrFallback(RemotePeer.FleetDesignNames,
+            seed, RemotePeer.LoadoutTrait, hostSide: false);
+        return new ArenaMultiplayerSettings
+        {
+            MatchSeed = seed,
+            RngSeed = (uint)seed ^ 0xA12EA000u,
             InputDelay = 3,
-            MaxTurns = LiveAuthoritative4XMaxTurns,
+            MaxTurns = ParseTurns(),
             CommandEveryTurns = 1,
             HostRacePreference = LocalPeer.RacePreference,
             JoinRacePreference = RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference,
@@ -973,7 +1041,13 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             JoinLoadoutTrait = RemotePeer.LoadoutTrait == "-" ? ArenaStartArchetype.Wingmates.ToString() : RemotePeer.LoadoutTrait,
             GameSpeed = ParseSpeed(),
             StartPaused = StartPaused,
-        };
+            HostFleetDesignNames = hostFleet,
+            JoinFleetDesignNames = joinFleet,
+        }.WithResolvedFleets();
+    }
+
+    SessionStartMessage BuildArenaStartMessage()
+        => BuildArenaSettings().ToStartMessage(AuthorityPeerId);
 
     SessionStartMessage Build4XStartMessage()
     {
@@ -1062,6 +1136,12 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         return error.NotEmpty() ? $"{error}\n{Build4XStartDiagnostics(start)}" : "";
     }
 
+    string ValidateArenaStart(SessionStartMessage start)
+    {
+        string error = ArenaMultiplayerSettings.ValidateStartMessage(start, out _);
+        return error.NotEmpty() ? $"{error}\n{BuildArenaStartDiagnostics(start)}" : "";
+    }
+
     Authoritative4XGeneratedGameStart CreateGenerated4XGame(SessionStartMessage start)
         => LobbyFlow.CreateGeneratedGame(start);
 
@@ -1078,6 +1158,42 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         string turnText = turns == 0 ? "indefinite" : turns.ToString(CultureInfo.InvariantCulture);
         return $"seed={settings.GenerationSeed} settings={settingsHash} "
                + $"host='{hostRace}' join='{joinRace}' turns={turnText}";
+    }
+
+    string BuildArenaStartDiagnostics(SessionStartMessage start = null)
+    {
+        ArenaMultiplayerSettings settings = start != null
+            ? ArenaMultiplayerSettings.FromStartMessage(start).WithResolvedFleets()
+            : BuildArenaSettings();
+        string settingsHash = start?.SettingsHash ?? settings.SettingsHash;
+        return $"seed={settings.MatchSeed} rng={settings.RngSeed} settings={settingsHash} "
+               + $"hostFleet=[{string.Join(",", settings.HostFleetDesignNames)}] "
+               + $"joinFleet=[{string.Join(",", settings.JoinFleetDesignNames)}] "
+               + $"turns={settings.MaxTurns}";
+    }
+
+    string BuildStartDiagnostics(SessionStartMessage start = null)
+        => start?.IsAuthoritative4X == true || (start == null && Surface == ArenaMultiplayerLobbySurface.Authoritative4X)
+            ? Build4XStartDiagnostics(start)
+            : BuildArenaStartDiagnostics(start);
+
+    static string StartFingerprint(SessionStartMessage start)
+        => start?.IsAuthoritative4X == true
+            ? Authoritative4XLobbyNetworkFlow.StartFingerprint(start)
+            : ArenaMultiplayerSettings.StartFingerprint(start);
+
+    static string StartTelemetrySummary(SessionStartMessage start)
+    {
+        if (start?.IsAuthoritative4X == true)
+            return $"mode=4x {Authoritative4XLobbyNetworkFlow.StartTelemetrySummary(start)}";
+        if (start == null)
+            return "mode=arena startFingerprint=";
+        return $"mode=arena startFingerprint={ArenaMultiplayerSettings.StartFingerprint(start)} "
+               + $"protocol={start.ProtocolVersion} settingsHash={start.SettingsHash} "
+               + $"matchSeed={start.MatchSeed} rngSeed={start.RngSeed} turns={start.MaxTurns} "
+               + $"speed={start.GameSpeed:0.###} startPaused={start.StartPaused} "
+               + $"hostFleet=[{string.Join(",", ArenaMultiplayerSettings.DecodeFleet(start.HostFleet))}] "
+               + $"joinFleet=[{string.Join(",", ArenaMultiplayerSettings.DecodeFleet(start.JoinFleet))}]";
     }
 
     int PlayerCountForStart()
@@ -1117,6 +1233,12 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             SessionStartMessage start = Pending4XStart;
             Pending4XStart = null;
             LaunchVisible4X(Authoritative4XLiveRole.Client, start);
+        }
+        if (PendingArenaStart != null)
+        {
+            SessionStartMessage start = PendingArenaStart;
+            PendingArenaStart = null;
+            LaunchVisibleArena(ArenaMultiplayerRole.Join, start);
         }
     }
 
@@ -1388,8 +1510,72 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         LocalPeer.RacePreference = RaceOptions.Length == 0 ? "United" : RaceOptions[RaceIndex.Clamped(0, RaceOptions.Length - 1)];
         LocalPeer.LoadoutTrait = ArenaStartArchetype.Wingmates.ToString();
         LocalPeer.TraitOptions = NormalizeTraitSelection(LocalPeer.TraitOptions);
+        LocalPeer.FleetDesignNames = CurrentArenaFleetDesignNames(LocalPeer.LoadoutTrait, hostSide: LocalRole != ArenaMultiplayerRole.Join);
         RegularSettings.HostRacePreference = LocalPeer.RacePreference;
         RegularSettings.JoinRacePreference = RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference;
+    }
+
+    string[] CurrentArenaFleetDesignNames(string loadoutTrait, bool hostSide)
+    {
+        string[] careerFleet = CareerFleetDesignNames();
+        if (careerFleet.Length > 0)
+            return careerFleet;
+        int seed = ParseSeed();
+        return StartingRosterFleetDesignNames(loadoutTrait,
+            (ulong)(uint)seed ^ (hostSide ? 0xA12E_0001ul : 0xA12E_0002ul));
+    }
+
+    static string[] ArenaFleetOrFallback(string[] names, int seed, string loadoutTrait, bool hostSide)
+    {
+        string[] normalized = LegalArenaFleetNames(names);
+        if (normalized.Length > 0)
+            return normalized;
+        return StartingRosterFleetDesignNames(loadoutTrait,
+            (ulong)(uint)seed ^ (hostSide ? 0xA12E_0001ul : 0xA12E_0002ul));
+    }
+
+    static string[] CareerFleetDesignNames()
+    {
+        try
+        {
+            ArenaCareer career = CareerManager.LoadSlot(ArenaFightScreen.ActiveCareerSlot);
+            if (career == null || career.IsFresh)
+                career = CareerManager.Load(ArenaFightScreen.CareerSavePath);
+            if (career == null || career.IsFresh)
+                return Array.Empty<string>();
+            return LegalArenaFleetNames(career.FieldedFleetVessels()
+                .Select(v => v?.DesignName)
+                .ToArray());
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    static string[] StartingRosterFleetDesignNames(string loadoutTrait, ulong seed)
+        => LegalArenaFleetNames(CareerManager.StartingRosterDesigns(
+                ArenaMultiplayerSettings.ParseLoadoutTrait(loadoutTrait), seed)
+            .Select(d => d?.Name)
+            .ToArray());
+
+    static string[] LegalArenaFleetNames(string[] names)
+        => ArenaMultiplayerSettings.NormalizeFleet(names)
+            .Where(IsLegalArenaFleetDesignName)
+            .ToArray();
+
+    static bool IsLegalArenaFleetDesignName(string name)
+        => name.NotEmpty()
+           && ResourceManager.Ships.GetDesign(name, out IShipDesign design)
+           && ArenaFightScreen.IsLegalCombatCraft(design);
+
+    static string FleetSummary(string[] names)
+    {
+        string[] fleet = ArenaMultiplayerSettings.NormalizeFleet(names);
+        if (fleet.Length == 0)
+            return "Fleet: default";
+        string first = fleet[0];
+        return fleet.Length == 1 ? $"Fleet: {first}" : $"Fleet: {first} +{fleet.Length - 1}";
     }
 
     void InitializeSlotModesFromOpponentCount(int opponents)
@@ -1564,9 +1750,17 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     string SlotDetail(int peerId)
     {
         if (peerId == HostPlayerPeerId4X)
+        {
+            if (Surface == ArenaMultiplayerLobbySurface.StarGladiator)
+                return FleetSummary(LocalPeer.FleetDesignNames);
             return $"{LocalPeer.RacePreference} | {TraitLabel(LocalPeer.TraitOptions)}";
+        }
         if (RemotePeers.TryGetValue(peerId, out LobbyPeer peer))
+        {
+            if (Surface == ArenaMultiplayerLobbySurface.StarGladiator)
+                return FleetSummary(peer.FleetDesignNames);
             return $"{peer.RacePreference} | {TraitLabel(peer.TraitOptions)}";
+        }
         return SlotMode(peerId) switch
         {
             ArenaMultiplayerSlotMode.AI => "Counts as one AI opponent",
@@ -1713,7 +1907,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         };
 
     public static ArenaMultiplayerRunResult RunLocalSelfTestForHeadless(int turns = 90)
-        => ArenaMultiplayerSession.RunInProcess(CreateDefaultSettings(turns));
+        => ArenaMultiplayerSession.RunLoopbackTcpSelfTest(CreateDefaultSettings(turns));
 
     public static Authoritative4XLobbySelfTestResult RunAuthoritative4XSelfTestForHeadless(int turns = 90)
     {
@@ -2061,6 +2255,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         public string RacePreference = "";
         public string LoadoutTrait = "";
         public string TraitOptions = "";
+        public string[] FleetDesignNames = Array.Empty<string>();
         public string BuildHash = "";
         public string BuildSummary = "";
 
@@ -2076,6 +2271,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                 RacePreference = message.RacePreference.NotEmpty() ? message.RacePreference : "United",
                 LoadoutTrait = ArenaMultiplayerSettings.NormalizeLoadoutTrait(message.LoadoutTrait),
                 TraitOptions = message.TraitOptions ?? "",
+                FleetDesignNames = ArenaMultiplayerSettings.DecodeFleet(message.Fleet),
                 BuildHash = message.BuildHash ?? "",
                 BuildSummary = message.BuildSummary ?? "",
             };

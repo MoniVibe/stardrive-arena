@@ -95,10 +95,13 @@ public sealed partial class ArenaFightScreen
     string MultiplayerLiveStatus = "";
     bool MultiplayerLiveInitialized;
     bool MultiplayerLiveComplete;
+    UIPanel MultiplayerEndPanel;
 
     public bool MultiplayerLiveActive => MultiplayerLiveSession != null;
     public bool MultiplayerLiveDisplayPaused => MultiplayerLiveActive && MultiplayerLivePaused;
     public string MultiplayerLiveStatusText => MultiplayerLiveStatus ?? "";
+    public bool MultiplayerEndPanelVisibleForHeadless => MultiplayerEndPanel?.Visible == true;
+    public ArenaMultiplayerRunResult MultiplayerLiveResultForHeadless => MultiplayerLiveResult;
 
     public bool HasPendingMultiplayerPvPSetup => MultiplayerPvPMode;
 
@@ -245,8 +248,12 @@ public sealed partial class ArenaFightScreen
         MultiplayerLiveSession.Transport.Poll();
         if (MultiplayerLiveSession.Transport.LastError.NotEmpty())
         {
-            MultiplayerLiveStatus = "NETWORK: " + MultiplayerLiveSession.Transport.LastError;
-            MultiplayerTelemetry?.NetworkError(MultiplayerLiveSession.Transport.LastError);
+            HaltMultiplayerForDisconnect(MultiplayerLiveSession.Transport.LastError);
+            return;
+        }
+        if (!MultiplayerLiveSession.Transport.IsConnected)
+        {
+            HaltMultiplayerForDisconnect("Peer disconnected.");
             return;
         }
         if (MultiplayerLivePaused)
@@ -272,6 +279,9 @@ public sealed partial class ArenaFightScreen
         uint turn = MultiplayerLiveTurn;
         if (turn >= settings.MaxTurns)
         {
+            MultiplayerLiveResult.MatchEnded = true;
+            MultiplayerLiveResult.MatchEndedTurn = turn;
+            MultiplayerLiveResult.WinnerPeerId = 0;
             CompleteMultiplayerLive("turn limit");
             return false;
         }
@@ -334,8 +344,7 @@ public sealed partial class ArenaFightScreen
 
         if (MultiplayerLiveResult.Desynced)
         {
-            MultiplayerLiveComplete = true;
-            MultiplayerLiveStatus = $"DESYNC turn {MultiplayerLiveResult.DesyncTurn}: {MultiplayerLiveResult.DesyncReason}";
+            CompleteMultiplayerLive($"DESYNC turn {MultiplayerLiveResult.DesyncTurn}: {MultiplayerLiveResult.DesyncReason}");
             return false;
         }
 
@@ -346,6 +355,8 @@ public sealed partial class ArenaFightScreen
 
     void OnMultiplayerHostMessage(LockstepMessage message)
     {
+        if (MultiplayerLiveSession == null || MultiplayerLiveComplete)
+            return;
         if (message is ChecksumMessage c && c.FromPeer == ArenaMultiplayerSession.JoinPlayerPeerId)
         {
             MultiplayerRemoteChecksumTick = Math.Max(MultiplayerRemoteChecksumTick, c.Tick);
@@ -369,6 +380,8 @@ public sealed partial class ArenaFightScreen
 
     void OnMultiplayerJoinMessage(LockstepMessage message)
     {
+        if (MultiplayerLiveSession == null || MultiplayerLiveComplete)
+            return;
         if (message is SessionControlMessage c)
         {
             MultiplayerLivePaused = c.Paused;
@@ -379,9 +392,8 @@ public sealed partial class ArenaFightScreen
         }
         if (message is SessionErrorMessage e)
         {
-            MultiplayerLiveComplete = true;
-            MultiplayerLiveStatus = e.Error;
             MultiplayerTelemetry?.Event("SESSION_ERROR", e.Error);
+            CompleteMultiplayerLive(e.Error.NotEmpty() ? e.Error : "session error");
         }
     }
 
@@ -494,12 +506,133 @@ public sealed partial class ArenaFightScreen
 
     void CompleteMultiplayerLive(string reason)
     {
+        if (MultiplayerLiveComplete)
+            return;
         MultiplayerLiveComplete = true;
+        MultiplayerLivePaused = true;
+        UState.Paused = true;
         MultiplayerLiveStatus = $"COMPLETE {reason}\nturns {MultiplayerLiveResult.TurnsCompleted}\nfinal {MultiplayerLiveResult.FinalHash}";
         MultiplayerTelemetry?.Event("COMPLETE",
             $"reason='{reason}' turns={MultiplayerLiveResult.TurnsCompleted} final={MultiplayerLiveResult.FinalHash}");
         Log.Warning($"Arena MP COMPLETE role={MultiplayerLiveSession.Role} reason='{reason}' "
                     + $"turns={MultiplayerLiveResult.TurnsCompleted} final={MultiplayerLiveResult.FinalHash}");
+        ShowMultiplayerEndPanel();
+    }
+
+    void HaltMultiplayerForDisconnect(string reason)
+    {
+        MultiplayerLiveResult.Disconnected = true;
+        MultiplayerLiveResult.DisconnectReason = reason.NotEmpty() ? reason : "Peer disconnected.";
+        MultiplayerTelemetry?.NetworkError(MultiplayerLiveResult.DisconnectReason);
+        CompleteMultiplayerLive("NETWORK: " + MultiplayerLiveResult.DisconnectReason);
+    }
+
+    void ShowMultiplayerEndPanel()
+    {
+        if (MultiplayerEndPanel != null)
+        {
+            MultiplayerEndPanel.Visible = true;
+            return;
+        }
+
+        var panel = new RectF(ScreenCenter.X - 250, ScreenCenter.Y - 150, 500, 300);
+        MultiplayerEndPanel = ArenaTheme.Card(panel);
+        MultiplayerEndPanel.Name = "arena_mp_end_panel";
+        Add(MultiplayerEndPanel);
+        MultiplayerEndPanel.Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 22, panel.Y + 18), "MATCH COMPLETE"));
+        MultiplayerEndPanel.Add(new UILabel(new Vector2(panel.X + 22, panel.Y + 52), "", ArenaTheme.BodyFont, ArenaTheme.TextPrimary)
+        {
+            Name = "arena_mp_end_winner",
+            DynamicText = _ => MultiplayerEndWinnerText(),
+        });
+        MultiplayerEndPanel.Add(new UILabel(new Vector2(panel.X + 22, panel.Y + 84), "", ArenaTheme.BodySmallFont, ArenaTheme.TextSecondary)
+        {
+            Name = "arena_mp_end_losses",
+            DynamicText = _ => MultiplayerEndLossText(),
+        });
+        MultiplayerEndPanel.Add(new UILabel(new Vector2(panel.X + 22, panel.Y + 112), "", ArenaTheme.BodySmallFont, ArenaTheme.TextSecondary)
+        {
+            Name = "arena_mp_end_turns",
+            DynamicText = _ => $"Turns: {MultiplayerLiveResult?.TurnsCompleted ?? 0} | Final: {MultiplayerLiveResult?.FinalHash ?? ""}",
+        });
+        MultiplayerEndPanel.Add(new UILabel(new Vector2(panel.X + 22, panel.Y + 140), "", ArenaTheme.BodySmallFont, ArenaTheme.TextSecondary)
+        {
+            Name = "arena_mp_end_flags",
+            DynamicText = _ => MultiplayerEndFlagText(),
+        });
+
+        UIList actions = AddList(new Vector2(panel.X + 22, panel.Bottom - 54));
+        actions.Direction = new Vector2(1f, 0f);
+        actions.Padding = new Vector2(10f, 10f);
+        actions.LayoutStyle = ListLayoutStyle.ResizeList;
+        UIButton rematch = ArenaTheme.AddPrimaryButton(actions, "REMATCH", _ => StartMultiplayerRematch(), 120f);
+        rematch.Name = "arena_mp_end_rematch";
+        UIButton lobby = ArenaTheme.AddPillButton(actions, "LOBBY", _ => BackToMultiplayerLobby(), 100f);
+        lobby.Name = "arena_mp_end_lobby";
+    }
+
+    string MultiplayerEndWinnerText()
+    {
+        if (MultiplayerLiveResult == null)
+            return "No result.";
+        if (MultiplayerLiveResult.Disconnected)
+            return "Match halted: peer disconnected.";
+        if (MultiplayerLiveResult.Desynced)
+            return "Match void: lockstep desync.";
+        return MultiplayerLiveResult.WinnerPeerId switch
+        {
+            ArenaMultiplayerSession.HostPlayerPeerId => "Winner: Host fleet",
+            ArenaMultiplayerSession.JoinPlayerPeerId => "Winner: Join fleet",
+            _ => "Result: Draw",
+        };
+    }
+
+    string MultiplayerEndLossText()
+    {
+        int hostStart = MultiplayerLiveResult?.HostSnapshot.PlayerShipIds.Length ?? 0;
+        int joinStart = MultiplayerLiveResult?.HostSnapshot.EnemyShipIds.Length ?? 0;
+        int hostAlive = AliveCount(PlayerShips);
+        int joinAlive = AliveCount(EnemyShips);
+        return $"Losses: Host {Math.Max(0, hostStart - hostAlive)}/{hostStart} | "
+               + $"Join {Math.Max(0, joinStart - joinAlive)}/{joinStart}";
+    }
+
+    string MultiplayerEndFlagText()
+    {
+        if (MultiplayerLiveResult == null)
+            return "";
+        if (MultiplayerLiveResult.Desynced)
+            return $"DESYNC: {MultiplayerLiveResult.DesyncReason}";
+        if (MultiplayerLiveResult.Disconnected)
+            return $"DISCONNECT: {MultiplayerLiveResult.DisconnectReason}";
+        return "DESYNC: none";
+    }
+
+    void BackToMultiplayerLobby()
+    {
+        MultiplayerLiveSession?.Dispose();
+        MultiplayerLiveSession = null;
+        MultiplayerTelemetry?.Dispose();
+        MultiplayerTelemetry = null;
+        ScreenManager.GoToScreen(new ArenaMultiplayerLobbyScreen(), clear3DObjects: true);
+    }
+
+    void StartMultiplayerRematch()
+    {
+        if (MultiplayerLiveSession == null)
+            return;
+
+        TcpLockstepTransport transport = MultiplayerLiveSession.Transport;
+        ArenaMultiplayerRole role = MultiplayerLiveSession.Role;
+        ArenaMultiplayerSettings settings = MultiplayerLiveSession.Settings.WithRematchSeed();
+        MultiplayerLiveSession = null;
+        MultiplayerTelemetry?.Dispose();
+        MultiplayerTelemetry = null;
+
+        ArenaFightScreen screen = Create(settings.HostRacePreference, settings.MatchSeed,
+            startAtHub: false, opponentPreference: settings.JoinRacePreference);
+        screen.ArmMultiplayerLive(new ArenaMultiplayerLiveSession(role, transport, settings));
+        ScreenManager.GoToScreen(screen, clear3DObjects: true);
     }
 
     bool HasBothInputsForTurn(uint turn)

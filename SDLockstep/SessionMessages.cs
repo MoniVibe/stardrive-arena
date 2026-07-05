@@ -31,6 +31,7 @@ public sealed class SessionLobbyMessage : LockstepMessage
     public string RacePreference = "";
     public string LoadoutTrait = "";
     public string TraitOptions = "";
+    public string Fleet = "";
     public string BuildHash = "";
     public string BuildSummary = "";
 }

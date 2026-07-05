@@ -81,6 +81,7 @@ public static class LockstepMessageCodec
                     WriteString(w, lobby.BuildHash);
                     WriteString(w, lobby.BuildSummary);
                     WriteString(w, lobby.TraitOptions);
+                    WriteString(w, lobby.Fleet);
                     break;
                 case SessionStartMessage start:
                     w.Write(SessionStart);
@@ -288,6 +289,7 @@ public static class LockstepMessageCodec
                     BuildHash = ReadOptionalString(r),
                     BuildSummary = ReadOptionalString(r),
                     TraitOptions = ReadOptionalString(r),
+                    Fleet = ReadOptionalString(r),
                 };
                 break;
             case SessionStart:
