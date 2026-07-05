@@ -1,0 +1,49 @@
+# Arena pilot-trait catalog (Layer 1). Data-driven so trait values can be retuned without a
+# recompile. Loaded by PilotTraitV0; if this file is missing or malformed the game falls back to the
+# embedded 4-trait catalog (identical to the entries below), so pilot traits never hard-fail.
+#
+# DETERMINISM: in multiplayer this catalog is fingerprinted (PilotTraitV0.CatalogHash) and folded
+# into the match handshake — two peers running a DIFFERENT PilotTraits.yaml refuse to start rather
+# than desync. Keep both peers on the same file (a mod that edits this must ship to both sides).
+#
+# Fields:
+#   Id          stable identifier (Ordinal-sorted for a canonical, order-independent hash)
+#   Name        display name
+#   Description shown in UI
+#   LevelReq    crew level (0..10) at which the trait is auto-granted
+#   Kind        effect channel: Accuracy | Damage | Tracking | Evade  (family-blind; none reads a target)
+#   Value       Accuracy/Damage = fraction; Tracking = +targets (integer); Evade = +evade points
+#
+# Values are placeholders per the no-locked-balance mandate — tune freely.
+
+-PilotTraitEntry:
+ Id: eagle_eye
+ Name: Eagle Eye
+ Description: -15% weapon target error.
+ LevelReq: 2
+ Kind: Accuracy
+ Value: 0.15
+
+-PilotTraitEntry:
+ Id: gunnery_drill
+ Name: Gunnery Drill
+ Description: +8% weapon damage (separate channel from crew level).
+ LevelReq: 3
+ Kind: Damage
+ Value: 0.08
+
+-PilotTraitEntry:
+ Id: predictive_tracking
+ Name: Predictive Tracking
+ Description: +1 weapon tracking (helps hit fast targets).
+ LevelReq: 4
+ Kind: Tracking
+ Value: 1
+
+-PilotTraitEntry:
+ Id: evasive_ace
+ Name: Evasive Ace
+ Description: +10 explosion-evade chance.
+ LevelReq: 5
+ Kind: Evade
+ Value: 10

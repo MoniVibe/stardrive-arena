@@ -1,8 +1,32 @@
 using System;
 using SDUtils;
+using Ship_Game.Data;
+using Ship_Game.Data.Serialization;
+using Ship_Game.Data.Yaml;
 using Ship_Game.Ships;
 
 namespace Ship_Game.GameScreens.Arena;
+
+/// <summary>
+/// YAML row for the data-driven pilot-trait catalog (Content/PilotTraits.yaml). A plain
+/// [StarDataType] DTO mirrored 1:1 onto <see cref="PilotTraitDefinition"/> after load + validation.
+/// The Layer-3 fields (Branch/Excludes/PointCost) are accepted but ignored by the v0 auto-grant.
+/// </summary>
+[StarDataType]
+public class PilotTraitEntry
+{
+    [StarData] public string Id;
+    [StarData] public string Name;
+    [StarData] public string Description;
+    [StarData] public int LevelReq;
+    [StarData] public PilotTraitKind Kind;
+    [StarData] public float Value;
+    [StarData] public string Branch;
+    [StarData] public string[] Excludes;
+    [StarData] public int PointCost;
+
+    [StarDataConstructor] public PilotTraitEntry() { }
+}
 
 /// <summary>
 /// Effect channel of a v0 pilot trait. Each value maps 1:1 to ONE additive per-<see cref="Ship"/>
@@ -96,8 +120,12 @@ public static class PilotTraitV0
     public const string PredictiveTrackingId = "predictive_tracking";
     public const string EvasiveAceId         = "evasive_ace";
 
-    // Ordinal-sorted by Id so peer ordering is stable when hashed (Layer 2).
-    public static readonly PilotTraitDefinition[] Catalog =
+    public const string CatalogFile = "PilotTraits.yaml";
+
+    // Embedded fallback: the exact v0 catalog. Used verbatim when Content/PilotTraits.yaml is
+    // missing or malformed, so pilot traits never hard-fail. MUST stay in sync with the shipped
+    // yaml (a headless proof asserts the two are identical).
+    static readonly PilotTraitDefinition[] EmbeddedFallbackCatalog =
     {
         new(EagleEyeId, "Eagle Eye", "-15% weapon target error.",
             levelReq: 2, PilotTraitKind.Accuracy, 0.15f),
@@ -108,6 +136,91 @@ public static class PilotTraitV0
         new(PredictiveTrackingId, "Predictive Tracking", "+1 weapon tracking (helps hit fast targets).",
             levelReq: 4, PilotTraitKind.Tracking, 1f),
     };
+
+    static PilotTraitDefinition[] LoadedCatalog;
+    static readonly object LoadGate = new();
+
+    /// <summary>
+    /// The effective pilot-trait catalog: loaded once from Content/PilotTraits.yaml (data-driven
+    /// tuning; mod-overridable via the standard mod-or-vanilla path), canonicalized Ordinal by Id,
+    /// falling back to the embedded catalog if the file is missing/malformed/empty. Cached; call
+    /// <see cref="ReloadCatalog"/> after a content/mod change (mods are chosen at boot) or in tests.
+    /// </summary>
+    public static PilotTraitDefinition[] Catalog
+    {
+        get
+        {
+            PilotTraitDefinition[] cat = LoadedCatalog;
+            if (cat != null)
+                return cat;
+            lock (LoadGate)
+                return LoadedCatalog ??= LoadCatalog();
+        }
+    }
+
+    /// <summary>Drop the cache so the next <see cref="Catalog"/> access re-reads the yaml. For a
+    /// mod/content reload and for tests that swap the catalog file.</summary>
+    public static void ReloadCatalog()
+    {
+        lock (LoadGate)
+            LoadedCatalog = null;
+    }
+
+    static PilotTraitDefinition[] LoadCatalog()
+    {
+        try
+        {
+            Array<PilotTraitEntry> rows = YamlParser.DeserializeArray<PilotTraitEntry>(CatalogFile);
+            PilotTraitDefinition[] built = BuildCatalogFromEntries(rows);
+            if (built.Length == 0)
+            {
+                Log.Warning("PilotTraits.yaml yielded no valid traits; using embedded fallback catalog.");
+                return Canonicalize(EmbeddedFallbackCatalog);
+            }
+            return built; // already canonicalized by BuildCatalogFromEntries
+        }
+        catch (Exception e)
+        {
+            Log.Warning($"PilotTraits.yaml load failed ({e.Message}); using embedded fallback catalog.");
+            return Canonicalize(EmbeddedFallbackCatalog);
+        }
+    }
+
+    /// <summary>
+    /// Validate + canonicalize raw yaml rows into a catalog (pure; no I/O — testable). Drops rows
+    /// with empty/duplicate ids, out-of-range LevelReq, or an unknown Kind; returns Ordinal-sorted.
+    /// An empty result signals the caller to use the embedded fallback.
+    /// </summary>
+    public static PilotTraitDefinition[] BuildCatalogFromEntries(Array<PilotTraitEntry> rows)
+    {
+        var defs = new Array<PilotTraitDefinition>();
+        var seenIds = new Array<string>();
+        foreach (PilotTraitEntry r in rows ?? new Array<PilotTraitEntry>())
+        {
+            string id = r?.Id?.Trim();
+            if (id.IsEmpty())                                   { Log.Warning("PilotTraits: row with empty Id skipped."); continue; }
+            if (Contains(seenIds, id))                          { Log.Warning($"PilotTraits: duplicate Id '{id}' skipped."); continue; }
+            if (r.LevelReq is < 0 or > 10)                      { Log.Warning($"PilotTraits: '{id}' LevelReq {r.LevelReq} out of 0..10, skipped."); continue; }
+            if (!Enum.IsDefined(typeof(PilotTraitKind), r.Kind)){ Log.Warning($"PilotTraits: '{id}' unknown Kind, skipped."); continue; }
+            seenIds.Add(id);
+            defs.Add(new PilotTraitDefinition(id, r.Name, r.Description, r.LevelReq, r.Kind, r.Value,
+                r.Branch, r.Excludes, r.PointCost));
+        }
+        return defs.Count == 0 ? Array.Empty<PilotTraitDefinition>() : Canonicalize(defs.ToArray());
+    }
+
+    /// <summary>The embedded fallback catalog (canonicalized). Exposed so a proof can assert the
+    /// shipped Content/PilotTraits.yaml stays in sync with it.</summary>
+    public static PilotTraitDefinition[] EmbeddedFallback() => Canonicalize(EmbeddedFallbackCatalog);
+
+    // Canonical order: Ordinal by Id, so the catalog (and its hash) is independent of file/source
+    // order. Both peers derive the identical ordering from the identical content.
+    static PilotTraitDefinition[] Canonicalize(PilotTraitDefinition[] source)
+    {
+        var copy = (PilotTraitDefinition[])source.Clone();
+        Array.Sort(copy, (a, b) => string.CompareOrdinal(a.Id, b.Id));
+        return copy;
+    }
 
     /// <summary>
     /// A stable content hash of the catalog — the identity Layer 2 folds into the MP match

@@ -2,6 +2,7 @@ using System;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SDUtils;
 using Ship_Game;
+using Ship_Game.Data.Yaml;
 using Ship_Game.Gameplay;
 using Ship_Game.GameScreens.Arena;
 using Ship_Game.Ships;
@@ -284,6 +285,57 @@ public class ArenaPilotTraitsTests : StarDriveTest
             "Vessel scope (level 3) should NOT include evasive_ace.");
         Assert.IsFalse(new GamePlayGlobals().PilotTraitScopeVessel,
             "Pilot trait scope must default to Captain (PilotTraitScopeVessel=false, transferable pilots).");
+    }
+
+    [TestMethod]
+    public void PilotTraits_ShippedYaml_LoadsAndMatchesEmbeddedFallback_Headless()
+    {
+        // Prove the DATA-DRIVEN path actually works: the shipped Content/PilotTraits.yaml must
+        // deserialize (file present + parseable in the content dir) and build to EXACTLY the
+        // embedded fallback catalog. This is the sync guard — if someone edits the yaml but not the
+        // embedded fallback (or vice-versa), determinism between the two load paths breaks and this
+        // fails loudly.
+        Array<PilotTraitEntry> rows = YamlParser.DeserializeArray<PilotTraitEntry>(PilotTraitV0.CatalogFile);
+        Assert.IsNotNull(rows, "Content/PilotTraits.yaml must exist and parse.");
+        Assert.AreEqual(4, rows.Count, "Shipped yaml must contain the 4 v0 traits.");
+
+        PilotTraitDefinition[] fromYaml = PilotTraitV0.BuildCatalogFromEntries(rows);
+        PilotTraitDefinition[] embedded = PilotTraitV0.EmbeddedFallback();
+        Assert.AreEqual(embedded.Length, fromYaml.Length, "Yaml and embedded fallback must have equal counts.");
+        for (int i = 0; i < embedded.Length; ++i)
+        {
+            Assert.AreEqual(embedded[i].Id, fromYaml[i].Id, $"trait {i} id");
+            Assert.AreEqual(embedded[i].LevelReq, fromYaml[i].LevelReq, $"{embedded[i].Id} levelReq");
+            Assert.AreEqual(embedded[i].Kind, fromYaml[i].Kind, $"{embedded[i].Id} kind");
+            Assert.AreEqual(embedded[i].Value, fromYaml[i].Value, 1e-6f, $"{embedded[i].Id} value");
+        }
+
+        // And the live Catalog (loaded through the cache) equals the shipped content too.
+        Assert.AreEqual(4, PilotTraitV0.Catalog.Length, "Loaded Catalog must be the 4 shipped traits.");
+    }
+
+    [TestMethod]
+    public void PilotTraits_BuildCatalog_DropsInvalidRows_AndFallbackWhenEmpty_Headless()
+    {
+        // The lint drops empty/duplicate ids and out-of-range levels; the survivors are canonical
+        // (Ordinal-sorted). An all-invalid input yields an empty result, which is the signal
+        // LoadCatalog uses to fall back to the embedded catalog.
+        var rows = new Array<PilotTraitEntry>
+        {
+            new() { Id = "  ", Name = "blank", LevelReq = 2, Kind = PilotTraitKind.Damage, Value = 0.1f },
+            new() { Id = "zeta_trait", LevelReq = 4, Kind = PilotTraitKind.Evade, Value = 5f },
+            new() { Id = "alpha_trait", LevelReq = 3, Kind = PilotTraitKind.Damage, Value = 0.2f },
+            new() { Id = "alpha_trait", LevelReq = 6, Kind = PilotTraitKind.Damage, Value = 0.9f }, // dup -> dropped
+            new() { Id = "bad_level", LevelReq = 99, Kind = PilotTraitKind.Accuracy, Value = 0.1f }, // out of range -> dropped
+        };
+        PilotTraitDefinition[] built = PilotTraitV0.BuildCatalogFromEntries(rows);
+        Assert.AreEqual(2, built.Length, "Only the two valid, unique, in-range rows survive.");
+        Assert.AreEqual("alpha_trait", built[0].Id, "Survivors must be Ordinal-sorted.");
+        Assert.AreEqual("zeta_trait", built[1].Id);
+        Assert.AreEqual(0.2f, built[0].Value, 1e-6f, "The FIRST alpha_trait wins; the duplicate is dropped.");
+
+        Assert.AreEqual(0, PilotTraitV0.BuildCatalogFromEntries(new Array<PilotTraitEntry>()).Length,
+            "An all-invalid/empty input yields an empty catalog (the fallback signal).");
     }
 
     // ---- helpers ----
