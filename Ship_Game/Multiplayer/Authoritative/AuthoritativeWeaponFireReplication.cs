@@ -300,17 +300,26 @@ public sealed class RenderOnlyWeaponFireVisual
         if (IsBeam)
             return;
 
-        Vector2 destination = CurrentDestination();
-        Vector2 toDestination = destination - Position;
-        float distance = toDestination.Length();
         float step = Speed * dt;
-        if (distance <= Math.Max(step, ProjectileWorldSize))
+        // Only guided weapons track the live target; ballistic shots fly the
+        // straight line they were fired on (destination fixed at fire time).
+        if (Weapon?.Tag_Guided == true)
+        {
+            Vector2 destination = CurrentDestination();
+            Vector2 toDestination = destination - Position;
+            if (toDestination.Length() <= Math.Max(step, ProjectileWorldSize))
+            {
+                Active = false;
+                return;
+            }
+            Direction = toDestination.Normalized();
+        }
+        else if (Position.Distance(BallisticDestination()) <= Math.Max(step, ProjectileWorldSize))
         {
             Active = false;
             return;
         }
 
-        Direction = toDestination.Normalized();
         Position += Direction * step;
     }
 
@@ -370,10 +379,13 @@ public sealed class RenderOnlyWeaponFireVisual
     {
         if (Target?.Active == true)
             return Target.Position;
-        return RowDestination.SqLen() > 0.000001f
+        return BallisticDestination();
+    }
+
+    Vector2 BallisticDestination()
+        => RowDestination.SqLen() > 0.000001f
             ? RowDestination
             : RowSource + Direction * (Weapon?.BaseRange ?? 1000f);
-    }
 
     Color WeaponColor()
     {

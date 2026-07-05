@@ -19,6 +19,7 @@ namespace Ship_Game.Ships
         const float PassiveAuthoritativeInterpolationMaxFrameSeconds = 0.25f;
         const float PassiveAuthoritativeInterpolationSnapDistance = 25_000f;
         const uint PassiveAuthoritativeInterpolationMaxTickGap = 60u;
+        const float PassiveAuthoritativeInterpolationJitterCushion = 1.25f;
         float PassiveAuthoritativeLastRotation;
         uint PassiveAuthoritativeLastTransformTick;
         bool PassiveAuthoritativeHasLastTransform;
@@ -82,8 +83,11 @@ namespace Ship_Game.Ships
             if (tick <= PassiveAuthoritativeCurrentTransformTick)
                 return false;
 
-            PassiveAuthoritativePreviousPosition = PassiveAuthoritativeCurrentPosition;
-            PassiveAuthoritativePreviousRotation = PassiveAuthoritativeCurrentRotation;
+            // Rebase from the RENDERED transform, not the last snapshot: if the
+            // previous segment hadn't finished playing out, starting from the raw
+            // snapshot makes the ship visibly jump on every snapshot arrival.
+            PassiveAuthoritativePreviousPosition = PassiveAuthoritativeRenderPosition;
+            PassiveAuthoritativePreviousRotation = PassiveAuthoritativeRenderRotation;
             PassiveAuthoritativePreviousTransformTick = PassiveAuthoritativeCurrentTransformTick;
             PassiveAuthoritativeCurrentPosition = position;
             PassiveAuthoritativeCurrentRotation = rotation;
@@ -118,7 +122,10 @@ namespace Ship_Game.Ships
         }
 
         static float SnapshotDurationSeconds(uint elapsedTicks)
-            => Math.Max(1u, elapsedTicks) / PassiveAuthoritativeVisualTicksPerSecond;
+            // The cushion absorbs network jitter: with an exact duration any late
+            // snapshot leaves the ship parked at segment end, then lurching.
+            => Math.Max(1u, elapsedTicks) / PassiveAuthoritativeVisualTicksPerSecond
+               * PassiveAuthoritativeInterpolationJitterCushion;
 
         void ObservePassiveAuthoritativeVisualBank(uint tick, float rotation, bool active, bool dying, bool snapped)
         {
