@@ -48,17 +48,29 @@ public static class AuthoritativeMutationGuard
     [ThreadStatic] static int ReplayApplyDepth;
     [ThreadStatic] static int AcceptedCommandDepth;
     [ThreadStatic] static int UniverseInitDepth;
+#endif
 
+    // The Enter* scope methods exist in ALL configurations so call sites never need
+    // #if DEBUG wrapping (a bare call site broke the Release build once). In Release
+    // they return the default no-op scope; the guard state exists only in Debug.
     public static AuthoritativeMutationScope EnterReplayApply()
     {
+#if DEBUG
         ++ReplayApplyDepth;
         return new AuthoritativeMutationScope(static () => --ReplayApplyDepth);
+#else
+        return default;
+#endif
     }
 
     public static AuthoritativeMutationScope EnterAcceptedCommandApply()
     {
+#if DEBUG
         ++AcceptedCommandDepth;
         return new AuthoritativeMutationScope(static () => --AcceptedCommandDepth);
+#else
+        return default;
+#endif
     }
 
     // Sanctions the one-time initial universe build (LoadContent -> InitializeUniverse:
@@ -68,10 +80,15 @@ public static class AuthoritativeMutationGuard
     // wrapped, so genuine passive-sim leaks are still caught.
     public static AuthoritativeMutationScope EnterUniverseInitialization()
     {
+#if DEBUG
         ++UniverseInitDepth;
         return new AuthoritativeMutationScope(static () => --UniverseInitDepth);
+#else
+        return default;
+#endif
     }
 
+#if DEBUG
     static bool IsSanctionedPath => ReplayApplyDepth > 0 || AcceptedCommandDepth > 0
         || UniverseInitDepth > 0;
 #endif
