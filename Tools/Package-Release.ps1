@@ -162,10 +162,20 @@ try {
         @{ Source = 'game\Plugins\StarDriveArena.dll'; PackagePath = 'Plugins/StarDriveArena.dll' }
     )
 
-    $fileManifest = foreach ($artifact in $artifacts) {
+    # NEW content files this fork adds on top of vanilla BlackBox. They must ship in the overlay so
+    # the installed game has them; each extracts to <install>/<PackagePath>. Omitting one is not a
+    # crash (the code carries an embedded fallback), but it disables the data-driven tuning the file
+    # provides. Add any future fork-authored content file (yaml/xml/etc.) here as a one-line entry.
+    $contentArtifacts = @(
+        @{ Source = 'game\Content\PilotTraits.yaml'; PackagePath = 'Content/PilotTraits.yaml' }
+    )
+
+    $allArtifacts = @($artifacts) + @($contentArtifacts)
+
+    $fileManifest = foreach ($artifact in $allArtifacts) {
         $sourcePath = Join-Path $repoRoot $artifact.Source
         if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
-            throw "Required release DLL is missing: $($artifact.Source)"
+            throw "Required release file is missing: $($artifact.Source)"
         }
 
         $destPath = Join-Path $stageRoot ($artifact.PackagePath -replace '/', [System.IO.Path]::DirectorySeparatorChar)

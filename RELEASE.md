@@ -14,7 +14,9 @@ pwsh -File Tools/Package-Release.ps1 -Configuration Release -Version X.Y
 
 If `-Version` is omitted, the package version defaults to `g<git-short-sha>-p<protocol-version>`.
 
-The script builds `StarDrive.csproj` and `StarDriveArena.csproj` for `x64`, collects the five overlay DLLs from `game\`, writes `manifest.json`, includes `INSTALL.md`, creates `dist\release\stardrive-arena-<version>.zip`, and reopens the zip to validate the manifest JSON.
+The script builds `StarDrive.csproj` and `StarDriveArena.csproj` for `x64`, collects the five overlay DLLs plus the fork-authored content files (the `$contentArtifacts` list in the script — currently `Content/PilotTraits.yaml`) from `game\`, writes `manifest.json`, includes `INSTALL.md`, creates `dist\release\stardrive-arena-<version>.zip`, and reopens the zip to validate the manifest JSON (every listed file must be present, or packaging fails).
+
+> **When the fork adds a new content file** (a `Content\*.yaml`/`*.xml` this fork authors on top of vanilla BlackBox), register it in the `$contentArtifacts` array in `Tools\Package-Release.ps1` in the same commit. Otherwise it will not ship in the overlay and the installed game will silently fall back to embedded defaults (losing the data-driven tuning). The packaging step enforces presence of every *listed* file, but it cannot know about a content file you never listed.
 
 ## Smoke Release
 
@@ -36,5 +38,5 @@ The script builds `StarDrive.csproj` and `StarDriveArena.csproj` for `x64`, coll
 
 ## Caveats
 
-- The package must contain only `StarDrive.dll`, `SDUtils.dll`, `SDGraphics.dll`, `SDLockstep.dll`, `Plugins\StarDriveArena.dll`, `INSTALL.md`, and `manifest.json`.
+- The package must contain only the fork's own artifacts: the overlay DLLs (`StarDrive.dll`, `SDUtils.dll`, `SDGraphics.dll`, `SDLockstep.dll`, `Plugins\StarDriveArena.dll`), the fork-authored content files (`Content\PilotTraits.yaml` and any later `$contentArtifacts` additions), `INSTALL.md`, and `manifest.json`. Never include BlackBox/Jupiter commercial content — only files this fork authored.
 - If a build machine is missing SDKs or the local `game\` build-output layout, fix provisioning before packaging. Do not work around that by copying commercial content into the release artifact.
