@@ -111,7 +111,8 @@ public sealed class ArenaHubScreen : GameScreen
 
         Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 372), "CAREER"));
         StatusLabel = Add(new UILabel(new Vector2(panel.X + 118, panel.Y + 372),
-            "", ArenaTheme.BodySmallFont, ArenaTheme.TextMuted));
+            BettingBannerText(Arena.LatestSettledBet), ArenaTheme.BodySmallFont,
+            BettingBannerColor(Arena.LatestSettledBet)));
 
         UIList careerButtons = AddList(new Vector2(panel.X + 24, panel.Y + 402));
         careerButtons.Direction = new Vector2(1f, 0f);
@@ -168,6 +169,17 @@ public sealed class ArenaHubScreen : GameScreen
     };
 
     public string CashDisplayText => $"${Arena.CurrentCash}";
+
+    static string BettingBannerText(ArenaSettledBet bet)
+    {
+        if (bet == null)
+            return "";
+        string outcome = bet.Won ? $"LAST BET WON ${bet.Payout}" : "LAST BET LOST";
+        return $"{outcome}  stake ${bet.Stake} @ {bet.Odds:0.00}x";
+    }
+
+    static Color BettingBannerColor(ArenaSettledBet bet)
+        => bet == null ? ArenaTheme.TextMuted : bet.Won ? ArenaTheme.Green : ArenaTheme.Red;
 
     void Save_OnClick(UIButton button)
     {
@@ -238,7 +250,7 @@ public sealed class ArenaHubScreen : GameScreen
     void Climb_OnClick(UIButton button)
     {
         GameAudio.AcceptClick();
-        Arena.OpenLeaderboard();
+        Arena.OpenLeagueSeason();
     }
 
     void Boss_OnClick(UIButton button)

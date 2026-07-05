@@ -1051,7 +1051,8 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         foreach (OwnedVessel vessel in lost)
         {
             Career.AddMemorial(vessel, CurrentArenaThreatName(),
-                "Destroyed in arena bout", ChronicleSeed($"memorial:{vessel.VesselId}"));
+                "Destroyed in arena bout", ChronicleSeed($"memorial:{vessel.VesselId}"),
+                Round, CurrentFame);
         }
 
         int removed = lost.Length;
@@ -1962,6 +1963,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
     public int CurrentPerkCount => Career?.Perks?.Length ?? 0;
     public int CurrentResearchedModuleCount => Career?.ResearchedModules?.Length ?? 0;
     public int CurrentTeamCount => Career?.Teams?.Length ?? 0;
+    public int CurrentBetHistoryCount => Career?.SettledBets?.Length ?? 0;
     public float CurrentPermadeathChance => Career?.PermadeathChance ?? 0f;
     public bool CurrentHardLossEndsRun => Career?.HardLossEndsRun ?? false;
     public bool CurrentPlayerShipsPermadeath => Career?.PlayerShipsPermadeath ?? true;
@@ -1969,6 +1971,15 @@ public sealed partial class ArenaFightScreen : UniverseScreen
     public bool HasQueuedFightOption => PendingFightOption != null;
     public bool HasPendingBet => Career?.PendingBet != null;
     public ArenaBetSlip PendingBet => Career?.PendingBet;
+    public ArenaSettledBet[] SettledBets => Career?.SettledBets ?? Empty<ArenaSettledBet>.Array;
+    public ArenaSettledBet LatestSettledBet
+        => SettledBets.OrderByDescending(b => b?.Order ?? 0).FirstOrDefault();
+    public ArenaMemorialRecord[] Memorials => Career?.Memorials ?? Empty<ArenaMemorialRecord>.Array;
+    public ArenaCaptain[] Captains => Career?.Captains ?? Empty<ArenaCaptain>.Array;
+    public ArenaChronicleEvent[] Chronicle => Career?.Chronicle ?? Empty<ArenaChronicleEvent>.Array;
+    public string[] CurrentPerks => Career?.Perks ?? Empty<string>.Array;
+    public ArenaTeam[] Teams => Career?.Teams ?? Empty<ArenaTeam>.Array;
+    public OwnedVessel[] FieldedVessels => Career?.FieldedFleetVessels() ?? Empty<OwnedVessel>.Array;
 
     public static ulong ModifierSeedForCareer(ArenaCareer career)
     {
@@ -2398,6 +2409,11 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         ScreenManager?.AddScreen(new ArenaLeaderboardScreen(this));
     }
 
+    public void OpenLeagueSeason()
+    {
+        ScreenManager?.AddScreen(new ArenaLeagueSeasonScreen(this));
+    }
+
     public void OpenBossChallenges()
     {
         ScreenManager?.AddScreen(new ArenaBossChallengeScreen(this));
@@ -2691,6 +2707,26 @@ public sealed partial class ArenaFightScreen : UniverseScreen
 
     public Task<ArenaBigLeagueReport> RunLeagueSeasonAndApplyAsync(ArenaLeagueSeasonOptions options)
         => ArenaLeagues.RunLeagueSeasonAndApplyAsync(Career, options);
+
+    public ArenaLeagueSeasonOptions BuildLeagueSeasonOptionsForUi()
+    {
+        const int teamSize = 3;
+        const int maxTeams = 4;
+        const int matchupBudget = 3;
+        const int duelTicks = 240;
+        ulong seed = ArenaFightOptions.SeedForCareer(Career, HubRound) ^ 0x1EA6_C11B_2026ul;
+        return new ArenaLeagueSeasonOptions(teamSize, matchupBudget, duelTicks, seed,
+            runParallel: false, maxTeams: maxTeams, spawnOffset: 2200f);
+    }
+
+    public ArenaBigLeagueReport RunLeagueSeasonAndApplyForUi()
+    {
+        Career ??= new ArenaCareer();
+        ArenaBigLeagueReport report = RunLeagueSeasonAndApplyAsync(BuildLeagueSeasonOptionsForUi())
+            .GetAwaiter().GetResult();
+        ManualSaveCareer();
+        return report;
+    }
 
     public bool SelectFightOption(string optionId)
     {

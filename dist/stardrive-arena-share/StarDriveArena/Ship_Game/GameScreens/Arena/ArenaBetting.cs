@@ -105,10 +105,13 @@ public readonly struct ArenaBetResult
     public readonly float Odds;
     public readonly string BetId;
     public readonly string WinnerName;
+    public readonly string Kind;
+    public readonly string MatchupLabel;
 
     public ArenaBetResult(bool success, bool won, string message, int cashBefore,
         int cashAfter, int stake = 0, int payout = 0, float odds = 0f,
-        string betId = "", string winnerName = "")
+        string betId = "", string winnerName = "", string kind = "",
+        string matchupLabel = "")
     {
         Success = success;
         Won = won;
@@ -120,6 +123,84 @@ public readonly struct ArenaBetResult
         Odds = Math.Max(0f, odds);
         BetId = betId ?? "";
         WinnerName = winnerName ?? "";
+        Kind = kind ?? "";
+        MatchupLabel = matchupLabel ?? "";
+    }
+}
+
+[StarDataType]
+public sealed class ArenaSettledBet
+{
+    [StarData] public string Kind = "";
+    [StarData] public string BetId = "";
+    [StarData] public int Order;
+    [StarData] public string Matchup = "";
+    [StarData] public string PickName = "";
+    [StarData] public string OpponentName = "";
+    [StarData] public string PickDesignName = "";
+    [StarData] public string OpponentDesignName = "";
+    [StarData] public string Description = "";
+    [StarData] public bool Won;
+    [StarData] public string WinnerName = "";
+    [StarData] public int Stake;
+    [StarData] public float Odds;
+    [StarData] public int Payout;
+    [StarData] public int CashBefore;
+    [StarData] public int CashAfter;
+
+    [StarDataConstructor] public ArenaSettledBet() { }
+
+    public static ArenaSettledBet FromSlip(ArenaBetSlip slip, bool won, int cashBefore,
+        int cashAfter, string winnerName)
+    {
+        if (slip == null)
+            return null;
+
+        return new ArenaSettledBet
+        {
+            Kind = slip.Kind,
+            BetId = slip.BetId,
+            Matchup = ArenaBetQuote.FormatMatchup(slip.PickName, slip.PickDesignName,
+                slip.OpponentName, slip.OpponentDesignName),
+            PickName = slip.PickName,
+            OpponentName = slip.OpponentName,
+            PickDesignName = slip.PickDesignName,
+            OpponentDesignName = slip.OpponentDesignName,
+            Description = slip.Description,
+            Won = won,
+            WinnerName = winnerName ?? "",
+            Stake = slip.Stake,
+            Odds = slip.Odds,
+            Payout = won ? slip.Payout : 0,
+            CashBefore = cashBefore,
+            CashAfter = cashAfter,
+        };
+    }
+
+    public static ArenaSettledBet FromQuote(ArenaBetQuote quote, bool won, int cashBefore,
+        int cashAfter, string winnerName)
+    {
+        if (quote == null)
+            return null;
+
+        return new ArenaSettledBet
+        {
+            Kind = quote.Kind,
+            BetId = quote.BetId,
+            Matchup = quote.MatchupLabel,
+            PickName = quote.PickName,
+            OpponentName = quote.OpponentName,
+            PickDesignName = quote.PickDesignName,
+            OpponentDesignName = quote.OpponentDesignName,
+            Description = quote.Description,
+            Won = won,
+            WinnerName = winnerName ?? "",
+            Stake = quote.Stake,
+            Odds = quote.Odds,
+            Payout = won ? quote.Payout : 0,
+            CashBefore = cashBefore,
+            CashAfter = cashAfter,
+        };
     }
 }
 
@@ -128,6 +209,7 @@ public static class ArenaBetting
     public const string FightOptionKind = "fight-option";
     public const string ContenderDuelKind = "contender-duel";
     public const int DefaultStake = 100;
+    public const int SettledBetHistoryLimit = 5;
 
     public static ArenaBetSlip NormalizePendingBet(ArenaBetSlip slip)
     {
@@ -145,6 +227,62 @@ public static class ArenaBetting
         slip.Description ??= "";
         slip.StrengthRatio = Math.Max(0.01f, slip.StrengthRatio);
         return slip;
+    }
+
+    public static ArenaSettledBet[] NormalizeSettledBets(ArenaSettledBet[] bets)
+    {
+        if (bets == null || bets.Length == 0)
+            return Empty<ArenaSettledBet>.Array;
+
+        var result = new List<ArenaSettledBet>(bets.Length);
+        int nextOrder = 1;
+        foreach (ArenaSettledBet bet in bets)
+        {
+            if (bet == null || bet.Stake <= 0)
+                continue;
+
+            bet.Kind = CleanBetText(bet.Kind, 32);
+            if (bet.Kind.IsEmpty())
+                bet.Kind = FightOptionKind;
+            bet.BetId = CleanBetText(bet.BetId, 120);
+            bet.PickName = CleanBetText(bet.PickName, 80);
+            bet.OpponentName = CleanBetText(bet.OpponentName, 80);
+            bet.PickDesignName = CleanBetText(bet.PickDesignName, 80);
+            bet.OpponentDesignName = CleanBetText(bet.OpponentDesignName, 80);
+            bet.Description = CleanBetText(bet.Description, 160);
+            bet.WinnerName = CleanBetText(bet.WinnerName, 80);
+            bet.Matchup = CleanBetText(bet.Matchup, 180);
+            if (bet.Matchup.IsEmpty())
+                bet.Matchup = ArenaBetQuote.FormatMatchup(bet.PickName, bet.PickDesignName,
+                    bet.OpponentName, bet.OpponentDesignName);
+            if (bet.Order <= 0)
+                bet.Order = nextOrder;
+            nextOrder = Math.Max(nextOrder, bet.Order + 1);
+            bet.Stake = Math.Max(0, bet.Stake);
+            bet.Odds = Math.Max(1f, bet.Odds);
+            bet.Payout = bet.Won ? Math.Max(0, bet.Payout) : 0;
+            result.Add(bet);
+        }
+
+        return result
+            .OrderByDescending(b => b.Order)
+            .ThenByDescending(b => b.BetId, StringComparer.Ordinal)
+            .Take(SettledBetHistoryLimit)
+            .OrderBy(b => b.Order)
+            .ThenBy(b => b.BetId, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    public static void AppendSettledBet(ArenaCareer career, ArenaSettledBet bet)
+    {
+        if (career == null || bet == null || bet.Stake <= 0)
+            return;
+
+        ArenaSettledBet[] history = NormalizeSettledBets(career.SettledBets);
+        bet.Order = history.Length == 0 ? 1 : history.Max(b => b?.Order ?? 0) + 1;
+        var list = history.ToList();
+        list.Add(bet);
+        career.SettledBets = NormalizeSettledBets(list.ToArray());
     }
 
     public static ArenaBetQuote QuoteFightOption(FightOption option, int stake = DefaultStake)
@@ -235,8 +373,13 @@ public static class ArenaBetting
         string message = playerWon
             ? $"Bet won: paid ${payout} at {slip.Odds:0.00}x."
             : $"Bet lost: stake ${slip.Stake} is gone.";
+        string winner = playerWon ? slip.PickName : slip.OpponentName;
+        AppendSettledBet(career, ArenaSettledBet.FromSlip(slip, playerWon, before,
+            career.Cash, winner));
         return new ArenaBetResult(true, playerWon, message, before, career.Cash,
-            slip.Stake, payout, slip.Odds, slip.BetId, playerWon ? slip.PickName : slip.OpponentName);
+            slip.Stake, payout, slip.Odds, slip.BetId, winner, slip.Kind,
+            ArenaBetQuote.FormatMatchup(slip.PickName, slip.PickDesignName,
+                slip.OpponentName, slip.OpponentDesignName));
     }
 
     public static ArenaBetResult PlaceContenderDuelBet(ArenaCareer career, string contenderName,
@@ -268,8 +411,11 @@ public static class ArenaBetting
         string message = won
             ? $"Bet won: {quote.PickName} paid ${payout}."
             : $"Bet lost: {quote.OpponentName} won.";
+        AppendSettledBet(career, ArenaSettledBet.FromQuote(quote, won, before,
+            career.Cash, winner));
         return new ArenaBetResult(true, won, message, before, career.Cash,
-            stake, payout, quote.Odds, quote.BetId, winner);
+            stake, payout, quote.Odds, quote.BetId, winner, quote.Kind,
+            quote.MatchupLabel);
     }
 
     public static float OddsForWinProbability(float winProbability)
@@ -303,5 +449,13 @@ public static class ArenaBetting
 
     static ArenaBetResult Fail(string message, int cash)
         => new(false, false, message, cash, cash);
+
+    static string CleanBetText(string text, int max)
+    {
+        if (text == null)
+            return "";
+        text = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return text.Length <= max ? text : text.Substring(0, max);
+    }
 
 }

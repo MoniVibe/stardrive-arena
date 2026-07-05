@@ -130,6 +130,7 @@ public sealed class ArenaCareer
     // BETTING — an open wager on the exact queued next fight option. The stake is deducted
     // immediately; resolving the chosen bout clears this slip and pays only on a win.
     [StarData] public ArenaBetSlip PendingBet;
+    [StarData] public ArenaSettledBet[] SettledBets = Empty<ArenaSettledBet>.Array;
 
     // MEMORY LEDGERS — append-only deterministic career memory. Chronicle records notable
     // career events; memorials preserve permanently lost owned ships.
@@ -205,6 +206,7 @@ public sealed class ArenaCareer
         ResearchedModules = NormalizeResearchedModules(ResearchedModules, Salvage);
         Salvage = Empty<SalvageRecord>.Array;
         PendingBet = ArenaBetting.NormalizePendingBet(PendingBet);
+        SettledBets = ArenaBetting.NormalizeSettledBets(SettledBets);
         Chronicle = NormalizeChronicle(Chronicle);
         Memorials = NormalizeMemorials(Memorials);
         PermadeathChance = Math.Clamp(PermadeathChance, 0f, 1f);
@@ -285,7 +287,8 @@ public sealed class ArenaCareer
         return true;
     }
 
-    public bool AddMemorial(OwnedVessel vessel, string killer, string cause, ulong fightSeed = 0)
+    public bool AddMemorial(OwnedVessel vessel, string killer, string cause, ulong fightSeed = 0,
+        int roundAtDeath = 0, int fameAtDeath = 0)
     {
         if (vessel == null || vessel.VesselId.IsEmpty())
             return false;
@@ -299,7 +302,8 @@ public sealed class ArenaCareer
         int order = Memorials.Length == 0 ? 1 : Memorials.Max(m => m?.Order ?? 0) + 1;
         var list = Memorials.ToList();
         list.Add(new ArenaMemorialRecord(id, order, vessel.VesselId, vessel.Name, vessel.DesignName,
-            vessel.Kills, vessel.Level, killer, cause, fightSeed, "Ship", vessel.CaptainId));
+            vessel.Kills, vessel.Level, killer, cause, fightSeed, "Ship", vessel.CaptainId,
+            roundAtDeath, fameAtDeath));
         Memorials = NormalizeMemorials(list.ToArray());
         AddChronicleEvent("ship_destroyed", vessel.VesselId,
             $"{DisplayVesselName(vessel)} was lost: {CleanLedgerText(cause, 80)}", fightSeed);
@@ -321,7 +325,8 @@ public sealed class ArenaCareer
         return true;
     }
 
-    public bool AddCaptainDeathMemorial(OwnedVessel vessel, string killer, string cause, ulong fightSeed = 0)
+    public bool AddCaptainDeathMemorial(OwnedVessel vessel, string killer, string cause,
+        ulong fightSeed = 0, int roundAtDeath = 0, int fameAtDeath = 0)
     {
         ArenaCaptain captain = CaptainForVessel(vessel);
         if (captain == null || !captain.Alive)
@@ -338,7 +343,8 @@ public sealed class ArenaCareer
         int order = Memorials.Length == 0 ? 1 : Memorials.Max(m => m?.Order ?? 0) + 1;
         var list = Memorials.ToList();
         list.Add(new ArenaMemorialRecord(id, order, vessel?.VesselId ?? "", captain.Name, vessel?.DesignName ?? "",
-            captain.Kills, captain.Level, killer, cause, fightSeed, "Captain", captain.CaptainId));
+            captain.Kills, captain.Level, killer, cause, fightSeed, "Captain", captain.CaptainId,
+            roundAtDeath, fameAtDeath));
         Memorials = NormalizeMemorials(list.ToArray());
         AddChronicleEvent("captain_killed", captain.CaptainId,
             $"{captain.Name} was killed: {captain.DeathCause}.", fightSeed);
@@ -467,6 +473,8 @@ public sealed class ArenaCareer
             m.CaptainId = CleanLedgerText(m.CaptainId, 64);
             if (m.Kills < 0) m.Kills = 0;
             if (m.Level < 0) m.Level = 0;
+            if (m.RoundAtDeath < 0) m.RoundAtDeath = 0;
+            if (m.FameAtDeath < 0) m.FameAtDeath = 0;
             m.FightSeed = CleanLedgerText(m.FightSeed, 32);
             if (m.FightSeed.IsEmpty())
                 m.FightSeed = LedgerSeed(0);
@@ -1483,12 +1491,14 @@ public sealed class ArenaMemorialRecord
     [StarData] public string FightSeed = "";
     [StarData] public string Kind = "Ship";
     [StarData] public string CaptainId = "";
+    [StarData] public int RoundAtDeath;
+    [StarData] public int FameAtDeath;
 
     [StarDataConstructor] public ArenaMemorialRecord() { }
 
     public ArenaMemorialRecord(string memorialId, int order, string vesselId, string name,
         string designName, int kills, int level, string killer, string cause, ulong fightSeed,
-        string kind = "Ship", string captainId = "")
+        string kind = "Ship", string captainId = "", int roundAtDeath = 0, int fameAtDeath = 0)
     {
         MemorialId = memorialId ?? "";
         Order = Math.Max(1, order);
@@ -1502,6 +1512,8 @@ public sealed class ArenaMemorialRecord
         FightSeed = ArenaCareer.LedgerSeed(fightSeed);
         Kind = kind ?? "Ship";
         CaptainId = captainId ?? "";
+        RoundAtDeath = Math.Max(0, roundAtDeath);
+        FameAtDeath = Math.Max(0, fameAtDeath);
     }
 }
 

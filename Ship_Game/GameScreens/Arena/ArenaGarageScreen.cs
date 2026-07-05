@@ -26,6 +26,10 @@ namespace Ship_Game.GameScreens.Arena;
 public sealed class ArenaGarageScreen : GameScreen
 {
     public const string RefitButtonTooltip = "Refit: restore destroyed modules for cash.";
+    public const int VeteranLevelThreshold = 3;
+    public const int VeteranKillThreshold = 5;
+    public const int LegendaryLevelThreshold = 8;
+    public const int LegendaryKillThreshold = 15;
 
     readonly ArenaFightScreen Arena;
     ShipInfoOverlayComponent ShipInfoOverlay;
@@ -87,8 +91,9 @@ public sealed class ArenaGarageScreen : GameScreen
             int destroyedSlots = Arena.DestroyedModuleSlots(v.VesselId).Length;
             string label = (isActive ? "[ACTIVE] " : "") +
                            $"{Display(v)}  (Lvl {v.Level}, {v.Kills} kills)";
-            if (destroyedSlots > 0)
-                label += $"  [REFIT {destroyedSlots}]";
+            string tags = StatusTags(v, destroyedSlots);
+            if (tags.NotEmpty())
+                label += $"  {tags}";
             if (!status.Success)
                 label += $" - {status.Message}";
             string tooltip = ArenaDesignTooltipProvider.ForOwnedVessel(v).ToTooltipText();
@@ -123,6 +128,31 @@ public sealed class ArenaGarageScreen : GameScreen
 
     static string Display(OwnedVessel v)
         => v.Name.NotEmpty() ? $"{v.Name} ({v.DesignName})" : v.DesignName;
+
+    public static string StatusTags(OwnedVessel vessel, int destroyedSlots)
+    {
+        if (vessel == null)
+            return "";
+
+        var tags = new System.Collections.Generic.List<string>();
+        if (vessel.Level >= LegendaryLevelThreshold || vessel.Kills >= LegendaryKillThreshold)
+            tags.Add("[LEGENDARY]");
+        else if (vessel.Level >= VeteranLevelThreshold || vessel.Kills >= VeteranKillThreshold)
+            tags.Add("[VETERAN]");
+
+        if (vessel.CurrentHullHealth > 0f && vessel.MaxHullHealth > vessel.CurrentHullHealth + 0.5f)
+        {
+            float fraction = System.Math.Clamp(vessel.CurrentHullHealth / vessel.MaxHullHealth, 0f, 1f);
+            int hull = (int)System.Math.Round(
+                fraction * 100f);
+            tags.Add($"[HULL {hull}%]");
+        }
+
+        if (destroyedSlots > 0)
+            tags.Add($"[SCAR {destroyedSlots}]");
+
+        return string.Join(" ", tags);
+    }
 
     // SELECT: make the clicked owned vessel the ACTIVE gladiator (sets ActiveVesselId + Save +
     // live respawn), then refresh the list so the [ACTIVE] marker moves.

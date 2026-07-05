@@ -35,6 +35,7 @@ using Arena = Ship_Game.GameScreens.Arena.ArenaFightScreen;
 using ArenaBetting = Ship_Game.GameScreens.Arena.ArenaBetting;
 using ArenaBetQuote = Ship_Game.GameScreens.Arena.ArenaBetQuote;
 using ArenaBetResult = Ship_Game.GameScreens.Arena.ArenaBetResult;
+using ArenaBettingScreen = Ship_Game.GameScreens.Arena.ArenaBettingScreen;
 using ArenaEngineCapabilities = Ship_Game.GameScreens.Arena.ArenaEngineCapabilities;
 using ArenaCareerMenuScreen = Ship_Game.GameScreens.Arena.ArenaCareerMenuScreen;
 using ArenaCareerMenuMode = Ship_Game.GameScreens.Arena.ArenaCareerMenuMode;
@@ -59,10 +60,14 @@ using ArenaDesignTooltipProvider = Ship_Game.GameScreens.Arena.ArenaDesignToolti
 using ArenaGarageScreen = Ship_Game.GameScreens.Arena.ArenaGarageScreen;
 using ArenaInventoryScreen = Ship_Game.GameScreens.Arena.ArenaInventoryScreen;
 using ArenaLeaderboardScreen = Ship_Game.GameScreens.Arena.ArenaLeaderboardScreen;
+using ArenaLeagueSeasonScreen = Ship_Game.GameScreens.Arena.ArenaLeagueSeasonScreen;
 using ArenaModuleShopItem = Ship_Game.GameScreens.Arena.ArenaModuleShopItem;
 using ArenaModuleShopScreen = Ship_Game.GameScreens.Arena.ArenaModuleShopScreen;
 using ArenaMetaShopItem = Ship_Game.GameScreens.Arena.ArenaMetaShopItem;
 using ArenaPopupListItem = Ship_Game.GameScreens.Arena.ArenaPopupListItem;
+using ArenaPilotSoulScreen = Ship_Game.GameScreens.Arena.ArenaPilotSoulScreen;
+using ArenaMemorialScreen = Ship_Game.GameScreens.Arena.ArenaMemorialScreen;
+using ArenaSettledBet = Ship_Game.GameScreens.Arena.ArenaSettledBet;
 using ArenaMonteCarloTelemetry = Ship_Game.GameScreens.Arena.ArenaMonteCarloTelemetry;
 using ArenaMonteCarloTelemetryReport = Ship_Game.GameScreens.Arena.ArenaMonteCarloTelemetryReport;
 using ArenaMonteCarloTelemetryRow = Ship_Game.GameScreens.Arena.ArenaMonteCarloTelemetryRow;
@@ -2784,6 +2789,14 @@ public class ArenaRenderSmokeTests : StarDriveTest
         Assert.AreEqual(1900 + hardQuote.Payout, winCareer.Cash,
             "Won bet must pay the prequoted stake x odds payout after the stake was escrowed.");
         Assert.IsNull(winCareer.PendingBet, "Resolved fight-option bet must clear the pending slip.");
+        Assert.AreEqual(1, winCareer.SettledBets.Length,
+            "Resolved fight-option bet must append a settled-bet history row.");
+        Assert.IsTrue(winCareer.SettledBets[0].Won,
+            "Won fight-option history row must preserve the winning outcome.");
+        Assert.AreEqual(hardQuote.Payout, winCareer.SettledBets[0].Payout,
+            "Won fight-option history row must preserve the payout.");
+        StringAssert.Contains(winCareer.SettledBets[0].Matchup, starter.Name,
+            "Settled fight-option history must preserve matchup display data.");
 
         ArenaCareer lossCareer = BetCareer(starter, 2000);
         Assert.IsTrue(ArenaBetting.PlaceFightOptionBet(lossCareer, hard, Stake).Success,
@@ -2792,6 +2805,12 @@ public class ArenaRenderSmokeTests : StarDriveTest
         Assert.IsTrue(lost.Success && !lost.Won, lost.Message);
         Assert.AreEqual(1900, lossCareer.Cash,
             "Lost bet must net exactly -stake because the stake was already deducted.");
+        Assert.AreEqual(1, lossCareer.SettledBets.Length,
+            "Lost fight-option bet must also append settled history.");
+        Assert.IsFalse(lossCareer.SettledBets[0].Won,
+            "Lost fight-option history row must preserve the losing outcome.");
+        Assert.AreEqual(0, lossCareer.SettledBets[0].Payout,
+            "Lost fight-option history row must not invent a payout.");
 
         string tempPath = Path.Combine(Path.GetTempPath(), $"arena_betting_{Guid.NewGuid():N}.yaml");
         string savedStaticPath = Arena.CareerSavePath;
@@ -2825,11 +2844,16 @@ public class ArenaRenderSmokeTests : StarDriveTest
                 Assert.IsFalse(screen.SelectFightOption(other.OptionId),
                     "An open betting slip must block switching to a different fight option.");
 
-            ArenaCareer loaded = CareerManager.Load(tempPath);
-            Assert.AreEqual(screen.CurrentCash, loaded.Cash,
-                "Bet placement cash must round-trip through CareerManager Save/Load.");
-            Assert.IsNotNull(loaded.PendingBet,
-                "Open fight-option slip must persist as career state.");
+        ArenaCareer loaded = CareerManager.Load(tempPath);
+        Assert.AreEqual(screen.CurrentCash, loaded.Cash,
+            "Bet placement cash must round-trip through CareerManager Save/Load.");
+        Assert.IsNotNull(loaded.PendingBet,
+            "Open fight-option slip must persist as career state.");
+        var bettingPopup = new ArenaBettingScreen(screen);
+        bettingPopup.LoadContent();
+        string[] bettingRows = PopupRowLabels(bettingPopup);
+        Assert.IsTrue(bettingRows.Any(r => r.Contains("SETTLED HISTORY")),
+            "BET popup must include the settled history section even with an open slip.");
         }
         finally
         {
@@ -2889,6 +2913,10 @@ public class ArenaRenderSmokeTests : StarDriveTest
         Assert.IsTrue(contenderWin.Success && contenderWin.Won, contenderWin.Message);
         Assert.AreEqual(2000 - Stake + winnerQuote.Payout, contenderCareer.Cash,
             "Immediate contender bet on the deterministic winner must pay stake x odds.");
+        Assert.AreEqual(1, contenderCareer.SettledBets.Length,
+            "Immediate contender-duel bet must write settled history without leaving a pending slip.");
+        Assert.AreEqual(ArenaBetting.ContenderDuelKind, contenderCareer.SettledBets[0].Kind,
+            "Contender-duel history must preserve the bet kind.");
 
         var loserCareer = new ArenaCareer
         {
@@ -2900,6 +2928,25 @@ public class ArenaRenderSmokeTests : StarDriveTest
         Assert.IsTrue(contenderLoss.Success && !contenderLoss.Won, contenderLoss.Message);
         Assert.AreEqual(2000 - Stake, loserCareer.Cash,
             "Immediate contender bet on the deterministic loser must net exactly -stake.");
+        Assert.AreEqual(1, loserCareer.SettledBets.Length,
+            "Lost contender-duel bet must write settled history.");
+
+        var cappedCareer = BetCareer(starter, 2000);
+        for (int i = 0; i < ArenaBetting.SettledBetHistoryLimit + 2; ++i)
+        {
+            ArenaBetting.AppendSettledBet(cappedCareer, new ArenaSettledBet
+            {
+                Kind = ArenaBetting.ContenderDuelKind,
+                BetId = $"cap:{i}",
+                Matchup = $"Cap {i}",
+                Stake = Stake,
+                Odds = 2f,
+                Won = i % 2 == 0,
+                Payout = i % 2 == 0 ? Stake * 2 : 0,
+            });
+        }
+        Assert.AreEqual(ArenaBetting.SettledBetHistoryLimit, cappedCareer.SettledBets.Length,
+            "Settled-bet history must stay capped to the last few rows.");
 
         Console.WriteLine($"[bet] trivialOdds={trivialQuote.Odds:0.00} hardOdds={hardQuote.Odds:0.00} " +
             $"contender strong='{strong.Name}' weak='{weak.Name}' ratio={CareerLadder.ContenderStrengthRatio(weak, strong):0.00} " +
@@ -2924,6 +2971,145 @@ public class ArenaRenderSmokeTests : StarDriveTest
                 }
             }
             return false;
+        }
+    }
+
+    [TestMethod]
+    public void ArenaPolishPayoffScreensPopulate_Headless()
+    {
+        LoadAllGameData();
+
+        IShipDesign[] pool = ResourceManager.Ships.Designs
+            .Where(d => Arena.IsLegalCombatCraft(d) && Arena.IsDesignAllowedForCareerLevel(d, 7))
+            .OrderBy(d => d.BaseStrength)
+            .ThenBy(d => d.Name, StringComparer.Ordinal)
+            .Take(16)
+            .ToArray();
+        Assert.IsTrue(pool.Length >= 12, "Payoff screen fixture needs enough legal arena designs.");
+
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_polish_ui_{Guid.NewGuid():N}.yaml");
+        string savedStaticPath = Arena.CareerSavePath;
+        try
+        {
+            var vA = new OwnedVessel(pool[0].Name, 120f, 4, 6, "Veteran One")
+            {
+                VesselId = "polish-vA",
+                CaptainId = "cap-one",
+                CurrentHullHealth = 40f,
+                MaxHullHealth = 100f,
+            };
+            var vB = new OwnedVessel(pool[1].Name, 400f, 9, 18, "Legend Two")
+            {
+                VesselId = "polish-vB",
+                CaptainId = "cap-two",
+                DestroyedModules = new[] { new DestroyedModuleSlot(0, "polish-scar") },
+            };
+
+            var career = new ArenaCareer
+            {
+                Cash = 5000,
+                CareerLevel = 7,
+                Fame = 42,
+                OwnedVessels = new[] { vA, vB },
+                ActiveVesselId = vA.VesselId,
+                FleetVesselIds = new[] { vB.VesselId },
+                Captains = new[]
+                {
+                    new ArenaCaptain { CaptainId = "cap-one", Name = "Captain One", Epithet = "Iron Nerve", Level = 4, Kills = 6 },
+                    new ArenaCaptain { CaptainId = "cap-two", Name = "Captain Two", Epithet = "Cold Vector", Level = 9, Kills = 18 },
+                },
+                Perks = new[] { ArenaPerks.WeaponDamageId },
+                Chronicle = new[]
+                {
+                    new ArenaChronicleEvent("ui-win", 1, "win", "round:1", "Won.", 0x1001ul),
+                    new ArenaChronicleEvent("ui-loss", 2, "loss", "round:2", "Lost.", 0x1002ul),
+                },
+                Memorials = new[]
+                {
+                    new ArenaMemorialRecord("ui-mem", 1, "lost-vessel", "Fallen Star", pool[2].Name,
+                        7, 4, "Rival One", "Destroyed during UI proof", 0x1003ul,
+                        "Ship", "cap-lost", roundAtDeath: 5, fameAtDeath: 42),
+                },
+                SettledBets = new[]
+                {
+                    new ArenaSettledBet
+                    {
+                        Kind = ArenaBetting.FightOptionKind,
+                        BetId = "ui-bet",
+                        Order = 1,
+                        Matchup = "Veteran One vs Rival One",
+                        PickName = "Veteran One",
+                        OpponentName = "Rival One",
+                        Stake = ArenaBetting.DefaultStake,
+                        Odds = 2.5f,
+                        Won = true,
+                        Payout = 250,
+                        WinnerName = "Veteran One",
+                        CashBefore = 4900,
+                        CashAfter = 5150,
+                    },
+                },
+                Contenders = Enumerable.Range(0, 12)
+                    .Select(i => new ContenderRecord($"League UI {i + 1:00}", pool[i % pool.Length].Name,
+                        pool[i % pool.Length].Role.ToString().ToUpperInvariant(), 1000 + i))
+                    .ToArray(),
+            };
+            career.NormalizeForPersistence();
+            Assert.IsTrue(CareerManager.Save(career, tempPath), "Payoff fixture career must save.");
+            Arena.CareerSavePath = tempPath;
+
+            Arena screen = Arena.Create("United", ArenaDriveSeed, startAtHub: true);
+            Assert.IsNotNull(screen, "ArenaFightScreen.Create returned null.");
+            screen.UState.Objects.EnableParallelUpdate = false;
+            screen.UState.EnableDeterministicRng(0xA12E5011u);
+            screen.CreateSimThread = false;
+            screen.LoadContent();
+            Assert.AreEqual("Idle", GetPhase(screen), "Payoff screen fixture should start from the idle hub.");
+
+            var betting = new ArenaBettingScreen(screen);
+            betting.LoadContent();
+            string[] bettingRows = PopupRowLabels(betting);
+            Assert.IsTrue(bettingRows.Any(r => r.Contains("WON $250")),
+                "BET popup must show the settled payout history.");
+
+            var memorial = new ArenaMemorialScreen(screen);
+            memorial.LoadContent();
+            string[] memorialRows = PopupRowLabels(memorial);
+            Assert.IsTrue(memorialRows.Any(r => r.Contains("Fallen Star")),
+                "Memorial wall must list the persisted memorial ship name.");
+            Assert.IsTrue(memorialRows.Any(r => r.Contains("Round 5, Fame 42")),
+                "Memorial wall must show round/fame death context.");
+
+            var dossier = new ArenaPilotSoulScreen(screen);
+            dossier.LoadContent();
+            string[] dossierRows = PopupRowLabels(dossier);
+            Assert.IsTrue(dossierRows.Any(r => r.Contains("Captain One")),
+                "Pilot dossier must list career captains.");
+            Assert.IsTrue(dossierRows.Any(r => r.Contains("CURRENT FLEET")),
+                "Pilot dossier must include the current fleet section.");
+
+            var league = new ArenaLeagueSeasonScreen(screen);
+            league.LoadContent();
+            string[] leagueRows = PopupRowLabels(league);
+            Assert.IsTrue(leagueRows.Any(r => r.Contains("STANDINGS")),
+                "League modal must show standings.");
+            Assert.IsTrue(leagueRows.Any(r => r.Contains("RECENT RESULTS")),
+                "League modal must show recent match results.");
+            Assert.IsTrue(leagueRows.Any(r => r.Contains("NEXT MATCHUP")),
+                "League modal must show the next matchup.");
+
+            var garage = new ArenaGarageScreen(screen);
+            garage.LoadContent();
+            string[] garageRows = PopupRowLabels(garage);
+            Assert.IsTrue(garageRows.Any(r => r.Contains("[VETERAN]") && r.Contains("[HULL 40%]")),
+                "Garage rows must tag veteran damaged owned vessels.");
+            Assert.IsTrue(garageRows.Any(r => r.Contains("[LEGENDARY]") && r.Contains("[SCAR 1]")),
+                "Garage rows must tag legendary scarred owned vessels.");
+        }
+        finally
+        {
+            Arena.CareerSavePath = savedStaticPath;
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { /* best-effort */ }
         }
     }
 
@@ -9720,8 +9906,10 @@ public class ArenaRenderSmokeTests : StarDriveTest
             Assert.IsTrue(career.AddChronicleEvent("win", "round:1", "Won.", Seed + 1));
             Assert.IsFalse(career.AddChronicleEvent("win", "round:1", "Won.", Seed + 1),
                 "Chronicle events must dedupe by deterministic ID.");
-            Assert.IsTrue(career.AddMemorial(vessel, "Ledger Rival", "Destroyed in ledger proof", Seed + 2));
-            Assert.IsFalse(career.AddMemorial(vessel, "Ledger Rival", "Destroyed in ledger proof", Seed + 2),
+            Assert.IsTrue(career.AddMemorial(vessel, "Ledger Rival", "Destroyed in ledger proof",
+                Seed + 2, roundAtDeath: 3, fameAtDeath: 12));
+            Assert.IsFalse(career.AddMemorial(vessel, "Ledger Rival", "Destroyed in ledger proof",
+                Seed + 2, roundAtDeath: 3, fameAtDeath: 12),
                 "Memorial records must dedupe by deterministic ID.");
             Assert.IsTrue(CareerManager.SaveSlot(career, 1), "Ledger career must save.");
 
@@ -9742,6 +9930,8 @@ public class ArenaRenderSmokeTests : StarDriveTest
             Assert.AreEqual(vessel.Level, memorial.Level);
             Assert.AreEqual("Ledger Rival", memorial.Killer);
             Assert.AreEqual("Destroyed in ledger proof", memorial.Cause);
+            Assert.AreEqual(3, memorial.RoundAtDeath);
+            Assert.AreEqual(12, memorial.FameAtDeath);
         }
         finally
         {
@@ -10355,6 +10545,24 @@ public class ArenaRenderSmokeTests : StarDriveTest
                 .Append("|seed=").Append(m.FightSeed)
                 .Append("|kind=").Append(m.Kind)
                 .Append("|captain=").Append(m.CaptainId)
+                .Append("|round=").Append(m.RoundAtDeath)
+                .Append("|fame=").Append(m.FameAtDeath)
+                .Append('\n');
+        }
+        foreach (ArenaSettledBet bet in (career.SettledBets ?? Array.Empty<ArenaSettledBet>())
+                     .OrderBy(b => b?.Order ?? 0)
+                     .ThenBy(b => b?.BetId, StringComparer.Ordinal))
+        {
+            if (bet == null) continue;
+            b.Append("bet|").Append(bet.BetId)
+                .Append("|order=").Append(bet.Order)
+                .Append("|kind=").Append(bet.Kind)
+                .Append("|matchup=").Append(bet.Matchup)
+                .Append("|won=").Append(bet.Won)
+                .Append("|stake=").Append(bet.Stake)
+                .Append("|odds=").Append(F32(bet.Odds))
+                .Append("|payout=").Append(bet.Payout)
+                .Append("|winner=").Append(bet.WinnerName)
                 .Append('\n');
         }
         return b.ToString();
