@@ -300,7 +300,10 @@ namespace Ship_Game.Gameplay
             if (IsTurret) adjust    *= 0.5f;
             if (Tag_PD) adjust      *= 0.5f;
             if (TruePD) adjust      *= 0.5f;
-            return adjust * (1f - (Owner?.Loyalty?.data.Traits.TargetingModifier ?? 0));
+            adjust *= (1f - (Owner?.Loyalty?.data.Traits.TargetingModifier ?? 0));
+            // ARENA PILOT TRAITS: eagle_eye reduces target error by PilotAccuracyBonus, folded exactly
+            // like the empire TargetingModifier above but as a per-Ship additive channel (default 0).
+            return adjust * (1f - (Owner?.PilotAccuracyBonus ?? 0f));
         }
 
         // @note This is used for debugging
@@ -454,7 +457,9 @@ namespace Ship_Game.Gameplay
         {
             if (Tag_PD && enemyProjectiles.Length != 0)
             {
-                int maxTracking = 1 + Owner.TrackingPower + Owner.Level;
+                // ARENA PILOT TRAITS: predictive_tracking adds PilotTrackingBonus tracked targets as an
+                // additive per-Ship term (default 0), never a Level bump.
+                int maxTracking = 1 + Owner.TrackingPower + Owner.Level + Owner.PilotTrackingBonus;
                 for (int i = 0; i < maxTracking && i < enemyProjectiles.Length; i++)
                 {
                     Projectile proj = enemyProjectiles[i];
@@ -485,7 +490,9 @@ namespace Ship_Game.Gameplay
             else // otherwise track a new target:
             {
                 // limit to one target per level.
-                int maxTracking = 1 + Owner.TrackingPower + Owner.Level;
+                // ARENA PILOT TRAITS: predictive_tracking adds PilotTrackingBonus tracked targets as an
+                // additive per-Ship term (default 0), never a Level bump.
+                int maxTracking = 1 + Owner.TrackingPower + Owner.Level + Owner.PilotTrackingBonus;
                 for (int i = 0; i < potentialTargets.Length && i < maxTracking; ++i)
                 {
                     Ship potentialTarget = potentialTargets[i];

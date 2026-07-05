@@ -95,6 +95,10 @@ public class GamePlayGlobals
     // setting this to true means upkeep depends on number of hull design slots
     [StarData] public bool UseUpkeepByHullSize;
     [StarData] public bool EnableRandomizedAIFleetSizes;
+    // ARENA PILOT TRAITS (Layer 1, SP-only): when true, auto-granted pilot traits apply an
+    // ADDITIVE per-Ship bonus channel on top of the existing crew-Level veterancy (composed in
+    // ArenaFightScreen.ReapplyVeterancy). Default false = zero behavior change (a true no-op).
+    [StarData] public bool EnablePilotTraits;
 
     // visual modifiers
     [StarData] public float SpaceportScale = 0.5f;

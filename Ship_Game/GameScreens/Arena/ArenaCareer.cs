@@ -1432,6 +1432,12 @@ public sealed class ArenaCaptain
     [StarData] public string Killer = "";
     [StarData] public string DeathCause = "";
 
+    // ARENA PILOT TRAITS (Layer 1): the pilot's auto-granted trait ids, mirrored from Level at bank
+    // time. Traits live on the CAPTAIN so an ace that ejects and re-crews a new hull keeps its skill.
+    // v0 auto-grants from Level, so this is a derived/display record; Layer 2 hashes it into the MP
+    // fingerprint and Layer 3 may make it point-buy-authored.
+    [StarData] public string[] GrantedTraits = Empty<string>.Array;
+
     [StarDataConstructor] public ArenaCaptain() { }
 }
 

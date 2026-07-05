@@ -366,6 +366,13 @@ namespace Ship_Game.Gameplay
             if (owner?.Level > 0)
                 damageAmount += damageAmount * owner.Level * 0.05f;
 
+            // ARENA PILOT TRAITS: gunnery_drill applies as a SEPARATE trait multiplier on the
+            // veterancy-adjusted damage — damage * (1 + PilotDamageBonus). It does NOT bump the Level
+            // number (which would recursively change targeting/tracking/evade/turn-rate), so it is a
+            // clean, deterministic per-Ship channel that never double-applies through the Level curve.
+            if (owner != null && owner.PilotDamageBonus > 0f)
+                damageAmount += damageAmount * owner.PilotDamageBonus;
+
             // Hull bonus damage increase
             if (GlobalStats.Defaults.UseHullBonuses && owner != null &&
                 ResourceManager.HullBonuses.TryGetValue(owner.ShipData.Hull, out HullBonus mod))

@@ -1166,6 +1166,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
             if (s == null || v == null)
                 continue;
             MergeOwnedVesselVeterancyMonotonic(v, s);
+            MirrorPilotVeterancyToCaptain(v);
             ++banked;
         }
 
@@ -1189,6 +1190,23 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         vessel.Experience = Math.Max(vessel.Experience, ship.Experience);
         vessel.Level      = Math.Max(vessel.Level, ship.Level);
         vessel.Kills      = Math.Max(vessel.Kills, ship.Kills);
+    }
+
+    /// <summary>
+    /// ARENA PILOT TRAITS (Layer 1): mirror the fielded vessel's crew Level into its captain record
+    /// (monotonic, no parallel counter) and record the pilot's auto-granted trait ids for display /
+    /// future MP hashing. Reuses the existing vessel-&gt;captain link and the engine's 0..10 Level scale;
+    /// safe/no-op when there is no captain. Runs regardless of the flag so the derived record stays
+    /// consistent — the flag only gates whether the traits have any MECHANICAL effect at spawn.
+    /// </summary>
+    void MirrorPilotVeterancyToCaptain(OwnedVessel vessel)
+    {
+        ArenaCaptain captain = Career?.CaptainForVessel(vessel);
+        if (captain == null)
+            return;
+        if (vessel.Level > captain.Level)
+            captain.Level = vessel.Level;
+        captain.GrantedTraits = PilotTraitV0.GrantedTraitsForLevel(captain.Level);
     }
 
     public int RefreshOwnedVesselVeterancyForUi() => SyncOwnedVesselVeterancyFromLiveShips();
@@ -1330,6 +1348,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
             s.Experience = v.Experience;
             s.Level      = v.Level;
             s.Kills      = v.Kills;
+            ApplyPilotTraits(s, v);
             ++applied;
         }
         if (applied > 0)
@@ -1355,10 +1374,32 @@ public sealed partial class ArenaFightScreen : UniverseScreen
             s.Experience = glad.Experience;
             s.Level      = glad.Level;
             s.Kills      = glad.Kills;
+            ApplyPilotTraits(s, glad);
             Log.Info($"ArenaFightScreen: re-applied veterancy to gladiator '{designName}' " +
                      $"exp={s.Experience:0} level={s.Level} kills={s.Kills}.");
             return; // first matching gladiator only
         }
+    }
+
+    /// <summary>
+    /// ARENA PILOT TRAITS (Layer 1, SP-only, flag-gated). Compose the pilot's auto-granted traits into
+    /// an ADDITIVE per-Ship bonus channel and write it onto the freshly spawned ship, in the SAME loop
+    /// that just wrote veterancy. Gated on <see cref="GamePlayGlobals.EnablePilotTraits"/> — default
+    /// false means this is a pure no-op (the fields stay 0, matching today's behavior exactly).
+    ///
+    /// The granted set is a PURE function of the pilot's crew level (v0 auto-grant) resolved from the
+    /// captain record when present (so an ace who ejects and re-crews keeps its skill), else the
+    /// vessel's own Level. No empire mutation, no RNG — identical inputs always yield identical fields.
+    /// </summary>
+    void ApplyPilotTraits(Ship s, OwnedVessel v)
+    {
+        if (s == null || v == null || !GlobalStats.Defaults.EnablePilotTraits)
+            return;
+
+        ArenaCaptain captain = Career?.CaptainForVessel(v);
+        int pilotLevel = captain?.Level > 0 ? captain.Level : v.Level;
+        ShipTraitEffect effect = PilotTraitV0.ComposeForLevel(pilotLevel);
+        PilotTraitV0.ApplyToShip(s, effect);
     }
 
     // The first LIVING player ship whose design matches `designName` (the gladiator), or null.

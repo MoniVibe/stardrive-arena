@@ -125,6 +125,16 @@ namespace Ship_Game.Ships
         [StarData] public bool InCombat;
         public float XRotation;
         public float BonusEMPProtection;
+
+        // ARENA PILOT TRAITS (Layer 1): additive, non-serialized per-Ship bonus channels set at
+        // spawn by ArenaFightScreen.ReapplyVeterancy from the pilot's auto-granted traits. These are
+        // a SEPARATE additive term summed once into the existing crew-Level math — never a second
+        // Level bump, never empire-data mutation. All default 0, so with EnablePilotTraits off (or
+        // outside the arena) they are a pure no-op. Mirror the BonusEMPProtection pattern above.
+        public float PilotAccuracyBonus; // -target-error fraction, folded like Traits.TargetingModifier
+        public float PilotDamageBonus;   // +weapon-damage fraction, additive with the +5%/level curve
+        public int   PilotTrackingBonus; // +max tracked targets, additive with 1 + TrackingPower + Level
+        public float PilotEvadeBonus;    // +explosion-evade chance points, additive with +Level
         public bool InPlayerSensorRange => KnownByEmpires.KnownByPlayer(Universe);
         public KnownByEmpire KnownByEmpires;
         public KnownByEmpire PlayerProjectorHasSeenEmpires;
@@ -1485,6 +1495,9 @@ namespace Ship_Game.Ships
             }
 
             explosionEvadeBaseChance += Level;
+            // ARENA PILOT TRAITS: evasive_ace adds PilotEvadeBonus evade points as an additive per-Ship
+            // term (default 0), summed once alongside +Level — never a Level bump.
+            explosionEvadeBaseChance += PilotEvadeBonus;
             if (pointBlank)
                 switch (ShipData.HullRole)
                 {

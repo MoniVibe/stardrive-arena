@@ -83,6 +83,7 @@
     <Compile Include="..\x64Migration\Tools\ArenaLockstepProbe\PortableLockstepProbe.cs" Link="Determinism\ArenaPortableLockstepProbeRunner.cs" />
     <Compile Include="Determinism\DeterminismHashTests.cs" />
     <Compile Include="Determinism\ArenaDeterminismPatchContractTests.cs" />
+    <Compile Include="Determinism\ArenaPilotTraitsTests.cs" />
     <Compile Include="Determinism\ArenaPortableFingerprintTests.cs" />
     <Compile Include="Determinism\ArenaPortableLockstepProbeTests.cs" />
     <Compile Include="Determinism\LockstepNetworkTransportTests.cs" />

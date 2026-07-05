@@ -74,6 +74,7 @@
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaMultiplayerTelemetry.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaPerks.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaPlugin.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\PilotTraitV0.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaPopupListItem.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaProgressionSimulator.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaRegularMultiplayerSettings.cs" />
