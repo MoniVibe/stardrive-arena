@@ -34,6 +34,12 @@ namespace Ship_Game.AI
         #pragma warning restore CA2213
 
         public Array<Ship> TargetQueue = new();
+        // Arena PvP countdown hold-fire (deep-reasoner design 2026-07-06). A hard, one-way gate: set
+        // true once at spawn on BOTH peers, flipped false once at the shared engage tick. Unlike
+        // TriggerDelay it does NOT decrement, so it never expires mid-countdown and needs no per-tick
+        // mutation. Read inside the deterministic sim; written only at spawn and at the engage-tick
+        // threshold, symmetrically on both peers => lockstep-safe. Transient (never [StarData]).
+        public bool ArenaHoldFire;
         float TriggerDelay;
         Array<Ship> ScannedTargets = new();
         Array<Ship> ScannedFriendlies = new();
@@ -76,7 +82,12 @@ namespace Ship_Game.AI
 
         bool FireOnTarget()
         {
-            // base reasons not to fire. @TODO actions decided by loyalty like should be the same in all areas. 
+            // Arena PvP countdown hold-fire: a hard, deterministic gate honored by the ONLY fire
+            // path (FireWeapons -> FireOnTarget, incl. point-defense which flows through here).
+            if (ArenaHoldFire)
+                return false;
+
+            // base reasons not to fire. @TODO actions decided by loyalty like should be the same in all areas.
             if (!Owner.HasCommand || Owner.engineState == Ship.MoveState.Warp
                 || Owner.EMPDisabled || Owner.Weapons.Count == 0 || !BadGuysNear)
                 return false;
@@ -326,6 +337,11 @@ namespace Ship_Game.AI
 
         Ship SelectCombatTarget(float radius)
         {
+            // Arena PvP countdown hold-fire: acquire no target while frozen, so Target/InCombat stay
+            // clear and the countdown never trips the engagement-liveness predicate.
+            if (ArenaHoldFire)
+                return null;
+
             if (HasPriorityTarget && Target == null)
             {
                 HasPriorityTarget = false;

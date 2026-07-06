@@ -16,7 +16,9 @@ public static class ArenaBattleCodes
 {
     const string Prefix = "SGB1-";
     const string Magic = "SGB1";
-    const int FormatVersion = 1;
+    // 2: Arena P1 RulesetV0 + canonical design bundles (folded into SettingsHash), appended after
+    // the existing fields so a format-1 code still parses (missing fields -> defaults).
+    const int FormatVersion = 2;
 
     public static string Export(ArenaMultiplayerSettings settings, string sequenceSha256)
         => Export(settings, sequenceSha256, buildHashOverride: null);
@@ -54,6 +56,20 @@ public static class ArenaBattleCodes
             WriteString(w, start.JoinLoadoutTrait);
             WriteString(w, start.HostFleet);
             WriteString(w, start.JoinFleet);
+            // Arena P1 RulesetV0 + design bundles (format 2). Order matches the TryImport reader.
+            w.Write(start.RulesetVersion);
+            w.Write(start.RulesetMode);
+            w.Write(start.RulesetBudgetModel);
+            w.Write(start.RulesetBudgetCredits);
+            w.Write(start.RulesetRosterSource);
+            w.Write(start.RulesetCountdownSeconds);
+            w.Write(start.RulesetMaxMatchSeconds);
+            w.Write(start.RulesetMaxFleetShipsPerSide);
+            w.Write(start.RulesetWagerCredits);
+            WriteString(w, start.RulesetCommitmentHash);
+            WriteString(w, start.RulesetContentFingerprint);
+            WriteString(w, start.HostFleetBundle);
+            WriteString(w, start.JoinFleetBundle);
             WriteString(w, digest);
         }
 
@@ -80,7 +96,7 @@ public static class ArenaBattleCodes
             using var r = new BinaryReader(payload, Encoding.UTF8);
             string magic = r.ReadString();
             int format = r.ReadInt32();
-            if (!string.Equals(magic, Magic, StringComparison.Ordinal) || format != FormatVersion)
+            if (!string.Equals(magic, Magic, StringComparison.Ordinal) || format < 1 || format > FormatVersion)
             {
                 imported = ArenaBattleCode.Failure("Unsupported battle code format.");
                 return false;
@@ -106,6 +122,22 @@ public static class ArenaBattleCodes
                 HostFleet = ReadString(r),
                 JoinFleet = ReadString(r),
             };
+            if (format >= 2)
+            {
+                start.RulesetVersion = r.ReadInt32();
+                start.RulesetMode = r.ReadInt32();
+                start.RulesetBudgetModel = r.ReadInt32();
+                start.RulesetBudgetCredits = r.ReadInt32();
+                start.RulesetRosterSource = r.ReadInt32();
+                start.RulesetCountdownSeconds = r.ReadInt32();
+                start.RulesetMaxMatchSeconds = r.ReadInt32();
+                start.RulesetMaxFleetShipsPerSide = r.ReadInt32();
+                start.RulesetWagerCredits = r.ReadInt32();
+                start.RulesetCommitmentHash = ReadString(r);
+                start.RulesetContentFingerprint = ReadString(r);
+                start.HostFleetBundle = ReadString(r);
+                start.JoinFleetBundle = ReadString(r);
+            }
             string sequenceSha256 = NormalizeSha256(ReadString(r));
             if (payload.Position != payload.Length)
             {

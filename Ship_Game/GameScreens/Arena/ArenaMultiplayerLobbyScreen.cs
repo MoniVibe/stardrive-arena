@@ -143,6 +143,11 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     int FtlIndex = 3;
     int ExtraRemnantIndex = 2;
     bool StartPaused;
+    // Arena P1 mode selector (flag-gated authoring; Career preserves existing behavior). The host's
+    // selection authors the RulesetV0 attached to the Arena start payload.
+    ArenaMatchMode ArenaMode = ArenaMatchMode.Career;
+    ArenaBudgetModel ArenaBudgetModel = ArenaBudgetModel.Unlimited;
+    int ArenaBudgetCredits = 5000;
     bool JoinInProgress;
     bool ScreenExiting;
     bool Launching;
@@ -216,6 +221,15 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     public bool RemoteReadyForHeadless => RemotePeers.Values.Any(p => p.Ready);
     public SessionStartMessage Build4XStartForHeadless() => Build4XStartMessage();
     public SessionStartMessage BuildArenaStartForHeadless() => BuildArenaStartMessage();
+    public ArenaMatchMode ArenaModeForHeadless => ArenaMode;
+    public ArenaMultiplayerRuleset ArenaRulesetForHeadless => BuildArenaRuleset();
+    public void SetArenaModeForHeadless(ArenaMatchMode mode, ArenaBudgetModel budgetModel = ArenaBudgetModel.Unlimited,
+        int budgetCredits = 0)
+    {
+        ArenaMode = mode;
+        ArenaBudgetModel = mode == ArenaMatchMode.Sandbox ? budgetModel : ArenaBudgetModel.Unlimited;
+        ArenaBudgetCredits = budgetCredits;
+    }
     public string ValidateArenaStartForHeadless(SessionStartMessage start) => ValidateArenaStart(start);
     public Authoritative4XGeneratedGameStart CreateGenerated4XGameForHeadless(SessionStartMessage start)
         => CreateGenerated4XGame(start);
@@ -1055,6 +1069,27 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             ScreenManager.GoToScreen(screen, clear3DObjects: true);
     }
 
+    // Arena P1: author the RulesetV0 from the host's mode selection. Career defaults preserve the
+    // existing behavior (career-locked roster, unlimited budget); Sandbox rides the all-content
+    // roster + optional budget cap. Content fingerprint folds in the active mod set.
+    ArenaMultiplayerRuleset BuildArenaRuleset()
+        => new()
+        {
+            Version = 0,
+            Mode = ArenaMode,
+            BudgetModel = ArenaMode == ArenaMatchMode.Sandbox ? ArenaBudgetModel : ArenaBudgetModel.Unlimited,
+            BudgetCredits = ArenaMode == ArenaMatchMode.Sandbox && ArenaBudgetModel == ArenaBudgetModel.Cap
+                ? ArenaBudgetCredits : 0,
+            RosterSource = ArenaMode == ArenaMatchMode.Career
+                ? ArenaRosterSource.CareerLocked : ArenaRosterSource.AllContent,
+            CountdownSeconds = 3,
+            MaxMatchSeconds = 600,
+            MaxFleetShipsPerSide = 32,
+            WagerCredits = 0,
+            RosterCommitmentHash = "",
+            ContentFingerprint = GlobalStats.HasMod ? $"{GlobalStats.ModName} {GlobalStats.ModVersion}" : "Vanilla",
+        };
+
     ArenaMultiplayerSettings BuildArenaSettings()
     {
         ApplyLocalSelection();
@@ -1063,6 +1098,10 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             seed, LocalPeer.LoadoutTrait, hostSide: true);
         string[] joinFleet = ArenaFleetOrFallback(RemotePeer.FleetDesignNames,
             seed, RemotePeer.LoadoutTrait, hostSide: false);
+        ArenaMultiplayerRuleset ruleset = BuildArenaRuleset();
+        // P1 fleet-setup fallback (plan risk 1): emit zero-offset column bundles from the resolved
+        // name lists. When the FleetDesignScreen setup lands, replace these with the saved formation
+        // bundle (ArenaFleetBundle.Encode of a real FleetDesign).
         return new ArenaMultiplayerSettings
         {
             MatchSeed = seed,
@@ -1079,6 +1118,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             StartPaused = StartPaused,
             HostFleetDesignNames = hostFleet,
             JoinFleetDesignNames = joinFleet,
+            Ruleset = ruleset,
+            HostFleetBundle = ArenaFleetBundle.Encode(ArenaFleetBundle.FromDesignNames(hostFleet)),
+            JoinFleetBundle = ArenaFleetBundle.Encode(ArenaFleetBundle.FromDesignNames(joinFleet)),
         }.WithResolvedFleets();
     }
 

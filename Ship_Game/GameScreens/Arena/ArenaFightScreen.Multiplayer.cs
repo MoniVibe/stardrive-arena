@@ -6,10 +6,12 @@ using SDGraphics;
 using SDUtils.Deterministic;
 using Ship_Game.Determinism;
 using Ship_Game.Determinism.Lockstep;
+using Ship_Game.AI;
 using Ship_Game.Gameplay;
 using Ship_Game.Ships;
 using Ship_Game.UI;
 using Vector2 = SDGraphics.Vector2;
+using FleetDesignT = global::Ship_Game.FleetDesign;
 
 namespace Ship_Game.GameScreens.Arena;
 
@@ -109,7 +111,21 @@ public sealed partial class ArenaFightScreen
     const float MultiplayerHandshakeResendInterval = 0.5f;
     const float MultiplayerStallWarnSeconds = 5f;
     public const float MultiplayerStallHaltSeconds = 30f;
-    public const uint MultiplayerEngagementWindowTicks = 300; // 5 sim-seconds after spawn
+    public const uint MultiplayerEngagementWindowTicks = 300; // 5 sim-seconds after ENGAGE (rebased)
+
+    // ArenaMatchPhase (plan Part 3): Spawn -> Countdown -> Engage -> Fight -> Resolve, driven by SIM
+    // TICKS (never wall-clock), evaluated inside the already-lockstepped tick advance so both peers
+    // fire EngageAll on the SAME tick. The countdown is a tick threshold: EngageAll fires exactly at
+    // spawnTick + CountdownTicks. Default 180 ticks = CountdownSeconds(3) * 60.
+    public enum ArenaMatchPhase { Spawn, Countdown, Engage, Fight, Resolve }
+    ArenaMatchPhase MultiplayerPhase = ArenaMatchPhase.Spawn;
+    public const uint DefaultCountdownTicks = 180;
+    uint MultiplayerCountdownTicks = DefaultCountdownTicks;
+    long MultiplayerEngageAtTick = -1;          // set once at first tick: spawnTick + CountdownTicks
+    string MultiplayerEndReason = "";
+    public ArenaMatchPhase MultiplayerPhaseForHeadless => MultiplayerPhase;
+    public long MultiplayerEngageAtTickForHeadless => MultiplayerEngageAtTick;
+    public string MultiplayerEndReasonForHeadless => MultiplayerEndReason;
     bool MultiplayerLivePaused;
     float MultiplayerLiveSpeed = 1f;
     string MultiplayerLiveStatus = "";
@@ -261,17 +277,35 @@ public sealed partial class ArenaFightScreen
         RemoveMultiplayerShips(PlayerShips);
         RemoveMultiplayerShips(EnemyShips);
 
-        IShipDesign[] hostDesigns = ResolveMultiplayerFleet(MultiplayerHostFleetDesigns);
-        IShipDesign[] joinDesigns = ResolveMultiplayerFleet(MultiplayerJoinFleetDesigns);
+        // Formation-aware spawn (plan Part 3d): the canonical FleetDesignT bundle is the source of
+        // truth for placement AND stable ship-id order. Fall back to the name-list column when no
+        // bundle is present (legacy path) — FromDesignNames yields a zero-offset column.
+        ArenaMultiplayerSettings liveSettings = MultiplayerLiveSession?.Settings;
+        FleetDesignT hostBundle = ResolveMultiplayerBundle(liveSettings?.HostFleetBundle, MultiplayerHostFleetDesigns);
+        FleetDesignT joinBundle = ResolveMultiplayerBundle(liveSettings?.JoinFleetBundle, MultiplayerJoinFleetDesigns);
+        IShipDesign[] hostDesigns = ResolveMultiplayerFleet(BundleShipNames(hostBundle));
+        IShipDesign[] joinDesigns = ResolveMultiplayerFleet(BundleShipNames(joinBundle));
         if (hostDesigns.Length == 0 || joinDesigns.Length == 0)
             throw new InvalidOperationException("Arena PvP lockstep requires at least one legal design on each side.");
 
         PlayerDesign = hostDesigns[0];
         EnemyDesign = joinDesigns[0];
-        SpawnMultiplayerFleet(PlayerShips, ArenaPlayer, hostDesigns, -Gap, PlayerSpawnFacing);
-        SpawnMultiplayerFleet(EnemyShips, ArenaEnemy, joinDesigns, +Gap, EnemySpawnFacing);
+        // sideMirror mirrors the join side across the arena centerline so both fleets face each
+        // other; BOTH peers apply the SAME rule so ship i lands at the same absolute position.
+        SpawnMultiplayerFormation(PlayerShips, ArenaPlayer, hostBundle, -Gap, +1f, PlayerSpawnFacing);
+        SpawnMultiplayerFormation(EnemyShips, ArenaEnemy, joinBundle, +Gap, -1f, EnemySpawnFacing);
+
+        // Deterministic countdown: resolve tick length from the ruleset once (never per-frame).
+        MultiplayerCountdownTicks = (liveSettings?.Ruleset ?? new ArenaMultiplayerRuleset()).CountdownTicks;
+        MultiplayerPhase = ArenaMatchPhase.Spawn;
+        MultiplayerEngageAtTick = -1;
+        // Freeze both fleets during the countdown. ShipAI autonomously acquires sensor targets, so
+        // a combat stance would start the fight immediately; CombatState.None ("take no action in
+        // combat") holds fire deterministically on both peers until the Engage tick restores the
+        // stance. Do NOT call EngageAll() here — the phase machine issues it at MultiplayerEngageAtTick.
+        FreezeMultiplayerFleet(PlayerShips);
+        FreezeMultiplayerFleet(EnemyShips);
         RetargetTimer = 0f;
-        EngageAll();
         RunStarted = PlayerShips.Count > 0 && EnemyShips.Count > 0;
         if (!RunStarted)
             throw new InvalidOperationException("Arena PvP lockstep failed to spawn both fleets.");
@@ -350,10 +384,17 @@ public sealed partial class ArenaFightScreen
             return;
         }
 
-        if (simTick >= MultiplayerEngagementWindowTicks)
+        // Rebase the liveness clock to the ENGAGE tick (plan Part 3c): the deterministic countdown
+        // legitimately holds fire for CountdownTicks, so the engagement window must start at
+        // MultiplayerEngageAtTick, not at spawn — otherwise the countdown eats the liveness budget
+        // and a slow matchup false-fails. Until the engage tick is known/reached, don't judge.
+        if (MultiplayerEngageAtTick < 0 || simTick < MultiplayerEngageAtTick)
+            return;
+
+        if (simTick >= MultiplayerEngageAtTick + MultiplayerEngagementWindowTicks)
         {
             ArenaMultiplayerMatchStatus status = MultiplayerMatchStatus();
-            string reason = $"No engagement within {MultiplayerEngagementWindowTicks} sim ticks of spawn: "
+            string reason = $"No engagement within {MultiplayerEngagementWindowTicks} sim ticks of engage: "
                             + "no target acquired, no ship in combat, no weapon fire "
                             + $"(playerAlive={status.PlayerAlive} enemyAlive={status.EnemyAlive}).";
             MultiplayerTelemetry?.Event("ARENA_LIVENESS_FAIL", reason);
@@ -490,8 +531,15 @@ public sealed partial class ArenaFightScreen
         // method every rendered frame, and re-submitting piles duplicate commands into the frame.
         if (ShouldSubmitMultiplayer(settings, turn) && MultiplayerLastSubmitTurn < turn)
         {
-            MultiplayerLiveClient.Submit(BuildMultiplayerFocusCommand(peerId,
-                turn + (uint)Math.Max(0, settings.InputDelay), turn));
+            uint execTick = turn + (uint)Math.Max(0, settings.InputDelay);
+            // During Spawn/Countdown, submit a NoOp so the lockstep barrier still advances but no
+            // attack order (Target) is issued — the fleets stay frozen until the engage tick. The
+            // phase is a pure function of the committed sim tick, so this gate is identical on both
+            // peers (deterministic input stream).
+            SimCommand cmd = MultiplayerPhase == ArenaMatchPhase.Fight || MultiplayerPhase == ArenaMatchPhase.Engage
+                ? BuildMultiplayerFocusCommand(peerId, execTick, turn)
+                : new SimCommand(execTick, peerId, turn, SimCommandKind.NoOp);
+            MultiplayerLiveClient.Submit(cmd);
             MultiplayerLastSubmitTurn = turn;
             MultiplayerLiveResult.CommandsSubmitted++;
         }
@@ -545,6 +593,11 @@ public sealed partial class ArenaFightScreen
             RecordMultiplayerLiveTurn(turn, MultiplayerLiveSim.Hash(), null);
         }
 
+        // Drive the ArenaMatchPhase machine at the single point where simTick is known and identical
+        // on both peers (the committed tick just advanced). This is where the deterministic countdown
+        // fires EngageAll — a tick threshold, never a wall-clock dt.
+        AdvanceMultiplayerPhase(MultiplayerLiveSim.Tick);
+
         ArenaMultiplayerMatchStatus status = MultiplayerMatchStatus();
         if (status.Ended)
         {
@@ -562,8 +615,68 @@ public sealed partial class ArenaFightScreen
         }
 
         MultiplayerLiveTurn++;
-        MultiplayerLiveStatus = $"turn {MultiplayerLiveTurn} hash {MultiplayerLiveResult.FinalHash}";
+        if (MultiplayerPhase != ArenaMatchPhase.Countdown)
+            MultiplayerLiveStatus = $"turn {MultiplayerLiveTurn} hash {MultiplayerLiveResult.FinalHash}";
         return true;
+    }
+
+    // ArenaMatchPhase machine (plan Part 3c). Driven by the committed sim tick, so the countdown
+    // threshold and EngageAll fire on the SAME tick on both peers — the determinism guarantee.
+    void AdvanceMultiplayerPhase(long simTick)
+    {
+        if (MultiplayerLiveComplete || simTick < 0)
+            return;
+
+        switch (MultiplayerPhase)
+        {
+            case ArenaMatchPhase.Spawn:
+                // The engage tick is an ABSOLUTE sim tick, not firstSeenTick + countdown: the host
+                // reaches its first committed tick at simTick=1 while the join lags by InputDelay, so
+                // a relative baseline would give the peers different engage ticks. Both peers spawn at
+                // tick 0 conceptually, so engage at the absolute tick = CountdownTicks; both evaluate
+                // "simTick >= CountdownTicks" against the SAME lockstepped tick and engage together.
+                MultiplayerEngageAtTick = MultiplayerCountdownTicks;
+                MultiplayerPhase = simTick >= MultiplayerEngageAtTick ? ArenaMatchPhase.Engage : ArenaMatchPhase.Countdown;
+                MultiplayerTelemetry?.Event("PHASE_COUNTDOWN",
+                    $"firstTick={simTick} engageAtTick={MultiplayerEngageAtTick} countdownTicks={MultiplayerCountdownTicks}");
+                if (MultiplayerPhase == ArenaMatchPhase.Countdown)
+                    UpdateCountdownStatus(simTick);
+                else
+                    goto case ArenaMatchPhase.Engage;
+                break;
+
+            case ArenaMatchPhase.Countdown:
+                if (simTick >= MultiplayerEngageAtTick)
+                {
+                    MultiplayerPhase = ArenaMatchPhase.Engage;
+                    goto case ArenaMatchPhase.Engage;
+                }
+                UpdateCountdownStatus(simTick);
+                break;
+
+            case ArenaMatchPhase.Engage:
+                // Restore the combat stance (frozen during countdown) then issue attack orders on
+                // BOTH peers at the SAME tick.
+                UnfreezeMultiplayerFleet(PlayerShips);
+                UnfreezeMultiplayerFleet(EnemyShips);
+                EngageAll();
+                MultiplayerPhase = ArenaMatchPhase.Fight;
+                MultiplayerTelemetry?.Event("PHASE_ENGAGE", $"simTick={simTick}");
+                MultiplayerLiveStatus = "ENGAGE";
+                break;
+
+            case ArenaMatchPhase.Fight:
+                // Win/turn-limit detection stays in AdvanceMultiplayerLiveTurn; nothing to do here.
+                break;
+        }
+    }
+
+    void UpdateCountdownStatus(long simTick)
+    {
+        long remaining = MultiplayerEngageAtTick - simTick;
+        if (remaining < 0) remaining = 0;
+        int seconds = (int)((remaining + 59) / 60);
+        MultiplayerLiveStatus = $"ENGAGE IN {seconds}s";
     }
 
     void OnMultiplayerHostMessage(LockstepMessage message)
@@ -739,6 +852,8 @@ public sealed partial class ArenaFightScreen
         if (MultiplayerLiveComplete)
             return;
         MultiplayerLiveComplete = true;
+        MultiplayerPhase = ArenaMatchPhase.Resolve;
+        MultiplayerEndReason = reason ?? "";
         MultiplayerLivePaused = true;
         UState.Paused = true;
         MultiplayerLiveStatus = $"COMPLETE {reason}\nturns {MultiplayerLiveResult.TurnsCompleted}\nfinal {MultiplayerLiveResult.FinalHash}";
@@ -789,6 +904,11 @@ public sealed partial class ArenaFightScreen
         {
             Name = "arena_mp_end_flags",
             DynamicText = _ => MultiplayerEndFlagText(),
+        });
+        MultiplayerEndPanel.Add(new UILabel(new Vector2(panel.X + 22, panel.Y + 168), "", ArenaTheme.BodySmallFont, ArenaTheme.TextSecondary)
+        {
+            Name = "arena_mp_end_reason",
+            DynamicText = _ => $"End: {(MultiplayerEndReason.NotEmpty() ? MultiplayerEndReason : "—")}",
         });
 
         UIList actions = AddList(new Vector2(panel.X + 22, panel.Bottom - 54));
@@ -956,17 +1076,82 @@ public sealed partial class ArenaFightScreen
     public ArenaMultiplayerMatchStatus MultiplayerMatchStatus()
         => new(AliveCount(PlayerShips), AliveCount(EnemyShips));
 
-    static void SpawnMultiplayerFleet(List<Ship> ships, Empire owner, IShipDesign[] designs, float x, Vector2 facing)
+    // Resolve the exchanged canonical bundle; fall back to a zero-offset column bundle from the
+    // name list if no bundle was carried (legacy path). Both peers resolve the SAME bundle bytes.
+    static FleetDesignT ResolveMultiplayerBundle(string bundle, string[] names)
+    {
+        if (bundle.NotEmpty())
+        {
+            FleetDesignT decoded = ArenaFleetBundle.Decode(bundle);
+            if (decoded.Nodes.Count > 0)
+                return decoded;
+        }
+        return ArenaFleetBundle.FromDesignNames(names);
+    }
+
+    // Ship names in the bundle's STABLE order (the same order used for the hash and the spawn), so a
+    // legality/first-design pick and the spawn agree on ordering.
+    static string[] BundleShipNames(FleetDesignT bundle)
+        => ArenaFleetBundle.StableNodeOrder(bundle).Select(n => n.ShipName).ToArray();
+
+    // Formation-aware spawn (plan Part 3d). Iterates nodes in the SINGLE shared StableNodeOrder so
+    // ship-id assignment order is identical on both peers (MultiplayerSnapshot id equality holds).
+    // Placement: ArenaCenter + (sideX,0) + offset*sideMirror on X. Only legal combat designs spawn;
+    // an illegal node is skipped (matching ResolveMultiplayerFleet), keeping both peers in agreement.
+    static void SpawnMultiplayerFormation(List<Ship> ships, Empire owner, FleetDesignT bundle,
+        float sideX, float sideMirror, Vector2 facing)
     {
         Vector2 center = ArenaCenter;
-        for (int i = 0; i < designs.Length; ++i)
+        var nodes = ArenaFleetBundle.StableNodeOrder(bundle);
+        int index = 0;
+        foreach (FleetDataDesignNode node in nodes)
         {
-            float y = (i - (designs.Length - 1) / 2f) * RowSpan;
-            Ship ship = CreateArenaShipAtPoint(owner.Universe, designs[i].Name, owner, center + new Vector2(x, y), facing);
+            if (!ResourceManager.Ships.GetDesign(node.ShipName, out IShipDesign design)
+                || !IsLegalCombatCraft(design))
+                continue;
+            Vector2 offset = node.RelativeFleetOffset;
+            // Mirror the join side across the centerline on X; if the authored offset is zero
+            // (name-list fallback) fan out into the legacy column so ships don't stack.
+            Vector2 placed = offset == Vector2.Zero
+                ? new Vector2(sideX, (index - (nodes.Count - 1) / 2f) * RowSpan)
+                : new Vector2(sideX + offset.X * sideMirror, offset.Y);
+            Ship ship = CreateArenaShipAtPoint(owner.Universe, node.ShipName, owner, center + placed, facing);
             if (ship == null)
-                throw new InvalidOperationException($"Failed to spawn Arena PvP ship '{designs[i].Name}'.");
+                throw new InvalidOperationException($"Failed to spawn Arena PvP ship '{node.ShipName}'.");
             ship.SensorRange = 400000f;
             ships.Add(ship);
+            ++index;
+        }
+    }
+
+    // Countdown freeze/unfreeze. ShipAI autonomously acquires sensor targets and fires regardless of
+    // CombatState, so the true "hold fire" gate is AI.IgnoreCombat (checked in both the retarget and
+    // the weapon-fire paths). ClearOrders resets IgnoreCombat, so set it true AFTER clearing. This is
+    // deterministic (same on both peers, applied at spawn and lifted at the shared engage tick).
+    static void FreezeMultiplayerFleet(List<Ship> ships)
+    {
+        if (ships == null) return;
+        for (int i = 0; i < ships.Count; ++i)
+        {
+            Ship s = ships[i];
+            if (s == null || !s.Active || s.AI == null) continue;
+            s.AI.ClearOrders();
+            s.SetCombatStance(CombatState.None);
+            s.AI.IgnoreCombat = true;
+            s.AI.ArenaHoldFire = true; // hard fire gate honored by FireOnTarget/SelectCombatTarget
+        }
+    }
+
+    static void UnfreezeMultiplayerFleet(List<Ship> ships)
+    {
+        if (ships == null) return;
+        for (int i = 0; i < ships.Count; ++i)
+        {
+            Ship s = ships[i];
+            if (s == null || !s.Active || s.AI == null) continue;
+            s.AI.ArenaHoldFire = false; // lift hold-fire on the shared engage tick (one-way flip)
+            s.AI.IgnoreCombat = false;
+            s.SetCombatStance(CombatState.Artillery);
         }
     }
 

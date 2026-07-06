@@ -56,6 +56,26 @@ public sealed class SessionStartMessage : LockstepMessage
     public string HostFleet = "";
     public string JoinFleet = "";
 
+    // Arena P1 RulesetV0 + canonical design bundles (STARDRIVE_ARENA_P1_FLEETSETUP_EXEC_PLAN_20260705).
+    // Optional trailing fields — a v3 peer that never wrote them decodes them as the defaults below.
+    // Arena mode/roster/budget author the RulesetV0; Host/JoinFleetBundle are the canonical
+    // FleetDesign bundles (names + per-ship offsets); the bundle hashes fold into SettingsHash.
+    public int RulesetVersion;
+    public int RulesetMode;
+    public int RulesetBudgetModel;
+    public int RulesetBudgetCredits;
+    public int RulesetRosterSource;
+    public int RulesetCountdownSeconds = 3;
+    public int RulesetMaxMatchSeconds = 600;
+    public int RulesetMaxFleetShipsPerSide = 32;
+    public int RulesetWagerCredits;
+    public string RulesetCommitmentHash = "";
+    public string RulesetContentFingerprint = "";
+    public string HostFleetBundle = "";
+    public string JoinFleetBundle = "";
+    public string HostDesignBundleHash = "";
+    public string JoinDesignBundleHash = "";
+
     // Optional authoritative 4X launch payload. Arena/skirmish sessions leave this false
     // and ignore the fields; 4X lobby handoff uses it to generate the same real galaxy on
     // host and clients before attaching the authoritative session.

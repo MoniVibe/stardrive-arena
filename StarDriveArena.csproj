@@ -59,7 +59,9 @@
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaFightOptionsScreen.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaFightScreen.Multiplayer.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaFightScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaFleetBundle.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaFleetScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaFleetSetupScope.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaGarageScreen.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaHubScreen.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaInventoryScreen.cs" />
@@ -70,6 +72,7 @@
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaMonteCarloTelemetry.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaMultiplayerLobbyScreen.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaMultiplayerLobbyConfig.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaMultiplayerRuleset.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaMultiplayerSession.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaMultiplayerTelemetry.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaPerks.cs" />

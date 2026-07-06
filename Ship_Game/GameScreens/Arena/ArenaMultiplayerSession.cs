@@ -11,6 +11,7 @@ using SDUtils.Deterministic;
 using Ship_Game.Determinism;
 using Ship_Game.Determinism.Lockstep;
 using Ship_Game.Ships;
+using FleetDesignT = global::Ship_Game.FleetDesign;
 
 namespace Ship_Game.GameScreens.Arena;
 
@@ -22,7 +23,9 @@ public enum ArenaMultiplayerRole
 
 public sealed class ArenaMultiplayerSettings
 {
-    public const int ProtocolVersion = 3;
+    // 3 -> 4: RulesetV0 + canonical design bundles enter the start payload (the ONE bump for the
+    // whole Arena-MP-modes program). A v3 peer is cleanly rejected against a v4 peer.
+    public const int ProtocolVersion = 4;
     const char FleetSeparator = '\u001f';
 
     public int MatchSeed = 0x5EED;
@@ -39,6 +42,31 @@ public sealed class ArenaMultiplayerSettings
     public bool StartPaused;
     public string[] HostFleetDesignNames = Array.Empty<string>();
     public string[] JoinFleetDesignNames = Array.Empty<string>();
+
+    // Arena P1: RulesetV0 + canonical design bundles. The ruleset + both design-bundle hashes fold
+    // into SettingsHash/StartFingerprint in a FIXED order, so a divergent ruleset or bundle rejects
+    // at ValidateStartMessage rather than desyncing mid-match. The bundles default to zero-offset
+    // column bundles derived from the fleet name lists (see WithResolvedFleets), so the legacy
+    // name-list path keeps working unchanged.
+    public ArenaMultiplayerRuleset Ruleset = new();
+    public string HostFleetBundle = "";
+    public string JoinFleetBundle = "";
+
+    public string HostDesignBundleHash =>
+        ArenaFleetBundle.DesignBundleHash(ResolveBundleOrNames(HostFleetBundle, HostFleetDesignNames));
+    public string JoinDesignBundleHash =>
+        ArenaFleetBundle.DesignBundleHash(ResolveBundleOrNames(JoinFleetBundle, JoinFleetDesignNames));
+
+    static FleetDesignT ResolveBundleOrNames(string bundle, string[] names)
+    {
+        if (bundle.NotEmpty())
+        {
+            FleetDesignT decoded = ArenaFleetBundle.Decode(bundle);
+            if (decoded.Nodes.Count > 0)
+                return decoded;
+        }
+        return ArenaFleetBundle.FromDesignNames(names);
+    }
 
     public string SettingsHash
     {
@@ -60,12 +88,20 @@ public sealed class ArenaMultiplayerSettings
             h.AddBool(StartPaused);
             AddFleet(ref h, HostFleetDesignNames);
             AddFleet(ref h, JoinFleetDesignNames);
+            // FIXED order (plan Part 4b): existing settings -> RulesetV0 -> host bundle hash -> join
+            // bundle hash. Any ruleset or bundle divergence changes SettingsHash, which
+            // ValidateStartMessage already compares for exact equality and rejects.
+            (Ruleset ?? new ArenaMultiplayerRuleset()).AppendTo(ref h);
+            h.AddString(HostDesignBundleHash);
+            h.AddString(JoinDesignBundleHash);
             return "0x" + h.Value.ToString("X16", CultureInfo.InvariantCulture);
         }
     }
 
     public SessionStartMessage ToStartMessage(int fromPeer = LockstepHost.HostPeerId)
-        => new()
+    {
+        ArenaMultiplayerRuleset ruleset = Ruleset ?? new ArenaMultiplayerRuleset();
+        return new SessionStartMessage
         {
             FromPeer = fromPeer,
             ProtocolVersion = ProtocolVersion,
@@ -85,7 +121,23 @@ public sealed class ArenaMultiplayerSettings
             JoinLoadoutTrait = JoinLoadoutTrait,
             HostFleet = EncodeFleet(HostFleetDesignNames),
             JoinFleet = EncodeFleet(JoinFleetDesignNames),
+            RulesetVersion = ruleset.Version,
+            RulesetMode = (int)ruleset.Mode,
+            RulesetBudgetModel = (int)ruleset.BudgetModel,
+            RulesetBudgetCredits = ruleset.BudgetCredits,
+            RulesetRosterSource = (int)ruleset.RosterSource,
+            RulesetCountdownSeconds = ruleset.CountdownSeconds,
+            RulesetMaxMatchSeconds = ruleset.MaxMatchSeconds,
+            RulesetMaxFleetShipsPerSide = ruleset.MaxFleetShipsPerSide,
+            RulesetWagerCredits = ruleset.WagerCredits,
+            RulesetCommitmentHash = ruleset.RosterCommitmentHash ?? "",
+            RulesetContentFingerprint = ruleset.ContentFingerprint ?? "",
+            HostFleetBundle = HostFleetBundle ?? "",
+            JoinFleetBundle = JoinFleetBundle ?? "",
+            HostDesignBundleHash = HostDesignBundleHash,
+            JoinDesignBundleHash = JoinDesignBundleHash,
         };
+    }
 
     public static ArenaMultiplayerSettings FromStartMessage(SessionStartMessage message)
         => new()
@@ -104,6 +156,25 @@ public sealed class ArenaMultiplayerSettings
             StartPaused = message.StartPaused,
             HostFleetDesignNames = DecodeFleet(message.HostFleet),
             JoinFleetDesignNames = DecodeFleet(message.JoinFleet),
+            Ruleset = RulesetFromStartMessage(message),
+            HostFleetBundle = message.HostFleetBundle ?? "",
+            JoinFleetBundle = message.JoinFleetBundle ?? "",
+        };
+
+    public static ArenaMultiplayerRuleset RulesetFromStartMessage(SessionStartMessage message)
+        => new()
+        {
+            Version = message.RulesetVersion,
+            Mode = (ArenaMatchMode)message.RulesetMode,
+            BudgetModel = (ArenaBudgetModel)message.RulesetBudgetModel,
+            BudgetCredits = message.RulesetBudgetCredits,
+            RosterSource = (ArenaRosterSource)message.RulesetRosterSource,
+            CountdownSeconds = message.RulesetCountdownSeconds,
+            MaxMatchSeconds = message.RulesetMaxMatchSeconds,
+            MaxFleetShipsPerSide = message.RulesetMaxFleetShipsPerSide,
+            WagerCredits = message.RulesetWagerCredits,
+            RosterCommitmentHash = message.RulesetCommitmentHash ?? "",
+            ContentFingerprint = message.RulesetContentFingerprint ?? "",
         };
 
     public static string StartFingerprint(SessionStartMessage start)
@@ -129,6 +200,20 @@ public sealed class ArenaMultiplayerSettings
         h.AddString(start.JoinLoadoutTrait ?? "");
         h.AddString(start.HostFleet ?? "");
         h.AddString(start.JoinFleet ?? "");
+        // Arena P1: RulesetV0 + design bundles, FIXED order (matches ToStartMessage field order).
+        h.AddInt(start.RulesetVersion);
+        h.AddInt(start.RulesetMode);
+        h.AddInt(start.RulesetBudgetModel);
+        h.AddInt(start.RulesetBudgetCredits);
+        h.AddInt(start.RulesetRosterSource);
+        h.AddInt(start.RulesetCountdownSeconds);
+        h.AddInt(start.RulesetMaxMatchSeconds);
+        h.AddInt(start.RulesetMaxFleetShipsPerSide);
+        h.AddInt(start.RulesetWagerCredits);
+        h.AddString(start.RulesetCommitmentHash ?? "");
+        h.AddString(start.RulesetContentFingerprint ?? "");
+        h.AddString(start.HostDesignBundleHash ?? "");
+        h.AddString(start.JoinDesignBundleHash ?? "");
         return "0x" + h.Value.ToString("X16", CultureInfo.InvariantCulture);
     }
 
@@ -154,9 +239,73 @@ public sealed class ArenaMultiplayerSettings
         if (unavailable.NotEmpty())
             return $"Arena multiplayer fleet design '{unavailable}' is not available or legal on this machine.";
 
+        // Explicit design-bundle-hash inclusion: the SettingsHash equality above already folds both
+        // bundle hashes, but re-check them directly so a tampered bundle produces a precise error.
+        if (!string.Equals(start.HostDesignBundleHash ?? "", settings.HostDesignBundleHash, StringComparison.Ordinal))
+            return $"Arena multiplayer host design bundle mismatch. Host {start.HostDesignBundleHash}, local {settings.HostDesignBundleHash}.";
+        if (!string.Equals(start.JoinDesignBundleHash ?? "", settings.JoinDesignBundleHash, StringComparison.Ordinal))
+            return $"Arena multiplayer join design bundle mismatch. Host {start.JoinDesignBundleHash}, local {settings.JoinDesignBundleHash}.";
+
+        string modeError = ValidateRuleset(settings);
+        if (modeError.NotEmpty())
+            return modeError;
+
         string buildError = ArenaMultiplayerPeerSignature.ValidateSession(
             start.BuildHash, start.BuildSummary, settings, "host");
         return buildError;
+    }
+
+    /// <summary>
+    /// Mode-specific validation (plan Part 4e). Both peers run this locally; a divergent ruleset has
+    /// already been caught by the SettingsHash equality, so this is the "is this mode legal in this
+    /// build, with a legal roster/budget" gate. Returns "" when the ruleset is acceptable.
+    /// </summary>
+    public static string ValidateRuleset(ArenaMultiplayerSettings settings)
+    {
+        ArenaMultiplayerRuleset r = settings.Ruleset ?? new ArenaMultiplayerRuleset();
+        if (r.WagerCredits != 0)
+            return "Wagers are not available in this build.";
+
+        switch (r.Mode)
+        {
+            case ArenaMatchMode.Coop:
+                return "Coop mode is not available in this build.";
+            case ArenaMatchMode.Career:
+                if (r.RosterSource != ArenaRosterSource.CareerLocked)
+                    return "Career mode requires a career-locked roster source.";
+                break;
+            case ArenaMatchMode.Sandbox:
+                if (r.RosterSource != ArenaRosterSource.AllContent)
+                    return "Sandbox mode requires an all-content roster source.";
+                if (r.BudgetModel == ArenaBudgetModel.Cap)
+                {
+                    int hostCost = SumBundleCost(settings.HostFleetBundle, settings.HostFleetDesignNames);
+                    int joinCost = SumBundleCost(settings.JoinFleetBundle, settings.JoinFleetDesignNames);
+                    if (hostCost > r.BudgetCredits)
+                        return $"Sandbox host fleet cost {hostCost} exceeds budget {r.BudgetCredits}.";
+                    if (joinCost > r.BudgetCredits)
+                        return $"Sandbox join fleet cost {joinCost} exceeds budget {r.BudgetCredits}.";
+                }
+                break;
+            default:
+                return $"Unknown Arena match mode {(int)r.Mode}.";
+        }
+        return "";
+    }
+
+    /// <summary>
+    /// Deterministic total build cost of a fleet, summing each design's BaseStrength (rounded) — the
+    /// scalar the arena already uses as design cost/value everywhere (ArenaBetting, ArenaFightOptions).
+    /// Empire-independent so both peers compute the same total.
+    /// </summary>
+    public static int SumBundleCost(string bundle, string[] fallbackNames)
+    {
+        FleetDesignT design = ResolveBundleOrNames(bundle, fallbackNames);
+        int total = 0;
+        foreach (FleetDataDesignNode node in ArenaFleetBundle.StableNodeOrder(design))
+            if (ResourceManager.Ships.GetDesign(node.ShipName, out IShipDesign d))
+                total += (int)MathF.Round(d.BaseStrength);
+        return total;
     }
 
     public ArenaMultiplayerSettings WithRematchSeed()
@@ -178,6 +327,9 @@ public sealed class ArenaMultiplayerSettings
             StartPaused = StartPaused,
             HostFleetDesignNames = NormalizeFleet(HostFleetDesignNames),
             JoinFleetDesignNames = NormalizeFleet(JoinFleetDesignNames),
+            Ruleset = (Ruleset ?? new ArenaMultiplayerRuleset()).Clone(),
+            HostFleetBundle = HostFleetBundle ?? "",
+            JoinFleetBundle = JoinFleetBundle ?? "",
         }.WithResolvedFleets();
     }
 
@@ -185,6 +337,9 @@ public sealed class ArenaMultiplayerSettings
     {
         var copy = new ArenaMultiplayerSettings
         {
+            Ruleset = (Ruleset ?? new ArenaMultiplayerRuleset()).Clone(),
+            HostFleetBundle = HostFleetBundle ?? "",
+            JoinFleetBundle = JoinFleetBundle ?? "",
             MatchSeed = MatchSeed,
             RngSeed = RngSeed,
             InputDelay = Math.Max(0, InputDelay),

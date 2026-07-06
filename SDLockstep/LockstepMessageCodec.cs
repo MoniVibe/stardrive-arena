@@ -133,6 +133,23 @@ public static class LockstepMessageCodec
                     w.Write(start.DisablePirates);
                     w.Write(start.DisableResearchStations);
                     w.Write(start.DisableMiningOps);
+                    // Arena P1 RulesetV0 + design bundles (appended after all existing fields so a
+                    // v3 reader simply stops before them and gets the defaults).
+                    w.Write(start.RulesetVersion);
+                    w.Write(start.RulesetMode);
+                    w.Write(start.RulesetBudgetModel);
+                    w.Write(start.RulesetBudgetCredits);
+                    w.Write(start.RulesetRosterSource);
+                    w.Write(start.RulesetCountdownSeconds);
+                    w.Write(start.RulesetMaxMatchSeconds);
+                    w.Write(start.RulesetMaxFleetShipsPerSide);
+                    w.Write(start.RulesetWagerCredits);
+                    WriteString(w, start.RulesetCommitmentHash);
+                    WriteString(w, start.RulesetContentFingerprint);
+                    WriteString(w, start.HostFleetBundle);
+                    WriteString(w, start.JoinFleetBundle);
+                    WriteString(w, start.HostDesignBundleHash);
+                    WriteString(w, start.JoinDesignBundleHash);
                     break;
                 case SessionStartAckMessage ack:
                     w.Write(SessionStartAck);
@@ -341,6 +358,22 @@ public static class LockstepMessageCodec
                 bool disablePirates = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
                 bool disableResearchStations = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
                 bool disableMiningOps = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
+                // Arena P1 RulesetV0 + design bundles (optional trailing fields).
+                int rulesetVersion = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
+                int rulesetMode = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
+                int rulesetBudgetModel = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
+                int rulesetBudgetCredits = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
+                int rulesetRosterSource = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
+                int rulesetCountdownSeconds = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 3;
+                int rulesetMaxMatchSeconds = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 600;
+                int rulesetMaxFleetShips = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 32;
+                int rulesetWagerCredits = r.BaseStream.Position < r.BaseStream.Length ? r.ReadInt32() : 0;
+                string rulesetCommitmentHash = ReadOptionalString(r);
+                string rulesetContentFingerprint = ReadOptionalString(r);
+                string hostFleetBundle = ReadOptionalString(r);
+                string joinFleetBundle = ReadOptionalString(r);
+                string hostDesignBundleHash = ReadOptionalString(r);
+                string joinDesignBundleHash = ReadOptionalString(r);
                 message = new SessionStartMessage
                 {
                     ProtocolVersion = protocolVersion,
@@ -391,6 +424,21 @@ public static class LockstepMessageCodec
                     HostTraitOptions = hostTraitOptions,
                     JoinTraitOptions = joinTraitOptions,
                     AuthoritativePlayerRoster = authoritativePlayerRoster,
+                    RulesetVersion = rulesetVersion,
+                    RulesetMode = rulesetMode,
+                    RulesetBudgetModel = rulesetBudgetModel,
+                    RulesetBudgetCredits = rulesetBudgetCredits,
+                    RulesetRosterSource = rulesetRosterSource,
+                    RulesetCountdownSeconds = rulesetCountdownSeconds,
+                    RulesetMaxMatchSeconds = rulesetMaxMatchSeconds,
+                    RulesetMaxFleetShipsPerSide = rulesetMaxFleetShips,
+                    RulesetWagerCredits = rulesetWagerCredits,
+                    RulesetCommitmentHash = rulesetCommitmentHash,
+                    RulesetContentFingerprint = rulesetContentFingerprint,
+                    HostFleetBundle = hostFleetBundle,
+                    JoinFleetBundle = joinFleetBundle,
+                    HostDesignBundleHash = hostDesignBundleHash,
+                    JoinDesignBundleHash = joinDesignBundleHash,
                 };
                 break;
             case SessionStartAck:

@@ -1361,6 +1361,438 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         }
     }
 
+    // ===================================================================================
+    // Arena P1 "mode-first lobby + fleet setup + deterministic match flow" proof gates
+    // (STARDRIVE_ARENA_P1_FLEETSETUP_EXEC_PLAN_20260705).
+    // ===================================================================================
+
+    [TestMethod]
+    public void ArenaFleetBundle_CanonicalHash_StableAcrossNodeOrder_Headless()
+    {
+        // Step 1 proof: the canonical bundle hash is invariant under node INSERTION order (the
+        // editor drag sequence), sensitive to a changed offset, and survives Encode->Decode.
+        LoadAllGameData();
+        IShipDesign[] designs = LegalPvPDesigns();
+        Assert.IsTrue(designs.Length >= 2, "Need at least two legal designs for the bundle proof.");
+        string a = designs.First().Name;
+        string b = designs.Last().Name;
+
+        var forward = new FleetDesign { Name = "F", FleetIconIndex = 3 };
+        forward.Nodes.Add(new FleetDataDesignNode { ShipName = a, RelativeFleetOffset = new SDGraphics.Vector2(100f, -50f) });
+        forward.Nodes.Add(new FleetDataDesignNode { ShipName = b, RelativeFleetOffset = new SDGraphics.Vector2(-200f, 75f) });
+
+        var reversed = new FleetDesign { Name = "F", FleetIconIndex = 3 };
+        reversed.Nodes.Add(new FleetDataDesignNode { ShipName = b, RelativeFleetOffset = new SDGraphics.Vector2(-200f, 75f) });
+        reversed.Nodes.Add(new FleetDataDesignNode { ShipName = a, RelativeFleetOffset = new SDGraphics.Vector2(100f, -50f) });
+
+        string hForward = ArenaFleetBundle.DesignBundleHash(forward);
+        string hReversed = ArenaFleetBundle.DesignBundleHash(reversed);
+        Assert.AreEqual(hForward, hReversed,
+            "The bundle hash must be invariant under node insertion order (stable-sorted nodes).");
+
+        var moved = new FleetDesign { Name = "F", FleetIconIndex = 3 };
+        moved.Nodes.Add(new FleetDataDesignNode { ShipName = a, RelativeFleetOffset = new SDGraphics.Vector2(101f, -50f) });
+        moved.Nodes.Add(new FleetDataDesignNode { ShipName = b, RelativeFleetOffset = new SDGraphics.Vector2(-200f, 75f) });
+        Assert.AreNotEqual(hForward, ArenaFleetBundle.DesignBundleHash(moved),
+            "Changing a per-ship offset must change the bundle hash.");
+
+        string encoded = ArenaFleetBundle.Encode(forward);
+        Assert.IsTrue(encoded.Length > 0 && encoded.Length <= ArenaFleetBundle.MaxEncodedChars,
+            "The encoded bundle must be non-empty and within the wire cap.");
+        FleetDesign decoded = ArenaFleetBundle.Decode(encoded);
+        Assert.AreEqual(hForward, ArenaFleetBundle.DesignBundleHash(decoded),
+            "Encode->Decode must preserve the canonical bundle hash exactly.");
+        Assert.AreEqual(2, decoded.Nodes.Count, "The decoded bundle must preserve every node.");
+    }
+
+    [TestMethod]
+    public void RulesetV0_SettingsHash_RoundTripsAndOrderFixed_Headless()
+    {
+        // Step 2 proof: RulesetV0 + bundles round-trip through ToStartMessage->FromStartMessage,
+        // SettingsHash parses, ProtocolVersion is 4, and flipping any ruleset field changes the hash.
+        LoadAllGameData();
+        Assert.AreEqual(4, ArenaMultiplayerSettings.ProtocolVersion,
+            "P1 bumps the Arena MP protocol version to 4.");
+
+        var settings = new ArenaMultiplayerSettings
+        {
+            MatchSeed = 0x5EED,
+            RngSeed = 0xA12EA000u,
+            HostFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x1001ul),
+            JoinFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x2002ul),
+            Ruleset = new ArenaMultiplayerRuleset
+            {
+                Mode = ArenaMatchMode.Sandbox,
+                BudgetModel = ArenaBudgetModel.Cap,
+                BudgetCredits = 999999,
+                RosterSource = ArenaRosterSource.AllContent,
+                CountdownSeconds = 3,
+            },
+        }.WithResolvedFleets();
+
+        string hash = settings.SettingsHash;
+        StringAssert.StartsWith(hash, "0x");
+        Assert.AreEqual(18, hash.Length, "SettingsHash must be a parseable 0x + 16 hex digits.");
+
+        SessionStartMessage start = settings.ToStartMessage();
+        Assert.AreEqual(4, start.ProtocolVersion);
+        Assert.AreEqual((int)ArenaMatchMode.Sandbox, start.RulesetMode);
+        Assert.AreEqual(999999, start.RulesetBudgetCredits);
+        Assert.AreEqual(settings.HostDesignBundleHash, start.HostDesignBundleHash);
+
+        ArenaMultiplayerSettings back = ArenaMultiplayerSettings.FromStartMessage(start).WithResolvedFleets();
+        Assert.AreEqual(ArenaMatchMode.Sandbox, back.Ruleset.Mode);
+        Assert.AreEqual(ArenaBudgetModel.Cap, back.Ruleset.BudgetModel);
+        Assert.AreEqual(999999, back.Ruleset.BudgetCredits);
+        Assert.AreEqual(settings.SettingsHash, back.SettingsHash,
+            "ToStartMessage->FromStartMessage must round-trip the ruleset into an identical SettingsHash.");
+
+        // Flipping a ruleset field changes the hash (fixed-order fold).
+        ArenaMultiplayerSettings flipped = settings.WithResolvedFleets();
+        flipped.Ruleset.CountdownSeconds = 5;
+        Assert.AreNotEqual(settings.SettingsHash, flipped.SettingsHash,
+            "Changing a ruleset field must change SettingsHash.");
+    }
+
+    [TestMethod]
+    public void RulesetV0_MismatchRejectsStart_Headless()
+    {
+        // Step 3 proof: a tampered ruleset field OR design bundle is rejected at ValidateStartMessage
+        // (handshake), and an illegal mode (Coop) / non-zero wager is rejected too.
+        LoadAllGameData();
+        var settings = new ArenaMultiplayerSettings
+        {
+            MatchSeed = 0x5EED,
+            RngSeed = 0xA12EA000u,
+            HostFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x1001ul),
+            JoinFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x2002ul),
+            Ruleset = new ArenaMultiplayerRuleset { Mode = ArenaMatchMode.Career, RosterSource = ArenaRosterSource.CareerLocked },
+        }.WithResolvedFleets();
+
+        SessionStartMessage clean = settings.ToStartMessage();
+        Assert.AreEqual("", ArenaMultiplayerSettings.ValidateStartMessage(clean, out _),
+            "A matching career ruleset must validate.");
+
+        // Tamper a ruleset field but leave the SettingsHash untouched -> mismatch.
+        SessionStartMessage tamperedRuleset = settings.ToStartMessage();
+        tamperedRuleset.RulesetBudgetCredits += 1;
+        StringAssert.Contains(ArenaMultiplayerSettings.ValidateStartMessage(tamperedRuleset, out _),
+            "mismatch", "A tampered ruleset field must reject at handshake via the SettingsHash gate.");
+
+        // Tamper a design bundle hash -> reject.
+        SessionStartMessage tamperedBundle = settings.ToStartMessage();
+        tamperedBundle.HostDesignBundleHash = "0xDEADBEEFDEADBEEF";
+        StringAssert.Contains(ArenaMultiplayerSettings.ValidateStartMessage(tamperedBundle, out _),
+            "mismatch", "A tampered design bundle hash must reject at handshake.");
+
+        // Coop mode is rejected in P1.
+        var coop = new ArenaMultiplayerSettings
+        {
+            MatchSeed = settings.MatchSeed, RngSeed = settings.RngSeed,
+            HostFleetDesignNames = settings.HostFleetDesignNames, JoinFleetDesignNames = settings.JoinFleetDesignNames,
+            Ruleset = new ArenaMultiplayerRuleset { Mode = ArenaMatchMode.Coop },
+        }.WithResolvedFleets();
+        StringAssert.Contains(ArenaMultiplayerSettings.ValidateStartMessage(coop.ToStartMessage(), out _),
+            "Coop", "Coop mode must be rejected in P1.");
+
+        // Non-zero wager is rejected in P1.
+        var wager = new ArenaMultiplayerSettings
+        {
+            MatchSeed = settings.MatchSeed, RngSeed = settings.RngSeed,
+            HostFleetDesignNames = settings.HostFleetDesignNames, JoinFleetDesignNames = settings.JoinFleetDesignNames,
+            Ruleset = new ArenaMultiplayerRuleset { Mode = ArenaMatchMode.Career, RosterSource = ArenaRosterSource.CareerLocked, WagerCredits = 100 },
+        }.WithResolvedFleets();
+        StringAssert.Contains(ArenaMultiplayerSettings.ValidateStartMessage(wager.ToStartMessage(), out _),
+            "Wager", "A non-zero wager must be rejected in P1.");
+    }
+
+    [TestMethod]
+    public void Sandbox_BudgetCapRejectsOverspend_Headless()
+    {
+        // Step 6 proof (budget): a Sandbox Cap ruleset whose fleet cost exceeds the budget rejects at
+        // handshake; the same fleet under a sufficient budget validates.
+        LoadAllGameData();
+        IShipDesign[] designs = LegalPvPDesigns();
+        string strong = designs.Last().Name;
+        int cost = (int)MathF.Round(designs.Last().BaseStrength);
+
+        var overspent = new ArenaMultiplayerSettings
+        {
+            MatchSeed = 0x5EED, RngSeed = 0xA12EA000u,
+            HostFleetDesignNames = new[] { strong, strong },
+            JoinFleetDesignNames = new[] { strong },
+            Ruleset = new ArenaMultiplayerRuleset
+            {
+                Mode = ArenaMatchMode.Sandbox, RosterSource = ArenaRosterSource.AllContent,
+                BudgetModel = ArenaBudgetModel.Cap, BudgetCredits = Math.Max(0, cost - 1),
+            },
+        }.WithResolvedFleets();
+        StringAssert.Contains(ArenaMultiplayerSettings.ValidateStartMessage(overspent.ToStartMessage(), out _),
+            "exceeds budget", "A Sandbox fleet over the budget cap must reject at handshake.");
+
+        var affordable = new ArenaMultiplayerSettings
+        {
+            MatchSeed = 0x5EED, RngSeed = 0xA12EA000u,
+            HostFleetDesignNames = new[] { strong },
+            JoinFleetDesignNames = new[] { strong },
+            Ruleset = new ArenaMultiplayerRuleset
+            {
+                Mode = ArenaMatchMode.Sandbox, RosterSource = ArenaRosterSource.AllContent,
+                BudgetModel = ArenaBudgetModel.Cap, BudgetCredits = cost + 10,
+            },
+        }.WithResolvedFleets();
+        Assert.AreEqual("", ArenaMultiplayerSettings.ValidateStartMessage(affordable.ToStartMessage(), out _),
+            "A Sandbox fleet within the budget cap must validate.");
+    }
+
+    [TestMethod]
+    public void FormationSpawn_Deterministic_Headless()
+    {
+        // Step 4 proof: a non-trivial multi-node formation bundle spawns identical ship-ID order AND
+        // identical positions on both peers, and the authored offsets actually place the ships.
+        LoadAllGameData();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_mp_formation_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempPath;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+
+        try
+        {
+            IShipDesign[] designs = LegalPvPDesigns();
+            string a = designs.First().Name;
+            string b = designs.Last().Name;
+
+            var hostBundle = new FleetDesign { Name = "Host" };
+            hostBundle.Nodes.Add(new FleetDataDesignNode { ShipName = a, RelativeFleetOffset = new SDGraphics.Vector2(0f, 900f) });
+            hostBundle.Nodes.Add(new FleetDataDesignNode { ShipName = b, RelativeFleetOffset = new SDGraphics.Vector2(0f, -900f) });
+            var joinBundle = new FleetDesign { Name = "Join" };
+            joinBundle.Nodes.Add(new FleetDataDesignNode { ShipName = a, RelativeFleetOffset = new SDGraphics.Vector2(0f, 600f) });
+
+            var settings = new ArenaMultiplayerSettings
+            {
+                MatchSeed = 0x5EED, RngSeed = 0xA12EA000u, InputDelay = 3, MaxTurns = 60, CommandEveryTurns = 1,
+                HostFleetDesignNames = new[] { a, b },
+                JoinFleetDesignNames = new[] { a },
+                HostFleetBundle = ArenaFleetBundle.Encode(hostBundle),
+                JoinFleetBundle = ArenaFleetBundle.Encode(joinBundle),
+                Ruleset = new ArenaMultiplayerRuleset { Mode = ArenaMatchMode.Sandbox, RosterSource = ArenaRosterSource.AllContent },
+            }.WithResolvedFleets();
+
+            ArenaMultiplayerRunResult result = ArenaMultiplayerSession.RunInProcess(settings);
+            Assert.IsFalse(result.Desynced,
+                $"Formation-spawn in-process desynced at turn {result.DesyncTurn}: {result.DesyncReason}");
+            CollectionAssert.AreEqual(result.HostSnapshot.PlayerShipIds, result.JoinSnapshot.PlayerShipIds,
+                "Both peers must spawn identical player ship IDs from the formation bundle (stable order).");
+            CollectionAssert.AreEqual(result.HostSnapshot.EnemyShipIds, result.JoinSnapshot.EnemyShipIds,
+                "Both peers must spawn identical enemy ship IDs from the formation bundle.");
+            Assert.AreEqual(2, result.HostSnapshot.PlayerShipIds.Length, "The 2-node host formation must field two ships.");
+            Assert.AreEqual(1, result.HostSnapshot.EnemyShipIds.Length, "The 1-node join formation must field one ship.");
+            Assert.IsTrue(result.TurnHashes.All(h => h.Match),
+                "Every formation-spawn turn hash must match across peers.");
+        }
+        finally
+        {
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+        }
+    }
+
+    [TestMethod]
+    public void Countdown_EngageAtDeterministicTick_Headless()
+    {
+        // Step 5 proof: both live peers issue attack orders exactly at spawnTick + CountdownTicks,
+        // with no engagement evidence before that tick, and the countdown does not trip the liveness
+        // halt. Uses the real live driver over loopback TCP.
+        LoadAllGameData();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_mp_countdown_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempPath;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+        TcpLockstepTransport hostTransport = null;
+        TcpLockstepTransport joinTransport = null;
+        ArenaFightScreen hostScreen = null;
+        ArenaFightScreen joinScreen = null;
+
+        try
+        {
+            IShipDesign weak = LegalPvPDesigns().First();
+            IShipDesign strong = LegalPvPDesigns().Last();
+            var settings = new ArenaMultiplayerSettings
+            {
+                MatchSeed = 0x6EED, RngSeed = 0xB12EA000u, InputDelay = 3, MaxTurns = 900, CommandEveryTurns = 1,
+                HostFleetDesignNames = new[] { strong.Name, strong.Name },
+                JoinFleetDesignNames = new[] { weak.Name },
+                Ruleset = new ArenaMultiplayerRuleset { Mode = ArenaMatchMode.Career, RosterSource = ArenaRosterSource.CareerLocked, CountdownSeconds = 3 },
+            }.WithResolvedFleets();
+
+            (hostScreen, joinScreen) = BuildLiveLoopbackScreens(settings, out hostTransport, out joinTransport);
+
+            // Drive until the host reaches the Engage/Fight phase or a generous frame budget elapses.
+            bool engaged = false;
+            long engageAtTick = -1;
+            bool sawEvidenceBeforeEngage = false;
+            for (int frame = 0; frame < 6000 && !engaged; ++frame)
+            {
+                hostScreen.Update(1f / 60f);
+                joinScreen.Update(1f / 60f);
+                engageAtTick = hostScreen.MultiplayerEngageAtTickForHeadless;
+                long tick = hostScreen.MultiplayerLiveSimTickForHeadless;
+                // Before the engage tick, there must be no engagement evidence (frozen spawn).
+                if (engageAtTick > 0 && tick > 0 && tick < engageAtTick && hostScreen.MultiplayerEngagementSeenForHeadless)
+                    sawEvidenceBeforeEngage = true;
+                engaged = hostScreen.MultiplayerPhaseForHeadless == ArenaFightScreen.ArenaMatchPhase.Fight
+                          && joinScreen.MultiplayerPhaseForHeadless == ArenaFightScreen.ArenaMatchPhase.Fight;
+            }
+
+            Assert.IsTrue(engaged,
+                "Both peers must reach the Engage/Fight phase. "
+                + $"hostPhase={hostScreen.MultiplayerPhaseForHeadless} hostTick={hostScreen.MultiplayerLiveSimTickForHeadless} "
+                + $"endReason='{hostScreen.MultiplayerEndReasonForHeadless}' engageAt={hostScreen.MultiplayerEngageAtTickForHeadless} "
+                + $"joinPhase={joinScreen.MultiplayerPhaseForHeadless} joinTick={joinScreen.MultiplayerLiveSimTickForHeadless}");
+            Assert.IsFalse(sawEvidenceBeforeEngage,
+                "No engagement evidence may appear before the deterministic engage tick (frozen countdown).");
+            Assert.AreEqual(hostScreen.MultiplayerEngageAtTickForHeadless, joinScreen.MultiplayerEngageAtTickForHeadless,
+                "Both peers must compute the SAME engage tick.");
+            Assert.AreEqual((long)ArenaFightScreen.DefaultCountdownTicks, engageAtTick,
+                $"The engage tick must be the absolute CountdownTicks sim tick; got {engageAtTick}.");
+            Assert.IsFalse(hostScreen.MultiplayerLiveResultForHeadless?.Disconnected == true,
+                "The countdown must not trip the liveness/no-progress halt: "
+                + hostScreen.MultiplayerLiveResultForHeadless?.DisconnectReason);
+        }
+        finally
+        {
+            try { hostScreen?.ExitScreen(); } catch { }
+            try { joinScreen?.ExitScreen(); } catch { }
+            try { hostTransport?.Dispose(); } catch { }
+            try { joinTransport?.Dispose(); } catch { }
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+        }
+    }
+
+    [TestMethod]
+    public void ArenaMultiplayer_ModeSetupToResolve_TwoScreens_Headless()
+    {
+        // Step 7 proof: two REAL lobbies pick a mode (Sandbox), launch through the real
+        // Host/Join/Ready/Launch flow into the fight screens, spawn in formation, run through the
+        // deterministic countdown -> engage -> fight -> resolve, and surface a visible end-reason.
+        LoadAllGameData();
+        string dir = Path.Combine(Path.GetTempPath(), $"arena_mp_modeflow_{Guid.NewGuid():N}");
+        string savedConfigPath = ArenaMultiplayerLobbyConfig.ConfigPathOverride;
+        string tempCareer = Path.Combine(Path.GetTempPath(), $"arena_mp_modeflow_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempCareer;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+        ArenaMultiplayerLobbyScreen hostLobby = null;
+        ArenaMultiplayerLobbyScreen joinLobby = null;
+        ArenaFightScreen hostFight = null;
+        ArenaFightScreen joinFight = null;
+
+        try
+        {
+            Directory.CreateDirectory(dir);
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = Path.Combine(dir, "mp-lobby-config.yaml");
+            int port = FreeTcpPort();
+            Assert.IsTrue(ArenaMultiplayerLobbyConfig.Save(new ArenaMultiplayerLobbyConfig
+            {
+                Host = "127.0.0.1",
+                Port = port,
+                PeerSlot = ArenaMultiplayerLobbyScreen.DefaultJoinPeerSlot,
+            }), "Lobby config must save to the temp override path.");
+
+            (hostLobby, joinLobby, hostFight, joinFight) =
+                DriveRealLobbiesToLaunchedFight(lobby => lobby.SetArenaModeForHeadless(
+                    ArenaMatchMode.Sandbox, ArenaBudgetModel.Unlimited));
+
+            // The host's authored ruleset must be Sandbox and ride into the fight via the start payload.
+            Assert.AreEqual(ArenaMatchMode.Sandbox, hostLobby.ArenaModeForHeadless,
+                "The host must author the selected Sandbox mode.");
+
+            // Run to a completed match on both peers.
+            for (int frame = 0; frame < 60000; ++frame)
+            {
+                hostFight.Update(1f / 60f);
+                joinFight.Update(1f / 60f);
+                if (hostFight.MultiplayerLiveResultForHeadless?.MatchEnded == true
+                    && joinFight.MultiplayerLiveResultForHeadless?.MatchEnded == true)
+                    break;
+            }
+
+            Assert.IsTrue(hostFight.MultiplayerEndPanelVisibleForHeadless,
+                $"Host must surface the match-complete panel. status='{hostFight.MultiplayerLiveStatusText}'");
+            Assert.IsTrue(joinFight.MultiplayerEndPanelVisibleForHeadless,
+                $"Join must surface the match-complete panel. status='{joinFight.MultiplayerLiveStatusText}'");
+            Assert.IsFalse(string.IsNullOrWhiteSpace(hostFight.MultiplayerEndReasonForHeadless),
+                "The host result panel must carry a visible end-reason.");
+            Assert.IsFalse(string.IsNullOrWhiteSpace(joinFight.MultiplayerEndReasonForHeadless),
+                "The join result panel must carry a visible end-reason.");
+            Assert.IsTrue(hostFight.Find("arena_mp_end_reason", out UILabel _),
+                "The result panel must expose the end-reason label.");
+            Assert.AreEqual(hostFight.MultiplayerLiveResultForHeadless.WinnerPeerId,
+                joinFight.MultiplayerLiveResultForHeadless.WinnerPeerId,
+                "Both peers must agree on the match outcome (symmetric completion).");
+        }
+        finally
+        {
+            try { hostFight?.ExitScreen(); } catch { }
+            try { joinFight?.ExitScreen(); } catch { }
+            DisposeLobbyTransport(hostLobby);
+            DisposeLobbyTransport(joinLobby);
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = savedConfigPath;
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+            try { if (File.Exists(tempCareer)) File.Delete(tempCareer); } catch { }
+        }
+    }
+
+    [TestMethod]
+    public void MatchingRuleset_CareerAndSandbox_RunsToDigest_Headless()
+    {
+        // Step 6 proof: a Career-locked matchup AND a Sandbox-budgeted matchup each run in-process
+        // (two-peer lockstep) to a final digest with matching per-turn hashes.
+        LoadAllGameData();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_mp_modes_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempPath;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+
+        try
+        {
+            IShipDesign[] designs = LegalPvPDesigns();
+            string strong = designs.Last().Name;
+            int cost = (int)MathF.Round(designs.Last().BaseStrength);
+
+            var career = new ArenaMultiplayerSettings
+            {
+                MatchSeed = 0x5EED, RngSeed = 0xA12EA000u, InputDelay = 3, MaxTurns = 90, CommandEveryTurns = 1,
+                HostFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x1001ul),
+                JoinFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x2002ul),
+                Ruleset = new ArenaMultiplayerRuleset { Mode = ArenaMatchMode.Career, RosterSource = ArenaRosterSource.CareerLocked },
+            }.WithResolvedFleets();
+            ArenaMultiplayerRunResult careerResult = ArenaMultiplayerSession.RunInProcess(career);
+            Assert.IsFalse(careerResult.Desynced,
+                $"Career matchup desynced at turn {careerResult.DesyncTurn}: {careerResult.DesyncReason}");
+            Assert.IsTrue(careerResult.TurnHashes.All(h => h.Match), "Career matchup per-turn hashes must match.");
+            Assert.IsFalse(string.IsNullOrWhiteSpace(careerResult.FinalHash), "Career matchup must reach a digest.");
+
+            var sandbox = new ArenaMultiplayerSettings
+            {
+                MatchSeed = 0x6EED, RngSeed = 0xB12EA000u, InputDelay = 3, MaxTurns = 90, CommandEveryTurns = 1,
+                HostFleetDesignNames = new[] { strong },
+                JoinFleetDesignNames = new[] { strong },
+                Ruleset = new ArenaMultiplayerRuleset
+                {
+                    Mode = ArenaMatchMode.Sandbox, RosterSource = ArenaRosterSource.AllContent,
+                    BudgetModel = ArenaBudgetModel.Cap, BudgetCredits = cost + 100,
+                },
+            }.WithResolvedFleets();
+            Assert.AreEqual("", ArenaMultiplayerSettings.ValidateStartMessage(sandbox.ToStartMessage(), out _),
+                "The Sandbox matchup must validate within its budget cap.");
+            ArenaMultiplayerRunResult sandboxResult = ArenaMultiplayerSession.RunInProcess(sandbox);
+            Assert.IsFalse(sandboxResult.Desynced,
+                $"Sandbox matchup desynced at turn {sandboxResult.DesyncTurn}: {sandboxResult.DesyncReason}");
+            Assert.IsTrue(sandboxResult.TurnHashes.All(h => h.Match), "Sandbox matchup per-turn hashes must match.");
+            Assert.IsFalse(string.IsNullOrWhiteSpace(sandboxResult.FinalHash), "Sandbox matchup must reach a digest.");
+        }
+        finally
+        {
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+        }
+    }
+
     static string[] FleetNames(ArenaStartArchetype archetype, ulong seed)
         => CareerManager.StartingRosterDesigns(archetype, seed)
             .Select(d => d.Name)
@@ -1601,6 +2033,11 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
     /// </summary>
     (ArenaMultiplayerLobbyScreen hostLobby, ArenaMultiplayerLobbyScreen joinLobby,
         ArenaFightScreen hostFight, ArenaFightScreen joinFight) DriveRealLobbiesToLaunchedFight()
+        => DriveRealLobbiesToLaunchedFight(null);
+
+    (ArenaMultiplayerLobbyScreen hostLobby, ArenaMultiplayerLobbyScreen joinLobby,
+        ArenaFightScreen hostFight, ArenaFightScreen joinFight) DriveRealLobbiesToLaunchedFight(
+        Action<ArenaMultiplayerLobbyScreen> configureHost)
     {
         var hostLobby = new ArenaMultiplayerLobbyScreen(ArenaMultiplayerLobbySurface.StarGladiator);
         var joinLobby = new ArenaMultiplayerLobbyScreen(ArenaMultiplayerLobbySurface.StarGladiator);
@@ -1608,6 +2045,7 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         GameScreen joinLaunched = null;
         hostLobby.LaunchScreenOverrideForHeadless = s => hostLaunched = s;
         joinLobby.LaunchScreenOverrideForHeadless = s => joinLaunched = s;
+        configureHost?.Invoke(hostLobby);
 
         hostLobby.StartHostForHeadless();
         joinLobby.StartJoinForHeadless();
