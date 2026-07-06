@@ -838,8 +838,15 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         PendingWingmen = 0;
         if (HasPendingMultiplayerPvPSetup)
         {
-            StartMultiplayerPvPMatch();
-            InitializeMultiplayerLiveIfNeeded();
+            // §2.3 setup-phase gate: while the pre-match SETUP phase is active (custom-fleet authoring in the
+            // arena), do NOT spawn yet — the spawn happens after the setup->fight rebuild + exchange completes
+            // (driven per-frame by UpdateMultiplayerSetup). Default/flag-off: the phase is terminal Fight, so
+            // this spawns immediately exactly as before (a true no-op for the legacy duel).
+            if (!ArenaSetupActiveForHeadless)
+            {
+                StartMultiplayerPvPMatch();
+                InitializeMultiplayerLiveIfNeeded();
+            }
         }
         else if (StartAtHub)
         {
@@ -2056,6 +2063,10 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         {
             UState.Paused = true;
             base.Update(fixedDeltaTime);
+            // §2.3: while the pre-match SETUP phase is active, drive the setup->fight handshake (publish Ready,
+            // rebuild+broadcast the authoritative start from the setup scratch set, validate+register, advance to
+            // Fight, then spawn). A no-op when the phase is terminal Fight (the legacy/flag-off duel).
+            UpdateMultiplayerSetup(fixedDeltaTime);
             UpdateMultiplayerLive(fixedDeltaTime);
             UState.Paused = MultiplayerLiveDisplayPaused;
             return;

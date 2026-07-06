@@ -1,18 +1,42 @@
 # StarDrive Arena — PRE-MATCH SETUP PHASE — Implementation Report
 
-Date 2026-07-06. Repo `C:\dev\stardrive\StarDrive-main`, branch `arena-045-port` (trunk `1d3089430`).
+Date 2026-07-06. Repo `C:\dev\stardrive\StarDrive-main`, branch `arena-045-port`.
+Phases A–D committed `dd79af36d`; the §2.3 setup→fight rebuild (below) is uncommitted in the working tree.
 Spec: `C:\dev\plans\STARDRIVE_ARENA_SETUP_PHASE_EXEC_PLAN_20260706.md` (+ program plan ADDENDUM 4 + KERNEL-REVIEW amendments).
 
 **Left uncommitted in the working tree** for the orchestrator to verify FUNCTION and commit. No protocol re-bump (stays 5; append-only wire). Everything gated behind `GlobalStats.Defaults.EnableArenaCustomFleet` (default OFF).
 
 ---
 
-## Headline result
+## UPDATE — §2.3 CLOSED: the in-arena "design → fight" loop is playable
+
+The one piece previously deferred — the post-setup authoritative-start REBUILD + re-broadcast — is now implemented and proven. **A custom authored INSIDE the in-arena setup phase now actually reaches the fight, on both peers.**
+
+- **Setup-authored custom reaches the fight: YES.** `PROOF_SETUP_AUTHORED_CUSTOM_REACHES_FIGHT` — two REAL peers over loopback TCP each author a DISTINCT custom (a hull the other never authored) in the in-arena setup phase, capture a formation, and mark Ready. The host rebuilds the authoritative `SessionStartMessage` from the SETUP scratch tables/bundles (NOT the lobby-time ones), broadcasts it over the CURRENT fight transport; both peers `ValidateStartMessage` + `RegisterPeerDesignTables` (reconstructing from RECEIVED bytes — the host never authored the join's design, so its only path in is the wire), advance to Fight, and **both spawn BOTH setup-authored fleets** (identical ship-ids, join's design byte-identical to what the joiner authored), ticking deterministically with no desync. RED before this lane (spawn was gated with nothing to advance it); GREEN after.
+- **Reused the proven Phase A machinery, no parallel path:** `SessionLobbyMessage` carries the setup `DesignTable`+bundle over the live transport (the same message Phase A proved); `SessionStartMessage`/`ValidateStartMessage`/`RegisterPeerDesignTables` are the authoritative rebuild — just sourced from the setup scratch set and run at the setup→fight transition rather than lobby LOCK.
+- **Determinism is law:** the rebuilt start is host-built + broadcast + fingerprinted; both peers validate+register the setup tables BEFORE spawn; a divergent/overspent setup fleet rejects at `ValidateStartMessage` (surfaced to the setup HUD + a `SessionErrorMessage` to the peer), never mid-match — content-hash-as-name covers it.
+- **Flag-off stays a true no-op; the 57 prior proofs do not regress → 58/58 focused tests green, both game projects build clean (0 warnings).**
+
+### §2.3 — how it works (files + flow)
+
+- `ArenaFightScreen.Multiplayer.cs`:
+  - `UpdateMultiplayerSetup(dt)` — per-frame setup driver (called from `ArenaFightScreen.Update` while setup is active): polls the transport, publishes this peer's setup-Ready, and (host) rebuilds+broadcasts once both peers are Ready.
+  - `PublishSetupReady()` — sends this peer's `BuildSetupLocalDesignTable()` + `SetupLocalFleetBundle` as a `SessionLobbyMessage` over the live transport (host→join id, join→host id).
+  - `OnMultiplayerSetupMessage(msg)` — setup-exchange observer (registered in `ArmMultiplayerLive` while setup is active; coexists with the Fight observer). Host consumes the join's setup lobby message; join consumes the host's rebuilt start.
+  - `TryRebuildAndBroadcastSetupStart()` (host) / `ApplyRebuiltSetupStartOnJoin(start)` (join) — the rebuild: build setup-authored settings, register the setup tables, `ValidateStartMessage`, rebind the live settings, advance to Fight, then `SpawnAfterSetup()` runs the same `StartMultiplayerPvPMatch`+`InitializeMultiplayerLiveIfNeeded` chain `LoadContent` would have.
+  - `BuildSetupAuthoritativeSettings()` — mirrors the lobby's `BuildArenaSettings` but sourced from the setup scratch set (host table = local setup table, join table = remote setup table from the wire; bundles = the authored setup bundles).
+  - `RebindMultiplayerLiveSettings(settings)` — swaps the live session (readonly `Settings`) to the rebuilt object, re-runs `ConfigureMultiplayerPvP`.
+- `ArenaFightScreen.cs` — `LoadContent` spawn gated behind `!ArenaSetupActiveForHeadless`; `Update` calls `UpdateMultiplayerSetup` while setup is active.
+- `ArenaMultiplayerLobbyScreen.cs` — `RequestArenaSetupPhase` flag; `LaunchVisibleArena` calls `screen.EnterMultiplayerSetupPhase()` before arming when it's set (flag-gated).
+
+---
+
+## Headline result (Phases A–D, committed `dd79af36d`)
 
 - **Real editors LAUNCH against the arena universe: YES.** `PROOF_REAL_EDITORS_LAUNCH_AGAINST_ARENA_UNIVERSE` mounts the UNMODIFIED base `ShipDesignScreen(this, EmpireUI)` AND `FleetDesignScreen(this, EmpireUI)` on the live arena `ArenaFightScreen : UniverseScreen` and asserts both appear on the ScreenManager. The "lobby has no universe" excuse is dead — no name-picker stub.
 - **Join-transport: WORKS over the real wire.** `PROOF_JOIN_TABLE_REACHES_HOST` drives two real lobbies over actual loopback TCP; the joiner fields a custom the host NEVER authored; the host's authoritative start (captured on BOTH armed fight screens) carries that custom in `JoinDesignTable`, reconstructed byte-identically from the received bytes. This also exposed and fixed a real lane-1 bug (see below).
 - **Import: WORKS.** `PROOF_IMPORT_PRODUCES_ARENA_CUSTOM` — import-by-name and import-from-`.design`-bytes both converge on the SAME `@arena/<hash>` and byte-identical canonical payload as a live capture.
-- **All 7 new proofs GREEN; 57/57 focused tests pass; both game projects build clean.**
+- **All 8 proofs GREEN; 58/58 focused tests pass; both game projects build clean.**
 
 ---
 
@@ -82,7 +106,8 @@ Spec: `C:\dev\plans\STARDRIVE_ARENA_SETUP_PHASE_EXEC_PLAN_20260706.md` (+ progra
 | `PROOF_FORMATION_SPAWN_DETERMINISTIC` (formation spawns identically both peers) | **PASS** |
 | `PROOF_BUDGET_ENFORCED_IN_SETUP` (roster scope + handshake budget) | **PASS** |
 | `PROOF_REAL_EDITORS_LAUNCH_AGAINST_ARENA_UNIVERSE` (real ShipDesign/FleetDesign mount) | **PASS** |
-| Focused regression: `ArenaCustomFleetKernel` + `ArenaCustomFleetUi` + `ArenaMultiplayerLockstep` + `ArenaDeterminism` + all `PROOF_*` | **57 / 57 PASS** |
+| `PROOF_SETUP_AUTHORED_CUSTOM_REACHES_FIGHT` (§2.3: 2 real peers, distinct setup customs, real TCP, both spawn both fleets, byte-identical join reconstruction, deterministic) | **PASS** |
+| Focused regression: `ArenaCustomFleetKernel` + `ArenaCustomFleetUi` + `ArenaMultiplayerLockstep` + `ArenaDeterminism` + all `PROOF_*` | **58 / 58 PASS** |
 | Game builds: `StarDrive.csproj`, `StarDriveArena.csproj`, `SDUnitTests.csproj` | **0 error, 0 warning** |
 
 Stray `testhost` was killed before each run; only focused filters used (never the full `~Arena` suite). Match-run proofs pass explicit small `MaxTurns` (60–90).
@@ -104,6 +129,8 @@ Stray `testhost` was killed before each run; only focused filters used (never th
 
 ## Genuinely deferred (with reason)
 
-- **Post-setup authoritative-start REBUILD + re-broadcast (§2.3, anti-stub #3).** The lobby still builds the authoritative start at LOCK. Customs authored in the in-arena SETUP phase are captured (scratch set + `SetupLocalFleetBundle` + `BuildSetupLocalDesignTable`) but not yet re-broadcast as a fresh `SessionStartMessage` over the live fight-screen transport with a re-run ack loop. This is a substantial cross-screen protocol change (relocating start-build + ack from the lobby to the setup terminal state). **Consequence today:** BUILD-ANEW/IMPORT authored *inside* the arena setup phase does not yet drive a live match; customs authored in the LOBBY (Phase A) fully reach the host and fight. Everything needed to complete this is in place (the scratch set, the local table/bundle builders, the phase machine, `AdvanceSetupPhaseToFight`); what remains is wiring the setup terminal state to rebuild+send the start and re-run `HandleStartAck`. Documented loudly per the plan rather than silently stubbed.
-- **Live per-peer SETUP-READY exchange over the fight-screen transport.** The phase transitions and local-ready are wired and proven; the peer-to-peer READY broadcast reuses the same transport as Phase A but is driven headlessly via `AdvanceSetupPhaseToFight` rather than a live 2-peer setup handshake (which depends on the rebuild above).
-- **Editor GUI interaction** (dragging modules, pressing Save) is not unit-tested — per the plan's Phase D note, the CAPTURE seam and the bundle are proven; the editors are proven to LAUNCH.
+- ~~Post-setup authoritative-start REBUILD + re-broadcast (§2.3).~~ **CLOSED** — see the "§2.3 CLOSED" section at the top. The setup terminal state now rebuilds+broadcasts the authoritative start from the setup scratch set over the live transport, both peers validate+register+spawn, proven end-to-end over real TCP by `PROOF_SETUP_AUTHORED_CUSTOM_REACHES_FIGHT`.
+- ~~Live per-peer SETUP-READY exchange over the fight-screen transport.~~ **CLOSED** — the per-frame `UpdateMultiplayerSetup` publishes each peer's setup-Ready `SessionLobbyMessage` over the live transport and gates the host rebuild on the remote peer's Ready; proven live (not just via `AdvanceSetupPhaseToFight`) in the same proof.
+- **N>2 setup exchange.** The setup rebuild is authored 2-peer (host + single joiner) matching the rest of the arena's N=2 slice; the union logic generalizes (same as Phase A's `UnionRemoteDesignTables`) but is proven at N=2. Consistent with the program's "author N-aware, prove at N=2" posture.
+- **Editor GUI interaction** (dragging modules, pressing Save) is not unit-tested — per the plan's Phase D note, the CAPTURE seam and the bundle are proven; the editors are proven to LAUNCH. The setup→fight loop is driven headlessly via the capture seams (`CaptureSetupDesign`/`SetSetupFleetBundleForHeadless`), which are the exact endpoints the real editors' `OnExit` route through.
+- **Lobby UI toggle for "design in arena".** `RequestArenaSetupPhase` is the wired opt-in (headless-set in the proof); a lobby button to set it is UI polish, not wired in this lane.

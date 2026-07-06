@@ -2294,6 +2294,150 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
     }
 
     // ===================================================================================================
+    // §2.3 — THE LOOP IS CLOSED: a custom authored INSIDE the in-arena SETUP phase actually reaches the FIGHT.
+    // Two REAL peers over loopback TCP each author a DISTINCT custom (a hull the other never authored) in the
+    // setup phase, capture a formation, reach Ready. The host rebuilds the authoritative start from the SETUP
+    // scratch set and broadcasts it; both peers validate + register the setup tables (reconstructing from RECEIVED
+    // bytes — the host never authored the join's design, so its only path in is the wire), advance to Fight, and
+    // BOTH spawn BOTH setup-authored fleets, ticking to the same digest. RED before this lane (spawn was gated
+    // with nothing to advance it); GREEN after.
+    // ===================================================================================================
+    [TestMethod]
+    public void PROOF_SETUP_AUTHORED_CUSTOM_REACHES_FIGHT_Headless()
+    {
+        LoadAllGameData();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_setupfight_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempPath;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+        bool savedFlag = GlobalStats.Defaults.EnableArenaCustomFleet;
+        int snapshot = ResourceManager.Ships.Designs.Count;
+        TcpLockstepTransport hostTransport = null, joinTransport = null;
+        ArenaFightScreen hostScreen = null, joinScreen = null;
+        try
+        {
+            GlobalStats.Defaults.EnableArenaCustomFleet = true;
+            string[] stock = TwoDistinctStockHulls();
+            // Distinct source designs for host vs join (different hulls -> distinct @arena/<hash>).
+            Assert.IsTrue(ResourceManager.Ships.GetDesign(stock[0], out IShipDesign hostSource));
+            Assert.IsTrue(ResourceManager.Ships.GetDesign(stock[1], out IShipDesign joinSource));
+            string hostArena = ArenaDesignTable.ContentName(hostSource);
+            string joinArena = ArenaDesignTable.ContentName(joinSource);
+            Assert.AreNotEqual(hostArena, joinArena, "Host and join setup customs must be distinct.");
+
+            // Lobby-time settings field STOCK designs (NOT the customs) — the customs come ONLY from the setup phase.
+            var lobbySettings = new ArenaMultiplayerSettings
+            {
+                MatchSeed = 0x5EED, RngSeed = 0xA12EA000u, InputDelay = 3, MaxTurns = 240, CommandEveryTurns = 1,
+                HostFleetDesignNames = new[] { stock[0] },
+                JoinFleetDesignNames = new[] { stock[1] },
+                HostFleetBundle = ArenaFleetBundle.Encode(ArenaFleetBundle.FromDesignNames(new[] { stock[0] })),
+                JoinFleetBundle = ArenaFleetBundle.Encode(ArenaFleetBundle.FromDesignNames(new[] { stock[1] })),
+                Ruleset = new ArenaMultiplayerRuleset
+                {
+                    Mode = ArenaMatchMode.Sandbox, RosterSource = ArenaRosterSource.AllContent,
+                    BudgetModel = ArenaBudgetModel.Unlimited,
+                },
+            }.WithResolvedFleets();
+
+            int port = FreeTcpPort();
+            hostTransport = TcpLockstepTransport.Host(port, ArenaMultiplayerSession.JoinPlayerPeerId);
+            joinTransport = TcpLockstepTransport.Join("127.0.0.1", port, LockstepHost.HostPeerId);
+            Assert.IsTrue(hostTransport.WaitForConnection(TimeSpan.FromSeconds(5)), "Loopback TCP did not connect.");
+
+            // Build both fight screens IN SETUP MODE: EnterMultiplayerSetupPhase BEFORE arm (so the setup observer
+            // registers) and LoadContent does NOT spawn (gated). Author a DISTINCT custom + formation on each.
+            hostScreen = ArenaFightScreen.Create(lobbySettings.HostRacePreference, lobbySettings.MatchSeed,
+                startAtHub: false, opponentPreference: lobbySettings.JoinRacePreference);
+            hostScreen.EnterMultiplayerSetupPhase();
+            hostScreen.ArmMultiplayerLive(new ArenaMultiplayerLiveSession(ArenaMultiplayerRole.Host, hostTransport, lobbySettings));
+            hostScreen.LoadContent();
+            Assert.AreEqual(-1L, hostScreen.MultiplayerLiveSimTickForHeadless,
+                "The host must NOT spawn during setup (the gate holds).");
+
+            joinScreen = ArenaFightScreen.Create(lobbySettings.HostRacePreference, lobbySettings.MatchSeed,
+                startAtHub: false, opponentPreference: lobbySettings.JoinRacePreference);
+            joinScreen.EnterMultiplayerSetupPhase();
+            joinScreen.ArmMultiplayerLive(new ArenaMultiplayerLiveSession(ArenaMultiplayerRole.Join, joinTransport, lobbySettings));
+            joinScreen.LoadContent();
+            Assert.AreEqual(-1L, joinScreen.MultiplayerLiveSimTickForHeadless,
+                "The join must NOT spawn during setup (the gate holds).");
+
+            // AUTHOR distinct customs + formations INSIDE the setup phase (the capture seam build-anew/import uses).
+            Assert.AreEqual(hostArena, hostScreen.CaptureSetupDesign(hostSource), $"host capture: {hostScreen.SetupHudErrorForHeadless}");
+            Assert.AreEqual(joinArena, joinScreen.CaptureSetupDesign(joinSource), $"join capture: {joinScreen.SetupHudErrorForHeadless}");
+            // Capture the authored formation bundle (the headless PLACE-FORMATION seam — same capture endpoint the
+            // real FleetDesignScreen OnExit routes through, sans GUI). One custom per side at a column offset.
+            hostScreen.SetSetupFleetBundleForHeadless(ArenaFleetBundle.Encode(BuildColumnBundle("H", new[] { hostArena })));
+            joinScreen.SetSetupFleetBundleForHeadless(ArenaFleetBundle.Encode(BuildColumnBundle("J", new[] { joinArena })));
+
+            // Mark both Ready — the per-frame setup handshake then exchanges tables + rebuilds+broadcasts the start.
+            hostScreen.MarkSetupLocalReady();
+            joinScreen.MarkSetupLocalReady();
+
+            // Pump both Update loops until BOTH reach Fight and both sims advance past tick 0.
+            bool bothFighting = false;
+            for (int frame = 0; frame < 2400 && !bothFighting; ++frame)
+            {
+                hostScreen.Update(1f / 60f);
+                joinScreen.Update(1f / 60f);
+                bothFighting = hostScreen.MultiplayerLiveSimTickForHeadless > 0
+                               && joinScreen.MultiplayerLiveSimTickForHeadless > 0;
+            }
+            Assert.IsTrue(bothFighting,
+                "Both peers must reach Fight and pump the sim after the setup->fight rebuild. "
+                + $"hostSetup={hostScreen.MultiplayerSetupPhaseForHeadless} hostTick={hostScreen.MultiplayerLiveSimTickForHeadless} "
+                + $"joinSetup={joinScreen.MultiplayerSetupPhaseForHeadless} joinTick={joinScreen.MultiplayerLiveSimTickForHeadless} "
+                + $"hostHud='{hostScreen.SetupHudErrorForHeadless}' joinHud='{joinScreen.SetupHudErrorForHeadless}'");
+
+            // BOTH peers spawned BOTH setup-authored fleets (the host's custom + the join's custom).
+            ArenaMultiplayerShipSnapshot hostSnap = hostScreen.MultiplayerSnapshot();
+            ArenaMultiplayerShipSnapshot joinSnap = joinScreen.MultiplayerSnapshot();
+            Assert.AreEqual(1, hostSnap.PlayerShipIds.Length, "Host peer must spawn the host setup fleet.");
+            Assert.AreEqual(1, hostSnap.EnemyShipIds.Length, "Host peer must spawn the join setup fleet.");
+            CollectionAssert.AreEqual(hostSnap.PlayerShipIds, joinSnap.PlayerShipIds,
+                "Both peers must spawn identical player ship IDs from the setup-authored fleets.");
+            CollectionAssert.AreEqual(hostSnap.EnemyShipIds, joinSnap.EnemyShipIds,
+                "Both peers must spawn identical enemy ship IDs from the setup-authored fleets.");
+
+            // The spawned designs ARE the setup-authored @arena customs (byte-identical reconstruction on the join,
+            // which never authored the host's design — the only path in was the rebuilt-start wire).
+            Assert.IsTrue(ResourceManager.Ships.GetDesign(hostArena, out IShipDesign hostRegistered),
+                "The host setup custom must be registered for spawn on both peers.");
+            Assert.IsTrue(ResourceManager.Ships.GetDesign(joinArena, out IShipDesign joinRegistered),
+                "The join setup custom must be registered for spawn on both peers (reconstructed from the wire).");
+            CollectionAssert.AreEqual(ArenaDesignTable.CanonicalPayload(joinSource), ArenaDesignTable.CanonicalPayload(joinRegistered),
+                "The join's setup custom reconstructed for the fight must be byte-identical to what the joiner authored.");
+
+            // Run to a matching digest (no desync) — the setup-authored match is deterministic across both peers.
+            for (int frame = 0; frame < 6000; ++frame)
+            {
+                hostScreen.Update(1f / 60f);
+                joinScreen.Update(1f / 60f);
+                if (hostScreen.MultiplayerLiveResultForHeadless?.MatchEnded == true
+                    && joinScreen.MultiplayerLiveResultForHeadless?.MatchEnded == true)
+                    break;
+            }
+            ArenaMultiplayerRunResult hostResult = hostScreen.MultiplayerLiveResultForHeadless;
+            ArenaMultiplayerRunResult joinResult = joinScreen.MultiplayerLiveResultForHeadless;
+            Assert.IsFalse(hostResult.Desynced, $"Setup-authored match desynced at turn {hostResult.DesyncTurn}: {hostResult.DesyncReason}");
+            Assert.IsFalse(joinResult.Desynced, $"Setup-authored match desynced (join): {joinResult.DesyncReason}");
+            Assert.IsTrue(hostScreen.MultiplayerLiveSimTickForHeadless > 0 && joinScreen.MultiplayerLiveSimTickForHeadless > 0,
+                "Both sims must have advanced in the setup-authored fight.");
+        }
+        finally
+        {
+            try { hostScreen?.ExitScreen(); } catch { }
+            try { joinScreen?.ExitScreen(); } catch { }
+            try { hostTransport?.Dispose(); } catch { }
+            try { joinTransport?.Dispose(); } catch { }
+            GlobalStats.Defaults.EnableArenaCustomFleet = savedFlag;
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+            Assert.AreEqual(snapshot, ResourceManager.Ships.Designs.Count,
+                "Teardown must leave the global design table exactly as it started (no leaked designs).");
+        }
+    }
+
+    // ===================================================================================================
     // PHASE B — SETUP-PHASE STATE MACHINE (§2). The gate: the sim must NOT spawn until the setup phase reaches
     // its terminal Fight state; and a match authored via the setup capture seam runs to the SAME digest as a
     // direct match with the same designs (deterministic handoff, setup -> fight, one reused universe).

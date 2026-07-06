@@ -143,6 +143,25 @@ public sealed partial class ArenaFightScreen
     public string SetupHudErrorForHeadless => SetupHudError;
     public IReadOnlyList<string> SetupScratchWireNamesForHeadless
         => SetupScratchDesigns.Select(d => ArenaDesignTable.ContentName(d)).ToArray();
+
+    // §2.3 SETUP -> FIGHT AUTHORITATIVE-START REBUILD. When both peers reach setup-Ready, the HOST rebuilds the
+    // authoritative SessionStartMessage from the SETUP scratch tables/bundles (NOT the lobby-time ones), broadcasts
+    // it over the CURRENT (fight/setup) transport, both peers validate + register the setup tables, then advance
+    // to Fight and spawn the setup-authored fleets. This REUSES the proven Phase A exchange machinery
+    // (SessionLobbyMessage carries the setup DesignTable+Fleet; SessionStartMessage is the authoritative rebuild),
+    // just sourced from the setup scratch set and run at the setup->fight transition rather than lobby LOCK.
+    bool SetupLocalReadySent;                              // this peer published its setup-Ready lobby message
+    bool SetupRemoteReady;                                 // host: the join peer's setup-Ready lobby message arrived
+    string SetupRemoteDesignTable = "";                   // host: the join peer's setup design table (from the wire)
+    string SetupRemoteFleetBundle = "";                   // host: the join peer's setup fleet bundle (from the wire)
+    bool SetupStartBroadcast;                              // host: the rebuilt authoritative start was broadcast
+    bool SetupStartReceived;                               // join: the rebuilt authoritative start arrived + validated
+    float SetupHandshakeResendTimer;                      // periodic re-send of setup-Ready / rebuilt-start
+    const float SetupHandshakeResendInterval = 0.5f;
+    public bool SetupLocalReadySentForHeadless => SetupLocalReadySent;
+    public bool SetupRemoteReadyForHeadless => SetupRemoteReady;
+    public bool SetupStartBroadcastForHeadless => SetupStartBroadcast;
+    public bool SetupStartReceivedForHeadless => SetupStartReceived;
     public const uint DefaultCountdownTicks = 180;
     uint MultiplayerCountdownTicks = DefaultCountdownTicks;
     long MultiplayerEngageAtTick = -1;          // set once at first tick: spawnTick + CountdownTicks
@@ -421,6 +440,217 @@ public sealed partial class ArenaFightScreen
         SetupLocalFleetBundle = "";
     }
 
+    // ---------------------------------------------------------------------------------------------------
+    // §2.3 SETUP -> FIGHT AUTHORITATIVE-START REBUILD + RE-BROADCAST over the CURRENT (fight/setup) transport.
+    // Reuses the Phase A exchange: each peer publishes its setup DesignTable+Fleet via SessionLobbyMessage; the
+    // HOST rebuilds the authoritative SessionStartMessage from the SETUP scratch set and broadcasts it; both
+    // peers validate + register the setup tables before spawn (a divergent/overspent setup fleet rejects at
+    // ValidateStartMessage, never mid-match — content-hash-as-name already covers it). Then AdvanceSetupPhaseToFight
+    // -> InitializeMultiplayerLiveIfNeeded spawns the SETUP-authored fleets.
+    // ---------------------------------------------------------------------------------------------------
+
+    // Per-frame setup-phase driver (called from ArenaFightScreen.Update while the setup phase is active). Polls the
+    // transport, publishes this peer's setup-Ready, and — once both peers are ready — the host rebuilds+broadcasts
+    // the authoritative start and both peers advance to Fight. No-op when the phase is terminal Fight.
+    public void UpdateMultiplayerSetup(float dt)
+    {
+        if (MultiplayerLiveSession == null || MultiplayerSetupPhase == ArenaSetupPhase.Fight)
+            return;
+
+        MultiplayerLiveSession.Transport.Poll();
+
+        SetupHandshakeResendTimer -= Math.Max(0f, dt);
+        bool resend = SetupHandshakeResendTimer <= 0f;
+        if (resend)
+            SetupHandshakeResendTimer = SetupHandshakeResendInterval;
+
+        // Publish this peer's setup-Ready (its scratch DesignTable + fleet bundle) once local authoring is marked
+        // Ready. Re-sent periodically until the exchange completes (a copy may be consumed before the far peer's
+        // observer registers — same idiom as the arm handshake).
+        if (MultiplayerSetupPhase == ArenaSetupPhase.LocalReady && resend)
+            PublishSetupReady();
+
+        // Host: once the remote peer's setup-Ready has arrived AND we are locally Ready, rebuild+broadcast the
+        // authoritative start from the SETUP scratch set, then advance to Fight.
+        if (MultiplayerLiveSession.Role == ArenaMultiplayerRole.Host
+            && MultiplayerSetupPhase == ArenaSetupPhase.LocalReady
+            && SetupRemoteReady && !SetupStartBroadcast)
+        {
+            TryRebuildAndBroadcastSetupStart();
+        }
+    }
+
+    // Publish this peer's setup design table + fleet bundle over the live transport, as a SessionLobbyMessage
+    // (the SAME message Phase A proved carries DesignTable). Host addresses the join peer id; join addresses host.
+    void PublishSetupReady()
+    {
+        int fromPeer = MultiplayerLiveSession.Role == ArenaMultiplayerRole.Host
+            ? ArenaMultiplayerSession.HostPlayerPeerId
+            : ArenaMultiplayerSession.JoinPlayerPeerId;
+        int toPeer = MultiplayerLiveSession.Role == ArenaMultiplayerRole.Host
+            ? ArenaMultiplayerSession.JoinPlayerPeerId
+            : LockstepHost.HostPeerId;
+        MultiplayerLiveSession.Transport.Send(toPeer, new SessionLobbyMessage
+        {
+            FromPeer = fromPeer,
+            PeerId = fromPeer,
+            Ready = true,
+            DesignTable = BuildSetupLocalDesignTable(),
+            Fleet = SetupLocalFleetBundle, // the authored formation bundle rides the Fleet field for the setup exchange
+            BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
+            BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
+        });
+        SetupLocalReadySent = true;
+    }
+
+    // The setup-exchange message observer (registered in ArmMultiplayerLive while the setup phase is active).
+    // Host handles the join's setup-Ready SessionLobbyMessage; join handles the host's rebuilt SessionStartMessage.
+    void OnMultiplayerSetupMessage(LockstepMessage message)
+    {
+        if (MultiplayerLiveSession == null || MultiplayerSetupPhase == ArenaSetupPhase.Fight)
+            return;
+
+        // HOST: the join peer published its setup design table + fleet bundle.
+        if (MultiplayerLiveSession.Role == ArenaMultiplayerRole.Host
+            && message is SessionLobbyMessage lobby
+            && lobby.PeerId == ArenaMultiplayerSession.JoinPlayerPeerId && lobby.Ready)
+        {
+            SetupRemoteDesignTable = lobby.DesignTable ?? "";
+            SetupRemoteFleetBundle = lobby.Fleet ?? "";
+            if (!SetupRemoteReady)
+                MultiplayerTelemetry?.Event("SETUP_REMOTE_READY", $"peer={lobby.PeerId}");
+            SetupRemoteReady = true;
+        }
+
+        // JOIN: the host broadcast the rebuilt authoritative start (built from the setup scratch set).
+        if (MultiplayerLiveSession.Role == ArenaMultiplayerRole.Join
+            && message is SessionStartMessage start && !SetupStartReceived)
+        {
+            ApplyRebuiltSetupStartOnJoin(start);
+        }
+    }
+
+    // HOST: rebuild the authoritative SessionStartMessage from the SETUP scratch tables/bundles (NOT the lobby-time
+    // ones), broadcast it to the join peer, register the setup tables locally, and advance to Fight.
+    void TryRebuildAndBroadcastSetupStart()
+    {
+        ArenaMultiplayerSettings rebuilt = BuildSetupAuthoritativeSettings();
+        // Register the setup tables locally BEFORE spawn (idempotent, content-hash dedup) so the @arena/<hash>
+        // names resolve; re-registering replaces the lobby-time set with the setup set.
+        RegisterMultiplayerCustomDesigns(rebuilt);
+        string err = ArenaMultiplayerSettings.ValidateStartMessage(rebuilt.ToStartMessage(), out _);
+        if (err.NotEmpty())
+        {
+            // A divergent/overspent setup fleet rejects HERE (never mid-match). Surface + halt cleanly.
+            SetupHudError = err;
+            MultiplayerTelemetry?.Event("SETUP_START_REJECT", err);
+            MultiplayerLiveSession.Transport.Send(ArenaMultiplayerSession.JoinPlayerPeerId,
+                new SessionErrorMessage { FromPeer = ArenaMultiplayerSession.HostPlayerPeerId, Error = err });
+            return;
+        }
+
+        // Rewire the live session settings to the rebuilt (setup-authored) settings, then broadcast the start.
+        RebindMultiplayerLiveSettings(rebuilt);
+        MultiplayerLiveSession.Transport.Send(ArenaMultiplayerSession.JoinPlayerPeerId,
+            rebuilt.ToStartMessage(ArenaMultiplayerSession.HostPlayerPeerId));
+        SetupStartBroadcast = true;
+        MultiplayerTelemetry?.Event("SETUP_START_BROADCAST",
+            $"hostTableLen={rebuilt.HostDesignTable?.Length ?? 0} joinTableLen={rebuilt.JoinDesignTable?.Length ?? 0}");
+        AdvanceSetupPhaseToFight();
+        SpawnAfterSetup();
+    }
+
+    // JOIN: validate + register the host's rebuilt authoritative start, rebind the live settings to it, and advance
+    // to Fight. A mismatch rejects at ValidateStartMessage -> the match aborts cleanly (never a mid-match desync).
+    void ApplyRebuiltSetupStartOnJoin(SessionStartMessage start)
+    {
+        // Register the peer design tables carried in the rebuilt start BEFORE validation (bidirectional; the join's
+        // own customs + the host's customs both reconstruct from the received bytes — real reconstruction, not the
+        // shared-static shortcut). RegisterMultiplayerCustomDesigns re-registers (replaces the lobby-time set).
+        ArenaMultiplayerSettings received = ArenaMultiplayerSettings.FromStartMessage(start).WithResolvedFleets();
+        RegisterMultiplayerCustomDesigns(received);
+        string err = ArenaMultiplayerSettings.ValidateStartMessage(start, out ArenaMultiplayerSettings validated);
+        if (err.NotEmpty())
+        {
+            SetupHudError = err;
+            MultiplayerTelemetry?.Event("SETUP_START_VALIDATE_REJECT", err);
+            MultiplayerLiveSession.Transport.Send(LockstepHost.HostPeerId,
+                new SessionErrorMessage { FromPeer = ArenaMultiplayerSession.JoinPlayerPeerId, Error = err });
+            return;
+        }
+        RebindMultiplayerLiveSettings(validated);
+        SetupStartReceived = true;
+        MultiplayerTelemetry?.Event("SETUP_START_ACCEPTED",
+            $"hostTableLen={validated.HostDesignTable?.Length ?? 0} joinTableLen={validated.JoinDesignTable?.Length ?? 0}");
+        AdvanceSetupPhaseToFight();
+        SpawnAfterSetup();
+    }
+
+    // After the setup phase reaches terminal Fight, run the SAME spawn chain LoadContent would have run (it was
+    // gated out while setup was active). Idempotent: StartMultiplayerPvPMatch / InitializeMultiplayerLiveIfNeeded
+    // guard against re-entry, and the setup gate in InitializeMultiplayerLiveIfNeeded is now open (phase == Fight).
+    void SpawnAfterSetup()
+    {
+        if (MultiplayerSetupPhase != ArenaSetupPhase.Fight)
+            return;
+        StartMultiplayerPvPMatch();
+        InitializeMultiplayerLiveIfNeeded();
+    }
+
+    // Build the authoritative settings from the SETUP scratch set (§2.3). Host side: HostDesignTable = this peer's
+    // setup table, JoinDesignTable = the remote peer's setup table (arrived over the wire); host/join fleet bundles
+    // = the authored setup bundles. Mirrors the lobby's BuildArenaSettings but sourced from the setup scratch set.
+    ArenaMultiplayerSettings BuildSetupAuthoritativeSettings()
+    {
+        ArenaMultiplayerSettings baseSettings = MultiplayerLiveSession.Settings;
+        string localTable = BuildSetupLocalDesignTable();
+        string localBundle = SetupLocalFleetBundle.NotEmpty()
+            ? SetupLocalFleetBundle
+            : baseSettings.HostFleetBundle ?? "";
+        string remoteTable = SetupRemoteDesignTable ?? "";
+        string remoteBundle = SetupRemoteFleetBundle.NotEmpty()
+            ? SetupRemoteFleetBundle
+            : baseSettings.JoinFleetBundle ?? "";
+
+        // Derive the fleet NAME lists from the bundles so the names match the @arena/<hash> designs the tables carry.
+        string[] hostNames = BundleShipNames(ResolveMultiplayerBundle(localBundle, baseSettings.HostFleetDesignNames));
+        string[] joinNames = BundleShipNames(ResolveMultiplayerBundle(remoteBundle, baseSettings.JoinFleetDesignNames));
+
+        return new ArenaMultiplayerSettings
+        {
+            MatchSeed = baseSettings.MatchSeed,
+            RngSeed = baseSettings.RngSeed,
+            InputDelay = baseSettings.InputDelay,
+            MaxTurns = baseSettings.MaxTurns,
+            CommandEveryTurns = baseSettings.CommandEveryTurns,
+            GameSpeed = baseSettings.GameSpeed,
+            StartPaused = baseSettings.StartPaused,
+            HostRacePreference = baseSettings.HostRacePreference,
+            JoinRacePreference = baseSettings.JoinRacePreference,
+            PlayerPreference = baseSettings.PlayerPreference,
+            HostLoadoutTrait = baseSettings.HostLoadoutTrait,
+            JoinLoadoutTrait = baseSettings.JoinLoadoutTrait,
+            HostFleetDesignNames = hostNames.Length > 0 ? hostNames : baseSettings.HostFleetDesignNames,
+            JoinFleetDesignNames = joinNames.Length > 0 ? joinNames : baseSettings.JoinFleetDesignNames,
+            Ruleset = (baseSettings.Ruleset ?? new ArenaMultiplayerRuleset()).Clone(),
+            HostFleetBundle = localBundle,
+            JoinFleetBundle = remoteBundle,
+            HostDesignTable = localTable,
+            JoinDesignTable = remoteTable,
+        }.WithResolvedFleets();
+    }
+
+    // Replace the live session's settings with the rebuilt (setup-authored) settings so InitializeMultiplayerLive /
+    // StartMultiplayerPvPMatch spawn the SETUP fleets. MultiplayerLiveSession.Settings is readonly, so swap the
+    // session object (same role + transport). ConfigureMultiplayerPvP re-derives the spawn name lists.
+    void RebindMultiplayerLiveSettings(ArenaMultiplayerSettings settings)
+    {
+        ArenaMultiplayerLiveSession old = MultiplayerLiveSession;
+        MultiplayerLiveSession = new ArenaMultiplayerLiveSession(old.Role, old.Transport, settings);
+        MultiplayerLiveSession.Transport.RoutingAlarm = old.Transport.RoutingAlarm;
+        ConfigureMultiplayerPvP(settings);
+    }
+
     public void ArmMultiplayerLive(ArenaMultiplayerLiveSession session)
     {
         MultiplayerLiveSession = session ?? throw new ArgumentNullException(nameof(session));
@@ -445,6 +675,17 @@ public sealed partial class ArenaFightScreen
         MultiplayerLiveSpeed = ArenaMultiplayerSettings.ClampGameSpeed(settings.GameSpeed);
         MultiplayerLiveStatus = $"{session.Role.ToString().ToUpperInvariant()} armed";
         MultiplayerTelemetry.Event("ARMED", $"paused={MultiplayerLivePaused} speed={MultiplayerLiveSpeed:0.###}");
+
+        // §2.3: if the pre-match SETUP phase is active, register the setup-exchange observer NOW (the transport
+        // is live and peer-routed by LaunchVisibleArena). It coexists with the Fight observer added later at
+        // InitializeMultiplayerLiveIfNeeded (AddObserver appends per peer). A no-op when the phase is terminal.
+        if (MultiplayerSetupPhase != ArenaSetupPhase.Fight)
+        {
+            int observePeer = session.Role == ArenaMultiplayerRole.Host
+                ? LockstepHost.HostPeerId
+                : ArenaMultiplayerSession.JoinPlayerPeerId;
+            session.Transport.AddObserver(observePeer, OnMultiplayerSetupMessage);
+        }
     }
 
     public void InitializeMultiplayerLiveIfNeeded()

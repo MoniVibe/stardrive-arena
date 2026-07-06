@@ -289,6 +289,10 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     // BuildArenaStartForHeadless()/CurrentArenaSettingsForHeadless exercises UnionRemoteDesignTables +
     // BuildArenaSettings for real. BuildLocalDesignTableForHeadless exposes the local scratch table so a proof
     // can build the "joiner" side's wire payload the exact way SendLocalLobby does.
+    // §2.3: when set, LaunchVisibleArena enters the in-arena PRE-MATCH SETUP phase on the fight screen before
+    // arming, so authoring happens in the arena and spawn waits for the setup->fight rebuild. Flag-gated.
+    public bool RequestArenaSetupPhase;
+    public void SetRequestArenaSetupPhaseForHeadless(bool on) => RequestArenaSetupPhase = on;
     public void SetLocalRoleForHeadless(ArenaMultiplayerRole role) => LocalRole = role;
     public string BuildLocalDesignTableForHeadless() => BuildLocalDesignTable();
     public string RemoteDesignTableUnionForHeadless() => UnionRemoteDesignTables();
@@ -1500,6 +1504,11 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
         ArenaFightScreen screen = ArenaFightScreen.Create(settings.HostRacePreference,
             settings.MatchSeed, startAtHub: false, opponentPreference: settings.JoinRacePreference);
+        // §2.3: when the host requested the in-arena PRE-MATCH SETUP phase (design/import/formation INSIDE the
+        // arena), enter it BEFORE arming so ArmMultiplayerLive registers the setup-exchange observer and LoadContent
+        // does not spawn until the setup->fight rebuild completes. Flag-gated; a no-op otherwise (spawns as today).
+        if (RequestArenaSetupPhase && GlobalStats.Defaults.EnableArenaCustomFleet)
+            screen.EnterMultiplayerSetupPhase();
         screen.ArmMultiplayerLive(new ArenaMultiplayerLiveSession(role, transport, settings));
         if (LaunchScreenOverrideForHeadless != null)
             LaunchScreenOverrideForHeadless(screen);
