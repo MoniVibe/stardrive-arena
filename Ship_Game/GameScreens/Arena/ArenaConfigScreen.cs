@@ -59,6 +59,13 @@ public sealed class ArenaConfigScreen : GameScreen
             AddPilotScopeRow(panel, y);
         }
 
+        // CUSTOM FLEET master toggle: gates the whole design-in-arena setup flow (the lobby "SETUP:
+        // DESIGN IN ARENA" pill + the in-arena Design/Import/Fleet-page/Ready UI). Default off = today's.
+        y += 70;
+        AddToggleRow(panel, y, "Custom Fleet (design ships in MP)",
+            Arena?.CurrentEnableArenaCustomFleet ?? false,
+            _ => ToggleArenaCustomFleet());
+
         UIList footer = AddList(new Vector2(c.X - 54, panel.Bottom - 62), new Vector2(108, 40));
         footer.Padding = new Vector2(2f, 12f);
         footer.LayoutStyle = ListLayoutStyle.ResizeList;
@@ -104,6 +111,12 @@ public sealed class ArenaConfigScreen : GameScreen
     {
         bool next = !(Arena?.CurrentEnablePilotTraits ?? false);
         Save(Arena != null && Arena.SetEnablePilotTraits(next));
+    }
+
+    void ToggleArenaCustomFleet()
+    {
+        bool next = !(Arena?.CurrentEnableArenaCustomFleet ?? false);
+        Save(Arena != null && Arena.SetEnableArenaCustomFleet(next));
     }
 
     void TogglePilotScope()

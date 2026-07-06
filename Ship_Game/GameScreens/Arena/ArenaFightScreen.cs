@@ -1243,6 +1243,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         {
             GlobalStats.Defaults.EnablePilotTraits    = Career.EnablePilotTraits;
             GlobalStats.Defaults.PilotTraitScopeVessel = Career.PilotTraitScopeVessel;
+            GlobalStats.Defaults.EnableArenaCustomFleet = Career.EnableArenaCustomFleet;
         }
 
         if (!CareerPerksApplied)
@@ -2663,6 +2664,20 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         Career.PilotTraitScopeVessel = shipBound;
         if (GlobalStats.Defaults != null)
             GlobalStats.Defaults.PilotTraitScopeVessel = shipBound;
+        return ManualSaveCareer();
+    }
+
+    // Custom-fleet master toggle. Same persist-and-apply pattern as pilot traits: the career keeps
+    // the choice (ApplyCareer re-applies on load) and it drives GlobalStats.Defaults.EnableArenaCustomFleet,
+    // which gates the whole design-in-arena setup flow (default off = today's behavior).
+    public bool CurrentEnableArenaCustomFleet => GlobalStats.Defaults?.EnableArenaCustomFleet ?? false;
+
+    public bool SetEnableArenaCustomFleet(bool enabled)
+    {
+        Career ??= new ArenaCareer();
+        Career.EnableArenaCustomFleet = enabled;
+        if (GlobalStats.Defaults != null)
+            GlobalStats.Defaults.EnableArenaCustomFleet = enabled;
         return ManualSaveCareer();
     }
 

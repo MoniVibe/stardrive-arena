@@ -134,6 +134,8 @@ public sealed class ArenaCareer
     // so a re-opened career restores its playtest setting. Default false = today's exact behavior.
     [StarData] public bool EnablePilotTraits;
     [StarData] public bool PilotTraitScopeVessel;
+    // Custom-fleet master toggle (design-in-arena setup flow). Same persist/apply pattern; default off.
+    [StarData] public bool EnableArenaCustomFleet;
 
     // BETTING — an open wager on the exact queued next fight option. The stake is deducted
     // immediately; resolving the chosen bout clears this slip and pays only on a win.
