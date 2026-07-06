@@ -280,6 +280,27 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     public void CycleArenaModeForHeadless() => CycleArenaMode();
     public void CycleBudgetForHeadless() => CycleBudget();
     public void SetFleetForHeadless(string[] designNames) => ApplyPickedFleet(designNames);
+
+    // Phase A (SETUP_PHASE_EXEC_PLAN §3) headless seams: prove the JOIN-SIDE design-table transport WITHOUT the
+    // modal/GPU stack, but through the REAL data path. SetLocalRoleForHeadless picks the authoring role;
+    // IngestRemoteLobbyForHeadless mirrors the host's live SessionLobbyMessage handler (the RemotePeers[..] =
+    // LobbyPeer.From(..) line) — feed it a message that has ROUND-TRIPPED through LockstepMessageCodec so the
+    // DesignTable it carries is reconstructed from received BYTES, never a shared in-process object. Then
+    // BuildArenaStartForHeadless()/CurrentArenaSettingsForHeadless exercises UnionRemoteDesignTables +
+    // BuildArenaSettings for real. BuildLocalDesignTableForHeadless exposes the local scratch table so a proof
+    // can build the "joiner" side's wire payload the exact way SendLocalLobby does.
+    public void SetLocalRoleForHeadless(ArenaMultiplayerRole role) => LocalRole = role;
+    public string BuildLocalDesignTableForHeadless() => BuildLocalDesignTable();
+    public string RemoteDesignTableUnionForHeadless() => UnionRemoteDesignTables();
+    public string FirstRemotePeerDesignTableForHeadless()
+        => RemotePeers.OrderBy(p => p.Key).Select(p => p.Value?.DesignTable ?? "").FirstOrDefault() ?? "";
+    public string[] ToWireFleetNamesForHeadless(string[] displayNames) => ToWireFleetNames(displayNames);
+    public void IngestRemoteLobbyForHeadless(SessionLobbyMessage lobby)
+    {
+        RemotePeers[lobby.PeerId] = LobbyPeer.From(lobby, $"P{lobby.PeerId}");
+        RefreshPrimaryRemotePeer();
+    }
+
     public ArenaFleetPickerScreen OpenFleetPickerForHeadless()
     {
         string[] options = FleetPickerOptions();
@@ -764,7 +785,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         TeardownSandboxScratchSet();
         if (!GlobalStats.Defaults.EnableArenaCustomFleet)
             return;
-        var toRegister = new List<IShipDesign>();
+        var toRegister = new List<Ship_Game.Ships.ShipDesign>();
         foreach (string display in displayNames)
         {
             if (!ResourceManager.Ships.GetDesign(display, out IShipDesign design))
@@ -773,12 +794,20 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             // set; anything else stays a plain stock reference.
             if (ArenaDesignTable.ValidateContentAvailable(design).NotEmpty())
                 continue;
-            SandboxDisplayToWire[display] = ArenaDesignTable.ContentName(design);
-            toRegister.Add(design);
+            // Register under the @arena/<hash> CONTENT name (not the display name). RegisterTransient only accepts
+            // @arena/-prefixed designs (its defensive guard, matching Decode's re-derive), so we must CLONE the
+            // picked design and rename the clone to its content name before registering — exactly the same
+            // canonicalization the JOIN side does when it reconstructs from received bytes. Registering the raw
+            // display-named object is a no-op (RegisterTransient skips it), which would leave the scratch set —
+            // and thus BuildLocalDesignTable — empty. Clone so the player's saved/stock design keeps its name.
+            string wire = ArenaDesignTable.ContentName(design);
+            SandboxDisplayToWire[display] = wire;
+            var scratch = ((Ship_Game.Ships.ShipDesign)design).GetClone(wire);
+            scratch.Name = wire;
+            toRegister.Add(scratch);
         }
         if (toRegister.Count > 0)
-            SandboxRegisteredNames = ArenaDesignTable.RegisterTransient(
-                toRegister.Select(d => (Ship_Game.Ships.ShipDesign)d));
+            SandboxRegisteredNames = ArenaDesignTable.RegisterTransient(toRegister);
     }
 
     // Undo the transient registration and clear the display->wire map. Safe to call repeatedly; targets the
@@ -813,6 +842,34 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             if (ResourceManager.Ships.GetDesign(wire, out IShipDesign d))
                 designs.Add(d);
         return designs.Count > 0 ? ArenaDesignTable.Encode(designs) : "";
+    }
+
+    // Phase A (SETUP_PHASE_EXEC_PLAN §3.2/§3.3): the JOIN-SIDE transport fix. Union every REMOTE peer's design
+    // table (each carries its OWN customs, published in SendLocalLobby) into the single JoinDesignTable the host
+    // folds into the authoritative start. Decode-all-then-Encode-union: the container is dedup-by-content-name
+    // and order-independent, so decoding each remote table's reconstructed designs and re-Encoding yields a
+    // stable union. Any single remote table that fails to decode is skipped (its custom simply won't resolve at
+    // the handshake — a clean rejection, never a desync). "" when no remote fielded a custom / the flag is off.
+    // N-peer: iterating RemotePeers (sorted by id) unions all joiners; at N=2 this is the single joiner's table.
+    string UnionRemoteDesignTables()
+    {
+        if (!GlobalStats.Defaults.EnableArenaCustomFleet)
+            return "";
+        var union = new List<IShipDesign>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (KeyValuePair<int, LobbyPeer> kv in RemotePeers.OrderBy(p => p.Key))
+        {
+            string table = kv.Value?.DesignTable ?? "";
+            if (table.IsEmpty())
+                continue;
+            ArenaDesignTable.DecodeResult decoded = ArenaDesignTable.Decode(table);
+            if (!decoded.Ok)
+                continue; // a malformed remote table simply won't resolve at the handshake; never crash here.
+            foreach (KeyValuePair<string, Ship_Game.Ships.ShipDesign> d in decoded.Designs)
+                if (seen.Add(d.Key))
+                    union.Add(d.Value);
+        }
+        return union.Count > 0 ? ArenaDesignTable.Encode(union) : "";
     }
 
     void AddField(float x, float y, string label, string value, out UITextEntry entry,
@@ -1358,6 +1415,11 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             // Custom-fleet slice: peers must key on the @arena/<hash> WIRE names (which they resolve against the
             // exchanged design table), not the local display names. No-op mapping when nothing custom is fielded.
             Fleet = ArenaMultiplayerSettings.EncodeFleet(ToWireFleetNames(LocalPeer.FleetDesignNames)),
+            // Phase A (SETUP_PHASE_EXEC_PLAN §3): publish this peer's OWN full canonical design-table payloads
+            // alongside its wire names, so a JOINER's customs reach the host over the lobby sync. The host folds
+            // every remote peer's table into JoinDesignTable in BuildArenaSettings. "" when nothing custom is
+            // fielded / EnableArenaCustomFleet is off — today's name-only behaviour unchanged.
+            DesignTable = BuildLocalDesignTable(),
             BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
             BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
         };
@@ -1480,11 +1542,13 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         string[] joinFleet = ArenaFleetOrFallback(RemotePeer.FleetDesignNames,
             seed, RemotePeer.LoadoutTrait, hostSide: false);
         ArenaMultiplayerRuleset ruleset = BuildArenaRuleset();
-        // Custom-fleet slice: carry the LOCAL sandbox design payloads so the far peer reconstructs them. The host
-        // authors the customs in this pass (advisor ruling risk 4: join-side custom payloads over the lobby sync
-        // are a bounded next-phase extension — the fleet name list transports, the payload does not yet). Empty
-        // when nothing custom is fielded / the flag is off. The far peer's RegisterPeerDesignTables consumes both.
+        // Custom-fleet exchange: carry BOTH sides' full design payloads so either peer reconstructs the other's
+        // customs. localDesignTable is THIS peer's own scratch customs; remoteDesignTable is the UNION of every
+        // remote peer's published table (Phase A: the joiner's customs now reach the host over the lobby sync —
+        // SETUP_PHASE_EXEC_PLAN §3, the confirmed gap). Empty when nothing custom is fielded / the flag is off.
+        // The far peer's RegisterPeerDesignTables consumes both tables bidirectionally before ValidateStartMessage.
         string localDesignTable = BuildLocalDesignTable();
+        string remoteDesignTable = UnionRemoteDesignTables();
         // Fallback COMPOSER (advisor ruling A/B): zero-offset column bundles from the resolved wire names — the
         // proven deterministic formation. Real FleetDesignScreen/ShipDesignScreen-from-lobby are DEFERRED.
         return new ArenaMultiplayerSettings
@@ -1511,8 +1575,13 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             Ruleset = ruleset,
             HostFleetBundle = ArenaFleetBundle.Encode(ArenaFleetBundle.FromDesignNames(hostFleet)),
             JoinFleetBundle = ArenaFleetBundle.Encode(ArenaFleetBundle.FromDesignNames(joinFleet)),
-            HostDesignTable = LocalRole == ArenaMultiplayerRole.Host ? localDesignTable : "",
-            JoinDesignTable = LocalRole == ArenaMultiplayerRole.Join ? localDesignTable : "",
+            // HostDesignTable = the HOST peer's customs; JoinDesignTable = the JOINER(s)' customs. When THIS peer
+            // is the host, its own scratch set is the host table and the union of remote tables is the join table
+            // (Phase A: the joiner's payloads now arrive over the lobby sync). When THIS peer is a joiner, its own
+            // scratch set is the join table and the remote (host) table is the host table. RegisterPeerDesignTables
+            // registers both bidirectionally, so both peers reconstruct every custom before ValidateStartMessage.
+            HostDesignTable = LocalRole == ArenaMultiplayerRole.Host ? localDesignTable : remoteDesignTable,
+            JoinDesignTable = LocalRole == ArenaMultiplayerRole.Host ? remoteDesignTable : localDesignTable,
         }.WithResolvedFleets();
     }
 
@@ -2734,6 +2803,10 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         public string LoadoutTrait = "";
         public string TraitOptions = "";
         public string[] FleetDesignNames = Array.Empty<string>();
+        // Phase A (SETUP_PHASE_EXEC_PLAN §3): the peer's full canonical design-table payloads (the @arena/<hash>
+        // customs its FleetDesignNames reference). Carried so a remote JOINER's customs reach the host, which
+        // unions every remote peer's table into JoinDesignTable. "" when the peer fielded nothing custom.
+        public string DesignTable = "";
         public string BuildHash = "";
         public string BuildSummary = "";
 
@@ -2750,6 +2823,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                 LoadoutTrait = ArenaMultiplayerSettings.NormalizeLoadoutTrait(message.LoadoutTrait),
                 TraitOptions = message.TraitOptions ?? "",
                 FleetDesignNames = ArenaMultiplayerSettings.DecodeFleet(message.Fleet),
+                DesignTable = message.DesignTable ?? "",
                 BuildHash = message.BuildHash ?? "",
                 BuildSummary = message.BuildSummary ?? "",
             };

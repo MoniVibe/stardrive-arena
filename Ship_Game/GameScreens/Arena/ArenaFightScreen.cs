@@ -4616,6 +4616,53 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         ScreenManager.AddScreen(designer);
     }
 
+    // PRE-MATCH SETUP PHASE — BUILD-ANEW (§1.2): launch the REAL base ShipDesignScreen against the arena
+    // universe (identical ctor to OpenCustomizerForActiveVessel above — no fork), but REROUTE the capture seam
+    // to CaptureSetupDesign (NOT AdoptDesignerChoice, which writes the career vessel record + CareerManager.Save
+    // = 4X/career pollution). The captured in-memory design is canonicalized into the sandbox scratch set under
+    // its @arena/<hash> name (playerDesign:false, readOnly:true) — never Saved Designs / the 4X.
+    public void OpenArenaSetupDesigner(IShipDesign seed = null)
+    {
+        if (EmpireUI == null)
+        {
+            Log.Warning("ArenaFightScreen: EmpireUI null; cannot open the arena setup ship designer.");
+            return;
+        }
+        var designer = new ShipDesignScreen(this, EmpireUI);
+        if (seed != null)
+            TryLoadDesignerOpeningDesign(designer, seed);
+        // REROUTE: capture into the arena scratch set, NOT the career vessel. The base save may still write the
+        // player-typed .design into SP Saved Designs (resolution (A) quarantine-in-place, see the report) — that
+        // template is a harmless legal stock-namespace design; the arena sim only ever references the @arena/ name.
+        designer.OnExit += () => CaptureSetupDesign(designer.CurrentDesign as IShipDesign);
+        ScreenManager.AddScreen(designer);
+    }
+
+    // PRE-MATCH SETUP PHASE — PLACE-FORMATION (§1.4): launch the REAL base FleetDesignScreen against the arena
+    // universe (identical ctor to UniverseScreen.HandleInput.cs:89 — no fork), roster PRE-SCOPED to the
+    // budget-affordable scratch designs (Player.ShipsWeCanBuild seeded under the @arena/<hash> wire names by
+    // CaptureSetupDesign's UnlockScratchDesignForArenaDesigner). On exit, project the authored Fleet to the
+    // canonical bundle via CaptureSetupFormation (ArenaFleetBundle.FromFleet — the SAME projection the base
+    // fleet-save uses), captured IN-MEMORY so no .fleet is written to the 4X fleet-designs dir.
+    public void OpenArenaSetupFormation()
+    {
+        if (EmpireUI == null)
+        {
+            Log.Warning("ArenaFightScreen: EmpireUI null; cannot open the arena setup formation editor.");
+            return;
+        }
+        // Refresh the buildable roster to the current scratch set before constructing the editor (the ctor reads
+        // Player.ShipsWeCanBuild). The scratch designs were already unlocked per-design at capture time.
+        ArenaPlayer?.UpdateShipsWeCanBuild(new Array<string>());
+        var editor = new FleetDesignScreen(this, EmpireUI);
+        editor.OnExit += () =>
+        {
+            if (editor.SelectedFleet != null)
+                CaptureSetupFormation(editor.SelectedFleet);
+        };
+        ScreenManager.AddScreen(editor);
+    }
+
     static bool TryLoadDesignerOpeningDesign(ShipDesignScreen designer, IShipDesign design)
     {
         if (designer == null || design == null || LoadDesignOnOpenMethod == null)

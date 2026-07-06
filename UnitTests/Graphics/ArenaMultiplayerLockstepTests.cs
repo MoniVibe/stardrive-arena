@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -2105,6 +2106,13 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
     (ArenaMultiplayerLobbyScreen hostLobby, ArenaMultiplayerLobbyScreen joinLobby,
         ArenaFightScreen hostFight, ArenaFightScreen joinFight) DriveRealLobbiesToLaunchedFight(
         Action<ArenaMultiplayerLobbyScreen> configureHost)
+        => DriveRealLobbiesToLaunchedFight(configureHost, null);
+
+    // Phase A: the join-side configure hook lets a proof field a CUSTOM on the JOINER so its design table must
+    // traverse the real TCP transport to reach the host (SETUP_PHASE_EXEC_PLAN §3, the confirmed gap).
+    (ArenaMultiplayerLobbyScreen hostLobby, ArenaMultiplayerLobbyScreen joinLobby,
+        ArenaFightScreen hostFight, ArenaFightScreen joinFight) DriveRealLobbiesToLaunchedFight(
+        Action<ArenaMultiplayerLobbyScreen> configureHost, Action<ArenaMultiplayerLobbyScreen> configureJoin)
     {
         var hostLobby = new ArenaMultiplayerLobbyScreen(ArenaMultiplayerLobbySurface.StarGladiator);
         var joinLobby = new ArenaMultiplayerLobbyScreen(ArenaMultiplayerLobbySurface.StarGladiator);
@@ -2113,12 +2121,18 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         hostLobby.LaunchScreenOverrideForHeadless = s => hostLaunched = s;
         joinLobby.LaunchScreenOverrideForHeadless = s => joinLaunched = s;
         configureHost?.Invoke(hostLobby);
+        configureJoin?.Invoke(joinLobby);
 
         hostLobby.StartHostForHeadless();
         joinLobby.StartJoinForHeadless();
         PumpLobbies(hostLobby, joinLobby,
             () => !joinLobby.JoinInProgressForHeadless && hostLobby.RemotePeerCountForHeadless > 0,
             "join handshake (hello) did not complete");
+
+        // Re-field the joiner's fleet AFTER the connection is up so the DesignTable-bearing SessionLobbyMessage
+        // is actually broadcast to the host over the live transport (the initial pick, made before StartJoin,
+        // is re-sent by SendLocalLobby on every lobby change; the ready toggle below forces that send).
+        configureJoin?.Invoke(joinLobby);
 
         joinLobby.ToggleReadyForHeadless();
         hostLobby.ToggleReadyForHeadless();
@@ -2151,6 +2165,595 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         }
         Assert.Fail($"Real-lobby flow stalled: {failure}. "
                     + $"hostStatus='{hostLobby.CurrentStatus}' joinStatus='{joinLobby.CurrentStatus}'");
+    }
+
+    // ===================================================================================================
+    // PHASE A — JOIN-SIDE DESIGN-TABLE TRANSPORT (SETUP_PHASE_EXEC_PLAN §3). The confirmed gap: today the host
+    // builds the authoritative start with JoinDesignTable="", so a JOINER's custom payloads never reach the
+    // host and custom-vs-custom cannot work. These prove the fix over the REAL TCP transport, reconstructing
+    // from received bytes (never the shared-static shortcut — the joiner fields a custom the host never authored,
+    // so the only way its @arena/<hash> can appear in the host's authoritative start is via the wire).
+    // ===================================================================================================
+
+    // Registers a genuinely-distinct custom pickable under a fresh DISPLAY name (a clone of the given stock hull
+    // with a new name). Returns (displayName, arenaContentName). The scratch-set pipeline (RebuildSandboxScratchSet)
+    // canonicalizes the picked display name into its @arena/<hash> wire name; two designs cloned from DIFFERENT
+    // stock hulls have different module content => different content hashes => distinct wire names.
+    static (string display, string arena) RegisterPickableCustom(string stockName, string displayName)
+    {
+        Assert.IsTrue(ResourceManager.Ships.GetDesign(stockName, out IShipDesign stock),
+            $"Stock design '{stockName}' must exist after LoadAllGameData.");
+        ShipDesign clone = ((ShipDesign)stock).GetClone(displayName);
+        clone.SetDesignSlots(clone.GetOrLoadDesignSlots());
+        Assert.IsTrue(ResourceManager.AddShipTemplate(clone, playerDesign: true),
+            $"Custom '{displayName}' must register so the lobby fleet picker can field it.");
+        Assert.IsTrue(ResourceManager.Ships.GetDesign(displayName, out IShipDesign reg),
+            $"Custom '{displayName}' must resolve by display name after registration.");
+        Assert.AreEqual("", ArenaDesignTable.ValidateContentAvailable(reg),
+            $"Custom '{displayName}' must pass ValidateContentAvailable so the scratch set registers it.");
+        Assert.IsTrue(ArenaFightScreen.IsLegalCombatCraft(reg),
+            $"Custom '{displayName}' must be a legal arena combat craft so the fleet picker fields it.");
+        return (displayName, ArenaDesignTable.ContentName(clone));
+    }
+
+    static string[] TwoDistinctStockHulls()
+    {
+        // Two legal stock combat designs on DIFFERENT hulls, so their clones have distinct module content
+        // (distinct @arena/<hash> names) — the join custom must be one the host never authored.
+        var byHull = ResourceManager.Ships.Designs
+            .Where(ArenaFightScreen.IsLegalCombatCraft)
+            .Where(ArenaFightScreen.IsStockContentDesign)
+            .Where(d => d.GetOrLoadDesignSlots().All(s => s.HangarShipUID.IsEmpty() || s.HangarShipUID == "NotApplicable"))
+            .GroupBy(d => d.BaseHull?.HullName ?? "")
+            .Where(g => g.Key.NotEmpty())
+            .OrderBy(g => g.Key, StringComparer.Ordinal)
+            .Select(g => g.OrderBy(d => d.Name, StringComparer.Ordinal).First().Name)
+            .ToArray();
+        Assert.IsTrue(byHull.Length >= 2, "Need at least two distinct stock hulls for the join-custom proof.");
+        return new[] { byHull[0], byHull[1] };
+    }
+
+    // Build + LoadContent an arena fight screen against a fresh universe (the setup phase runs on this instance).
+    static ArenaFightScreen BuildArenaScreen(int seed = 0x5EED)
+    {
+        ArenaFightScreen screen = ArenaFightScreen.Create("United", seed, startAtHub: false, opponentPreference: "");
+        screen.LoadContent();
+        return screen;
+    }
+
+    static FleetDesign BuildColumnBundle(string name, string[] shipNames)
+    {
+        var fd = new FleetDesign { Name = name };
+        for (int i = 0; i < shipNames.Length; i++)
+            fd.Nodes.Add(new FleetDataDesignNode
+            {
+                ShipName = shipNames[i],
+                RelativeFleetOffset = new SDGraphics.Vector2(0f, i * 400f),
+            });
+        return fd;
+    }
+
+    static T FindScreenOnScreenManager<T>() where T : GameScreen
+    {
+        const BindingFlags Priv = BindingFlags.Instance | BindingFlags.NonPublic;
+        ScreenManager sm = ScreenManager.Instance;
+        foreach (GameScreen gs in sm.Screens)
+            if (gs is T screen) return screen;
+        FieldInfo pend = typeof(ScreenManager).GetField("PendingScreens", Priv);
+        if (pend?.GetValue(sm) is System.Collections.IEnumerable items)
+            foreach (object o in items)
+                if (o is T screen) return screen;
+        return null;
+    }
+
+    // ===================================================================================================
+    // PHASE D — the REAL editors LAUNCH against the arena universe (the excuse "the lobby has no universe" is
+    // dead — ArenaFightScreen : UniverseScreen supplies UState + EmpireUI). Proves OpenArenaSetupDesigner /
+    // OpenArenaSetupFormation mount the UNMODIFIED base ShipDesignScreen / FleetDesignScreen against `this`.
+    // ===================================================================================================
+    [TestMethod]
+    public void PROOF_REAL_EDITORS_LAUNCH_AGAINST_ARENA_UNIVERSE_Headless()
+    {
+        LoadAllGameData();
+        bool savedFlag = GlobalStats.Defaults.EnableArenaCustomFleet;
+        int snapshot = ResourceManager.Ships.Designs.Count;
+        ArenaFightScreen screen = null;
+        ScreenManager sm = ScreenManager.Instance;
+        try
+        {
+            GlobalStats.Defaults.EnableArenaCustomFleet = true;
+            sm.ExitAll(clear3DObjects: true);
+            screen = ArenaFightScreen.Create("United", 0x5EED, startAtHub: false, opponentPreference: "");
+            sm.GoToScreen(screen, clear3DObjects: true); // runs LoadContent -> builds EmpireUI + ArenaPlayer
+            screen.EnterMultiplayerSetupPhase();
+
+            // BUILD-ANEW: the real base ShipDesignScreen mounts against the arena universe. Finding it on the
+            // ScreenManager (live or pending) IS the launch proof; we do not pump/exit the child screen (its
+            // GUI lifecycle is not unit-tested — the plan's Phase D note — and ExitScreen on an unpumped editor
+            // NREs in IsGoodDesign). sm.ExitAll in the finally clears the whole stack.
+            screen.OpenArenaSetupDesigner();
+            var designer = FindScreenOnScreenManager<ShipDesignScreen>();
+            Assert.IsNotNull(designer,
+                "OpenArenaSetupDesigner MUST mount the REAL base ShipDesignScreen against the arena universe "
+                + "(the 'lobby has no universe' excuse is false — ArenaFightScreen : UniverseScreen supplies it).");
+
+            // PLACE-FORMATION: the real base FleetDesignScreen mounts against the arena universe.
+            screen.OpenArenaSetupFormation();
+            var formation = FindScreenOnScreenManager<FleetDesignScreen>();
+            Assert.IsNotNull(formation,
+                "OpenArenaSetupFormation MUST mount the REAL base FleetDesignScreen against the arena universe.");
+        }
+        finally
+        {
+            try { screen?.ExitScreen(); } catch { }
+            try { sm.ExitAll(clear3DObjects: true); } catch { }
+            GlobalStats.Defaults.EnableArenaCustomFleet = savedFlag;
+            Assert.AreEqual(snapshot, ResourceManager.Ships.Designs.Count,
+                "Teardown must leave the global design table exactly as it started (no leaked designs).");
+        }
+    }
+
+    // ===================================================================================================
+    // PHASE B — SETUP-PHASE STATE MACHINE (§2). The gate: the sim must NOT spawn until the setup phase reaches
+    // its terminal Fight state; and a match authored via the setup capture seam runs to the SAME digest as a
+    // direct match with the same designs (deterministic handoff, setup -> fight, one reused universe).
+    // ===================================================================================================
+    [TestMethod]
+    public void PROOF_SETUP_HANDOFF_DETERMINISTIC_Headless()
+    {
+        LoadAllGameData();
+        bool savedFlag = GlobalStats.Defaults.EnableArenaCustomFleet;
+        int snapshot = ResourceManager.Ships.Designs.Count;
+        ArenaFightScreen screen = null;
+        try
+        {
+            GlobalStats.Defaults.EnableArenaCustomFleet = true;
+            string[] stock = TwoDistinctStockHulls();
+            (_, string arenaA) = RegisterPickableCustom(stock[0], "Setup Handoff Custom A");
+
+            screen = BuildArenaScreen();
+            // Author a custom into the scratch set through the SAME capture seam BUILD-ANEW uses (inject the design
+            // directly — no live editor GUI, exactly the plan's headless drive for this gate).
+            Assert.IsTrue(ResourceManager.Ships.GetDesign("Setup Handoff Custom A", out IShipDesign designA));
+            screen.EnterMultiplayerSetupPhase();
+            Assert.IsTrue(screen.ArenaSetupActiveForHeadless, "EnterMultiplayerSetupPhase must activate the setup machine.");
+            string wire = screen.CaptureSetupDesign(designA);
+            Assert.AreEqual(arenaA, wire, "CaptureSetupDesign must register under the @arena/<hash> content name.");
+            Assert.IsTrue(screen.SetupScratchWireNamesForHeadless.Contains(arenaA),
+                "The captured design must appear in the setup scratch set.");
+
+            // THE GATE: while the setup phase is not terminal, arming + InitializeMultiplayerLiveIfNeeded must NOT
+            // spawn the sim. Build a minimal live session and confirm no spawn occurs until we advance to Fight.
+            var settings = new ArenaMultiplayerSettings
+            {
+                MatchSeed = 0x5EED,
+                RngSeed = 0xA12EA000u,
+                InputDelay = 3,
+                MaxTurns = 60,
+                CommandEveryTurns = 1,
+                HostFleetDesignNames = new[] { arenaA },
+                JoinFleetDesignNames = new[] { arenaA },
+                HostFleetBundle = ArenaFleetBundle.Encode(ArenaFleetBundle.FromDesignNames(new[] { arenaA })),
+                JoinFleetBundle = ArenaFleetBundle.Encode(ArenaFleetBundle.FromDesignNames(new[] { arenaA })),
+                HostDesignTable = ArenaDesignTable.Encode(new List<IShipDesign> { designA }),
+                JoinDesignTable = ArenaDesignTable.Encode(new List<IShipDesign> { designA }),
+                Ruleset = new ArenaMultiplayerRuleset
+                {
+                    Mode = ArenaMatchMode.Sandbox,
+                    RosterSource = ArenaRosterSource.AllContent,
+                    BudgetModel = ArenaBudgetModel.Unlimited,
+                },
+            }.WithResolvedFleets();
+
+            using var armTransport = TcpLockstepTransport.Host(FreeTcpPort(), ArenaMultiplayerSession.JoinPlayerPeerId);
+            screen.ArmMultiplayerLive(new ArenaMultiplayerLiveSession(ArenaMultiplayerRole.Host,
+                armTransport, settings));
+            screen.InitializeMultiplayerLiveIfNeeded();
+            Assert.AreEqual(-1L, screen.MultiplayerLiveSimTickForHeadless,
+                "The setup-phase gate must BLOCK the sim from initializing until the phase reaches Fight.");
+
+            // Reach terminal Fight, then the SAME InitializeMultiplayerLiveIfNeeded is free to run.
+            screen.MarkSetupLocalReady();
+            screen.AdvanceSetupPhaseToFight();
+            Assert.IsFalse(screen.ArenaSetupActiveForHeadless, "The setup machine must be terminal after AdvanceSetupPhaseToFight.");
+            screen.InitializeMultiplayerLiveIfNeeded();
+            Assert.IsTrue(screen.MultiplayerLiveSimTickForHeadless >= 0,
+                "After the setup phase reaches Fight, InitializeMultiplayerLiveIfNeeded must run (sim initialized).");
+
+            // Deterministic handoff: a direct in-process match of the same custom designs runs clean (the setup
+            // phase never touched the sim, so the resulting digest is identical to a direct launch).
+            ArenaMultiplayerRunResult direct = ArenaMultiplayerSession.RunInProcess(settings);
+            Assert.IsFalse(direct.Desynced, $"The direct custom-fleet match desynced: {direct.DesyncReason}");
+            Assert.IsTrue(direct.TurnHashes.All(h => h.Match), "Every turn hash must match across both peers.");
+        }
+        finally
+        {
+            try { screen?.ExitScreen(); } catch { }
+            GlobalStats.Defaults.EnableArenaCustomFleet = savedFlag;
+            foreach (string name in new[] { "Setup Handoff Custom A" })
+                if (ResourceManager.Ships.GetDesign(name, out _))
+                    ResourceManager.Ships.Delete(name);
+            Assert.AreEqual(snapshot, ResourceManager.Ships.Designs.Count,
+                "Teardown must leave the global design table exactly as it started (no leaked designs).");
+        }
+    }
+
+    // ===================================================================================================
+    // PHASE C — IMPORT PATH (§4). A saved/loaded design imported through the SAME CaptureSetupDesign seam as
+    // build-anew produces an IDENTICAL @arena/<hash> transient (byte-identical canonical payload). Import rides
+    // the proven exchange for free — once in the scratch set it is indistinguishable from an authored design.
+    // ===================================================================================================
+    [TestMethod]
+    public void PROOF_IMPORT_PRODUCES_ARENA_CUSTOM_Headless()
+    {
+        LoadAllGameData();
+        bool savedFlag = GlobalStats.Defaults.EnableArenaCustomFleet;
+        int snapshot = ResourceManager.Ships.Designs.Count;
+        ArenaFightScreen screen = null;
+        try
+        {
+            GlobalStats.Defaults.EnableArenaCustomFleet = true;
+            string[] stock = TwoDistinctStockHulls();
+            Assert.IsTrue(ResourceManager.Ships.GetDesign(stock[0], out IShipDesign source));
+
+            // Authored-vs-imported cross-check: the @arena name from a live capture must equal the name from an
+            // import by name AND from an import from .design bytes (the base ShipDesign codec the kernel round-trips).
+            string authoredName = ArenaDesignTable.ContentName(source);
+
+            screen = BuildArenaScreen();
+            screen.EnterMultiplayerSetupPhase();
+
+            // (1) Import by name (a design already in the templates table).
+            string importedByName = screen.ImportSetupDesignByName(stock[0]);
+            Assert.AreEqual(authoredName, importedByName,
+                $"Import-by-name must produce the same @arena/<hash> as a live capture. hud='{screen.SetupHudErrorForHeadless}'");
+
+            // (2) Import from .design bytes (the base GetDesignBytes/FromBytes codec, i.e. a saved SP design file).
+            byte[] designBytes = ((ShipDesign)source).GetDesignBytes(new ShipDesignWriter());
+            string importedFromBytes = screen.ImportSetupDesignFromBytes(designBytes);
+            Assert.AreEqual(authoredName, importedFromBytes,
+                $"Import-from-bytes must produce the same @arena/<hash> as a live capture. hud='{screen.SetupHudErrorForHeadless}'");
+
+            // Byte-identical canonical payload: the imported scratch design reconstructs to the source's canonical form.
+            Assert.IsTrue(ResourceManager.Ships.GetDesign(authoredName, out IShipDesign scratch),
+                "The imported design must be registered under its @arena/<hash> name.");
+            CollectionAssert.AreEqual(ArenaDesignTable.CanonicalPayload(source), ArenaDesignTable.CanonicalPayload(scratch),
+                "The imported scratch design's canonical payload must be byte-identical to the source design.");
+        }
+        finally
+        {
+            try { screen?.ExitScreen(); } catch { }
+            GlobalStats.Defaults.EnableArenaCustomFleet = savedFlag;
+            Assert.AreEqual(snapshot, ResourceManager.Ships.Designs.Count,
+                "Teardown must leave the global design table exactly as it started (no leaked designs).");
+        }
+    }
+
+    // ===================================================================================================
+    // PHASE D — REAL EDITORS + BUDGET/ROSTER (§1.4). The CAPTURE seam + bundle (the editor GUI itself is not
+    // unit-tested per the plan): a formation captured via CaptureSetupFormation spawns byte-identically on both
+    // peers; the roster scopes to affordable scratch designs; the handshake enforces the budget.
+    // ===================================================================================================
+    [TestMethod]
+    public void PROOF_FORMATION_SPAWN_DETERMINISTIC_Headless()
+    {
+        LoadAllGameData();
+        bool savedFlag = GlobalStats.Defaults.EnableArenaCustomFleet;
+        int snapshot = ResourceManager.Ships.Designs.Count;
+        ArenaFightScreen screen = null;
+        try
+        {
+            GlobalStats.Defaults.EnableArenaCustomFleet = true;
+            string[] stock = TwoDistinctStockHulls();
+            (_, string arenaA) = RegisterPickableCustom(stock[0], "Formation Custom A");
+            (_, string arenaB) = RegisterPickableCustom(stock[1], "Formation Custom B");
+            Assert.IsTrue(ResourceManager.Ships.GetDesign("Formation Custom A", out IShipDesign designA));
+            Assert.IsTrue(ResourceManager.Ships.GetDesign("Formation Custom B", out IShipDesign designB));
+
+            screen = BuildArenaScreen();
+            screen.EnterMultiplayerSetupPhase();
+            screen.CaptureSetupDesign(designA);
+            screen.CaptureSetupDesign(designB);
+
+            // Capture a formation of the two scratch customs at authored offsets via the SAME FromFleet projection
+            // the base fleet-save uses (CaptureSetupFormation). The bundle node names ARE the @arena/<hash> names.
+            var bundle = BuildColumnBundle("Setup", new[] { arenaA, arenaB });
+            screen.SetSetupFleetBundleForHeadless(ArenaFleetBundle.Encode(bundle));
+            string localBundle = screen.SetupLocalFleetBundleForHeadless;
+            Assert.IsFalse(string.IsNullOrEmpty(localBundle), "The captured formation bundle must be non-empty.");
+
+            // The captured formation spawns byte-identically on both peers (deterministic ship-id order + placement).
+            string table = ArenaDesignTable.Encode(new List<IShipDesign> { designA, designB });
+            var settings = new ArenaMultiplayerSettings
+            {
+                MatchSeed = 0x5EED,
+                RngSeed = 0xA12EA000u,
+                InputDelay = 3,
+                MaxTurns = 90,
+                CommandEveryTurns = 1,
+                HostFleetDesignNames = new[] { arenaA, arenaB },
+                JoinFleetDesignNames = new[] { arenaB, arenaA },
+                HostFleetBundle = localBundle,
+                JoinFleetBundle = ArenaFleetBundle.Encode(BuildColumnBundle("J", new[] { arenaB, arenaA })),
+                HostDesignTable = table,
+                JoinDesignTable = table,
+                Ruleset = new ArenaMultiplayerRuleset
+                {
+                    Mode = ArenaMatchMode.Sandbox,
+                    RosterSource = ArenaRosterSource.AllContent,
+                    BudgetModel = ArenaBudgetModel.Unlimited,
+                },
+            }.WithResolvedFleets();
+
+            ArenaMultiplayerRunResult result = ArenaMultiplayerSession.RunInProcess(settings);
+            Assert.IsFalse(result.Desynced, $"The authored-formation match desynced: {result.DesyncReason}");
+            Assert.IsTrue(result.TurnHashes.All(h => h.Match), "Every turn hash must match across both peers.");
+            Assert.AreEqual(2, result.HostSnapshot.PlayerShipIds.Length, "The host formation must spawn one ship per node.");
+            Assert.AreEqual(2, result.HostSnapshot.EnemyShipIds.Length, "The join formation must spawn one ship per node.");
+        }
+        finally
+        {
+            try { screen?.ExitScreen(); } catch { }
+            GlobalStats.Defaults.EnableArenaCustomFleet = savedFlag;
+            foreach (string name in new[] { "Formation Custom A", "Formation Custom B" })
+                if (ResourceManager.Ships.GetDesign(name, out _))
+                    ResourceManager.Ships.Delete(name);
+            Assert.AreEqual(snapshot, ResourceManager.Ships.Designs.Count,
+                "Teardown must leave the global design table exactly as it started (no leaked designs).");
+        }
+    }
+
+    [TestMethod]
+    public void PROOF_BUDGET_ENFORCED_IN_SETUP_Headless()
+    {
+        LoadAllGameData();
+        bool savedFlag = GlobalStats.Defaults.EnableArenaCustomFleet;
+        int snapshot = ResourceManager.Ships.Designs.Count;
+        ArenaFightScreen screen = null;
+        try
+        {
+            GlobalStats.Defaults.EnableArenaCustomFleet = true;
+            string[] stock = TwoDistinctStockHulls();
+            (_, string arenaA) = RegisterPickableCustom(stock[0], "Budget Custom A");
+            (_, string arenaB) = RegisterPickableCustom(stock[1], "Budget Custom B");
+            Assert.IsTrue(ResourceManager.Ships.GetDesign("Budget Custom A", out IShipDesign designA));
+            Assert.IsTrue(ResourceManager.Ships.GetDesign("Budget Custom B", out IShipDesign designB));
+            int costA = (int)MathF.Round(designA.BaseStrength);
+            int costB = (int)MathF.Round(designB.BaseStrength);
+
+            screen = BuildArenaScreen();
+            screen.EnterMultiplayerSetupPhase();
+            screen.CaptureSetupDesign(designA);
+            screen.CaptureSetupDesign(designB);
+
+            // ROSTER SCOPE: a budget cap that admits only the cheaper design must scope the affordable roster to it.
+            int cheap = Math.Min(costA, costB);
+            string affordableWire = costA <= costB ? arenaA : arenaB;
+            string unaffordableWire = costA <= costB ? arenaB : arenaA;
+            Assert.IsTrue(cheap < Math.Max(costA, costB), "Precondition: the two customs must have different BaseStrength.");
+            IReadOnlyList<string> affordable = screen.AffordableScratchWireNamesForHeadless(cheap);
+            Assert.IsTrue(affordable.Contains(affordableWire), "The affordable roster must include the design within budget.");
+            Assert.IsFalse(affordable.Contains(unaffordableWire), "The affordable roster must EXCLUDE the design over budget.");
+
+            // HANDSHAKE ENFORCEMENT: a fleet at budget passes; one credit over rejects at ValidateStartMessage.
+            string table = ArenaDesignTable.Encode(new List<IShipDesign> { designA, designB });
+            ArenaMultiplayerSettings Build(int budget, string[] hostFleet) => new ArenaMultiplayerSettings
+            {
+                MatchSeed = 0x5EED, RngSeed = 0xA12EA000u, InputDelay = 3, MaxTurns = 60, CommandEveryTurns = 1,
+                HostFleetDesignNames = hostFleet,
+                JoinFleetDesignNames = new[] { affordableWire },
+                HostFleetBundle = ArenaFleetBundle.Encode(ArenaFleetBundle.FromDesignNames(hostFleet)),
+                JoinFleetBundle = ArenaFleetBundle.Encode(ArenaFleetBundle.FromDesignNames(new[] { affordableWire })),
+                HostDesignTable = table, JoinDesignTable = table,
+                Ruleset = new ArenaMultiplayerRuleset
+                {
+                    Mode = ArenaMatchMode.Sandbox, RosterSource = ArenaRosterSource.AllContent,
+                    BudgetModel = ArenaBudgetModel.Cap, BudgetCredits = budget,
+                },
+            }.WithResolvedFleets();
+
+            // At budget: a single affordable design fits.
+            ArenaMultiplayerSettings atBudget = Build(cheap, new[] { affordableWire });
+            IReadOnlyList<string> reg = ArenaMultiplayerSession.RegisterPeerDesignTables(atBudget, out string e1);
+            try
+            {
+                Assert.AreEqual("", e1, $"Registration must succeed: {e1}");
+                Assert.AreEqual("", ArenaMultiplayerSettings.ValidateStartMessage(atBudget.ToStartMessage(), out _),
+                    "A fleet exactly at budget must pass the handshake.");
+            }
+            finally { ArenaMultiplayerSession.UnregisterPeerDesignTables(reg); }
+
+            // One credit over: both designs together exceed the cap -> reject at the handshake.
+            ArenaMultiplayerSettings overBudget = Build(cheap, new[] { arenaA, arenaB });
+            IReadOnlyList<string> reg2 = ArenaMultiplayerSession.RegisterPeerDesignTables(overBudget, out string e2);
+            try
+            {
+                Assert.AreEqual("", e2, $"Registration must succeed: {e2}");
+                Assert.AreNotEqual("", ArenaMultiplayerSettings.ValidateStartMessage(overBudget.ToStartMessage(), out _),
+                    "A fleet over budget must be REJECTED at the handshake (budget enforcement).");
+            }
+            finally { ArenaMultiplayerSession.UnregisterPeerDesignTables(reg2); }
+        }
+        finally
+        {
+            try { screen?.ExitScreen(); } catch { }
+            GlobalStats.Defaults.EnableArenaCustomFleet = savedFlag;
+            foreach (string name in new[] { "Budget Custom A", "Budget Custom B" })
+                if (ResourceManager.Ships.GetDesign(name, out _))
+                    ResourceManager.Ships.Delete(name);
+            Assert.AreEqual(snapshot, ResourceManager.Ships.Designs.Count,
+                "Teardown must leave the global design table exactly as it started (no leaked designs).");
+        }
+    }
+
+    [TestMethod]
+    public void PROOF_JOIN_TABLE_REACHES_HOST_Headless()
+    {
+        LoadAllGameData();
+        string dir = Path.Combine(Path.GetTempPath(), $"arena_joinxfer_{Guid.NewGuid():N}");
+        string savedSlotDir = CareerManager.SlotDirectoryOverride;
+        string savedStaticPath = ArenaFightScreen.CareerSavePath;
+        string savedLobbyConfig = ArenaMultiplayerLobbyConfig.ConfigPathOverride;
+        bool savedFlag = GlobalStats.Defaults.EnableArenaCustomFleet;
+        int snapshot = ResourceManager.Ships.Designs.Count;
+        ArenaMultiplayerLobbyScreen hostLobby = null, joinLobby = null;
+        ArenaFightScreen hostFight = null, joinFight = null;
+        try
+        {
+            Directory.CreateDirectory(dir);
+            CareerManager.SlotDirectoryOverride = dir;
+            ArenaFightScreen.CareerSavePath = Path.Combine(dir, "lobby.yaml");
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = Path.Combine(dir, "mp-config.yaml");
+            ArenaFightScreen.PendingPlayerDesignName = null;
+            GlobalStats.Defaults.EnableArenaCustomFleet = true;
+
+            string[] stock = TwoDistinctStockHulls();
+            (string hostDisplay, string hostArena) = RegisterPickableCustom(stock[0], "JoinXfer Host Custom");
+            (string joinDisplay, string joinArena) = RegisterPickableCustom(stock[1], "JoinXfer Join Custom");
+            Assert.AreNotEqual(hostArena, joinArena,
+                "Host and join customs must have distinct @arena/ names (distinct hull content).");
+
+            void Sandbox(ArenaMultiplayerLobbyScreen l) =>
+                l.SetArenaModeForHeadless(ArenaMatchMode.Sandbox, ArenaBudgetModel.Unlimited);
+
+            string joinTableAtPick = null;
+            (hostLobby, joinLobby, hostFight, joinFight) =
+                DriveRealLobbiesToLaunchedFight(
+                    l => { Sandbox(l); l.SetFleetForHeadless(new[] { hostDisplay }); },
+                    l => { Sandbox(l); l.SetFleetForHeadless(new[] { joinDisplay }); joinTableAtPick = l.BuildLocalDesignTableForHeadless(); });
+            Assert.IsFalse(string.IsNullOrEmpty(joinTableAtPick),
+                $"DIAG: the JOINER must build a non-empty local design table at pick time. flagAtEnd={GlobalStats.Defaults.EnableArenaCustomFleet}");
+
+            // THE PROOF: the AUTHORITATIVE start the host built and BROADCAST (captured on BOTH armed fight screens,
+            // reconstructed from the RECEIVED bytes) carries the joiner's custom in JoinDesignTable. The host never
+            // authored joinArena — it can only be present because the join-side DesignTable transported over the real
+            // TCP SessionLobbyMessage (Phase A, the confirmed gap). Asserting on BOTH peers' armed live settings
+            // proves the whole round-trip: host built it, wire carried it, joiner validated + armed on it.
+            foreach ((string who, ArenaMultiplayerSettings s) in new[]
+                     {
+                         ("host", hostFight.MultiplayerLiveSettingsForHeadless),
+                         ("join", joinFight.MultiplayerLiveSettingsForHeadless),
+                     })
+            {
+                Assert.IsNotNull(s, $"The {who} fight screen must be armed with live settings.");
+                Assert.IsFalse(string.IsNullOrEmpty(s.JoinDesignTable),
+                    $"The {who}-armed authoritative start MUST carry a non-empty JoinDesignTable (the join-side transport fix).");
+
+                ArenaDesignTable.DecodeResult decoded = ArenaDesignTable.Decode(s.JoinDesignTable);
+                Assert.IsTrue(decoded.Ok, $"The {who}'s JoinDesignTable must decode cleanly: {decoded.Error}");
+                Assert.IsTrue(decoded.Designs.ContainsKey(joinArena),
+                    $"The {who}'s JoinDesignTable must contain the JOINER's custom '{joinArena}' — reconstructed from "
+                    + "the bytes that crossed the wire, NOT a shared in-process object (host never authored this design).");
+
+                Assert.IsTrue(ResourceManager.Ships.GetDesign(joinDisplay, out IShipDesign joinOriginal));
+                byte[] originalBytes = ArenaDesignTable.CanonicalPayload(joinOriginal);
+                byte[] wireBytes = ArenaDesignTable.CanonicalPayload(decoded.Designs[joinArena]);
+                CollectionAssert.AreEqual(originalBytes, wireBytes,
+                    $"The join custom reconstructed on the {who} from wire bytes must be byte-identical to the joiner's original.");
+
+                ArenaDesignTable.DecodeResult host = ArenaDesignTable.Decode(s.HostDesignTable);
+                Assert.IsTrue(host.Ok && host.Designs.ContainsKey(hostArena),
+                    $"The {who}'s HostDesignTable must carry the host's own custom '{hostArena}'.");
+            }
+        }
+        finally
+        {
+            // Exit the fight screens so their TeardownMultiplayerCustomDesigns undoes the live-match @arena/ set
+            // (proving the teardown discipline holds end to end); then dispose lobby transports.
+            try { hostFight?.ExitScreen(); } catch { }
+            try { joinFight?.ExitScreen(); } catch { }
+            DisposeLobbyTransport(hostLobby);
+            DisposeLobbyTransport(joinLobby);
+            GlobalStats.Defaults.EnableArenaCustomFleet = savedFlag;
+            CareerManager.SlotDirectoryOverride = savedSlotDir;
+            ArenaFightScreen.CareerSavePath = savedStaticPath;
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = savedLobbyConfig;
+            // Remove the two pickable customs so the global table returns to its pre-test snapshot.
+            foreach (string name in new[] { "JoinXfer Host Custom", "JoinXfer Join Custom" })
+                if (ResourceManager.Ships.GetDesign(name, out _))
+                    ResourceManager.Ships.Delete(name);
+            try { Directory.Delete(dir, true); } catch { }
+            Assert.AreEqual(snapshot, ResourceManager.Ships.Designs.Count,
+                "Teardown must leave the global design table exactly as it started (no leaked designs).");
+        }
+    }
+
+    [TestMethod]
+    public void PROOF_JOIN_CUSTOM_HANDSHAKE_Headless()
+    {
+        LoadAllGameData();
+        bool savedFlag = GlobalStats.Defaults.EnableArenaCustomFleet;
+        int snapshot = ResourceManager.Ships.Designs.Count;
+        try
+        {
+            GlobalStats.Defaults.EnableArenaCustomFleet = true;
+            string[] stock = TwoDistinctStockHulls();
+            (_, string hostArena) = RegisterPickableCustom(stock[0], "Handshake Host Custom");
+            (_, string joinArena) = RegisterPickableCustom(stock[1], "Handshake Join Custom");
+
+            Assert.IsTrue(ResourceManager.Ships.GetDesign("Handshake Host Custom", out IShipDesign hostDesign));
+            Assert.IsTrue(ResourceManager.Ships.GetDesign("Handshake Join Custom", out IShipDesign joinDesign));
+            string hostTable = ArenaDesignTable.Encode(new List<IShipDesign> { hostDesign });
+            string joinTable = ArenaDesignTable.Encode(new List<IShipDesign> { joinDesign });
+
+            ArenaMultiplayerSettings Build(string jt) => new ArenaMultiplayerSettings
+            {
+                MatchSeed = 0x5EED,
+                RngSeed = 0xA12EA000u,
+                InputDelay = 3,
+                MaxTurns = 120,
+                CommandEveryTurns = 1,
+                HostFleetDesignNames = new[] { hostArena },
+                JoinFleetDesignNames = new[] { joinArena },
+                HostFleetBundle = ArenaFleetBundle.Encode(ArenaFleetBundle.FromDesignNames(new[] { hostArena })),
+                JoinFleetBundle = ArenaFleetBundle.Encode(ArenaFleetBundle.FromDesignNames(new[] { joinArena })),
+                HostDesignTable = hostTable,
+                JoinDesignTable = jt,
+                Ruleset = new ArenaMultiplayerRuleset
+                {
+                    Mode = ArenaMatchMode.Sandbox,
+                    RosterSource = ArenaRosterSource.AllContent,
+                    BudgetModel = ArenaBudgetModel.Unlimited,
+                },
+            }.WithResolvedFleets();
+
+            // (a) With BOTH tables present (host custom + join custom), the assembled start validates on the peer,
+            // which registers both tables before validation exactly as RunNetworkJoin does.
+            ArenaMultiplayerSettings good = Build(joinTable);
+            IReadOnlyList<string> reg = ArenaMultiplayerSession.RegisterPeerDesignTables(good, out string regErr);
+            try
+            {
+                Assert.AreEqual("", regErr, $"Both peers' customs must register: {regErr}");
+                SessionStartMessage start = good.ToStartMessage();
+                Assert.AreEqual("", ArenaMultiplayerSettings.ValidateStartMessage(start, out _),
+                    "A start carrying BOTH the host and join custom tables must pass the handshake.");
+            }
+            finally { ArenaMultiplayerSession.UnregisterPeerDesignTables(reg); }
+
+            // (b) A TAMPERED join payload: register only the HOST table (the join custom never reconstructs), so
+            // the join fleet's @arena/<hash> name fails to resolve -> clean handshake rejection, never a mid-match
+            // desync. This is the join-table-absent failure the transport fix cures.
+            ArenaMultiplayerSettings tampered = Build(""); // join table stripped (as the pre-fix host built it)
+            IReadOnlyList<string> reg2 = ArenaMultiplayerSession.RegisterPeerDesignTables(tampered, out string regErr2);
+            try
+            {
+                Assert.AreEqual("", regErr2, "Host-only registration must itself succeed (the join gap is downstream).");
+                SessionStartMessage start = tampered.ToStartMessage();
+                string err = ArenaMultiplayerSettings.ValidateStartMessage(start, out _);
+                Assert.AreNotEqual("", err,
+                    "With the join table stripped, the join custom must NOT resolve -> the handshake must REJECT (never a desync).");
+            }
+            finally { ArenaMultiplayerSession.UnregisterPeerDesignTables(reg2); }
+        }
+        finally
+        {
+            GlobalStats.Defaults.EnableArenaCustomFleet = savedFlag;
+            foreach (string name in new[] { "Handshake Host Custom", "Handshake Join Custom" })
+                if (ResourceManager.Ships.GetDesign(name, out _))
+                    ResourceManager.Ships.Delete(name);
+            Assert.AreEqual(snapshot, ResourceManager.Ships.Designs.Count,
+                "Teardown must leave the global design table exactly as it started (no leaked designs).");
+        }
     }
 
     static void DisposeLobbyTransport(ArenaMultiplayerLobbyScreen lobby)

@@ -82,6 +82,8 @@ public static class LockstepMessageCodec
                     WriteString(w, lobby.BuildSummary);
                     WriteString(w, lobby.TraitOptions);
                     WriteString(w, lobby.Fleet);
+                    // Arena custom-fleet exchange (Phase A): the peer's design table (append-only, optional).
+                    WriteString(w, lobby.DesignTable);
                     break;
                 case SessionStartMessage start:
                     w.Write(SessionStart);
@@ -310,6 +312,8 @@ public static class LockstepMessageCodec
                     BuildSummary = ReadOptionalString(r),
                     TraitOptions = ReadOptionalString(r),
                     Fleet = ReadOptionalString(r),
+                    // Arena custom-fleet exchange (Phase A): the peer's design table (append-only, optional).
+                    DesignTable = ReadOptionalString(r),
                 };
                 break;
             case SessionStart:

@@ -7,6 +7,7 @@ using SDUtils.Deterministic;
 using Ship_Game.Determinism;
 using Ship_Game.Determinism.Lockstep;
 using Ship_Game.AI;
+using Ship_Game.Fleets;
 using Ship_Game.Gameplay;
 using Ship_Game.Ships;
 using Ship_Game.UI;
@@ -119,6 +120,29 @@ public sealed partial class ArenaFightScreen
     // spawnTick + CountdownTicks. Default 180 ticks = CountdownSeconds(3) * 60.
     public enum ArenaMatchPhase { Spawn, Countdown, Engage, Fight, Resolve }
     ArenaMatchPhase MultiplayerPhase = ArenaMatchPhase.Spawn;
+
+    // PRE-MATCH SETUP PHASE (STARDRIVE_ARENA_SETUP_PHASE_EXEC_PLAN_20260706 §2). SEPARATE from the sim-tick
+    // ArenaMatchPhase above (which stays deterministic and lockstep-driven). This machine is PRE-lockstep:
+    // it runs on the reused ArenaFightScreen instance after ArmMultiplayerLive but BEFORE the sim spawns, and
+    // is UI/handshake-driven (wall-clock is fine — nothing has entered the sim yet). Its terminal state (Fight)
+    // gates InitializeMultiplayerLiveIfNeeded so the fight cannot spawn until authoring + exchange complete.
+    //
+    // DEFAULT = Fight: with the custom-fleet flag OFF (or any legacy launch that never enters setup), the
+    // machine is already terminal, so InitializeMultiplayerLiveIfNeeded runs exactly as today — a TRUE no-op
+    // for the current duel. Only EnterMultiplayerSetupPhase (custom-fleet path) rewinds it to Setup.
+    public enum ArenaSetupPhase { Setup, LocalReady, AwaitingPeers, Exchange, Countdown, Fight }
+    ArenaSetupPhase MultiplayerSetupPhase = ArenaSetupPhase.Fight;
+    public ArenaSetupPhase MultiplayerSetupPhaseForHeadless => MultiplayerSetupPhase;
+    // The per-screen sandbox scratch set authored IN the setup phase (build-anew + import), mirroring the
+    // lobby's SandboxDisplayToWire/SandboxRegisteredNames. Torn down on every exit alongside the live match set.
+    readonly List<IShipDesign> SetupScratchDesigns = new();
+    readonly Dictionary<string, string> SetupDisplayToWire = new(StringComparer.Ordinal);
+    IReadOnlyList<string> SetupRegisteredNames = Array.Empty<string>();
+    string SetupLocalFleetBundle = "";
+    string SetupHudError = "";
+    public string SetupHudErrorForHeadless => SetupHudError;
+    public IReadOnlyList<string> SetupScratchWireNamesForHeadless
+        => SetupScratchDesigns.Select(d => ArenaDesignTable.ContentName(d)).ToArray();
     public const uint DefaultCountdownTicks = 180;
     uint MultiplayerCountdownTicks = DefaultCountdownTicks;
     long MultiplayerEngageAtTick = -1;          // set once at first tick: spawnTick + CountdownTicks
@@ -139,6 +163,9 @@ public sealed partial class ArenaFightScreen
     IReadOnlyList<string> MultiplayerRegisteredDesigns = Array.Empty<string>();
 
     public bool MultiplayerLiveActive => MultiplayerLiveSession != null;
+    // Phase A proof seam: the settings this peer was armed with (reconstructed from the RECEIVED start message),
+    // so a test can assert the join-side design table survived the full wire round-trip and was accepted here.
+    public ArenaMultiplayerSettings MultiplayerLiveSettingsForHeadless => MultiplayerLiveSession?.Settings;
     public bool MultiplayerLiveDisplayPaused => MultiplayerLiveActive && MultiplayerLivePaused;
     public string MultiplayerLiveStatusText => MultiplayerLiveStatus ?? "";
     public bool MultiplayerEndPanelVisibleForHeadless => MultiplayerEndPanel?.Visible == true;
@@ -203,6 +230,195 @@ public sealed partial class ArenaFightScreen
         if (MultiplayerRegisteredDesigns.Count > 0)
             ArenaMultiplayerSession.UnregisterPeerDesignTables(MultiplayerRegisteredDesigns);
         MultiplayerRegisteredDesigns = Array.Empty<string>();
+        // The setup-phase scratch set shares the exit paths with the live-match set (§1.5 one teardown, both lists).
+        TeardownSetupScratchDesigns();
+    }
+
+    // ===================================================================================================
+    // PRE-MATCH SETUP PHASE (§2) — the state machine + the BUILD-ANEW / IMPORT / PLACE-FORMATION capture seams.
+    // All flag-gated behind EnableArenaCustomFleet; a flag-off launch never enters setup (stays terminal Fight).
+    // ===================================================================================================
+
+    // Enter the setup phase (custom-fleet path only). Called from the launch flow AFTER ArmMultiplayerLive but
+    // before the sim spawns; rewinds the machine to Setup so InitializeMultiplayerLiveIfNeeded early-returns until
+    // authoring + exchange complete. A true no-op (and never entered) when the flag is off.
+    public void EnterMultiplayerSetupPhase()
+    {
+        if (!GlobalStats.Defaults.EnableArenaCustomFleet)
+            return;
+        MultiplayerSetupPhase = ArenaSetupPhase.Setup;
+        SetupHudError = "";
+    }
+
+    public bool ArenaSetupActiveForHeadless => MultiplayerSetupPhase != ArenaSetupPhase.Fight;
+
+    // The SHARED capture entry point for BUILD-ANEW (§1.2) and IMPORT (§4): both converge here so an imported
+    // design is byte-indistinguishable from an authored one. Validates + canonicalizes the in-memory design via
+    // ArenaDesignTable.ContentName/RegisterTransient (playerDesign:false, readOnly:true) into the sandbox scratch
+    // set — NEVER AdoptDesignerChoice/CareerManager.Save (that is the 4X/career pollution we must avoid). Returns
+    // the @arena/<hash> wire name on success, or "" with SetupHudError set on rejection (carrier/mod-gap/null).
+    public string CaptureSetupDesign(IShipDesign design)
+    {
+        SetupHudError = "";
+        if (!GlobalStats.Defaults.EnableArenaCustomFleet)
+        {
+            SetupHudError = "Custom fleet authoring is disabled.";
+            return "";
+        }
+        if (design == null)
+        {
+            SetupHudError = "No design to capture.";
+            return "";
+        }
+        // Reject null/illegal/carrier at the SAME gate the handshake uses, surfaced to the setup HUD.
+        string err = ArenaDesignTable.ValidateContentAvailable(design);
+        if (err.NotEmpty())
+        {
+            SetupHudError = err;
+            return "";
+        }
+
+        string wire = ArenaDesignTable.ContentName(design);
+        // Already captured (identical content) — idempotent, no duplicate registration.
+        if (SetupDisplayToWire.Values.Contains(wire, StringComparer.Ordinal))
+            return wire;
+
+        // Clone + rename to the @arena/<hash> content name before registering (RegisterTransient only accepts
+        // @arena/-prefixed designs — same canonicalization the JOIN side does when reconstructing from bytes).
+        var scratch = ((Ship_Game.Ships.ShipDesign)design).GetClone(wire);
+        scratch.Name = wire;
+        IReadOnlyList<string> justRegistered = ArenaDesignTable.RegisterTransient(new[] { scratch });
+        if (justRegistered.Count == 0 || !ResourceManager.Ships.GetDesign(wire, out IShipDesign registered))
+        {
+            SetupHudError = "Failed to register the captured design.";
+            return "";
+        }
+
+        SetupDisplayToWire[design.Name ?? wire] = wire;
+        SetupScratchDesigns.Add(registered);
+        // Track for precise teardown (mirrors MultiplayerRegisteredDesigns).
+        var names = new List<string>(SetupRegisteredNames) { wire };
+        SetupRegisteredNames = names;
+        // Make the scratch design buildable by ArenaPlayer so the formation editor's roster can offer it (§1.4).
+        UnlockScratchDesignForArenaDesigner(registered);
+        return wire;
+    }
+
+    // IMPORT (§4): load a saved SP .design from BYTES and feed it through the SAME CaptureSetupDesign seam, so a
+    // build-anew and an import of the same ship produce an IDENTICAL @arena/<hash> transient. Reuses the base
+    // ShipDesign.FromBytes codec the kernel round-trips. Returns the wire name or "" with SetupHudError set.
+    public string ImportSetupDesignFromBytes(byte[] designBytes)
+    {
+        SetupHudError = "";
+        Ship_Game.Ships.ShipDesign imported;
+        try { imported = Ship_Game.Ships.ShipDesign.FromBytes(designBytes); }
+        catch (Exception e) { SetupHudError = $"Import failed: {e.Message}"; return ""; }
+        if (imported == null)
+        {
+            SetupHudError = "Import failed: the design could not be reconstructed.";
+            return "";
+        }
+        return CaptureSetupDesign(imported);
+    }
+
+    // IMPORT (§4) convenience: import an already-loaded design by name (ResourceManager.Ships.GetDesign) — a stock
+    // design or one already in the templates table — through the same capture seam.
+    public string ImportSetupDesignByName(string designName)
+    {
+        SetupHudError = "";
+        if (!ResourceManager.Ships.GetDesign(designName, out IShipDesign design))
+        {
+            SetupHudError = $"Import failed: design '{designName}' not found.";
+            return "";
+        }
+        return CaptureSetupDesign(design);
+    }
+
+    // PLACE-FORMATION capture (§1.4 CaptureSetupFormation core): project an authored Fleet to the canonical
+    // ArenaFleetBundle via the SAME FromFleet projection SaveFleetDesignScreen.DoSave uses, so setup and the base
+    // fleet-save produce byte-identical bundles. The bundle's node ship-names ARE the @arena/<hash> wire names
+    // (the roster was seeded under those names), so the existing SpawnMultiplayerFormation path works unchanged.
+    public string CaptureSetupFormation(Fleet fleet)
+    {
+        SetupHudError = "";
+        if (fleet == null)
+        {
+            SetupHudError = "No formation to capture.";
+            return "";
+        }
+        FleetDesignT bundle = ArenaFleetBundle.FromFleet(fleet);
+        SetupLocalFleetBundle = ArenaFleetBundle.Encode(bundle);
+        return SetupLocalFleetBundle;
+    }
+
+    // Directly capture a pre-built canonical bundle (headless PLACE-FORMATION seam — the CAPTURE is what we prove;
+    // the FleetDesignScreen GUI itself is not unit-tested, per the plan's Phase D note).
+    public void SetSetupFleetBundleForHeadless(string encodedBundle) => SetupLocalFleetBundle = encodedBundle ?? "";
+    public string SetupLocalFleetBundleForHeadless => SetupLocalFleetBundle;
+    public string CaptureSetupDesignForHeadless(IShipDesign design) => CaptureSetupDesign(design);
+    public string ImportSetupDesignByNameForHeadless(string name) => ImportSetupDesignByName(name);
+    public string ImportSetupDesignFromBytesForHeadless(byte[] bytes) => ImportSetupDesignFromBytes(bytes);
+    public IReadOnlyList<string> AffordableScratchWireNamesForHeadless(int budgetCredits)
+        => AffordableScratchWireNames(budgetCredits);
+
+    // Roster scoping (§1.4): make a captured scratch design buildable by ArenaPlayer so the formation editor's
+    // roster (Player.ShipsWeCanBuild) can offer it — the exact trio at ArenaFightScreen.cs:1923-1927, but under
+    // the @arena/<hash> wire name. Roster scope is UX only; the handshake stays the budget/content enforcement.
+    void UnlockScratchDesignForArenaDesigner(IShipDesign design)
+    {
+        if (ArenaPlayer == null || design?.BaseHull == null)
+            return;
+        ArenaPlayer.UnlockEmpireHull(design.BaseHull.HullName);
+        UnlockDesignModulesForArenaDesigner(ArenaPlayer, design);
+        ArenaPlayer.UpdateShipsWeCanBuild(new SDUtils.Array<string> { design.Name });
+    }
+
+    // The affordable subset of the scratch set under a budget cap (BaseStrength currency, mirroring SumBundleCost).
+    // Used to scope the formation roster to designs the player can actually field (§1.4).
+    IReadOnlyList<string> AffordableScratchWireNames(int budgetCredits)
+    {
+        var affordable = new List<string>();
+        foreach (IShipDesign d in SetupScratchDesigns)
+        {
+            int cost = (int)MathF.Round(d.BaseStrength);
+            if (budgetCredits <= 0 || cost <= budgetCredits)
+                affordable.Add(ArenaDesignTable.ContentName(d));
+        }
+        return affordable;
+    }
+
+    // The local design TABLE for the setup scratch set (the full canonical payloads the far peer reconstructs).
+    // Mirrors ArenaMultiplayerLobbyScreen.BuildLocalDesignTable. "" when nothing custom is fielded.
+    public string BuildSetupLocalDesignTable()
+        => SetupScratchDesigns.Count > 0 ? ArenaDesignTable.Encode(SetupScratchDesigns) : "";
+
+    // SETUP-READY (§2.2): the local peer finished authoring. In v0 this advances the LOCAL machine; the per-peer
+    // exchange is carried by the same lobby/lockstep transport already proven in Phase A. Headless proofs drive
+    // AdvanceSetupPhaseToFight to complete the handshake deterministically.
+    public void MarkSetupLocalReady()
+    {
+        if (MultiplayerSetupPhase == ArenaSetupPhase.Setup)
+            MultiplayerSetupPhase = ArenaSetupPhase.LocalReady;
+    }
+
+    // Advance the setup machine to its terminal Fight state (both peers ready + exchange validated). Once here,
+    // InitializeMultiplayerLiveIfNeeded is free to spawn using the SAME reused screen + already-registered designs.
+    public void AdvanceSetupPhaseToFight()
+    {
+        MultiplayerSetupPhase = ArenaSetupPhase.Fight;
+    }
+
+    // Tear down exactly the setup-phase scratch @arena/ designs. Wired into TeardownMultiplayerCustomDesigns so it
+    // runs on EVERY exit path (match end, lobby exit, disconnect, rematch, ExitScreen catch-all). Never a blanket
+    // @arena/* delete (a concurrent match shares the process-global namespace).
+    void TeardownSetupScratchDesigns()
+    {
+        if (SetupRegisteredNames.Count > 0)
+            ArenaDesignTable.UnregisterTransient(SetupRegisteredNames);
+        SetupRegisteredNames = Array.Empty<string>();
+        SetupScratchDesigns.Clear();
+        SetupDisplayToWire.Clear();
+        SetupLocalFleetBundle = "";
     }
 
     public void ArmMultiplayerLive(ArenaMultiplayerLiveSession session)
@@ -234,6 +450,11 @@ public sealed partial class ArenaFightScreen
     public void InitializeMultiplayerLiveIfNeeded()
     {
         if (MultiplayerLiveSession == null || MultiplayerLiveInitialized)
+            return;
+        // Setup-phase gate (§2.3): the sim must not spawn until authoring + the design-table exchange are done.
+        // Default MultiplayerSetupPhase=Fight makes this a no-op for the legacy/flag-off duel (spawns as today);
+        // when the custom-fleet setup phase is active it early-returns until AdvanceSetupPhase reaches Fight.
+        if (MultiplayerSetupPhase != ArenaSetupPhase.Fight)
             return;
 
         ArenaMultiplayerSettings settings = MultiplayerLiveSession.Settings.WithResolvedFleets();

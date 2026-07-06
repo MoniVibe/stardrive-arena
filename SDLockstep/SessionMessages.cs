@@ -34,6 +34,13 @@ public sealed class SessionLobbyMessage : LockstepMessage
     public string Fleet = "";
     public string BuildHash = "";
     public string BuildSummary = "";
+
+    // Arena custom-fleet exchange (STARDRIVE_ARENA_SETUP_PHASE_EXEC_PLAN_20260706, Phase A).
+    // Each peer publishes its OWN full canonical design-table payloads (the @arena/<hash> customs
+    // referenced by Fleet) so the joiner's customs reach the host over the lobby sync. Optional
+    // trailing string; empty when EnableArenaCustomFleet is off (today's name-only behaviour).
+    // Append-only wire (no protocol re-bump; stays 5).
+    public string DesignTable = "";
 }
 
 public sealed class SessionStartMessage : LockstepMessage
