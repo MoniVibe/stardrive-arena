@@ -3615,4 +3615,304 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         GlobalStats.SetActiveModNoSave(null);
         ResourceManager.InitContentDir();
     }
+
+    // ==== LANE A N-SLOT SUBSTRATE GATE (STARDRIVE_ARENA_8PLAYER_TEAMS_SUBSTRATE_REFACTOR_20260707 §2/§5) ====
+    // The canonical 2-peer in-process match, used both to CAPTURE the pre-refactor per-turn host digest baseline
+    // and to PROVE the ArenaSlots substrate refactor is byte-identically inert at N=2. Settings are frozen
+    // (Wingmates vs Wingmates, MatchSeed 0x5EED, RngSeed 0xA12EA000, InputDelay 3, 180 turns) so the baseline
+    // is reproducible. Do NOT change these once the baseline is baked.
+    static ArenaMultiplayerSettings N2GateSettings()
+        => new ArenaMultiplayerSettings
+        {
+            MatchSeed = 0x5EED,
+            RngSeed = 0xA12EA000u,
+            InputDelay = 3,
+            MaxTurns = 180,
+            CommandEveryTurns = 1,
+            HostFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x1001ul),
+            JoinFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x2002ul),
+        }.WithResolvedFleets();
+
+    // The host peer's per-turn digest sequence as "Turn:HostHi:HostLo" hex triples (host == join by lockstep,
+    // so this fully pins the committed sim state per turn — a self-healing mid-match divergence cannot hide).
+    static string[] N2HostDigestSequence(ArenaMultiplayerRunResult result)
+        => result.TurnHashes
+            .Select(h => $"{h.Turn}:{h.HostHi:X16}:{h.HostLo:X16}")
+            .ToArray();
+
+    // CAPTURE step (run once before/after the refactor with ARENA_LANE_A_CAPTURE=<path> to dump the baseline).
+    // Not the merge gate itself — the gate is ArenaSubstrate_N2_PerTurnDigest_ByteIdenticalToPreRefactor below.
+    [TestMethod]
+    public void ArenaSubstrate_N2_CaptureBaseline_Headless()
+    {
+        string capturePath = Environment.GetEnvironmentVariable("ARENA_LANE_A_CAPTURE");
+        if (string.IsNullOrWhiteSpace(capturePath))
+            Assert.Inconclusive("Set ARENA_LANE_A_CAPTURE=<file> to dump the N=2 pre/post digest baseline.");
+
+        LoadAllGameData();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_lane_a_capture_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempPath;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+        try
+        {
+            ArenaMultiplayerSettings settings = N2GateSettings();
+            ArenaMultiplayerRunResult result = ArenaMultiplayerSession.RunInProcess(settings);
+            Assert.IsFalse(result.Desynced,
+                $"Baseline capture desynced at turn {result.DesyncTurn}: {result.DesyncReason}");
+
+            var lines = new List<string>
+            {
+                $"# turns={result.TurnsCompleted} matchEnded={result.MatchEnded} winnerPeerId={result.WinnerPeerId} matchEndedTurn={result.MatchEndedTurn}",
+                $"# hostPlayerIds={string.Join(",", result.HostSnapshot.PlayerShipIds)}",
+                $"# hostEnemyIds={string.Join(",", result.HostSnapshot.EnemyShipIds)}",
+                $"# finalHash={result.FinalHash}",
+            };
+            lines.AddRange(N2HostDigestSequence(result));
+            File.WriteAllLines(capturePath, lines);
+        }
+        finally
+        {
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+        }
+    }
+
+    // THE LANE A MERGE GATE. Runs the SAME canonical 2-peer match through the (now ArenaSlots-routed) code path
+    // and asserts the FULL per-turn host digest sequence is byte-identical to the pre-refactor baseline captured
+    // above, plus identical spawn ship-ids and identical winner. A single perturbed turn fails this — bisect by
+    // the first mismatching Turn line. NEVER weaken to FinalHash-only.
+    [TestMethod]
+    public void ArenaSubstrate_N2_PerTurnDigest_ByteIdenticalToPreRefactor_Headless()
+    {
+        LoadAllGameData();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_lane_a_gate_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempPath;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+        try
+        {
+            ArenaMultiplayerSettings settings = N2GateSettings();
+            ArenaMultiplayerRunResult result = ArenaMultiplayerSession.RunInProcess(settings);
+            Assert.IsFalse(result.Desynced,
+                $"N=2 gate run desynced at turn {result.DesyncTurn}: {result.DesyncReason}");
+
+            string[] actual = N2HostDigestSequence(result);
+
+            // Baseline captured from the PRE-REFACTOR trunk (commit d12345fb0) via ArenaSubstrate_N2_CaptureBaseline.
+            // Format: "Turn:HostHi:HostLo". If this array is empty the gate has not been baselined yet — that is a
+            // hard failure, not a pass, so the refactor can never merge without a real reference.
+            string[] expected = N2PreRefactorHostDigestBaseline;
+            Assert.IsTrue(expected.Length > 0,
+                "Lane A baseline is empty. Capture it on pre-refactor trunk before asserting inertness.");
+            Assert.AreEqual(expected.Length, actual.Length,
+                $"Turn count changed: baseline {expected.Length} vs actual {actual.Length}.");
+
+            for (int i = 0; i < expected.Length; ++i)
+                Assert.AreEqual(expected[i], actual[i],
+                    $"Per-turn digest diverged at index {i}: baseline '{expected[i]}' vs actual '{actual[i]}'. "
+                    + "The ArenaSlots refactor perturbed the sim — bisect from this turn.");
+
+            // Spawn determinism: identical ship-id assignment order (positions are folded into the turn-0 digest,
+            // already covered above; ids pin the spawn ordering the plan calls out explicitly).
+            CollectionAssert.AreEqual(N2PreRefactorHostPlayerIds, result.HostSnapshot.PlayerShipIds,
+                "Host-side spawn ship ids diverged from the pre-refactor baseline.");
+            CollectionAssert.AreEqual(N2PreRefactorHostEnemyIds, result.HostSnapshot.EnemyShipIds,
+                "Join-side spawn ship ids diverged from the pre-refactor baseline.");
+
+            // Winner identity unchanged.
+            Assert.AreEqual(N2PreRefactorMatchEnded, result.MatchEnded, "MatchEnded diverged from baseline.");
+            Assert.AreEqual(N2PreRefactorWinnerPeerId, result.WinnerPeerId, "WinnerPeerId diverged from baseline.");
+        }
+        finally
+        {
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+        }
+    }
+
+    // ---- Pre-refactor baseline (captured from trunk d12345fb0 via ArenaSubstrate_N2_CaptureBaseline) ----
+    static readonly int[] N2PreRefactorHostPlayerIds = { 791, 814, 851 };
+    static readonly int[] N2PreRefactorHostEnemyIds = { 884, 912 };
+    const bool N2PreRefactorMatchEnded = false;
+    const int N2PreRefactorWinnerPeerId = 0;
+    static readonly string[] N2PreRefactorHostDigestBaseline =
+    {
+        "0:57140E9980DADDB9:06B26EF8D6C57188",
+        "1:33AD332DDC55C2E9:0B00D8290481238F",
+        "2:9D586A2B26BFA122:CD1BCC4BCAA74CDC",
+        "3:478C877D36CE72FD:BB355265A80069D6",
+        "4:7E89A1EFA761B3CE:499813D164CC7E4E",
+        "5:F6D7E47029788A6B:C4F6924DA3227D06",
+        "6:DF83D0F5D20EBCE2:AD7D032A5280C7AB",
+        "7:93C0C78021E779F5:652FAB03D7B79F65",
+        "8:29A6721BE45367E3:3C37A6B807A283E0",
+        "9:D9D2E5E5F2FC0B7E:4129E75254FEC866",
+        "10:9EABB2610F68FCD7:66AFFF2DBF488E9B",
+        "11:DCAF7F930BF52C5B:015941ADF2F06E0B",
+        "12:3EF0E55803865FBF:DA284AB1FE2A5FA4",
+        "13:D7FD9FD8A4C1FE39:4C1518BE8848AD71",
+        "14:D2619080621B0CF8:4A8F5946BD8B5010",
+        "15:DD05B20CD8A6AEC0:D05166FE690D7351",
+        "16:1FD79230DE7B8822:817C211FC96D9D10",
+        "17:2520EFEEBC4B0602:A8CA03E6F8EAC5BA",
+        "18:537E4A3EFDE00079:BEB128845244D553",
+        "19:609555B5BFF6CF90:D3A35714DF3947C1",
+        "20:0396D6AD2B6E754E:A0F5CB5F129A5101",
+        "21:6AB230A6086D3D19:B06FD4C813B24EA5",
+        "22:C79C423B7C5AD504:1829409DFBC96CF2",
+        "23:23236D019118602C:3FA778EF5CD3867E",
+        "24:FAE0BB9444C33EAC:631A70FD528815A9",
+        "25:CA812BB46DDADB03:9F5175339AAF91B6",
+        "26:E65C3CE3CC8392E6:0ACAA6E0333B959D",
+        "27:6D835FB7E475035F:6BF41C8B44300DE7",
+        "28:0543900BD5BE4C4B:B3005806E1577DE9",
+        "29:20CB150F0566AC18:F59003DE3040B476",
+        "30:C26265449477040B:997F352A3672C86E",
+        "31:104E88BD6238A6E8:363EE447DB5DEC78",
+        "32:CABCE00519EE22C4:F9355A456F1E744F",
+        "33:DC34D2E7D393CE5B:65CE00C0C4AD65AB",
+        "34:E0C48B58465D4EE4:1B934E04BDAA556E",
+        "35:AD24333FAB40AEDE:DEB086521E513350",
+        "36:D93AC21AF29A9F00:DD095FF0516DAADC",
+        "37:A82353B573106B1B:D7DD10B6ED7C74B4",
+        "38:B2E0EE7D496ED578:A5C6B4B1D5C11C22",
+        "39:067D6293F58615DB:2E3CDE230164DA03",
+        "40:79780E0321119EDF:7E35875DE9A7879A",
+        "41:2D1221FF6C1EBAD7:2457BBD79AD6A6F8",
+        "42:45D80B74BBC57A45:0B2AB579BFA90811",
+        "43:C7CFE42D825D5BFA:7D95870BBB6DDBB1",
+        "44:8B81BD5277BBD6E3:D1EB0E5782E97D05",
+        "45:2C26BA77E3A97489:CD6BDB3F28C92594",
+        "46:586A123AC81A5448:5979A49FE96A4783",
+        "47:2DE544D4389B5863:20409DDBACA0F31C",
+        "48:AABEAAA25698F9C4:2DF2F3431B2E5FB3",
+        "49:EBB9839AB028EFE5:46932F474ADB16F3",
+        "50:A51570A074755A23:ACE2572036F8A0AF",
+        "51:3C25D9D5782D2A39:C0B6DBEB423294A8",
+        "52:58C45FE85624F5B7:30BF31A56B753531",
+        "53:378534406C33DB80:7984AD4E14FDBA8B",
+        "54:0739BC7DE1B4D844:11AF1B3C3A9202AE",
+        "55:5F1788FAD45D771B:FA8EF973999BC2D0",
+        "56:D7FDF570CEDAECE8:342120F038AAAC0F",
+        "57:B25B4D098DC39AB6:0F8292154F0BACAF",
+        "58:6E3EA08199F705F4:24353EB6491CA58A",
+        "59:9EBCBC6B01932CFA:6DBDD8D351461AAA",
+        "60:5D78266BD6CAA3B7:AB345658055BFADB",
+        "61:C1DE414525D0717D:F74E8DA4E7637116",
+        "62:E453B09B104E0A57:E93A81A1F71F4A19",
+        "63:5F31153202F775D5:9383B8E1C51C7C81",
+        "64:5B533F482E03D2CD:9C3B8D1F6DC3EE22",
+        "65:384458AA88E72DD9:344835D3CA4A134F",
+        "66:BEE73796BF9B2C57:A652F40B99CF4267",
+        "67:283E5DB6466AD089:63F7495FAC005355",
+        "68:5DBB1127AA14D219:82962AD5DB8DF0A4",
+        "69:5970E942F482019F:19C9890184FDC472",
+        "70:BCC47FB8E33CAF2C:A0597FE6A3D74B3A",
+        "71:F9541F11CA2B115B:35000795B35EAC47",
+        "72:F32A9F178426C427:8E1DA150233CA095",
+        "73:6A26121C50F593E0:C683108F72973C98",
+        "74:F2A4FAA325691AD9:AD9D88CE564AE646",
+        "75:4E2F21610ECC60B8:FBDA3A3F38E44230",
+        "76:02447A7BB95BE034:C11D7ABADE18ACA3",
+        "77:88B97131B1F281FB:FDB16B4EC757685B",
+        "78:3CE505BE60CF05FF:F3F64E663B8AD894",
+        "79:2AD0F97B17EA63D4:070BB899379FD2DF",
+        "80:9775DE4C3855A40E:C03A6030057D16C7",
+        "81:B078BF805CD0D6CA:DB498B2E1EBE5F7F",
+        "82:6C5C523F8C38FDF7:716B18B98FE40197",
+        "83:5D52C8A0BFAEBAA9:5CFBA683C92E0C45",
+        "84:8AAE2A3CC9BA277D:8B0F7275425A3910",
+        "85:031701E7D8FBE86B:D5FE4ED8F1F3BFF6",
+        "86:01C0BC59208E9C9B:2BDE5C354E9DE2FC",
+        "87:77A8F09D46820FFD:D89F69381A25221A",
+        "88:ED2D5C7BA9085D92:D7DC1497D3CC0232",
+        "89:F4D76BAE9A5FAFE5:63364D82EC927F3C",
+        "90:BAE86DEC0367D45D:494AC87AD56E986F",
+        "91:AB1761471CDF2B2B:F7397F621BC61B2E",
+        "92:74E186E60664FC0F:D97E0B01BB8267BA",
+        "93:A214B7C199E0A191:5429A5759EB3B42A",
+        "94:7C65A9F0A6970EC7:29A8DC08145F858D",
+        "95:C46E56925304C65F:4BA7B7368C9FAAB8",
+        "96:A1A39A9F4AF77E1D:7E3726EE2A1937D9",
+        "97:247B07312ACE36E4:8047945908EB7A09",
+        "98:B78CA5A381903E3C:CF4F5E50ADF72052",
+        "99:BF8075C0D35F7086:EFF2F7B7E08F5B52",
+        "100:C28198D77756DBA9:BE74AB0BD647EEC5",
+        "101:B13F2DE5AAE9D1DE:88C6786A9C2B3D9A",
+        "102:46A67AD11F48B404:DA3E8759C52DA4F1",
+        "103:38CB5D806C46D2BF:486FFE4E2F198A26",
+        "104:35F45DFFD4569B7B:ACDC6481F1C1E1C6",
+        "105:74F09F0F921BD88D:CAB44AF98DA7B6FF",
+        "106:21DF52B4136EC698:9C191C095CE66A8D",
+        "107:E69800A3C3CEA912:CF5AB3F07F0A5DFE",
+        "108:FC8386B9DD4972DB:D4AD30A4C2FEC834",
+        "109:1C9C3E2AF6BCA48B:420B92896BAFFE5D",
+        "110:A23B38B127F25304:13A6C6958028C3AF",
+        "111:5278BB36958A7A17:BC19E9B5E945C92F",
+        "112:658BD6D75255E3C6:D860B0A3D546DA31",
+        "113:A77BA7CAD0A00307:9148BE3B6635C40D",
+        "114:30C1E467424C1B35:4EB7187BBB3622F2",
+        "115:A3C71CE6B7030960:8F5E991F66404F52",
+        "116:DE1911F39FDBDF28:8643A254906F920E",
+        "117:7C9A44DBF6C1BDF5:23889E29CDD1EEC4",
+        "118:8F1938D947173A05:F71E3B4C85F228F9",
+        "119:6ACD70D48CF3D2C8:FF7B4C2331E9F938",
+        "120:4B421F3D6AB93987:622213A60F920A2F",
+        "121:CDAB5630B5D11B99:A3AB6AC08BDA10B6",
+        "122:52371C4C1F8B3F07:838BEA6B67EE2939",
+        "123:9FBFDA5DD03ED473:A0055EC45F0B4FEC",
+        "124:74AD584FFB462C32:667B86F79AED5941",
+        "125:6B83D1DAEA5293F7:2340E31A88DA8F17",
+        "126:B75E09FB374E5212:A81CF3A56F28DC7C",
+        "127:F50BCCB0432E5770:87A290821ABD4471",
+        "128:C39CE270C604FF56:4D66F42B0F284C71",
+        "129:C8AE351A523301EC:4497A1D61D9AADB6",
+        "130:744B03032BCD4BED:824252178C238DAA",
+        "131:4196FDE0AB337BF4:1829D74A4931131C",
+        "132:CFECEC9424DB48FC:B91FB9CB2E1ED7C4",
+        "133:316D4C66210BF23B:7EB597AB906C2E88",
+        "134:33EFBA045055EC76:EBBA4B1BAD142DE2",
+        "135:E426F3D15BC73E6F:E6AAE7DDF1D82F6C",
+        "136:6305E9C05252A335:4897BDB75E67DD98",
+        "137:F5C4A9FFB9B5D8A0:2587992678EDFF0F",
+        "138:16B66B49C7C935F0:E51130150955D975",
+        "139:C56B62F505FF7363:D5B06591D3C33BC1",
+        "140:3AE8EFF1A1868021:CEEE4729BA29E7E4",
+        "141:F70AD218B6D01B5E:B9E612B11E83E7DF",
+        "142:11508972D2B653F3:FF430AA82D1D31E8",
+        "143:861C981C5BEAB0EA:DDF8163D9BB9D8B5",
+        "144:377542C96BEB1C28:23534C0F348D1507",
+        "145:E0D46204A8F6FDC2:4AE7E0B232B9CBCC",
+        "146:91E73243B5F9BB69:61CBFCBD90E14F82",
+        "147:C00FEDAE84088C27:97B4BC9B4581D22E",
+        "148:510A8AF4C18A92BA:D7C947BFCF59655E",
+        "149:50E1F90EF84A7689:8E2E2C74B9C4CA19",
+        "150:D70AE94AD86FF7D4:9A2880099D8728B5",
+        "151:3BC1EAF29437F405:4FC477B647188FE1",
+        "152:D0622868BCB520EB:7DBD0EF0DD775DF0",
+        "153:C080645383AAC03B:F4ECBB7F11500EF7",
+        "154:1E9652A7757E1606:2E77F5F55EB6EDCB",
+        "155:EC936ECB50336727:289508C329B7CFCE",
+        "156:96696BE9A619C83A:347F0A5A0383E262",
+        "157:29C6BADBA648996B:C2C0A4ACBB55F68F",
+        "158:71CF08F2921C3223:A3098DA16D966DEA",
+        "159:CE3CE7B49ECBBBC4:25D9178522AA4A10",
+        "160:EDDE8B8282567F7C:C7A1774EFD32E8B6",
+        "161:06316CFD5FC2F845:62FE42F3EC1E6528",
+        "162:BB0F29B75AB1FC5D:DE37D47DBF04EBDC",
+        "163:7596EFDFA253EA1F:90B40B03D9138E1D",
+        "164:C0AEAA52130D0264:78D33DC1F3A4171E",
+        "165:FFFC0D22A04CFDDC:1FD0E27829E65C68",
+        "166:C62BAD3575204B3F:76DA84CA0F5172CE",
+        "167:A3772132EFEC1796:E8443BEF8E20A4DD",
+        "168:B5AE6546E2971C4C:FB8211ECC2761B9A",
+        "169:21F301113D726450:49971B0DE4F8518D",
+        "170:598BA81A01AA8BDD:B8EEEAB2F3CE7196",
+        "171:534EAA916BF0CD8E:012844ADE7792564",
+        "172:D12187596118798E:6DFB230F31EAC6E1",
+        "173:1C626E7FEDE172D6:077BD33E1A66B4F9",
+        "174:4B4476CC626BD88D:205B5EE1814C5B53",
+        "175:3678031483AB3619:14DD5380111F096D",
+        "176:C6D3E451D4E46B26:648B3D861D1D7013",
+        "177:B656BED251AC60FF:4BFD470A25624BD3",
+        "178:88B567E1B737404D:A28DB3859EA8ADD3",
+        "179:57C1D03D34F7EF33:5FB0CBED03622308",
+    };
 }

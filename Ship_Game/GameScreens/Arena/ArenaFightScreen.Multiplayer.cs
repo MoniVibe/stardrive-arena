@@ -987,12 +987,19 @@ public sealed partial class ArenaFightScreen
 
         PlayerDesign = hostDesigns[0];
         EnemyDesign = joinDesigns[0];
+
+        // N-SLOT SUBSTRATE build site (plan §1). Build the ascending-SlotId ArenaSlots array from the
+        // fingerprinted roster. Empty roster (the 2-peer default) synthesizes the legacy two-slot roster so
+        // the legacy path flows through the SAME machinery. At N=2, slot [0].Ships/[1].Ships ALIAS the same
+        // List<Ship> instances as PlayerShips/EnemyShips (they are populated by the spawn calls below), and
+        // the slot Empires alias ArenaPlayer/ArenaEnemy. Lane A never reads TeamId; it exists for Lane B.
+        BuildArenaSlots(liveSettings);
+        // sideMirror mirrors the join side across the arena centerline so both fleets face each
+        // other; BOTH peers apply the SAME rule so ship i lands at the same absolute position.
         // Finite-ammo was resolved from the FINGERPRINTED ruleset in ConfigureMultiplayerPvP (which runs on
         // every MP spawn path before LoadContent, even when MultiplayerLiveSession isn't armed yet), so both
         // peers carry the same handshaked value here and stamp identical ship.ArenaFiniteAmmo flags =>
         // lockstep-safe. Default UnlimitedAmmo=true => finite off => regen unchanged from trunk.
-        // sideMirror mirrors the join side across the arena centerline so both fleets face each
-        // other; BOTH peers apply the SAME rule so ship i lands at the same absolute position.
         SpawnMultiplayerFormation(PlayerShips, ArenaPlayer, hostBundle, -Gap, +1f, PlayerSpawnFacing, ArenaFiniteAmmoActive);
         SpawnMultiplayerFormation(EnemyShips, ArenaEnemy, joinBundle, +Gap, -1f, EnemySpawnFacing, ArenaFiniteAmmoActive);
 
@@ -1004,8 +1011,9 @@ public sealed partial class ArenaFightScreen
         // a combat stance would start the fight immediately; CombatState.None ("take no action in
         // combat") holds fire deterministically on both peers until the Engage tick restores the
         // stance. Do NOT call EngageAll() here — the phase machine issues it at MultiplayerEngageAtTick.
-        FreezeMultiplayerFleet(PlayerShips);
-        FreezeMultiplayerFleet(EnemyShips);
+        // Route freeze through ArenaSlots in ascending-slot order (freeze is order-neutral but must run for
+        // every slot); at N=2 slot[0]/[1] alias Player/EnemyShips so this is bit-identical to the two calls.
+        FreezeMultiplayerSlots();
         RetargetTimer = 0f;
         RunStarted = PlayerShips.Count > 0 && EnemyShips.Count > 0;
         if (!RunStarted)
@@ -1359,9 +1367,9 @@ public sealed partial class ArenaFightScreen
 
             case ArenaMatchPhase.Engage:
                 // Restore the combat stance (frozen during countdown) then issue attack orders on
-                // BOTH peers at the SAME tick.
-                UnfreezeMultiplayerFleet(PlayerShips);
-                UnfreezeMultiplayerFleet(EnemyShips);
+                // BOTH peers at the SAME tick. Route unfreeze through ArenaSlots in ascending-slot order;
+                // at N=2 slot[0]/[1] alias Player/EnemyShips so this is bit-identical to the two-list form.
+                UnfreezeMultiplayerSlots();
                 EngageAll();
                 MultiplayerPhase = ArenaMatchPhase.Fight;
                 MultiplayerTelemetry?.Event("PHASE_ENGAGE", $"simTick={simTick}");
@@ -1935,17 +1943,39 @@ public sealed partial class ArenaFightScreen
 
     public SimCommand BuildMultiplayerFocusCommand(int peerId, uint tick, uint localSequence)
     {
+        // Route subject/target selection through ArenaSlots (plan §2). §5 de-risk (a): at N=2 this is
+        // LITERALLY the current two-side formula — the peer's slot is the subject fleet, the single OTHER
+        // slot is the target fleet — so the emitted subject.Id/target.Id feed the SimCommand digest
+        // bit-for-bit unchanged. N>2 target selection (a hostile scan) is Lane B (C5); not built here.
+        if (ArenaSlots.Length == 2)
+        {
+            int subjectIndex =
+                ArenaSlots[0].Empire != null && peerId == ArenaSlots[0].Empire.Id ? 0 :
+                ArenaSlots[1].Empire != null && peerId == ArenaSlots[1].Empire.Id ? 1 : -1;
+            if (subjectIndex < 0)
+                return new SimCommand(tick, peerId, localSequence, SimCommandKind.NoOp);
+
+            int targetIndex = subjectIndex == 0 ? 1 : 0;
+            Ship subject = FirstAlive(ArenaSlots[subjectIndex].Ships);
+            Ship target = FirstAlive(ArenaSlots[targetIndex].Ships);
+            if (subject == null || target == null)
+                return new SimCommand(tick, peerId, localSequence, SimCommandKind.NoOp);
+
+            return new SimCommand(tick, peerId, localSequence, SimCommandKind.AttackTarget, subject.Id, target.Id);
+        }
+
+        // Legacy fallback (ArenaSlots not built — no MP substrate in scope).
         bool peerIsPlayer = ArenaPlayer != null && peerId == ArenaPlayer.Id;
         bool peerIsEnemy = ArenaEnemy != null && peerId == ArenaEnemy.Id;
         if (!peerIsPlayer && !peerIsEnemy)
             return new SimCommand(tick, peerId, localSequence, SimCommandKind.NoOp);
 
-        Ship subject = FirstAlive(peerIsPlayer ? PlayerShips : EnemyShips);
-        Ship target = FirstAlive(peerIsPlayer ? EnemyShips : PlayerShips);
-        if (subject == null || target == null)
+        Ship legacySubject = FirstAlive(peerIsPlayer ? PlayerShips : EnemyShips);
+        Ship legacyTarget = FirstAlive(peerIsPlayer ? EnemyShips : PlayerShips);
+        if (legacySubject == null || legacyTarget == null)
             return new SimCommand(tick, peerId, localSequence, SimCommandKind.NoOp);
 
-        return new SimCommand(tick, peerId, localSequence, SimCommandKind.AttackTarget, subject.Id, target.Id);
+        return new SimCommand(tick, peerId, localSequence, SimCommandKind.AttackTarget, legacySubject.Id, legacyTarget.Id);
     }
 
     public (ulong lo, ulong hi, string algorithm) MultiplayerStateHash(
@@ -1986,8 +2016,49 @@ public sealed partial class ArenaFightScreen
         return count;
     }
 
+    // Build the ascending-SlotId ArenaSlots array (plan §1). Slots [0] and [1] ALIAS the legacy
+    // PlayerShips/EnemyShips lists + ArenaPlayer/ArenaEnemy empires so the spawn calls that populate those
+    // lists also populate the slots, and every SP-shared helper keeps working. The roster (already sorted
+    // ascending by Decode/Fold) provides SlotId/TeamId; an empty roster (the 2-peer default) synthesizes the
+    // legacy two-slot roster [{SlotId=1,TeamId=1},{SlotId=2,TeamId=2}]. Lane A never routes N>2 (the lobby
+    // gate EnableArena8Player forbids assigning >2 slots), so any records past the first two get their own
+    // fresh list + null empire here and are wired by Lane B; at N=2 this is exactly the legacy two sides.
+    void BuildArenaSlots(ArenaMultiplayerSettings liveSettings)
+    {
+        ArenaPlayerRosterRecord[] roster = liveSettings?.Roster;
+        if (roster == null || roster.Length == 0)
+        {
+            roster = new[]
+            {
+                new ArenaPlayerRosterRecord(ArenaMultiplayerSession.HostPlayerPeerId, 1, ""),
+                new ArenaPlayerRosterRecord(ArenaMultiplayerSession.JoinPlayerPeerId, 2, ""),
+            };
+        }
+
+        // Canonical ascending-SlotId order (roster is already sorted, but re-sort defensively so the array
+        // index == ascending SlotId law holds regardless of caller).
+        ArenaPlayerRosterRecord[] ordered = roster.OrderBy(r => r.SlotId).ToArray();
+        var slots = new ArenaSlot[ordered.Length];
+        for (int i = 0; i < ordered.Length; ++i)
+        {
+            // The first two slots alias the legacy sides so N=2 flows through identical machinery.
+            List<Ship> ships = i == 0 ? PlayerShips : i == 1 ? EnemyShips : new List<Ship>();
+            Empire empire = i == 0 ? ArenaPlayer : i == 1 ? ArenaEnemy : null;
+            slots[i] = new ArenaSlot(ordered[i].SlotId, ordered[i].TeamId, empire, ships);
+        }
+        ArenaSlots = slots;
+    }
+
     public ArenaMultiplayerMatchStatus MultiplayerMatchStatus()
-        => new(AliveCount(PlayerShips), AliveCount(EnemyShips));
+    {
+        // Route the win reduction through ArenaSlots when the MP substrate is built; fall back to the legacy
+        // two-list read otherwise (SP paths never call this, but keep the exact-preservation contract clean).
+        // §5 de-risk (a): N==2 is LITERALLY the current formula — slot[0]=player side, slot[1]=enemy side —
+        // so the reduction reduces bit-for-bit to new(AliveCount(PlayerShips), AliveCount(EnemyShips)).
+        if (ArenaSlots.Length == 2)
+            return new(AliveCount(ArenaSlots[0].Ships), AliveCount(ArenaSlots[1].Ships));
+        return new(AliveCount(PlayerShips), AliveCount(EnemyShips));
+    }
 
     // Resolve the exchanged canonical bundle; fall back to a zero-offset column bundle from the
     // name list if no bundle was carried (legacy path). Both peers resolve the SAME bundle bytes.
@@ -2041,6 +2112,21 @@ public sealed partial class ArenaFightScreen
     // CombatState, so the true "hold fire" gate is AI.IgnoreCombat (checked in both the retarget and
     // the weapon-fire paths). ClearOrders resets IgnoreCombat, so set it true AFTER clearing. This is
     // deterministic (same on both peers, applied at spawn and lifted at the shared engage tick).
+    // Freeze/unfreeze every slot's fleet in ascending-slot order (plan §2). Instance wrappers over the static
+    // per-fleet primitives so the phase machine iterates the substrate, not the two hardcoded lists. At N=2
+    // ArenaSlots[0]/[1] alias Player/EnemyShips, so the loop makes the exact same two calls in the same order.
+    void FreezeMultiplayerSlots()
+    {
+        for (int i = 0; i < ArenaSlots.Length; ++i)
+            FreezeMultiplayerFleet(ArenaSlots[i].Ships);
+    }
+
+    void UnfreezeMultiplayerSlots()
+    {
+        for (int i = 0; i < ArenaSlots.Length; ++i)
+            UnfreezeMultiplayerFleet(ArenaSlots[i].Ships);
+    }
+
     static void FreezeMultiplayerFleet(List<Ship> ships)
     {
         if (ships == null) return;

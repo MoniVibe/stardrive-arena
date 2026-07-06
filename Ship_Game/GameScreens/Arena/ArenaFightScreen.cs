@@ -217,6 +217,35 @@ public sealed partial class ArenaFightScreen : UniverseScreen
     Empire ArenaPlayer;
     Empire ArenaEnemy;
 
+    // ---- N-SLOT SUBSTRATE (STARDRIVE_ARENA_8PLAYER_TEAMS_SUBSTRATE_REFACTOR_20260707 §1) --------------
+    // The MP-PvP path's ordered slot array. SP roguelike keeps PlayerShips/EnemyShips (spawn/banking/HUD
+    // depend on them); this is BUILT only on the MP spawn path in StartMultiplayerPvPMatch. Empty for SP.
+    // Invariant: ALWAYS ascending SlotId (== array index). Every win/target/hostility read iterates this
+    // in index order — never a Dict/HashSet. At N=2 slot [0].Ships/[1].Ships ALIAS the same List<Ship> as
+    // PlayerShips/EnemyShips so SP-shared helpers keep working; for N>2 (Lane B) extra slots live only here.
+    sealed class ArenaSlot
+    {
+        public readonly int SlotId;         // host-assigned, canonical key (Lane B C1)
+        public readonly int TeamId;         // from ArenaPlayerRosterRecord.TeamId (Lane B C2); unused by Lane A sim
+        public Empire Empire;
+        public readonly List<Ship> Ships;   // aliases Player/EnemyShips at N=2 (see build site)
+#pragma warning disable CS0649 // set by Lane B C9 Forfeit apply; reserved here, always false in Lane A
+        public bool Forfeited;
+#pragma warning restore CS0649
+
+        public ArenaSlot(int slotId, int teamId, Empire empire, List<Ship> ships)
+        {
+            SlotId = slotId;
+            TeamId = teamId;
+            Empire = empire;
+            Ships = ships ?? new List<Ship>();
+        }
+    }
+
+    // Ascending-SlotId ordered. Empty for SP; built on the MP spawn path. The ruling's ArenaFleets[slot]
+    // == ArenaSlots[i].Ships.
+    ArenaSlot[] ArenaSlots = Array.Empty<ArenaSlot>();
+
     // The arena gladiator roster as a real Fleet (built from the hub's FLEET button) so the
     // persistent roster spawns as a formation next round. Fixed fleet slot, arena-scoped.
     Fleet PlayerFleet;
@@ -4715,11 +4744,24 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         return true;
     }
 
-    // Each living player ship targets the nearest living enemy and vice-versa.
+    // Each living ship targets the nearest living enemy. The SP roguelike (ArenaSlots empty) and the MP N=2
+    // path (ArenaSlots[0]/[1] alias Player/EnemyShips) both reduce to the SAME two ordered scans below.
+    // §5 de-risk (a): at N=2 the MP branch is LITERALLY Order(slot0,slot1)+Order(slot1,slot0), and since the
+    // slots alias Player/EnemyShips, that is bit-for-bit the legacy pair — same list order, same strict
+    // `d<best` tie-break (Lane B C5 replaces the tie-break with a stable-id rule for N>2; NOT here).
     void EngageAll()
     {
-        Order(PlayerShips, EnemyShips);
-        Order(EnemyShips, PlayerShips);
+        if (ArenaSlots.Length == 2)
+        {
+            Order(ArenaSlots[0].Ships, ArenaSlots[1].Ships);
+            Order(ArenaSlots[1].Ships, ArenaSlots[0].Ships);
+        }
+        else
+        {
+            // SP roguelike + legacy fallback: the two hardcoded sides.
+            Order(PlayerShips, EnemyShips);
+            Order(EnemyShips, PlayerShips);
+        }
 
         static void Order(List<Ship> attackers, List<Ship> targets)
         {
