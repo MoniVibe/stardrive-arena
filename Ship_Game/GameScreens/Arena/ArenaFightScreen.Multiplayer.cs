@@ -529,12 +529,14 @@ public sealed partial class ArenaFightScreen
     {
         ArenaMultiplayerSettings settings = MultiplayerLiveSession.Settings;
         uint turn = MultiplayerLiveTurn;
-        if (turn >= settings.MaxTurns)
+        // Custom-fleet program §5.2: the REAL match cap derives from RulesetV0.MaxMatchSeconds (host-settable,
+        // already hashed), with MaxTurns as an absolute safety ceiling. Previously ended at MaxTurns only.
+        if (turn >= settings.EffectiveMaxTurns)
         {
             MultiplayerLiveResult.MatchEnded = true;
             MultiplayerLiveResult.MatchEndedTurn = turn;
             MultiplayerLiveResult.WinnerPeerId = 0;
-            CompleteMultiplayerLive("turn limit");
+            CompleteMultiplayerLive("time limit");
             return false;
         }
 

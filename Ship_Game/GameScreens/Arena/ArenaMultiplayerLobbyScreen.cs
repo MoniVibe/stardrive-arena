@@ -34,7 +34,16 @@ enum ArenaMultiplayerSlotMode
 public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 {
     public const int DefaultPort = 47377;
-    public const int DefaultTurns = 600;
+    // Custom-fleet program §5.2: a REAL lobby match's MaxTurns is a HIGH SAFETY CEILING so the host-selected
+    // RulesetV0.MaxMatchSeconds (via ArenaMultiplayerSettings.EffectiveMaxTurns = min(MaxTurns, MaxMatchSeconds*60))
+    // actually drives the match length. Previously 600 turns (~10s @ 60 Hz) hard-capped every match regardless of
+    // the host's choice — the director's "fights too short" complaint. 36000 turns = 10 min @ 60 Hz. Headless
+    // self-tests pass an EXPLICIT small `turns` to stay fast (min() keeps their low MaxTurns authoritative), so
+    // this ceiling only affects real matches that let MaxMatchSeconds bind.
+    public const int DefaultTurns = 36000;
+    // The hard clamp ceiling for a host-entered/derived MaxTurns. Raised from 2000 (~33s) so DefaultTurns and the
+    // longest offered MaxMatchSeconds are not silently re-clamped below the host's choice. 216000 = 60 min @ 60 Hz.
+    public const int MaxTurnsCeiling = 216000;
     public const int LiveAuthoritative4XMaxTurns = 0;
     public const int DefaultJoinPeerSlot = 3;
     public const int LastJoinPeerSlot = 9;
@@ -151,10 +160,26 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     ArenaMatchMode ArenaMode = ArenaMatchMode.Career;
     ArenaBudgetModel ArenaBudgetModel = ArenaBudgetModel.Unlimited;
     int ArenaBudgetCredits = 5000;
+    // Custom-fleet program §5.2: host-settable match length. RulesetV0.MaxMatchSeconds is the REAL cap now
+    // (ArenaMultiplayerSettings.EffectiveMaxTurns = MaxMatchSeconds*60, clamped by MaxTurns). Steps through a
+    // small set of round durations; folded into the fingerprint so both peers agree.
+    int ArenaMaxMatchSeconds = 600;
     // Star Gladiator fleet picker: when the local player picks a fleet via SET FLEET, the chosen
     // legal design names are pinned here so ApplyLocalSelection stops auto-deriving from career/roster.
     // Only rides the existing P1 bundle path (legal combat-craft names) — no wire/hash change.
     string[] ManualFleetDesignNames;
+    // Custom-fleet PLAYABLE slice (STARDRIVE_ARENA_CUSTOM_FLEET_PROGRAM_PLAN_20260706 §8, advisor ruling
+    // 2026-07-06). FALLBACK COMPOSER path (the real ShipDesignScreen/FleetDesignScreen-from-lobby is DEFERRED
+    // to the next phase, per §step-2 authorization): the slice fields EXISTING / previously-imported designs
+    // through the proven ArenaFleetBundle.FromDesignNames zero-offset column composer, wired into the already
+    // built exchange kernel. The "sandbox scratch set" is an in-memory map from a picked design's ORIGINAL
+    // display name to its content-derived @arena/<hash> wire name; the designs are registered TRANSIENTLY under
+    // those @arena/ names (never Saved Designs, never a dir, never the 4X) so both peers resolve them, and torn
+    // down on every lobby-exit path. LocalPeer.FleetDesignNames stays the DISPLAY names (labels/picker unchanged);
+    // the @arena/ rewrite happens only at the wire boundaries (lobby sync + BuildArenaSettings). Entire feature
+    // is a no-op when EnableArenaCustomFleet is off (map empty, table "", display names ride the wire unchanged).
+    readonly Dictionary<string, string> SandboxDisplayToWire = new(StringComparer.Ordinal);
+    IReadOnlyList<string> SandboxRegisteredNames = Array.Empty<string>();
     bool JoinInProgress;
     bool ScreenExiting;
     bool Launching;
@@ -509,6 +534,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         UIButton fleet = ArenaTheme.AddPillButton(setup, "", _ => OpenFleetPicker(), 168f);
         fleet.Name = "arena_mp_set_fleet";
         fleet.DynamicText = () => $"SET FLEET ({LocalPeer.FleetDesignNames.Length})";
+        UIButton matchLen = ArenaTheme.AddPillButton(setup, "", _ => CycleMatchLength(), 168f);
+        matchLen.Name = "arena_mp_match_length";
+        matchLen.DynamicText = MatchLengthLabel;
 
         UIList setup2 = AddList(new Vector2(panel.X + 24, panel.Y + 430));
         setup2.Direction = new Vector2(1f, 0f);
@@ -595,6 +623,31 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             ArenaBudgetCredits = 5000;
         }
         SetStatus(BudgetLabel());
+        GameAudio.AffirmativeClick();
+    }
+
+    static readonly int[] MatchLengthChoicesSeconds = { 30, 60, 120, 300, 600 };
+
+    string MatchLengthLabel()
+    {
+        int s = ArenaMaxMatchSeconds;
+        return s % 60 == 0 ? $"MATCH {s / 60} MIN" : $"MATCH {s} SEC";
+    }
+
+    // Cycle the host match length through a small set of round durations. RulesetV0.MaxMatchSeconds is the
+    // REAL cap (custom-fleet program §5.2); it is folded into the fingerprint, so both peers agree on when
+    // the match times out.
+    void CycleMatchLength()
+    {
+        if (HostSettingsAreLockedToRemote())
+        {
+            GameAudio.NegativeClick();
+            return;
+        }
+        int idx = Array.IndexOf(MatchLengthChoicesSeconds, ArenaMaxMatchSeconds);
+        idx = idx < 0 ? 0 : (idx + 1) % MatchLengthChoicesSeconds.Length;
+        ArenaMaxMatchSeconds = MatchLengthChoicesSeconds[idx];
+        SetStatus(MatchLengthLabel());
         GameAudio.AffirmativeClick();
     }
 
@@ -689,12 +742,77 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         string[] legal = LegalArenaFleetNames(picked);
         ManualFleetDesignNames = legal;
         LocalPeer.FleetDesignNames = legal;
+        // Custom-fleet slice: canonicalize + transiently register the picked designs into the sandbox scratch
+        // set so both peers resolve them and the wire carries content-hash names. No-op when the flag is off.
+        RebuildSandboxScratchSet(legal);
         SavePersistentConfig();
         SetStatus(legal.Length == 0
             ? "Fleet cleared — a default roster fields the fight."
             : FleetSummary(legal));
         GameAudio.AffirmativeClick();
         RefreshSetup();
+    }
+
+    // Rebuild the sandbox scratch set from the currently-picked display names. Tears down the PRIOR transient
+    // registration first (the "player opens the picker twice" leak, advisor risk 3), then for each picked design
+    // that resolves to a real IShipDesign: register it transiently under @arena/<hash> and record the
+    // display->wire mapping. Idempotent and flag-gated. A design that is a custom carrier (or otherwise fails
+    // ValidateContentAvailable) is left mapping to its display name (it rides as a stock name; the handshake is
+    // the authoritative gate either way).
+    void RebuildSandboxScratchSet(string[] displayNames)
+    {
+        TeardownSandboxScratchSet();
+        if (!GlobalStats.Defaults.EnableArenaCustomFleet)
+            return;
+        var toRegister = new List<IShipDesign>();
+        foreach (string display in displayNames)
+        {
+            if (!ResourceManager.Ships.GetDesign(display, out IShipDesign design))
+                continue;
+            // Only designs the exchange kernel will accept (non-carrier, all ids resolvable) join the scratch
+            // set; anything else stays a plain stock reference.
+            if (ArenaDesignTable.ValidateContentAvailable(design).NotEmpty())
+                continue;
+            SandboxDisplayToWire[display] = ArenaDesignTable.ContentName(design);
+            toRegister.Add(design);
+        }
+        if (toRegister.Count > 0)
+            SandboxRegisteredNames = ArenaDesignTable.RegisterTransient(
+                toRegister.Select(d => (Ship_Game.Ships.ShipDesign)d));
+    }
+
+    // Undo the transient registration and clear the display->wire map. Safe to call repeatedly; targets the
+    // EXACT tracked set (never a blanket @arena/* delete — a concurrent match shares the process-global table).
+    void TeardownSandboxScratchSet()
+    {
+        if (SandboxRegisteredNames.Count > 0)
+            ArenaDesignTable.UnregisterTransient(SandboxRegisteredNames);
+        SandboxRegisteredNames = Array.Empty<string>();
+        SandboxDisplayToWire.Clear();
+    }
+
+    // Map display fleet names to their @arena/<hash> WIRE names for the exchange kernel. Names not in the
+    // sandbox set (stock designs, or when the flag is off) pass through unchanged.
+    string[] ToWireFleetNames(string[] displayNames)
+    {
+        if (SandboxDisplayToWire.Count == 0 || displayNames == null)
+            return displayNames ?? Array.Empty<string>();
+        return displayNames
+            .Select(n => SandboxDisplayToWire.TryGetValue(n, out string wire) ? wire : n)
+            .ToArray();
+    }
+
+    // Encode the design TABLE for the currently-registered sandbox scratch set (the full canonical payloads the
+    // far peer reconstructs from). "" when nothing custom is fielded / the flag is off.
+    string BuildLocalDesignTable()
+    {
+        if (SandboxRegisteredNames.Count == 0)
+            return "";
+        var designs = new List<IShipDesign>();
+        foreach (string wire in SandboxDisplayToWire.Values.Distinct(StringComparer.Ordinal))
+            if (ResourceManager.Ships.GetDesign(wire, out IShipDesign d))
+                designs.Add(d);
+        return designs.Count > 0 ? ArenaDesignTable.Encode(designs) : "";
     }
 
     void AddField(float x, float y, string label, string value, out UITextEntry entry,
@@ -1237,7 +1355,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             RacePreference = LocalPeer.RacePreference,
             LoadoutTrait = LocalPeer.LoadoutTrait,
             TraitOptions = LocalPeer.TraitOptions,
-            Fleet = ArenaMultiplayerSettings.EncodeFleet(LocalPeer.FleetDesignNames),
+            // Custom-fleet slice: peers must key on the @arena/<hash> WIRE names (which they resolve against the
+            // exchanged design table), not the local display names. No-op mapping when nothing custom is fielded.
+            Fleet = ArenaMultiplayerSettings.EncodeFleet(ToWireFleetNames(LocalPeer.FleetDesignNames)),
             BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
             BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
         };
@@ -1284,6 +1404,11 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         Launching = true;
         PendingHostStart = null;
         AcceptedStartPeers.Clear();
+        // Custom-fleet slice: hand off the sandbox scratch set to the fight screen. The fight's ArmMultiplayerLive
+        // re-registers the SAME @arena/<hash> designs from the authoritative start-message tables (idempotent,
+        // content-hash dedup), so unregister the lobby's tracking here for a clean single-owner handoff — the
+        // reconstruction is driven by the exchanged tables, not the lobby's in-memory objects.
+        TeardownSandboxScratchSet();
         TcpLockstepTransport transport = Transport;
         Transport = null;
 
@@ -1334,7 +1459,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             RosterSource = ArenaMode == ArenaMatchMode.Career
                 ? ArenaRosterSource.CareerLocked : ArenaRosterSource.AllContent,
             CountdownSeconds = 3,
-            MaxMatchSeconds = 600,
+            MaxMatchSeconds = ArenaMaxMatchSeconds,
             MaxFleetShipsPerSide = 32,
             WagerCredits = 0,
             RosterCommitmentHash = "",
@@ -1345,20 +1470,34 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     {
         ApplyLocalSelection();
         int seed = ParseSeed();
-        string[] hostFleet = ArenaFleetOrFallback(LocalPeer.FleetDesignNames,
+        // Custom-fleet slice: the LOCAL peer's fleet is display-named; rewrite to @arena/<hash> wire names for the
+        // exchange kernel (no-op when nothing custom is fielded). The REMOTE peer's fleet already arrives as wire
+        // names over the lobby sync (BroadcastLobbyState maps them there).
+        string[] localDisplay = LocalPeer.FleetDesignNames;
+        string[] localWire = ToWireFleetNames(localDisplay);
+        string[] hostFleet = ArenaFleetOrFallback(localWire,
             seed, LocalPeer.LoadoutTrait, hostSide: true);
         string[] joinFleet = ArenaFleetOrFallback(RemotePeer.FleetDesignNames,
             seed, RemotePeer.LoadoutTrait, hostSide: false);
         ArenaMultiplayerRuleset ruleset = BuildArenaRuleset();
-        // P1 fleet-setup fallback (plan risk 1): emit zero-offset column bundles from the resolved
-        // name lists. When the FleetDesignScreen setup lands, replace these with the saved formation
-        // bundle (ArenaFleetBundle.Encode of a real FleetDesign).
+        // Custom-fleet slice: carry the LOCAL sandbox design payloads so the far peer reconstructs them. The host
+        // authors the customs in this pass (advisor ruling risk 4: join-side custom payloads over the lobby sync
+        // are a bounded next-phase extension — the fleet name list transports, the payload does not yet). Empty
+        // when nothing custom is fielded / the flag is off. The far peer's RegisterPeerDesignTables consumes both.
+        string localDesignTable = BuildLocalDesignTable();
+        // Fallback COMPOSER (advisor ruling A/B): zero-offset column bundles from the resolved wire names — the
+        // proven deterministic formation. Real FleetDesignScreen/ShipDesignScreen-from-lobby are DEFERRED.
         return new ArenaMultiplayerSettings
         {
             MatchSeed = seed,
             RngSeed = (uint)seed ^ 0xA12EA000u,
             InputDelay = 3,
-            MaxTurns = ParseTurns(),
+            // MaxTurns is a HIGH ABSOLUTE SAFETY CEILING (custom-fleet program §5.2); the REAL cap derives from
+            // Ruleset.MaxMatchSeconds via EffectiveMaxTurns = min(MaxTurns, MaxMatchSeconds*60). ParseTurns() is now
+            // DefaultTurns=36000 (10 min), and we take the max with the selected duration so the ceiling is ALWAYS
+            // comfortably above the host's choice — MaxMatchSeconds is what actually binds, for any offered length.
+            // Both values are already folded into the fingerprint (MaxTurns directly, MaxMatchSeconds via Ruleset).
+            MaxTurns = Math.Max(ParseTurns(), ruleset.MaxMatchSeconds * 60 + 60),
             CommandEveryTurns = 1,
             HostRacePreference = LocalPeer.RacePreference,
             JoinRacePreference = RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference,
@@ -1372,6 +1511,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             Ruleset = ruleset,
             HostFleetBundle = ArenaFleetBundle.Encode(ArenaFleetBundle.FromDesignNames(hostFleet)),
             JoinFleetBundle = ArenaFleetBundle.Encode(ArenaFleetBundle.FromDesignNames(joinFleet)),
+            HostDesignTable = LocalRole == ArenaMultiplayerRole.Host ? localDesignTable : "",
+            JoinDesignTable = LocalRole == ArenaMultiplayerRole.Join ? localDesignTable : "",
         }.WithResolvedFleets();
     }
 
@@ -2230,7 +2371,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             MatchSeed = 0x5EED,
             RngSeed = 0xA12EA000u,
             InputDelay = 3,
-            MaxTurns = turns.Clamped(30, 2000),
+            MaxTurns = turns.Clamped(30, MaxTurnsCeiling),
             CommandEveryTurns = 1,
             HostRacePreference = "United",
             JoinRacePreference = "",
@@ -2251,7 +2392,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             {
                 Passed = false,
                 FailureReason = "setup: authoritative 4X self-test needs two playable major races.",
-                MaxTurns = turns.Clamped(30, 2000),
+                MaxTurns = turns.Clamped(30, MaxTurnsCeiling),
             };
         }
 
@@ -2276,7 +2417,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             races[1], Array.Empty<string>(), ArenaMultiplayerSettings.ProtocolVersion,
             ArenaMultiplayerPeerSignature.EnvironmentHash(),
             ArenaMultiplayerPeerSignature.EnvironmentSummary(),
-            maxTurns: turns.Clamped(30, 2000));
+            maxTurns: turns.Clamped(30, MaxTurnsCeiling));
     }
 
     static string[] AvailableSelfTestRacePreferences()
@@ -2569,6 +2710,10 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         Transport = null;
         LobbyTelemetry?.Dispose();
         LobbyTelemetry = null;
+        // Custom-fleet slice: teardown any transient sandbox designs so the process-global design table returns
+        // to its pre-lobby state (advisor risk 1: a leaked @arena/<hash> registration is a slow correctness/memory
+        // hazard). On launch-to-fight this already ran in LaunchVisibleArena; this covers back-out / abandon.
+        TeardownSandboxScratchSet();
         base.ExitScreen();
         ScreenManager.GoToScreen(new Ship_Game.GameScreens.MainMenu.MainMenuScreen(), clear3DObjects: true);
     }

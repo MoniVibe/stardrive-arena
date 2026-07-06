@@ -56,6 +56,29 @@ public sealed class ArenaMultiplayerSettings
     public string HostFleetBundle = "";
     public string JoinFleetBundle = "";
 
+    // Arena custom-fleet program (STARDRIVE_ARENA_CUSTOM_FLEET_PROGRAM_PLAN_20260706 §5.2): the REAL match
+    // cap. RulesetV0.MaxMatchSeconds was hashed into the fingerprint but never enforced — the actual cap was
+    // MaxTurns (a separate field), so a host-set "10 minute" match ended at MaxTurns ticks (~7s at the old
+    // 420 default) regardless. Fix: the effective cap is a pure function of MaxMatchSeconds (60 Hz sim), with
+    // MaxTurns kept only as an absolute safety ceiling. Both MaxTurns AND MaxMatchSeconds (via Ruleset.AppendTo)
+    // are already folded into SettingsHash, so both peers agree on this derived cap and a timeout is
+    // deterministic — no new fingerprint surface. A MaxMatchSeconds<=0 disables the derived cap (safety ceiling
+    // only), matching the ruleset's "0 = no explicit cap" intent.
+    public uint EffectiveMaxTurns
+    {
+        get
+        {
+            int maxTurns = Math.Max(1, MaxTurns);
+            int seconds = (Ruleset ?? new ArenaMultiplayerRuleset()).MaxMatchSeconds;
+            if (seconds <= 0)
+                return (uint)maxTurns;
+            // 1 turn == 1 sim tick == 1/60 s. Guard the multiply against int overflow for absurd host input.
+            long derived = (long)seconds * 60L;
+            long capped = Math.Min((long)maxTurns, derived);
+            return (uint)Math.Max(1L, capped);
+        }
+    }
+
     // Arena custom-fleet exchange kernel (STARDRIVE_ARENA_CUSTOM_FLEET_PROGRAM_PLAN_20260706).
     // The parallel custom-design TABLE for each side: full canonical payloads keyed by content-derived
     // @arena/<hash> names, encoded via ArenaDesignTable.Encode. Empty when EnableArenaCustomFleet is off.
@@ -879,7 +902,8 @@ public static class ArenaMultiplayerSession
         var result = NewResult(hostScreen, joinScreen);
         ValidateSnapshots(result);
 
-        for (uint turn = 0; turn < settings.MaxTurns; ++turn)
+        uint maxTurns = settings.EffectiveMaxTurns;
+        for (uint turn = 0; turn < maxTurns; ++turn)
         {
             SubmitTurnCommands(settings, turn, hostClient, joinClient, hostScreen, ref result.CommandsSubmitted);
             transport.Poll();
@@ -931,7 +955,8 @@ public static class ArenaMultiplayerSession
             "client received Arena settings but did not arm the simulation");
 
         var result = NewResult(screen, screen);
-        for (uint turn = 0; turn < settings.MaxTurns; ++turn)
+        uint maxTurns = settings.EffectiveMaxTurns;
+        for (uint turn = 0; turn < maxTurns; ++turn)
         {
             if (ShouldSubmit(settings, turn))
             {
@@ -983,7 +1008,8 @@ public static class ArenaMultiplayerSession
             });
         var result = NewResult(screen, screen);
 
-        for (uint turn = 0; turn < settings.MaxTurns; ++turn)
+        uint maxTurns = settings.EffectiveMaxTurns;
+        for (uint turn = 0; turn < maxTurns; ++turn)
         {
             if (ShouldSubmit(settings, turn))
             {

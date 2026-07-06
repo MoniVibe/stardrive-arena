@@ -112,9 +112,14 @@ public sealed class ArenaFleetPickerScreen : GameScreen
         return $"{Selected.Count} selected  ({Options.Length} available)";
     }
 
+    // Cost currency = IShipDesign.BaseStrength (rounded) — the SAME scalar the authoritative handshake gate
+    // sums (ArenaMultiplayerSession.SumBundleCost) and the ONLY empire/pace-independent, deterministic design
+    // value. Previously this client guard used BaseCost, which disagreed with the server gate: a fleet the
+    // picker deemed affordable could still be REJECTED at the handshake for overspend. Now the friendly
+    // client-side guard mirrors the real rejection (custom-fleet program §5.1).
     static int CostOf(string designName)
         => ResourceManager.Ships.GetDesign(designName, out IShipDesign design)
-            ? (int)Math.Round(design.BaseCost)
+            ? (int)MathF.Round(design.BaseStrength)
             : 0;
 
     int SelectedCost() => Selected.Sum(CostOf);
