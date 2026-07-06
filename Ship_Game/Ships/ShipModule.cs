@@ -762,6 +762,9 @@ namespace Ship_Game.Ships
                 return;
             
             remainder   = (damageAmount - ShieldPower).LowerBound(0);
+            // ARENA AFTER-ACTION (ADDENDUM 3): the shield soaked (incoming - remainder). Pure observation on the
+            // defending ship — a transient counter increment only, never folded into the sim/checksum.
+            Parent.ArenaDamageAbsorbed += (damageAmount - remainder).LowerBound(0);
             ShieldPower = (ShieldPower - damageAmount).LowerBound(0);
 
             if (proj != null && Parent.IsVisibleToPlayer)
@@ -785,6 +788,10 @@ namespace Ship_Game.Ships
             if      (source is Ship s)       source = s;
             else if (source is Projectile p) source = p.Owner ?? p.Module?.Parent;
             source?.OnDamageInflicted(this, amount);
+            // ARENA AFTER-ACTION (ADDENDUM 3): mirror the attacker's dealt credit as the victim's taken debit at the
+            // SAME site with the SAME amount, so sum(dealt) == sum(taken) reconciles exactly. Pure observation.
+            if (amount > 0f)
+                Parent.ArenaDamageTaken += amount;
         }
 
         public void Damage(GameObject source, float damageAmount, out float damageRemainder)
@@ -798,6 +805,11 @@ namespace Ship_Game.Ships
             }
 
             float modifiedDamage = damageAmount * damageModifier;
+            // ARENA AFTER-ACTION (ADDENDUM 3): armor/shield RESISTANCE (damageModifier < 1) soaked part of the raw
+            // hit before it reached the module. Count that reduction as defense-absorbed on the defending ship.
+            // Shield-bubble absorption is counted separately in DamageShield. Pure observation, transient counter.
+            if (damageModifier < 1f)
+                Parent.ArenaDamageAbsorbed += (damageAmount - modifiedDamage).LowerBound(0);
             if (!TryDamageModule(source, modifiedDamage, out float grossRemainder))
             {
                 damageRemainder = 0f;

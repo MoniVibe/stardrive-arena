@@ -135,6 +135,16 @@ namespace Ship_Game.Ships
         public float PilotDamageBonus;   // +weapon-damage fraction, additive with the +5%/level curve
         public int   PilotTrackingBonus; // +max tracked targets, additive with 1 + TrackingPower + Level
         public float PilotEvadeBonus;    // +explosion-evade chance points, additive with +Level
+
+        // ARENA AFTER-ACTION COUNTERS (ADDENDUM 3): PURE-OBSERVATION per-ship stat counters accumulated ONLY at
+        // the existing deterministic damage-application sites (ShipModule.OnDamageInflicted / DamageShield / Damage).
+        // They are transient (NOT [StarData]), are NEVER folded into UniverseStateHash.WriteAuthoritative or any
+        // fingerprint, and NEVER feed back into the sim — they are a read-out only. Because they increment at
+        // deterministic sites inside the shared lockstep sim, both peers compute byte-identical totals for free.
+        // Mirror the BonusEMPProtection / Pilot*Bonus transient-field idiom above (default 0 => pure no-op).
+        public float ArenaDamageDealt;    // total damage this ship LANDED on enemy modules/shields (attacker credit)
+        public float ArenaDamageTaken;    // total damage LANDED on this ship's modules/shields (defender debit)
+        public float ArenaDamageAbsorbed; // total incoming damage this ship's shields+resistances NEGATED
         public bool InPlayerSensorRange => KnownByEmpires.KnownByPlayer(Universe);
         public KnownByEmpire KnownByEmpires;
         public KnownByEmpire PlayerProjectorHasSeenEmpires;
@@ -597,6 +607,15 @@ namespace Ship_Game.Ships
                 return false;
 
             return attackerToUs.CanAttack;
+        }
+
+        // ARENA AFTER-ACTION (ADDENDUM 3): accumulate the damage this ship inflicted. This is the base-game
+        // damage callback (ShipModule.EvtDamageInflicted -> source.OnDamageInflicted); previously a no-op for
+        // Ship sources. Pure observation — increments a transient counter only, never mutates sim state.
+        public override void OnDamageInflicted(ShipModule victim, float damage)
+        {
+            if (damage > 0f)
+                ArenaDamageDealt += damage;
         }
 
         // Level 5 crews can use advanced targeting which even predicts acceleration

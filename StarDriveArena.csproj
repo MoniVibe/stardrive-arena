@@ -42,6 +42,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaAfterActionReport.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaBalanceMetaWatch.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaBattleCodes.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaBetting.cs" />

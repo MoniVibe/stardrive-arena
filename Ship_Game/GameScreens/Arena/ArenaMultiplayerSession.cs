@@ -587,6 +587,10 @@ public sealed class ArenaMultiplayerRunResult
     public string FinalHash = "";
     public ArenaMultiplayerShipSnapshot HostSnapshot;
     public ArenaMultiplayerShipSnapshot JoinSnapshot;
+    // ADDENDUM 3 AFTER-ACTION REPORT: each peer's gathered stat report (pure read-out of the deterministic
+    // transient counters). In-process both peers are in scope, so the harness can assert they are byte-identical.
+    public ArenaAfterActionReport HostAfterAction;
+    public ArenaAfterActionReport JoinAfterAction;
     public int CommandsSubmitted;
     public int TurnsCompleted => TurnHashes.Count;
 }
@@ -949,6 +953,12 @@ public static class ArenaMultiplayerSession
             if (result.MatchEnded)
                 break;
         }
+
+        // ADDENDUM 3: gather each peer's after-action report from its own fielded ship lists. Because the stat
+        // counters increment at deterministic sim sites, the two reports must be byte-identical (asserted by the
+        // headless proof) with ZERO added determinism surface — they are never hashed or fed back into the sim.
+        result.HostAfterAction = hostScreen.GatherMultiplayerAfterAction();
+        result.JoinAfterAction = joinScreen.GatherMultiplayerAfterAction();
 
         return result;
     }

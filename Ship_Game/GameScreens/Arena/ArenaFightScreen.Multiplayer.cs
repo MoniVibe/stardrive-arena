@@ -12,6 +12,7 @@ using Ship_Game.Gameplay;
 using Ship_Game.Ships;
 using Ship_Game.UI;
 using Vector2 = SDGraphics.Vector2;
+using Color = Microsoft.Xna.Framework.Color;
 using FleetDesignT = global::Ship_Game.FleetDesign;
 
 namespace Ship_Game.GameScreens.Arena;
@@ -175,6 +176,11 @@ public sealed partial class ArenaFightScreen
     bool MultiplayerLiveInitialized;
     bool MultiplayerLiveComplete;
     UIPanel MultiplayerEndPanel;
+    // ADDENDUM 3 AFTER-ACTION REPORT: gathered once at Resolve from the fielded ship lists (pure read-out of the
+    // transient per-ship stat counters). Drives the end-panel summary + full-report list. Null until Resolve.
+    ArenaAfterActionReport MultiplayerAfterAction;
+    bool MultiplayerFullReportExpanded;
+    ScrollList<ArenaPopupListItem> MultiplayerFullReportList;
     // Arena custom-fleet exchange kernel: the EXACT set of transient @arena/<hash> designs registered for the
     // CURRENT live match, so teardown undoes precisely this set on EVERY exit path — match end, lobby exit,
     // disconnect, and rematch re-registration (amendment 4). Never blanket-delete @arena/* (a concurrent
@@ -235,6 +241,35 @@ public sealed partial class ArenaFightScreen
             MultiplayerJoinFleetDesigns,
             PlayerDesign?.Name ?? "",
             EnemyDesign?.Name ?? "");
+
+    // ADDENDUM 3: gather the after-action report from this peer's fielded ship lists. Pure read-out of the
+    // deterministic transient counters; identical on both peers because it reads the shared-sim totals.
+    public ArenaAfterActionReport GatherMultiplayerAfterAction()
+        => ArenaAfterActionReport.Gather(PlayerShips, EnemyShips);
+
+    // Headless proof seam: the report gathered at Resolve (null until the match resolves).
+    public ArenaAfterActionReport MultiplayerAfterActionForHeadless => MultiplayerAfterAction;
+
+    // Headless proof seam: gather the after-action report from the current fielded ships and build the end panel
+    // (incl. the after-action summary column). Proves the panel-construction path — ArenaTheme card, DynamicText
+    // AAR labels, and the FULL REPORT ScrollList expansion — is sound without booting a full live session.
+    public void ShowMultiplayerEndPanelForHeadless(ArenaMultiplayerRunResult result = null)
+    {
+        MultiplayerLiveResult ??= result ?? new ArenaMultiplayerRunResult
+        {
+            HostSnapshot = MultiplayerSnapshot(),
+            JoinSnapshot = MultiplayerSnapshot(),
+        };
+        MultiplayerAfterAction = GatherMultiplayerAfterAction();
+        ShowMultiplayerEndPanel();
+    }
+
+    // Headless proof seam: drive the FULL REPORT toggle and report whether the scroll list materialized.
+    public bool ToggleMultiplayerFullReportForHeadless()
+    {
+        ToggleMultiplayerFullReport();
+        return MultiplayerFullReportList != null && MultiplayerFullReportList.Visible;
+    }
 
     public void ConfigureMultiplayerPvP(ArenaMultiplayerSettings settings)
     {
@@ -1564,6 +1599,8 @@ public sealed partial class ArenaFightScreen
             $"reason='{reason}' turns={MultiplayerLiveResult.TurnsCompleted} final={MultiplayerLiveResult.FinalHash}");
         Log.Warning($"Arena MP COMPLETE role={MultiplayerLiveSession.Role} reason='{reason}' "
                     + $"turns={MultiplayerLiveResult.TurnsCompleted} final={MultiplayerLiveResult.FinalHash}");
+        // ADDENDUM 3: gather the after-action report once, at Resolve, from the final fielded ship state.
+        MultiplayerAfterAction = GatherMultiplayerAfterAction();
         ShowMultiplayerEndPanel();
     }
 
@@ -1583,7 +1620,8 @@ public sealed partial class ArenaFightScreen
             return;
         }
 
-        var panel = new RectF(ScreenCenter.X - 250, ScreenCenter.Y - 150, 500, 300);
+        // ADDENDUM 3: widened to host the after-action report column alongside the existing result/rematch/lobby.
+        var panel = new RectF(ScreenCenter.X - 380, ScreenCenter.Y - 170, 760, 340);
         MultiplayerEndPanel = ArenaTheme.Card(panel);
         MultiplayerEndPanel.Name = "arena_mp_end_panel";
         Add(MultiplayerEndPanel);
@@ -1614,6 +1652,8 @@ public sealed partial class ArenaFightScreen
             DynamicText = _ => $"End: {(MultiplayerEndReason.NotEmpty() ? MultiplayerEndReason : "—")}",
         });
 
+        BuildAfterActionSummary(panel);
+
         UIList actions = AddList(new Vector2(panel.X + 22, panel.Bottom - 54));
         actions.Direction = new Vector2(1f, 0f);
         actions.Padding = new Vector2(10f, 10f);
@@ -1622,6 +1662,130 @@ public sealed partial class ArenaFightScreen
         rematch.Name = "arena_mp_end_rematch";
         UIButton lobby = ArenaTheme.AddPillButton(actions, "LOBBY", _ => BackToMultiplayerLobby(), 100f);
         lobby.Name = "arena_mp_end_lobby";
+        UIButton fullReport = ArenaTheme.AddPillButton(actions, "FULL REPORT", _ => ToggleMultiplayerFullReport(), 140f);
+        fullReport.Name = "arena_mp_end_full_report";
+    }
+
+    // ADDENDUM 3: the compact after-action summary column (survivors / top damage / best absorber / top killer)
+    // rendered to the RIGHT of the existing result labels. Pure read-out — DynamicText pulls from the report
+    // gathered at Resolve, so it reflects the identical deterministic totals both peers computed.
+    void BuildAfterActionSummary(in RectF panel)
+    {
+        float x = panel.X + 400;
+        MultiplayerEndPanel.Add(ArenaTheme.SectionHeader(new Vector2(x, panel.Y + 18), "AFTER-ACTION"));
+
+        var rows = new (string name, Func<string> text)[]
+        {
+            ("arena_mp_aar_survivors", MultiplayerAfterActionSurvivorsText),
+            ("arena_mp_aar_topdamage", () => MultiplayerAfterActionHighlight("Top damage",
+                s => s.TopDamageDealer, r => r.DamageDealt)),
+            ("arena_mp_aar_absorber", () => MultiplayerAfterActionHighlight("Best absorber",
+                s => s.TopDamageAbsorber, r => r.DamageAbsorbed)),
+            ("arena_mp_aar_killer", MultiplayerAfterActionTopKillerText),
+            ("arena_mp_aar_total", MultiplayerAfterActionTotalsText),
+        };
+        for (int i = 0; i < rows.Length; ++i)
+        {
+            (string name, Func<string> text) = rows[i];
+            MultiplayerEndPanel.Add(new UILabel(new Vector2(x, panel.Y + 52 + i * 28),
+                "", ArenaTheme.BodySmallFont, ArenaTheme.TextSecondary)
+            {
+                Name = name,
+                DynamicText = _ => text(),
+            });
+        }
+    }
+
+    string MultiplayerAfterActionSurvivorsText()
+    {
+        if (MultiplayerAfterAction == null)
+            return "Survivors: —";
+        return $"Survivors: Host {MultiplayerAfterAction.Host.Survivors}/{MultiplayerAfterAction.Host.StartCount}"
+               + $" | Join {MultiplayerAfterAction.Join.Survivors}/{MultiplayerAfterAction.Join.StartCount}";
+    }
+
+    string MultiplayerAfterActionHighlight(string label,
+        Func<ArenaAfterActionSide, ArenaShipStatRow> pick, Func<ArenaShipStatRow, float> metric)
+    {
+        if (MultiplayerAfterAction == null)
+            return $"{label}: —";
+        ArenaShipStatRow best = default;
+        float bestVal = -1f;
+        foreach (ArenaAfterActionSide side in new[] { MultiplayerAfterAction.Host, MultiplayerAfterAction.Join })
+        {
+            if (!side.HasShips) continue;
+            ArenaShipStatRow row = pick(side);
+            if (metric(row) > bestVal) { bestVal = metric(row); best = row; }
+        }
+        if (bestVal < 0f)
+            return $"{label}: —";
+        return $"{label}: {best.DisplayName} ({(long)Math.Round(bestVal)})";
+    }
+
+    string MultiplayerAfterActionTopKillerText()
+    {
+        if (MultiplayerAfterAction == null)
+            return "Top killer: —";
+        ArenaShipStatRow best = default;
+        int bestKills = -1;
+        foreach (ArenaAfterActionSide side in new[] { MultiplayerAfterAction.Host, MultiplayerAfterAction.Join })
+        {
+            if (!side.HasShips) continue;
+            if (side.TopKiller.Kills > bestKills) { bestKills = side.TopKiller.Kills; best = side.TopKiller; }
+        }
+        if (bestKills <= 0)
+            return "Top killer: none";
+        return $"Top killer: {best.DisplayName} ({bestKills})";
+    }
+
+    string MultiplayerAfterActionTotalsText()
+    {
+        if (MultiplayerAfterAction == null)
+            return "";
+        return $"Total dmg: Host {(long)Math.Round(MultiplayerAfterAction.Host.DamageDealt)}"
+               + $" | Join {(long)Math.Round(MultiplayerAfterAction.Join.DamageDealt)}";
+    }
+
+    // ADDENDUM 3: the "FULL REPORT" expansion — a scroll list of the per-ship breakdown (survived / kills /
+    // damage dealt / damage absorbed), built lazily on first open and toggled thereafter.
+    void ToggleMultiplayerFullReport()
+    {
+        MultiplayerFullReportExpanded = !MultiplayerFullReportExpanded;
+        if (MultiplayerFullReportList == null && MultiplayerFullReportExpanded && MultiplayerEndPanel != null)
+            BuildMultiplayerFullReportList();
+        if (MultiplayerFullReportList != null)
+            MultiplayerFullReportList.Visible = MultiplayerFullReportExpanded;
+    }
+
+    void BuildMultiplayerFullReportList()
+    {
+        var listRect = new RectF(MultiplayerEndPanel.X + 22, MultiplayerEndPanel.Bottom + 8,
+            MultiplayerEndPanel.Width - 44, 200);
+        var scroll = Add(new ScrollList<ArenaPopupListItem>(listRect, 22));
+        scroll.Name = "arena_mp_end_full_report_list";
+
+        void AddLine(string text, Color color)
+            => scroll.AddItem(new ArenaPopupListItem(text, font: ArenaTheme.MonoFont, textColor: color));
+
+        AddLine("SHIP                        SURV KILLS   DEALT    TAKEN  ABSORBED", ArenaTheme.Amber);
+        if (MultiplayerAfterAction != null)
+        {
+            AppendSideRows(AddLine, "HOST", MultiplayerAfterAction.Host);
+            AppendSideRows(AddLine, "JOIN", MultiplayerAfterAction.Join);
+        }
+        MultiplayerFullReportList = scroll;
+        scroll.Visible = MultiplayerFullReportExpanded;
+    }
+
+    static void AppendSideRows(Action<string, Color> add, string sideLabel, ArenaAfterActionSide side)
+    {
+        add($"-- {sideLabel} --", ArenaTheme.TextMuted);
+        foreach (ArenaShipStatRow r in side.Ships)
+        {
+            string name = (r.DisplayName.Length > 24 ? r.DisplayName.Substring(0, 24) : r.DisplayName).PadRight(26);
+            add($"{name}{(r.Survived ? "  Y " : "  . ")}{r.Kills,5}  {(long)Math.Round(r.DamageDealt),7}  {(long)Math.Round(r.DamageTaken),7}  {(long)Math.Round(r.DamageAbsorbed),8}",
+                r.Survived ? ArenaTheme.TextSecondary : ArenaTheme.TextMuted);
+        }
     }
 
     string MultiplayerEndWinnerText()
