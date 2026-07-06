@@ -242,6 +242,13 @@ public sealed partial class ArenaFightScreen
             PlayerDesign?.Name ?? "",
             EnemyDesign?.Name ?? "");
 
+    // B0 population smoke-test seam. Per-slot (SlotId, EmpireId, aliveShipCount) in ascending-SlotId order for the
+    // built ArenaSlots. Pure observation (no sim surface); lets the N>2 spawn smoke test assert N empires + N
+    // non-empty fleets spawned without reaching into private state. Empty when the substrate isn't built (SP).
+    public (int SlotId, int EmpireId, int ShipCount)[] MultiplayerSlotSpawnSummaryForHeadless()
+        => ArenaSlots.Select(s => (s.SlotId, s.Empire?.Id ?? 0,
+            s.Ships.Count(sh => sh?.Active == true))).ToArray();
+
     // ADDENDUM 3: gather the after-action report from this peer's fielded ship lists. Pure read-out of the
     // deterministic transient counters; identical on both peers because it reads the shared-sim totals.
     public ArenaAfterActionReport GatherMultiplayerAfterAction()
@@ -271,9 +278,16 @@ public sealed partial class ArenaFightScreen
         return MultiplayerFullReportList != null && MultiplayerFullReportList.Visible;
     }
 
+    // B0 population: the full resolved match settings stashed at configure time so the spawn path (which reads the
+    // fingerprinted Roster + per-slot bundles) has them even when MultiplayerLiveSession isn't armed yet (the
+    // in-process RunInProcess/BuildPeerScreen path). The live path still prefers MultiplayerLiveSession.Settings.
+    // At N=2 the Roster is empty here, so BuildArenaSlots synthesizes the legacy two slots exactly as before.
+    ArenaMultiplayerSettings ConfiguredMultiplayerSettings;
+
     public void ConfigureMultiplayerPvP(ArenaMultiplayerSettings settings)
     {
         ArenaMultiplayerSettings resolved = (settings ?? new ArenaMultiplayerSettings()).WithResolvedFleets();
+        ConfiguredMultiplayerSettings = resolved;
         MultiplayerHostFleetDesigns = ArenaMultiplayerSettings.NormalizeFleet(resolved.HostFleetDesignNames);
         MultiplayerJoinFleetDesigns = ArenaMultiplayerSettings.NormalizeFleet(resolved.JoinFleetDesignNames);
         MultiplayerPvPMode = MultiplayerHostFleetDesigns.Length > 0 && MultiplayerJoinFleetDesigns.Length > 0;
@@ -977,7 +991,10 @@ public sealed partial class ArenaFightScreen
         // Formation-aware spawn (plan Part 3d): the canonical FleetDesignT bundle is the source of
         // truth for placement AND stable ship-id order. Fall back to the name-list column when no
         // bundle is present (legacy path) — FromDesignNames yields a zero-offset column.
-        ArenaMultiplayerSettings liveSettings = MultiplayerLiveSession?.Settings;
+        // Prefer the armed live-session settings; fall back to the settings stashed at ConfigureMultiplayerPvP so
+        // the in-process build path (RunInProcess/BuildPeerScreen, no live session) still carries the fingerprinted
+        // Roster + per-slot bundles into the spawn. Both are already WithResolvedFleets. Null => legacy 2-slot synth.
+        ArenaMultiplayerSettings liveSettings = MultiplayerLiveSession?.Settings ?? ConfiguredMultiplayerSettings;
         FleetDesignT hostBundle = ResolveMultiplayerBundle(liveSettings?.HostFleetBundle, MultiplayerHostFleetDesigns);
         FleetDesignT joinBundle = ResolveMultiplayerBundle(liveSettings?.JoinFleetBundle, MultiplayerJoinFleetDesigns);
         IShipDesign[] hostDesigns = ResolveMultiplayerFleet(BundleShipNames(hostBundle));
@@ -987,6 +1004,14 @@ public sealed partial class ArenaFightScreen
 
         PlayerDesign = hostDesigns[0];
         EnemyDesign = joinDesigns[0];
+
+        // B0 POPULATION (§1). MP-ONLY, gated on Roster.Length > 2: create one combatant Empire per occupied slot
+        // >= 2 in ascending-SlotId order, BEFORE BuildArenaSlots, so the slots for i>=2 have a real empire to own
+        // their fleet. This is the seam where the fingerprinted roster is in hand and Create has already built
+        // slots 0/1 (player + one opponent) + all minors. At N=2 (empty or 2-record roster) this is a no-op, so
+        // the legacy path is untouched and byte-identical. See PopulateMultiplayerCombatantEmpires for the
+        // id-determinism contract (each combatant consumes exactly ONE CreateId(), NO generated home system).
+        PopulateMultiplayerCombatantEmpires(liveSettings);
 
         // N-SLOT SUBSTRATE build site (plan §1). Build the ascending-SlotId ArenaSlots array from the
         // fingerprinted roster. Empty roster (the 2-peer default) synthesizes the legacy two-slot roster so
@@ -1000,8 +1025,29 @@ public sealed partial class ArenaFightScreen
         // every MP spawn path before LoadContent, even when MultiplayerLiveSession isn't armed yet), so both
         // peers carry the same handshaked value here and stamp identical ship.ArenaFiniteAmmo flags =>
         // lockstep-safe. Default UnlimitedAmmo=true => finite off => regen unchanged from trunk.
-        SpawnMultiplayerFormation(PlayerShips, ArenaPlayer, hostBundle, -Gap, +1f, PlayerSpawnFacing, ArenaFiniteAmmoActive);
-        SpawnMultiplayerFormation(EnemyShips, ArenaEnemy, joinBundle, +Gap, -1f, EnemySpawnFacing, ArenaFiniteAmmoActive);
+        // N-FLEET SPAWN LOOP (B0 §3). N==2 is LITERALLY the current two calls (byte-parity, never "generalize then
+        // hope it reduces"). N>2 iterates ArenaSlots ascending: slots 0/1 resolve from Host/JoinFleetBundle exactly
+        // as at N=2; slots >=2 resolve their bundle from the per-slot carrier and use a B0 PLACEHOLDER placement
+        // (NOT the C7 arc). Ship-id order is a pure fn of (slot order, per-slot StableNodeOrder) => peer-invariant.
+        if (ArenaSlots.Length == 2)
+        {
+            SpawnMultiplayerFormation(PlayerShips, ArenaPlayer, hostBundle, -Gap, +1f, PlayerSpawnFacing, ArenaFiniteAmmoActive);
+            SpawnMultiplayerFormation(EnemyShips, ArenaEnemy, joinBundle, +Gap, -1f, EnemySpawnFacing, ArenaFiniteAmmoActive);
+        }
+        else
+        {
+            for (int i = 0; i < ArenaSlots.Length; ++i)
+            {
+                ArenaSlot slot = ArenaSlots[i];
+                FleetDesignT bundle = ResolveSlotBundle(i, liveSettings, hostBundle, joinBundle);
+                (float sideX, float sideMirror, Vector2 facing) = B0PlacementFor(i);
+                // Per-slot Y lane so same-side slots don't overlap (B0 placeholder; pure fn of index). Slots 0/1
+                // stay on lane 0 (the legacy Y range); each subsequent same-side slot steps out by one lane span.
+                float laneY = i < 2 ? 0f : (i / 2) * B0LaneSpacing;
+                SpawnMultiplayerFormation(slot.Ships, slot.Empire, bundle, sideX, sideMirror, facing,
+                    ArenaFiniteAmmoActive, laneY);
+            }
+        }
 
         // Deterministic countdown: resolve tick length from the ruleset once (never per-frame).
         MultiplayerCountdownTicks = (liveSettings?.Ruleset ?? new ArenaMultiplayerRuleset()).CountdownTicks;
@@ -2041,12 +2087,115 @@ public sealed partial class ArenaFightScreen
         var slots = new ArenaSlot[ordered.Length];
         for (int i = 0; i < ordered.Length; ++i)
         {
-            // The first two slots alias the legacy sides so N=2 flows through identical machinery.
+            // The first two slots alias the legacy sides so N=2 flows through identical machinery. Slots >= 2
+            // (B0 §3) own a FRESH ship list and the combatant Empire created by PopulateMultiplayerCombatantEmpires
+            // (keyed by SlotId). A null empire for an i>=2 slot is a hard bug — the populate step runs before this.
             List<Ship> ships = i == 0 ? PlayerShips : i == 1 ? EnemyShips : new List<Ship>();
-            Empire empire = i == 0 ? ArenaPlayer : i == 1 ? ArenaEnemy : null;
+            Empire empire = i == 0 ? ArenaPlayer
+                : i == 1 ? ArenaEnemy
+                : CombatantEmpireForSlot(ordered[i].SlotId);
+            if (i >= 2 && empire == null)
+                throw new InvalidOperationException(
+                    $"Arena B0 population: slot {ordered[i].SlotId} has no combatant empire. "
+                    + "PopulateMultiplayerCombatantEmpires must run before BuildArenaSlots.");
             slots[i] = new ArenaSlot(ordered[i].SlotId, ordered[i].TeamId, empire, ships);
         }
         ArenaSlots = slots;
+    }
+
+    // B0 §3 placeholder lane spacing: the Y step between same-side slots so their formations don't overlap. Wide
+    // enough to clear a full RowSpan fan-out. Placeholder only — Lane B's C7 arc replaces this whole placement.
+    const float B0LaneSpacing = 6000f;
+
+    // B0 POPULATION (§1). The combatant empires created for slots >= 2, keyed by host-assigned SlotId. Populated by
+    // PopulateMultiplayerCombatantEmpires BEFORE BuildArenaSlots; read there to own each i>=2 slot's fleet. Empty at
+    // N=2 (the populate step is a no-op). Never contains slots 0/1 (those alias ArenaPlayer/ArenaEnemy).
+    readonly Dictionary<int, Empire> CombatantEmpiresBySlot = new();
+
+    Empire CombatantEmpireForSlot(int slotId)
+        => CombatantEmpiresBySlot.TryGetValue(slotId, out Empire e) ? e : null;
+
+    // B0 POPULATION (§1). MP-ONLY, gated on Roster.Length > 2. Creates ONE combatant Empire per occupied slot >= 2,
+    // in ascending-SlotId order, so that:
+    //   * Empire.Id == EmpireList.Count at insertion (pure fn of creation order) => peer-agreed empire ids.
+    //   * Each combatant consumes EXACTLY ONE CreateId() (the DefensiveCoordinator in EmpireAI.InitializeManagers);
+    //     we do NOT call GenerateRandomSystem (its planet/asteroid ids are RNG-VARIABLE and would diverge the
+    //     later slots' ship-id sequence and desync — B0 §5 #1). An empire with no system is safe: nothing in the
+    //     creation path derefs Capital/OwnedPlanets, and the sim never lazily spawns a starting ship for it.
+    // The per-slot race/color is a deterministic fn of (MatchSeed, SlotId): a MatchSeed-seeded shuffle of the
+    // major races NOT already consumed by Create's player+opponent, assigned to slots >= 2 in ascending order.
+    // ASSERT MatchSeed != 0 — a 0 seed makes empire personality RNG clock-random (drawn in CreateEmpireFromEmpireData
+    // BEFORE the global deterministic re-seed) and desyncs. Appends AFTER Create's minors, so combatant ids are the
+    // highest and non-contiguous with slot index (documented; ArenaSlots[i].Empire.Id != i+1 for i >= 2).
+    void PopulateMultiplayerCombatantEmpires(ArenaMultiplayerSettings liveSettings)
+    {
+        CombatantEmpiresBySlot.Clear();
+        ArenaPlayerRosterRecord[] roster = liveSettings?.Roster;
+        if (roster == null || roster.Length <= 2)
+            return; // N=2 (or empty): legacy path, no extra empires — byte-identical to trunk.
+
+        int matchSeed = liveSettings?.MatchSeed ?? 0;
+        if (matchSeed == 0)
+            throw new InvalidOperationException(
+                "Arena B0 population requires MatchSeed != 0 for N>2 matches. A zero seed makes combatant "
+                + "empire personalities clock-random (drawn before the deterministic re-seed) and desyncs the peers.");
+
+        ArenaPlayerRosterRecord[] ordered = roster.OrderBy(r => r.SlotId).ToArray();
+        int combatantsNeeded = ordered.Length - 2;
+
+        // Deterministic race pool: major races NOT already used by an existing empire (Create's player + opponent +
+        // any minor that shares the pool), shuffled by MatchSeed so the assignment is a pure fn of (MatchSeed).
+        // System.Random(seed) Fisher-Yates == the exact idiom Create uses (races.Shuffle(seed)), peer-invariant on
+        // a shared build. Distinct races per slot avoid CreateEmpire's GetEmpireByName duplicate-name throw.
+        var pool = new List<IEmpireData>();
+        foreach (IEmpireData data in ResourceManager.MajorRaces)
+        {
+            if (UState.GetEmpireByName(data.Name) == null)
+                pool.Add(data);
+        }
+        pool.Shuffle(matchSeed);
+        if (pool.Count < combatantsNeeded)
+            throw new InvalidOperationException(
+                $"Arena B0 population needs {combatantsNeeded} distinct combatant races but only {pool.Count} "
+                + "unused major races are available. (B0 caps at the number of distinct major races; larger N "
+                + "awaits Lane B race-reuse handling.)");
+
+        for (int i = 2; i < ordered.Length; ++i)
+        {
+            IEmpireData raceData = pool[i - 2];
+            // No generated home system (§5 #1): CreateEmpire alone consumes exactly one CreateId().
+            Empire e = UState.CreateEmpire(raceData, isPlayer: false, difficulty: GameDifficulty.Hard);
+            CombatantEmpiresBySlot[ordered[i].SlotId] = e;
+        }
+    }
+
+    // B0 §3 per-slot bundle resolution. Slot 0 -> host bundle, slot 1 -> join bundle (their SlotId-0/1 aliases);
+    // slots >= 2 -> the per-slot carrier (ArenaSlotFleetBundles keyed by SlotId), falling back to the name-list
+    // column if (defensively) absent. Both peers resolve the SAME bundle bytes so the spawn ids agree.
+    FleetDesignT ResolveSlotBundle(int index, ArenaMultiplayerSettings liveSettings,
+        FleetDesignT hostBundle, FleetDesignT joinBundle)
+    {
+        if (index == 0) return hostBundle;
+        if (index == 1) return joinBundle;
+        int slotId = ArenaSlots[index].SlotId;
+        string encoded = null;
+        liveSettings?.ArenaSlotFleetBundles?.TryGetValue(slotId, out encoded);
+        return ResolveMultiplayerBundle(encoded, MultiplayerHostFleetDesigns);
+    }
+
+    // B0 §3 PLACEHOLDER placement — NOT the C7 arc (Lane B owns the float surface + spawn-determinism proof #6).
+    // Slots 0/1 keep the literal legacy (-Gap,+1f,PlayerFacing) / (+Gap,-1f,EnemyFacing) so if this loop ever ran
+    // at N==2 it would still reduce correctly; slots >= 2 alternate sides (even i -> left, odd i -> right) and are
+    // staggered into a per-slot Y lane by index so fleets don't overlap. Pure fn of index (peer-invariant), minimal.
+    (float sideX, float sideMirror, Vector2 facing) B0PlacementFor(int index)
+    {
+        if (index == 0) return (-Gap, +1f, PlayerSpawnFacing);
+        if (index == 1) return (+Gap, -1f, EnemySpawnFacing);
+        bool left = (index % 2) == 0;
+        float sideX = left ? -Gap : +Gap;
+        float sideMirror = left ? +1f : -1f;
+        Vector2 facing = left ? PlayerSpawnFacing : EnemySpawnFacing;
+        return (sideX, sideMirror, facing);
     }
 
     public ArenaMultiplayerMatchStatus MultiplayerMatchStatus()
@@ -2082,8 +2231,10 @@ public sealed partial class ArenaFightScreen
     // ship-id assignment order is identical on both peers (MultiplayerSnapshot id equality holds).
     // Placement: ArenaCenter + (sideX,0) + offset*sideMirror on X. Only legal combat designs spawn;
     // an illegal node is skipped (matching ResolveMultiplayerFleet), keeping both peers in agreement.
+    // laneY (B0 §3 placeholder): a per-slot Y offset added to the whole formation so N>2 slots on the same side
+    // don't overlap. DEFAULTS to 0 so the N==2 literal calls are byte-identical to trunk (they never pass it).
     static void SpawnMultiplayerFormation(List<Ship> ships, Empire owner, FleetDesignT bundle,
-        float sideX, float sideMirror, Vector2 facing, bool finiteAmmo = false)
+        float sideX, float sideMirror, Vector2 facing, bool finiteAmmo = false, float laneY = 0f)
     {
         Vector2 center = ArenaCenter;
         var nodes = ArenaFleetBundle.StableNodeOrder(bundle);
@@ -2097,8 +2248,8 @@ public sealed partial class ArenaFightScreen
             // Mirror the join side across the centerline on X; if the authored offset is zero
             // (name-list fallback) fan out into the legacy column so ships don't stack.
             Vector2 placed = offset == Vector2.Zero
-                ? new Vector2(sideX, (index - (nodes.Count - 1) / 2f) * RowSpan)
-                : new Vector2(sideX + offset.X * sideMirror, offset.Y);
+                ? new Vector2(sideX, laneY + (index - (nodes.Count - 1) / 2f) * RowSpan)
+                : new Vector2(sideX + offset.X * sideMirror, laneY + offset.Y);
             Ship ship = CreateArenaShipAtPoint(owner.Universe, node.ShipName, owner, center + placed, facing, finiteAmmo);
             if (ship == null)
                 throw new InvalidOperationException($"Failed to spawn Arena PvP ship '{node.ShipName}'.");

@@ -109,6 +109,59 @@ public static class ArenaPlayerRosterCodec
     }
 }
 
+/// <summary>
+/// Per-slot fleet-bundle BYTES carrier (STARDRIVE_ARENA_8PLAYER_TEAMS_B0_POPULATION_20260707 §2). Parallel to
+/// ArenaPlayerRosterCodec: one 'slotId,base64(bundleString)' record per occupied combatant slot, joined by ';'
+/// in EXPLICIT ascending SlotId order; Decode re-sorts and un-base64s into a slotId -> bundle map. The bundle
+/// string is base64'd because it itself contains the ␟/␞ ArenaFleetBundle separators, which would collide with
+/// the outer ';'/',' framing. Carries the ACTUAL fleet bytes for slots >= 2 so a peer can reconstruct the spawn.
+///
+/// CONSISTENCY LAW (§2): the bytes are NEVER folded into the fingerprint. They fold TRANSITIVELY via the roster's
+/// per-slot DesignBundleHash — ValidateStartMessage decodes each slot's bundle, recomputes its hash, and rejects
+/// on mismatch against the fingerprinted roster hash. Same law as Host/JoinDesignBundleHash. Folding the raw
+/// bytes would false-reject benign base64/ordering variance between peers.
+/// </summary>
+public static class ArenaSlotBundleCodec
+{
+    public static string Encode(IReadOnlyDictionary<int, string> slotBundles)
+    {
+        if (slotBundles == null || slotBundles.Count == 0)
+            return "";
+        return string.Join(";", slotBundles
+            .OrderBy(kv => kv.Key)
+            .Select(kv => string.Join(",",
+                kv.Key.ToString(CultureInfo.InvariantCulture),
+                B64(kv.Value))));
+    }
+
+    public static Dictionary<int, string> Decode(string encoded)
+    {
+        var map = new Dictionary<int, string>();
+        if (string.IsNullOrEmpty(encoded))
+            return map;
+        foreach (string row in encoded.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            string[] parts = row.Split(',');
+            if (parts.Length < 2
+                || !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int slotId))
+                throw new InvalidOperationException("Arena per-slot fleet-bundle carrier was malformed.");
+            map[slotId] = UnB64(parts[1]);
+        }
+        return map;
+    }
+
+    static string B64(string text)
+        => Convert.ToBase64String(Encoding.UTF8.GetBytes(text ?? ""));
+
+    static string UnB64(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return "";
+        try { return Encoding.UTF8.GetString(Convert.FromBase64String(text)); }
+        catch (FormatException) { return ""; }
+    }
+}
+
 public sealed class ArenaMultiplayerSettings
 {
     // 3 -> 4: RulesetV0 + canonical design bundles enter the start payload.
@@ -190,6 +243,15 @@ public sealed class ArenaMultiplayerSettings
     // Host/Join two-slot fingerprint EXACTLY (the fold is skipped when there are no roster records),
     // which keeps flag-off byte-identical to trunk (ruling C10).
     public ArenaPlayerRosterRecord[] Roster = Array.Empty<ArenaPlayerRosterRecord>();
+
+    // Arena 8-player teams — B0 population (STARDRIVE_ARENA_8PLAYER_TEAMS_B0_POPULATION_20260707 §2). The per-slot
+    // fleet-bundle BYTES for slots >= 2, keyed by host-assigned SlotId. Slots 0/1 are NOT stored here — they ride
+    // HostFleetBundle/JoinFleetBundle (their SlotId-0/1 aliases). Encoded to the wire via ArenaSlotBundleCodec
+    // (ascending SlotId, base64 per bundle) and validated bytes-against-hash at ValidateStartMessage against each
+    // roster record's DesignBundleHash. Empty (the 2-peer default) means "no per-slot bundles": the spawn loop
+    // resolves slots 0/1 from Host/JoinFleetBundle exactly as today. The bytes are never folded into SettingsHash
+    // (they fold transitively via the roster's per-slot hash), so an empty map is byte-identical to trunk.
+    public Dictionary<int, string> ArenaSlotFleetBundles = new();
 
     public string HostDesignBundleHash =>
         ArenaFleetBundle.DesignBundleHash(ResolveBundleOrNames(HostFleetBundle, HostFleetDesignNames));
@@ -285,6 +347,7 @@ public sealed class ArenaMultiplayerSettings
             HostDesignTable = HostDesignTable ?? "",
             JoinDesignTable = JoinDesignTable ?? "",
             ArenaPlayerRoster = ArenaPlayerRosterCodec.Encode(Roster),
+            ArenaSlotBundles = ArenaSlotBundleCodec.Encode(ArenaSlotFleetBundles),
         };
     }
 
@@ -311,6 +374,7 @@ public sealed class ArenaMultiplayerSettings
             HostDesignTable = message.HostDesignTable ?? "",
             JoinDesignTable = message.JoinDesignTable ?? "",
             Roster = ArenaPlayerRosterCodec.Decode(message.ArenaPlayerRoster),
+            ArenaSlotFleetBundles = ArenaSlotBundleCodec.Decode(message.ArenaSlotBundles),
         };
 
     public static ArenaMultiplayerRuleset RulesetFromStartMessage(SessionStartMessage message)
@@ -403,6 +467,30 @@ public sealed class ArenaMultiplayerSettings
             return $"Arena multiplayer host design bundle mismatch. Host {start.HostDesignBundleHash}, local {settings.HostDesignBundleHash}.";
         if (!string.Equals(start.JoinDesignBundleHash ?? "", settings.JoinDesignBundleHash, StringComparison.Ordinal))
             return $"Arena multiplayer join design bundle mismatch. Host {start.JoinDesignBundleHash}, local {settings.JoinDesignBundleHash}.";
+
+        // B0 population (§2) CONSISTENCY LAW: fold the HASH, carry the BYTES, validate bytes-against-hash. The
+        // per-slot fleet bundles (ArenaSlotBundles) are NOT folded into the fingerprint — they fold TRANSITIVELY
+        // via each roster record's DesignBundleHash (which IS folded, via ArenaPlayerRosterCodec.Fold). Re-derive
+        // each carried slot's bundle hash and reject on mismatch against the fingerprinted roster hash, so a
+        // tampered/garbled per-slot bundle produces a precise per-slot error instead of a mid-match desync.
+        // (Slots 0/1 are validated above via Host/JoinDesignBundleHash; this covers slots >= 2. Empty carrier =>
+        // no records => this loop is a no-op, byte-identical to the 2-peer path.)
+        if (settings.ArenaSlotFleetBundles != null && settings.ArenaSlotFleetBundles.Count > 0)
+        {
+            var rosterHashBySlot = new Dictionary<int, string>();
+            foreach (ArenaPlayerRosterRecord rec in settings.Roster ?? Array.Empty<ArenaPlayerRosterRecord>())
+                rosterHashBySlot[rec.SlotId] = rec.DesignBundleHash ?? "";
+            foreach (KeyValuePair<int, string> kv in settings.ArenaSlotFleetBundles.OrderBy(kv => kv.Key))
+            {
+                if (string.IsNullOrEmpty(kv.Value))
+                    continue;
+                string carriedHash = ArenaFleetBundle.DesignBundleHash(ArenaFleetBundle.Decode(kv.Value));
+                if (!rosterHashBySlot.TryGetValue(kv.Key, out string rosterHash))
+                    return $"Arena multiplayer per-slot bundle for slot {kv.Key} has no matching roster record.";
+                if (!string.Equals(carriedHash, rosterHash, StringComparison.Ordinal))
+                    return $"Arena multiplayer per-slot bundle mismatch for slot {kv.Key}. Roster {rosterHash}, bundle {carriedHash}.";
+            }
+        }
 
         string modeError = ValidateRuleset(settings);
         if (modeError.NotEmpty())
@@ -511,6 +599,13 @@ public sealed class ArenaMultiplayerSettings
             // path (ValidateStartMessage calls WithResolvedFleets), defeating the divergent-team-map reject
             // and reproducing the exact "silently disabled" bug the design-table carry-through above fixed.
             Roster = Roster ?? Array.Empty<ArenaPlayerRosterRecord>(),
+            // B0 population (§2): carry the per-slot fleet-bundle bytes through fleet resolution. Dropping them
+            // here would silently strip slots >= 2 of their fleets on every re-resolve path (the same class of
+            // "silently disabled" bug the Roster/design-table carry-through above fixes). Copy the map so the
+            // resolved settings own an independent instance.
+            ArenaSlotFleetBundles = ArenaSlotFleetBundles != null
+                ? new Dictionary<int, string>(ArenaSlotFleetBundles)
+                : new Dictionary<int, string>(),
             MatchSeed = MatchSeed,
             RngSeed = RngSeed,
             InputDelay = Math.Max(0, InputDelay),

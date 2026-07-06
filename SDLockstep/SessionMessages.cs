@@ -106,6 +106,18 @@ public sealed class SessionStartMessage : LockstepMessage
     // stops before it and gets "" = "FFA-of-N / no team override", byte-identical to the 2-peer path.
     public string ArenaPlayerRoster = "";
 
+    // Arena 8-player + first-class teams — B0 population (STARDRIVE_ARENA_8PLAYER_TEAMS_B0_POPULATION_20260707 §2).
+    // The per-slot fleet-bundle BYTES carrier, parallel to ArenaPlayerRoster: one 'slotId,base64(bundleBytes)'
+    // record per occupied combatant slot, sorted ascending by SlotId (ArenaSlotBundleCodec). This carries the
+    // ACTUAL fleet bytes for slots >= 2 (slots 0/1 stay carried by HostFleetBundle/JoinFleetBundle, which are the
+    // SlotId-0/1 aliases). The bytes are NOT folded into the fingerprint — they fold TRANSITIVELY via the roster's
+    // per-slot DesignBundleHash (validated bytes-against-hash at ValidateStartMessage), the same law as
+    // Host/JoinDesignBundleHash. Optional trailing string (append-only AFTER ArenaPlayerRoster): a pre-field reader
+    // stops before it and gets "" = no per-slot bundles (legacy 2-peer path resolves slots 0/1 from
+    // Host/JoinFleetBundle), byte-identical. Rides the same protocol 6 as ArenaPlayerRoster (both are the
+    // 8-player program; a v5 peer already fails the version gate before either field is read).
+    public string ArenaSlotBundles = "";
+
     // Optional authoritative 4X launch payload. Arena/skirmish sessions leave this false
     // and ignore the fields; 4X lobby handoff uses it to generate the same real galaxy on
     // host and clients before attaching the authoritative session.

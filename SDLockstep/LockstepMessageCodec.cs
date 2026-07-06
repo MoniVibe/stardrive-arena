@@ -164,6 +164,11 @@ public static class LockstepMessageCodec
                     // decodes "" = no team override. ProtocolVersion is bumped 5->6 so a v5 peer that would
                     // mis-decode an N-player match as 2-player fails cleanly at the version gate.
                     WriteString(w, start.ArenaPlayerRoster);
+                    // Arena 8-player teams B0 population: the per-slot fleet-bundle bytes carrier (append-only
+                    // AFTER ArenaPlayerRoster). Empty for legacy 2-peer launches (slots 0/1 ride
+                    // Host/JoinFleetBundle); a pre-field reader stops before it and decodes "" = no per-slot
+                    // bundles. Rides the same protocol 6 gate as ArenaPlayerRoster.
+                    WriteString(w, start.ArenaSlotBundles);
                     break;
                 case SessionStartAckMessage ack:
                     w.Write(SessionStartAck);
@@ -403,6 +408,10 @@ public static class LockstepMessageCodec
                 // before it and gets "" = no team override (FFA-of-N / legacy 2-peer). Read as the LAST field
                 // so the append-only guarantee holds against any older writer.
                 string arenaPlayerRoster = ReadOptionalString(r);
+                // Arena 8-player teams B0 population: the per-slot fleet-bundle bytes carrier (optional trailing
+                // field, read AFTER ArenaPlayerRoster). A pre-field reader stops before it and gets "" = no
+                // per-slot bundles (legacy 2-peer path).
+                string arenaSlotBundles = ReadOptionalString(r);
                 message = new SessionStartMessage
                 {
                     ProtocolVersion = protocolVersion,
@@ -473,6 +482,7 @@ public static class LockstepMessageCodec
                     RulesetSetupPhase = rulesetSetupPhase,
                     RulesetUnlimitedAmmo = rulesetUnlimitedAmmo,
                     ArenaPlayerRoster = arenaPlayerRoster,
+                    ArenaSlotBundles = arenaSlotBundles,
                 };
                 break;
             case SessionStartAck:

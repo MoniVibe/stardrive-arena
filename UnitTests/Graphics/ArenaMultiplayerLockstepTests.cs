@@ -3720,9 +3720,154 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             // Winner identity unchanged.
             Assert.AreEqual(N2PreRefactorMatchEnded, result.MatchEnded, "MatchEnded diverged from baseline.");
             Assert.AreEqual(N2PreRefactorWinnerPeerId, result.WinnerPeerId, "WinnerPeerId diverged from baseline.");
+
+            // B0 GUARD (§4): the new ArenaSlotBundles wire field must NOT be folded into the fingerprint. It rides
+            // the start message present-but-empty at N=2 (empty Roster => empty carrier); if a future edit ever
+            // folded the raw bytes into StartFingerprint, this would diverge from the roster-only fingerprint and
+            // silently break the N=2 byte-parity contract. Assert the round-tripped fingerprint is UNCHANGED with
+            // ArenaSlotBundles present (and empty), and that the field is genuinely on the wire.
+            ArenaMultiplayerSettings gateSettings = N2GateSettings();
+            SessionStartMessage start = gateSettings.ToStartMessage();
+            Assert.IsNotNull(start.ArenaSlotBundles, "ArenaSlotBundles must be present on the start message (not null).");
+            Assert.AreEqual("", start.ArenaSlotBundles,
+                "At N=2 the per-slot bundle carrier must be empty (slots 0/1 ride Host/JoinFleetBundle).");
+            string fpWithField = ArenaMultiplayerSettings.StartFingerprint(start);
+            SessionStartMessage cleared = gateSettings.ToStartMessage();
+            cleared.ArenaSlotBundles = "";
+            string fpCleared = ArenaMultiplayerSettings.StartFingerprint(cleared);
+            Assert.AreEqual(fpCleared, fpWithField,
+                "StartFingerprint changed when ArenaSlotBundles was populated — the per-slot bundle BYTES were "
+                + "accidentally folded into the fingerprint (B0 trap #2). They must fold only transitively via the "
+                + "roster's per-slot DesignBundleHash.");
+            Assert.AreEqual(start.SettingsHash, cleared.SettingsHash,
+                "SettingsHash must be independent of the ArenaSlotBundles carrier at N=2.");
         }
         finally
         {
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+        }
+    }
+
+    // ---- B0 population smoke tests (STARDRIVE_ARENA_8PLAYER_TEAMS_B0_POPULATION_20260707 §gate) ----
+    // Build an N-slot settings: slots 0/1 ride Host/JoinFleetBundle; slots >= 2 carry their own fleet bytes via
+    // ArenaSlotFleetBundles, with the roster's per-slot DesignBundleHash matching the carried bytes (so
+    // ValidateStartMessage's bytes-against-hash check passes). Distinct fleet seeds per slot => distinct fleets.
+    static ArenaMultiplayerSettings NSlotSmokeSettings(int slotCount)
+    {
+        var roster = new List<ArenaPlayerRosterRecord>();
+        var slotBundles = new Dictionary<int, string>();
+        // Slots 0/1: the legacy sides. Their SlotIds are the canonical Host/Join peer ids; bundle rides
+        // Host/JoinFleetBundle, so no per-slot carrier entry and the roster hash is left empty for them
+        // (BuildArenaSlots aliases them to ArenaPlayer/ArenaEnemy regardless of the roster hash).
+        int slot0 = ArenaMultiplayerSession.HostPlayerPeerId;
+        int slot1 = ArenaMultiplayerSession.JoinPlayerPeerId;
+        string hostBundle = ArenaFleetBundle.Encode(
+            ArenaFleetBundle.FromDesignNames(FleetNames(ArenaStartArchetype.Wingmates, 0x1001ul)));
+        string joinBundle = ArenaFleetBundle.Encode(
+            ArenaFleetBundle.FromDesignNames(FleetNames(ArenaStartArchetype.Wingmates, 0x2002ul)));
+        roster.Add(new ArenaPlayerRosterRecord(slot0, 1,
+            ArenaFleetBundle.DesignBundleHash(ArenaFleetBundle.Decode(hostBundle))));
+        roster.Add(new ArenaPlayerRosterRecord(slot1, 2,
+            ArenaFleetBundle.DesignBundleHash(ArenaFleetBundle.Decode(joinBundle))));
+
+        for (int i = 2; i < slotCount; ++i)
+        {
+            int slotId = 10 + i; // distinct, higher than the peer-id slots; ascending
+            string[] names = FleetNames(ArenaStartArchetype.Wingmates, 0x3000ul + (ulong)i);
+            string bundle = ArenaFleetBundle.Encode(ArenaFleetBundle.FromDesignNames(names));
+            slotBundles[slotId] = bundle;
+            roster.Add(new ArenaPlayerRosterRecord(slotId, i + 1,
+                ArenaFleetBundle.DesignBundleHash(ArenaFleetBundle.Decode(bundle))));
+        }
+
+        return new ArenaMultiplayerSettings
+        {
+            MatchSeed = 0x5EED,
+            RngSeed = 0xA12EA000u,
+            InputDelay = 3,
+            MaxTurns = 30,
+            CommandEveryTurns = 1,
+            HostFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x1001ul),
+            JoinFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x2002ul),
+            HostFleetBundle = hostBundle,
+            JoinFleetBundle = joinBundle,
+            Roster = roster.ToArray(),
+            ArenaSlotFleetBundles = slotBundles,
+        }.WithResolvedFleets();
+    }
+
+    // Build ONE peer screen through the same Create -> Configure -> LoadContent (spawns) path the live setup uses.
+    static ArenaFightScreen BuildNSlotPeerScreen(ArenaMultiplayerSettings settings)
+    {
+        ArenaFightScreen screen = ArenaFightScreen.Create(settings.HostRacePreference, settings.MatchSeed,
+            startAtHub: false, opponentPreference: settings.JoinRacePreference);
+        screen.ConfigureMultiplayerPvP(settings);
+        screen.LoadContent();
+        return screen;
+    }
+
+    // SMOKE TEST (§gate #2): N=3 and N=4 SPAWN N empires + N non-empty fleets without throwing and reach the sim
+    // loop. NOT a winner assertion — B0 has no team hostility yet, so N>2 won't resolve; that's the corrections'
+    // job. The peer-invariance of the CreateId() sequence is VERIFIED by building TWO independent peer screens and
+    // asserting their per-slot (SlotId, EmpireId, ShipCount) summaries are BYTE-IDENTICAL (same spawn ids/empire
+    // ids => same global CreateId() sequence on both peers; a variable-id combatant would diverge here).
+    [TestMethod]
+    [DataRow(3)]
+    [DataRow(4)]
+    public void ArenaB0Population_NSpawnsNEmpiresAndNFleets_PeerInvariant_Headless(int slotCount)
+    {
+        LoadAllGameData();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_b0_smoke_{slotCount}_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempPath;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+        ArenaFightScreen host = null, join = null;
+        try
+        {
+            ArenaMultiplayerSettings settings = NSlotSmokeSettings(slotCount);
+
+            // The carrier must round-trip and validate cleanly (bytes-against-hash), else N>2 would reject at the
+            // handshake before spawn.
+            SessionStartMessage start = settings.ToStartMessage();
+            string validateError = ArenaMultiplayerSettings.ValidateStartMessage(start, out _);
+            Assert.AreEqual("", validateError, $"N={slotCount} start payload failed validation: {validateError}");
+
+            host = BuildNSlotPeerScreen(settings);
+            join = BuildNSlotPeerScreen(settings);
+
+            (int SlotId, int EmpireId, int ShipCount)[] hostSlots = host.MultiplayerSlotSpawnSummaryForHeadless();
+            (int SlotId, int EmpireId, int ShipCount)[] joinSlots = join.MultiplayerSlotSpawnSummaryForHeadless();
+
+            // N slots built.
+            Assert.AreEqual(slotCount, hostSlots.Length, $"Host built {hostSlots.Length} slots, expected {slotCount}.");
+            Assert.AreEqual(slotCount, joinSlots.Length, $"Join built {joinSlots.Length} slots, expected {slotCount}.");
+
+            // N distinct empires + N non-empty fleets.
+            var empireIds = new HashSet<int>();
+            for (int i = 0; i < slotCount; ++i)
+            {
+                Assert.IsTrue(hostSlots[i].EmpireId > 0, $"Slot {i} has no empire (id {hostSlots[i].EmpireId}).");
+                Assert.IsTrue(hostSlots[i].ShipCount > 0, $"Slot {i} spawned an empty fleet ({hostSlots[i].ShipCount} ships).");
+                Assert.IsTrue(empireIds.Add(hostSlots[i].EmpireId),
+                    $"Slot {i} empire id {hostSlots[i].EmpireId} is a DUPLICATE — combatants must be distinct empires.");
+            }
+
+            // PEER-INVARIANCE (the make-or-break check): both peers produced the IDENTICAL per-slot spawn summary,
+            // which means the global CreateId() sequence was identical on both peers (empire ids AND ship counts
+            // match slot-for-slot). A combatant that consumed a variable number of ids would diverge here.
+            CollectionAssert.AreEqual(hostSlots, joinSlots,
+                $"N={slotCount} per-slot spawn summary diverged between peers — the CreateId() sequence is NOT "
+                + "peer-invariant. A combatant empire consumed a variable number of ids (likely a generated home "
+                + "system). This desyncs the match.");
+
+            // Reaches the sim loop: RunStarted is set at the tail of StartMultiplayerPvPMatch after a successful spawn.
+            // (Player/Enemy sides — slots 0/1 — are always non-empty here, so the spawn guard passed.)
+            Assert.IsTrue(host.MultiplayerSnapshot().PlayerShipIds.Length > 0,
+                "Slot 0 (player) fleet did not spawn — the match cannot reach the sim loop.");
+        }
+        finally
+        {
+            try { host?.ExitScreen(); } catch { }
+            try { join?.ExitScreen(); } catch { }
             try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
         }
     }
