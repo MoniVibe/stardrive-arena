@@ -181,6 +181,15 @@ public sealed partial class ArenaFightScreen
     // side-orchestrator match may share the process-global ResourceManager.Ships namespace).
     IReadOnlyList<string> MultiplayerRegisteredDesigns = Array.Empty<string>();
 
+    // Field-level desync diagnostic (ARENA_DESYNC_INSTRUMENTATION_REPORT). On the live path each peer only holds
+    // its OWN sim state (the remote is a 128-bit checksum), so each peer dumps ITS OWN per-ship field breakdown
+    // when a desync fires; diffing the two machines' logs pinpoints the diverging ship + field. We cache the last
+    // turn's per-ship digests so the PRIOR (last-clean) turn can be dumped alongside the diverging turn. Populated
+    // only while the dump flag is on — a true no-op otherwise.
+    List<UniverseStateFieldDump.ShipDigest> MultiplayerPriorTurnDigests;
+    uint MultiplayerPriorTurnNumber;
+    bool MultiplayerDesyncFieldsDumped;
+
     public bool MultiplayerLiveActive => MultiplayerLiveSession != null;
     // Phase A proof seam: the settings this peer was armed with (reconstructed from the RECEIVED start message),
     // so a test can assert the join-side design table survived the full wire round-trip and was accepted here.
@@ -794,6 +803,17 @@ public sealed partial class ArenaFightScreen
     {
         MultiplayerLiveSession = session ?? throw new ArgumentNullException(nameof(session));
         ArenaMultiplayerSettings settings = session.Settings.WithResolvedFleets();
+        // The custom-fleet flag for a MP match is AUTHORITATIVE from the match, NOT each peer's local career.
+        // A joiner who never toggled Custom Fleet locally must still process the host's custom designs, or it
+        // would register nothing (RegisterPeerDesignTables no-ops when the flag is off) and desync. If the match
+        // carries custom designs or the setup phase, force the flag on for the duration of this match; ApplyCareer
+        // is guarded not to clobber it back off while a MP session is live.
+        if (settings.Ruleset?.SetupPhase == true
+            || settings.HostDesignTable.NotEmpty() || settings.JoinDesignTable.NotEmpty())
+        {
+            if (GlobalStats.Defaults != null)
+                GlobalStats.Defaults.EnableArenaCustomFleet = true;
+        }
         // Register this match's custom designs before spawn so the @arena/<hash> names resolve (amendment 6);
         // teardown is wired into BackToMultiplayerLobby / StartMultiplayerRematch / disconnect (amendment 4).
         RegisterMultiplayerCustomDesigns(settings);
@@ -1477,6 +1497,50 @@ public sealed partial class ArenaFightScreen
             MultiplayerTelemetry?.Desync(turn, MultiplayerLiveResult, desync);
             Log.Warning($"Arena MP DESYNC live role={MultiplayerLiveSession.Role} turn={turn}: "
                         + MultiplayerLiveResult.DesyncReason);
+            DumpMultiplayerDesyncFields(turn);
+        }
+
+        // Cache THIS turn's per-ship digests so the next turn (which may be the diverging one) can dump the
+        // last-clean state alongside. Gated behind the dump flag — pure observation, never perturbs the sim.
+        if (ArenaDesyncFieldDumpEnabled())
+        {
+            MultiplayerPriorTurnDigests = UniverseStateFieldDump.ShipDigests(UState);
+            MultiplayerPriorTurnNumber = turn;
+        }
+    }
+
+    // Whether the field-level desync dump is armed. On by the explicit flag, and auto-on whenever the custom-fleet
+    // telemetry path is active (that is the path that produced the live turn-1232 desync), so a live custom-fleet
+    // reproduction self-diagnoses with no extra toggle. Pure gate — a false result means nothing is captured.
+    static bool ArenaDesyncFieldDumpEnabled()
+        => GlobalStats.Defaults != null
+           && (GlobalStats.Defaults.EnableArenaDesyncFieldDump || GlobalStats.Defaults.EnableArenaCustomFleet);
+
+    // Emit the field-level breakdown for the diverging turn AND the turn before (idempotent — a desync fires
+    // once per match). Each peer dumps ITS OWN authoritative state; the two machines' DESYNC_FIELDS lines diff
+    // to reveal the first divergent ship + field. No-op when the flag is off or already dumped.
+    void DumpMultiplayerDesyncFields(uint divergingTurn)
+    {
+        if (MultiplayerDesyncFieldsDumped || !ArenaDesyncFieldDumpEnabled() || MultiplayerTelemetry == null)
+            return;
+        MultiplayerDesyncFieldsDumped = true;
+        try
+        {
+            IReadOnlyList<UniverseStateFieldDump.ShipDigest> prior =
+                MultiplayerPriorTurnDigests != null && MultiplayerPriorTurnNumber == divergingTurn - 1
+                    ? MultiplayerPriorTurnDigests
+                    : null;
+            // PRIOR line from the CACHED digests (the last-clean turn, captured before the sim advanced into the
+            // diverging turn — current UState has already moved on, so we cannot re-read it).
+            if (prior != null)
+                MultiplayerTelemetry.FieldDump("PRIOR",
+                    UniverseStateFieldDump.DumpFromDigests(prior, MultiplayerPriorTurnNumber, null));
+            // DIVERGING line from LIVE UState, anchored on the first ship whose digest changed since PRIOR.
+            MultiplayerTelemetry.FieldDump("DIVERGING", UniverseStateFieldDump.DumpTurn(UState, divergingTurn, prior));
+        }
+        catch (Exception e)
+        {
+            MultiplayerTelemetry.Event("DESYNC_FIELDS_ERROR", e.Message);
         }
     }
 
@@ -1709,11 +1773,38 @@ public sealed partial class ArenaFightScreen
         DeterminismProfile profile = DeterminismProfile.ReplayWinX64Float)
         => UState.ComputeAuthoritativeStateHash(profile);
 
+    // Field-level desync diagnostic seam (ARENA_DESYNC_INSTRUMENTATION_REPORT). Returns this peer's per-ship
+    // digests (mirroring the wire checksum's ship field set) so the in-process harness can diff host-vs-join
+    // and localize the first divergent ship + field. Pure observation; never mutates the sim.
+    public IReadOnlyList<UniverseStateFieldDump.ShipDigest> MultiplayerShipFieldDigests()
+        => UniverseStateFieldDump.ShipDigests(UState);
+
+    // Human-readable field dump of this peer's ship state for a given turn (anchor = first ship changed since
+    // the supplied prior digests, else highest-Id). Used by the in-process harness + live desync telemetry.
+    public string MultiplayerFieldDumpText(uint turn, IReadOnlyList<UniverseStateFieldDump.ShipDigest> prior = null)
+        => UniverseStateFieldDump.DumpTurn(UState, turn, prior);
+
     public void ForceMultiplayerDesyncForTest()
     {
         Ship ship = FirstAlive(PlayerShips);
         if (ship != null)
             ship.Position = ship.Position + new Vector2(3f, 0f);
+    }
+
+    // Order-perturbation harness seam (ARENA_DESYNC_INSTRUMENTATION_REPORT §3). Reverses every spawned ship's
+    // ModuleSlotList iteration order on THIS peer without changing any module state, so the harness can prove
+    // the combat sim is order-INSENSITIVE (per-turn digest still matches) or catch the first order-sensitive
+    // tie-break (digest diverges). Test-only; both fleets are perturbed so the probe covers attacker + defender.
+    public int PerturbMultiplayerModuleOrderForTest()
+    {
+        int count = 0;
+        foreach (Ship s in PlayerShips.Concat(EnemyShips))
+        {
+            if (s == null || !s.Active) continue;
+            s.PerturbModuleOrderForTest();
+            ++count;
+        }
+        return count;
     }
 
     public ArenaMultiplayerMatchStatus MultiplayerMatchStatus()

@@ -33,6 +33,21 @@ namespace Ship_Game.Ships
         public ShipModule[] Modules => ModuleSlotList;
         public bool HasModules => ModuleSlotList != null && ModuleSlotList.Length != 0;
 
+        // TEST-ONLY (ARENA_DESYNC_INSTRUMENTATION_REPORT order-perturbation harness). Reverses the ModuleSlotList
+        // iteration order in place WITHOUT touching module identity, grid coordinates, or health — every module
+        // keeps its own state; only the array traversal order changes. This exercises the order-sensitive combat
+        // selectors (Ship_Repair GetModuleToRepair->FindMax, module-explosion Ship.cs FindMax) so the harness can
+        // prove the sim is order-INSENSITIVE, or fail loudly at the first order-sensitive site. Grid/spatial code
+        // reads module positions from the flyweight, not the array index, so reversal is behavior-neutral EXCEPT
+        // at first-wins tie-breaks — which is exactly what we are probing. Never called in shipping code.
+        public void PerturbModuleOrderForTest()
+        {
+            if (ModuleSlotList == null || ModuleSlotList.Length < 2)
+                return;
+            for (int i = 0, j = ModuleSlotList.Length - 1; i < j; ++i, --j)
+                (ModuleSlotList[i], ModuleSlotList[j]) = (ModuleSlotList[j], ModuleSlotList[i]);
+        }
+
         void CreateModuleGrid(IShipDesign design, bool isTemplate, bool shipyardDesign)
         {
             ShipGridInfo info = design.GridInfo;

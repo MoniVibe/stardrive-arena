@@ -1861,6 +1861,151 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         }
     }
 
+    // ===================================================================================================
+    // DESYNC SELF-DIAGNOSIS (ARENA_DESYNC_INSTRUMENTATION_REPORT). These prove the field-level breakdown and
+    // the order-perturbation harness. They are the regression guard for the live turn-1232 diagnosis: a real
+    // 2-machine reproduction relies on the SAME field-dump code these exercise in-process.
+    // ===================================================================================================
+
+    // The field-level breakdown must localize a KNOWN divergence to the exact ship + field. ForceMultiplayerDesync
+    // nudges the join peer's first ship +3.0 on X, so the breakdown must name that ship and flag PosX, classified
+    // DISCRETE-FLIP (a +3.0 jump is far outside FP inexactness — proving the FP-vs-logic classifier works).
+    [TestMethod]
+    public void DesyncFieldDump_LocalizesForcedDivergence_Headless()
+    {
+        LoadAllGameData();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_mp_fielddump_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempPath;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+
+        try
+        {
+            var settings = new ArenaMultiplayerSettings
+            {
+                MatchSeed = 0x5EED, RngSeed = 0xA12EA000u, InputDelay = 3, MaxTurns = 90, CommandEveryTurns = 1,
+                HostFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x1001ul),
+                JoinFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x2002ul),
+            };
+
+            ArenaMultiplayerRunResult result = ArenaMultiplayerSession.RunInProcess(settings, forceDesyncAfterTurn: 30);
+
+            Assert.IsTrue(result.Desynced, "Forced local-only state mutation must trip desync detection.");
+            Assert.IsFalse(string.IsNullOrWhiteSpace(result.DesyncFieldBreakdown),
+                "The desync must produce a field-level breakdown localizing the divergence.");
+            StringAssert.Contains(result.DesyncFieldBreakdown, "firstDivergentShip=",
+                $"The breakdown must name the first divergent ship. Got: {result.DesyncFieldBreakdown}");
+            StringAssert.Contains(result.DesyncFieldBreakdown, "PosX",
+                $"The forced +X nudge must surface as a PosX difference. Got: {result.DesyncFieldBreakdown}");
+            StringAssert.Contains(result.DesyncFieldBreakdown, "DISCRETE-FLIP",
+                "A +3.0 nudge is a discrete flip, not FP drift; the classifier must say so. "
+                + $"Got: {result.DesyncFieldBreakdown}");
+        }
+        finally
+        {
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+        }
+    }
+
+    // ORDER-PERTURBATION HARNESS (report §3). Runs two in-process peers of a custom-fleet-shaped match to a few
+    // hundred turns with the JOIN peer's ModuleSlotList iteration order REVERSED on every ship. If the combat sim
+    // is order-INSENSITIVE the per-turn digest still matches on every turn (GREEN). If an order-sensitive tie-break
+    // fires (repair FindMax, target FindMax, module-explosion FindMax), the digest diverges and the breakdown
+    // bisects the site — the test then FAILS LOUDLY with that breakdown so we know WHICH site, without guessing.
+    [TestMethod]
+    public void OrderPerturbation_ModuleSlotList_SimIsOrderInsensitive_Headless()
+    {
+        LoadAllGameData();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_mp_perturb_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempPath;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+
+        try
+        {
+            // Asymmetric brawl to force real combat (damage, module death, repair, retarget) — the events that
+            // trip order-sensitive ties. Bounded to 300 turns (never the 36000 live cap) so nothing hangs.
+            IShipDesign weak = LegalPvPDesigns().First();
+            IShipDesign strong = LegalPvPDesigns().Last();
+            var settings = new ArenaMultiplayerSettings
+            {
+                MatchSeed = 0x6EED, RngSeed = 0xB12EA000u, InputDelay = 3, MaxTurns = 300, CommandEveryTurns = 1,
+                HostFleetDesignNames = new[] { strong.Name, strong.Name, weak.Name },
+                JoinFleetDesignNames = new[] { strong.Name, weak.Name, weak.Name },
+            };
+
+            int perturbed = 0;
+            ArenaMultiplayerRunResult result = ArenaMultiplayerSession.RunInProcess(settings, forceDesyncAfterTurn: -1,
+                joinScreen => perturbed = joinScreen.PerturbMultiplayerModuleOrderForTest());
+
+            Assert.IsTrue(perturbed > 0, "The perturbation must have reversed at least one ship's module order.");
+            Assert.IsFalse(result.Desynced,
+                "The combat sim is expected to be ModuleSlotList-order-INSENSITIVE. A desync here means an "
+                + "order-sensitive tie-break WAS bisected — inspect the field breakdown for the site "
+                + $"(repair/target/explosion FindMax): turn={result.DesyncTurn} reason={result.DesyncReason} "
+                + $"breakdown={result.DesyncFieldBreakdown}");
+            Assert.IsTrue(result.TurnHashes.All(h => h.Match),
+                "Every per-turn digest must match under module-order perturbation (proves order-insensitivity).");
+            Assert.IsTrue(result.TurnsCompleted > 0, "The perturbed match must actually run turns.");
+        }
+        finally
+        {
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+        }
+    }
+
+    // GUARD: the field-dump per-ship fold must equal that ship's exact contribution to the wire checksum, so a
+    // per-ship digest match here (but a wire-checksum mismatch) localizes the divergence OUT of the ship lane.
+    // If WriteAuthoritative's ship lane changes, this test breaks until UniverseStateFieldDump is updated in step.
+    [TestMethod]
+    public void UniverseStateFieldDump_MirrorsWireChecksumShipFold_Headless()
+    {
+        LoadAllGameData();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_mp_dumpguard_{Guid.NewGuid():N}.yaml");
+        ArenaFightScreen.CareerSavePath = tempPath;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+        ArenaFightScreen screen = null;
+
+        try
+        {
+            var settings = new ArenaMultiplayerSettings
+            {
+                MatchSeed = 0x5EED, RngSeed = 0xA12EA000u, InputDelay = 3, MaxTurns = 30, CommandEveryTurns = 1,
+                HostFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x1001ul),
+                JoinFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x2002ul),
+            }.WithResolvedFleets();
+
+            screen = ArenaFightScreen.Create(settings.HostRacePreference, settings.MatchSeed,
+                startAtHub: false, opponentPreference: settings.JoinRacePreference);
+            screen.ConfigureMultiplayerPvP(settings);
+            screen.CreateSimThread = false;
+            screen.LoadContent();
+            screen.PrepareForMultiplayerLockstep(settings.RngSeed);
+
+            IReadOnlyList<UniverseStateFieldDump.ShipDigest> digests = screen.MultiplayerShipFieldDigests();
+            Assert.IsTrue(digests.Count > 0, "The arena must spawn ships to fold.");
+
+            // Recompute each ship's expected digest by folding EXACTLY the checksum's ship field set with a fresh
+            // Hash128Checksum, and compare to DigestShip's result. (This is the same primitive sequence
+            // WriteAuthoritative uses for its ship lane; DigestShip must match it byte-for-byte.)
+            foreach (Ship s in screen.UState.Ships.OrderBy(s => s.Id))
+            {
+                var c = new SDUtils.Deterministic.Hash128Checksum();
+                c.WriteInt(s.Id);
+                c.FloatRaw(s.Position.X); c.FloatRaw(s.Position.Y);
+                c.FloatRaw(s.Velocity.X); c.FloatRaw(s.Velocity.Y);
+                c.FloatRaw(s.Rotation); c.FloatRaw(s.Health);
+                (ulong lo, ulong hi) = c.Finish128();
+                UniverseStateFieldDump.ShipDigest d = UniverseStateFieldDump.DigestShip(s);
+                Assert.AreEqual(lo, d.Lo, $"Ship {s.Id} digest lo must mirror the wire checksum ship fold.");
+                Assert.AreEqual(hi, d.Hi, $"Ship {s.Id} digest hi must mirror the wire checksum ship fold.");
+            }
+        }
+        finally
+        {
+            try { screen?.ExitScreen(); } catch { }
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+        }
+    }
+
     static string[] FleetNames(ArenaStartArchetype archetype, ulong seed)
         => CareerManager.StartingRosterDesigns(archetype, seed)
             .Select(d => d.Name)

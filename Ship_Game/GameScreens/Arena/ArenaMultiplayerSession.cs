@@ -576,6 +576,9 @@ public sealed class ArenaMultiplayerRunResult
     public bool Desynced;
     public long DesyncTurn = -1;
     public string DesyncReason = "";
+    // Field-level desync localization (ARENA_DESYNC_INSTRUMENTATION_REPORT): first divergent ship + per-field
+    // host-vs-join diff, populated by the in-process harness when both peers are in scope. "" if no desync.
+    public string DesyncFieldBreakdown = "";
     public bool MatchEnded;
     public int WinnerPeerId;
     public long MatchEndedTurn = -1;
@@ -644,6 +647,19 @@ public static class ArenaMultiplayerSession
 
     public static ArenaMultiplayerRunResult RunInProcess(ArenaMultiplayerSettings settings,
         int forceDesyncAfterTurn = -1)
+        => RunInProcess(settings, forceDesyncAfterTurn, null);
+
+    /// <summary>
+    /// Order-perturbation harness seam (ARENA_DESYNC_INSTRUMENTATION_REPORT §3). After both peers are built and
+    /// their fleets spawned, <paramref name="perturbJoinPeer"/> is invoked on the JOIN peer ONLY (e.g. reversing
+    /// each ship's ModuleSlotList order) so the two peers process identical inputs while iterating an order-
+    /// perturbed collection on one side. If the sim is order-INSENSITIVE the per-turn digest still matches (GREEN);
+    /// if an order-sensitive tie-break exists, the digest diverges and the harness has bisected the site. Pure
+    /// diagnostic: the perturbation is behavior-neutral except at first-wins tie-breaks (that is the whole point).
+    /// A null callback is exactly today's RunInProcess.
+    /// </summary>
+    public static ArenaMultiplayerRunResult RunInProcess(ArenaMultiplayerSettings settings,
+        int forceDesyncAfterTurn, Action<ArenaFightScreen> perturbJoinPeer)
     {
         settings = (settings ?? new ArenaMultiplayerSettings()).WithResolvedFleets();
         // Register both peers' custom-design tables before building the peer screens (so the @arena/<hash>
@@ -658,6 +674,10 @@ public static class ArenaMultiplayerSession
         {
             ArenaFightScreen hostScreen = BuildPeerScreen(settings);
             ArenaFightScreen joinScreen = BuildPeerScreen(settings);
+            // Perturb the JOIN peer's iteration order AFTER spawn but BEFORE the first tick, so both peers
+            // still start from identical state (identical digest at turn -1) and any divergence is purely a
+            // consequence of the order difference feeding an order-sensitive combat site.
+            perturbJoinPeer?.Invoke(joinScreen);
             return RunTwoPeerLockstep(settings, hostScreen, joinScreen, new FakeTransport(), forceDesyncAfterTurn);
         }
         finally
@@ -920,12 +940,32 @@ public static class ArenaMultiplayerSession
             RecordTurn(result, turn, hostSim.Hash(), joinSim.Hash(), host.Desync);
             UpdateMatchOutcome(result, turn, hostScreen.MultiplayerMatchStatus(), hostSim.Hash());
             if (result.Desynced)
+            {
+                // In-process both peers are in scope, so localize the FIRST divergent ship + field directly
+                // (this is the diagnostic the perturbation harness reads). Populates DesyncFieldBreakdown.
+                result.DesyncFieldBreakdown = DiagnoseFieldDivergence(hostScreen, joinScreen, (uint)result.DesyncTurn);
                 break;
+            }
             if (result.MatchEnded)
                 break;
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// In-process field-level desync diagnosis (ARENA_DESYNC_INSTRUMENTATION_REPORT). With BOTH peers in scope
+    /// this compares their per-ship digests directly and returns the FIRST ship whose digest differs plus a
+    /// per-field host-vs-join diff, distinguishing an FP drift (many fields slightly off) from a discrete
+    /// logic/order flip (one field changed). Pure observation. Returns a one-line human-readable summary.
+    /// </summary>
+    public static string DiagnoseFieldDivergence(ArenaFightScreen hostScreen, ArenaFightScreen joinScreen, uint turn)
+    {
+        IReadOnlyList<UniverseStateFieldDump.ShipDigest> host = hostScreen.MultiplayerShipFieldDigests();
+        IReadOnlyList<UniverseStateFieldDump.ShipDigest> join = joinScreen.MultiplayerShipFieldDigests();
+        string summary = UniverseStateFieldDump.DiagnoseHostVsJoin(turn, host, join);
+        Log.Warning($"Arena MP DESYNC field-breakdown turn={turn}: {summary}");
+        return summary;
     }
 
     static ArenaMultiplayerRunResult RunHostNetworkLoop(ArenaMultiplayerSettings settings,

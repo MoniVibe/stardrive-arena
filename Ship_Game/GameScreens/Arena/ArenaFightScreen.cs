@@ -1243,7 +1243,11 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         {
             GlobalStats.Defaults.EnablePilotTraits    = Career.EnablePilotTraits;
             GlobalStats.Defaults.PilotTraitScopeVessel = Career.PilotTraitScopeVessel;
-            GlobalStats.Defaults.EnableArenaCustomFleet = Career.EnableArenaCustomFleet;
+            // Custom-fleet flag: restore the career preference on load, but NEVER turn OFF an already-on flag.
+            // A MP match is authoritative (ArmMultiplayerLive forces it on for a custom match so BOTH peers
+            // process custom designs); clobbering it off from a joiner's local career would desync. OR-in only.
+            GlobalStats.Defaults.EnableArenaCustomFleet =
+                Career.EnableArenaCustomFleet || GlobalStats.Defaults.EnableArenaCustomFleet;
         }
 
         if (!CareerPerksApplied)

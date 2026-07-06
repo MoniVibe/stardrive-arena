@@ -754,6 +754,7 @@
     <Compile Include="Ship_Game\Utils\DeterministicRandom.cs" />
     <Compile Include="Ship_Game\Determinism\DeterminismHashWriter.cs" />
     <Compile Include="Ship_Game\Determinism\UniverseStateHash.cs" />
+    <Compile Include="Ship_Game\Determinism\UniverseStateFieldDump.cs" />
     <Compile Include="Ship_Game\Determinism\DeterminismProfile.cs" />
     <Compile Include="Ship_Game\Determinism\BuildFingerprint.cs" />
     <Compile Include="Ship_Game\Determinism\DeterministicStreams.cs" />

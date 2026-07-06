@@ -117,6 +117,18 @@ public class GamePlayGlobals
     // false = today's name-only behavior, unchanged (a true no-op — no table is emitted or consumed).
     [StarData] public bool EnableArenaCustomFleet;
 
+    // ARENA DESYNC FIELD DUMP (self-diagnosing lockstep desync, ARENA_DESYNC_INSTRUMENTATION_REPORT).
+    // When true AND an Arena lockstep desync fires, each peer writes a FIELD-LEVEL breakdown of its own
+    // authoritative sim state (per-ship digests for the diverging turn + the turn before, then a per-field
+    // dump of the first ship whose digest differs from the turn-before) to the arena-multiplayer-*.log via
+    // ArenaMultiplayerTelemetry. Pure observation over a SEPARATE Hash128Checksum — it never touches the
+    // wire checksum or the sim, so a flag-on run is bit-identical to a flag-off run. Default false = no dump
+    // (a true no-op). Auto-enabled alongside the custom-fleet path; can be forced on independently for a
+    // stock-fleet reproduction. Comparing the two machines' logs reveals WHICH ship + WHICH field diverged
+    // first, distinguishing cross-machine FP drift (many floats slightly off) from a logic/order bug (one
+    // discrete value flipped).
+    [StarData] public bool EnableArenaDesyncFieldDump;
+
     // visual modifiers
     [StarData] public float SpaceportScale = 0.5f;
     [StarData] public float ExplosionVisualIncreaser = 1f;
