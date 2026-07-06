@@ -8,6 +8,7 @@ using System.Reflection;
 using System.Threading;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SDLockstep;
+using SDUtils.Deterministic;
 using Ship_Game;
 using Ship_Game.Determinism;
 using Ship_Game.Determinism.Lockstep;
@@ -1479,8 +1480,8 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         // Step 2 proof: RulesetV0 + bundles round-trip through ToStartMessage->FromStartMessage,
         // SettingsHash parses, ProtocolVersion is 4, and flipping any ruleset field changes the hash.
         LoadAllGameData();
-        Assert.AreEqual(5, ArenaMultiplayerSettings.ProtocolVersion,
-            "The custom-fleet exchange kernel bumps the Arena MP protocol version to 5.");
+        Assert.AreEqual(6, ArenaMultiplayerSettings.ProtocolVersion,
+            "The 8-player + first-class-teams roster bumps the Arena MP protocol version 5->6 (ruling C8).");
 
         var settings = new ArenaMultiplayerSettings
         {
@@ -1503,7 +1504,7 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         Assert.AreEqual(18, hash.Length, "SettingsHash must be a parseable 0x + 16 hex digits.");
 
         SessionStartMessage start = settings.ToStartMessage();
-        Assert.AreEqual(5, start.ProtocolVersion);
+        Assert.AreEqual(6, start.ProtocolVersion);
         Assert.AreEqual((int)ArenaMatchMode.Sandbox, start.RulesetMode);
         Assert.AreEqual(999999, start.RulesetBudgetCredits);
         Assert.AreEqual(settings.HostDesignBundleHash, start.HostDesignBundleHash);
@@ -1520,6 +1521,150 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         flipped.Ruleset.CountdownSeconds = 5;
         Assert.AreNotEqual(settings.SettingsHash, flipped.SettingsHash,
             "Changing a ruleset field must change SettingsHash.");
+    }
+
+    // ================================================================================================
+    // 8-PLAYER + FIRST-CLASS TEAMS (STARDRIVE_ARENA_8PLAYER_TEAMS_DETERMINISM_RULING_20260707)
+    // Foundation proofs: canonical roster codec (C3), order-independent fold (C2/C3), empty-roster
+    // byte-identity to the legacy 2-peer fingerprint (C10), and a divergent team map rejecting at the
+    // handshake (C2/C4). These do NOT boot the sim — they pin the deterministic wire/hash contract that
+    // spawn/hostility/win/targeting all read from. The full N-peer TCP per-turn proofs (ruling proofs
+    // 1-9) build on this contract.
+    // ================================================================================================
+
+    [TestMethod]
+    public void ArenaRoster_CanonicalCodecRoundTrips_SlotSorted_Headless()
+    {
+        // Ruling C3: encode sorts by slot id ascending; decode re-sorts; base64 protects the free-text
+        // hash. Feeding records OUT of slot order must produce the SAME canonical string as sorted input.
+        var sorted = new[]
+        {
+            new ArenaPlayerRosterRecord(1, 0, "0xAAAA"),
+            new ArenaPlayerRosterRecord(2, 0, "0xBBBB"),
+            new ArenaPlayerRosterRecord(3, 1, "0xCCCC"),
+            new ArenaPlayerRosterRecord(4, 1, "0xDDDD"),
+        };
+        var shuffled = new[] { sorted[3], sorted[0], sorted[2], sorted[1] };
+
+        string a = ArenaPlayerRosterCodec.Encode(sorted);
+        string b = ArenaPlayerRosterCodec.Encode(shuffled);
+        Assert.AreEqual(a, b, "Encode must be canonical (slot-id sorted) regardless of input order.");
+
+        ArenaPlayerRosterRecord[] round = ArenaPlayerRosterCodec.Decode(a);
+        Assert.AreEqual(4, round.Length);
+        for (int i = 0; i < 4; i++)
+        {
+            Assert.AreEqual(sorted[i].SlotId, round[i].SlotId, $"slot[{i}] id");
+            Assert.AreEqual(sorted[i].TeamId, round[i].TeamId, $"slot[{i}] team");
+            Assert.AreEqual(sorted[i].DesignBundleHash, round[i].DesignBundleHash, $"slot[{i}] hash");
+        }
+        Assert.AreEqual(0, ArenaPlayerRosterCodec.Decode("").Length, "Empty string decodes to empty roster.");
+    }
+
+    [TestMethod]
+    public void ArenaRoster_FoldIsOrderIndependent_Headless()
+    {
+        // Ruling C2/C3: the fold sorts independently, so a differently-ordered record array folds to the
+        // IDENTICAL hash. This is the anti-desync guarantee — a peer must never hash Dictionary iteration
+        // order. Two peers building the same team map in different insertion orders agree.
+        var forward = new[]
+        {
+            new ArenaPlayerRosterRecord(1, 0, "0xA"),
+            new ArenaPlayerRosterRecord(2, 1, "0xB"),
+            new ArenaPlayerRosterRecord(3, 1, "0xC"),
+        };
+        var reversed = new[] { forward[2], forward[1], forward[0] };
+
+        var hf = DetHash.New();
+        ArenaPlayerRosterCodec.Fold(ref hf, forward);
+        var hr = DetHash.New();
+        ArenaPlayerRosterCodec.Fold(ref hr, reversed);
+        Assert.AreEqual(hf.Value, hr.Value, "Fold must be order-independent (slot-id sorted).");
+
+        // A different team map (slot 3 moves to team 0) MUST change the fold.
+        var different = new[]
+        {
+            new ArenaPlayerRosterRecord(1, 0, "0xA"),
+            new ArenaPlayerRosterRecord(2, 1, "0xB"),
+            new ArenaPlayerRosterRecord(3, 0, "0xC"),
+        };
+        var hd = DetHash.New();
+        ArenaPlayerRosterCodec.Fold(ref hd, different);
+        Assert.AreNotEqual(hf.Value, hd.Value, "A divergent team map must change the fold.");
+    }
+
+    [TestMethod]
+    public void ArenaRoster_EmptyRosterByteIdenticalToLegacyFingerprint_Headless()
+    {
+        // Ruling C10: an EMPTY roster (the 2-peer / flag-off default) skips the fold entirely, so
+        // SettingsHash and StartFingerprint are byte-for-byte identical to what they were before the
+        // roster field existed. This is the flag-off byte-identity guarantee.
+        LoadAllGameData();
+        var settings = new ArenaMultiplayerSettings
+        {
+            MatchSeed = 0x5EED,
+            RngSeed = 0xA12EA000u,
+            HostFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x1001ul),
+            JoinFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x2002ul),
+            Ruleset = new ArenaMultiplayerRuleset { Mode = ArenaMatchMode.Sandbox, RosterSource = ArenaRosterSource.AllContent },
+        }.WithResolvedFleets();
+
+        Assert.AreEqual(0, settings.Roster.Length, "Default settings carry an empty roster.");
+        string emptyHash = settings.SettingsHash;
+
+        SessionStartMessage start = settings.ToStartMessage();
+        Assert.AreEqual("", start.ArenaPlayerRoster, "Empty roster encodes to empty string on the wire.");
+        Assert.AreEqual(emptyHash, ArenaMultiplayerSettings.FromStartMessage(start).WithResolvedFleets().SettingsHash,
+            "Empty-roster SettingsHash must survive the wire round-trip unchanged.");
+
+        // The StartFingerprint of an empty-roster start must equal the fingerprint computed with the roster
+        // field forced to null (i.e. the pre-roster world) — the fold is skipped for empty.
+        SessionStartMessage nulled = settings.ToStartMessage();
+        nulled.ArenaPlayerRoster = null;
+        Assert.AreEqual(ArenaMultiplayerSettings.StartFingerprint(start),
+            ArenaMultiplayerSettings.StartFingerprint(nulled),
+            "Empty ('') and null roster must fold identically (both skip the fold) — flag-off byte-identity.");
+    }
+
+    [TestMethod]
+    public void ArenaRoster_DivergentTeamMapRejectsAtHandshake_Headless()
+    {
+        // Ruling C2/C4 (foundation for proof 4): a peer that computes a DIFFERENT team assignment produces
+        // a different SettingsHash, which ValidateStartMessage rejects for exact-inequality BEFORE spawn.
+        // Here the host authors a 2v2 (teams 0,0,1,1); a tampered start swaps slot 4 to team 0 (a 3v1) but
+        // leaves the host's SettingsHash intact -> the local recompute diverges -> "mismatch" reject.
+        LoadAllGameData();
+        var settings = new ArenaMultiplayerSettings
+        {
+            MatchSeed = 0x5EED,
+            RngSeed = 0xA12EA000u,
+            HostFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x1001ul),
+            JoinFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x2002ul),
+            Ruleset = new ArenaMultiplayerRuleset { Mode = ArenaMatchMode.Sandbox, RosterSource = ArenaRosterSource.AllContent },
+            Roster = new[]
+            {
+                new ArenaPlayerRosterRecord(1, 0, "0xA"),
+                new ArenaPlayerRosterRecord(2, 0, "0xB"),
+                new ArenaPlayerRosterRecord(3, 1, "0xC"),
+                new ArenaPlayerRosterRecord(4, 1, "0xD"),
+            },
+        }.WithResolvedFleets();
+
+        SessionStartMessage clean = settings.ToStartMessage();
+        Assert.AreEqual("", ArenaMultiplayerSettings.ValidateStartMessage(clean, out _),
+            "A matching 2v2 roster must validate (the host-authored roster is self-consistent).");
+
+        // Tamper the team map on the wire but keep the host's SettingsHash -> local recompute diverges.
+        SessionStartMessage tampered = settings.ToStartMessage();
+        tampered.ArenaPlayerRoster = ArenaPlayerRosterCodec.Encode(new[]
+        {
+            new ArenaPlayerRosterRecord(1, 0, "0xA"),
+            new ArenaPlayerRosterRecord(2, 0, "0xB"),
+            new ArenaPlayerRosterRecord(3, 1, "0xC"),
+            new ArenaPlayerRosterRecord(4, 0, "0xD"), // slot 4 defected to team 0 (3v1 instead of 2v2)
+        });
+        StringAssert.Contains(ArenaMultiplayerSettings.ValidateStartMessage(tampered, out _), "mismatch",
+            "A divergent team assignment must reject at the handshake via the SettingsHash gate.");
     }
 
     [TestMethod]

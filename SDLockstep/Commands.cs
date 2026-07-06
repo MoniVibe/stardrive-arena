@@ -12,6 +12,9 @@ public enum SimCommandKind : byte
     MoveShip = 1,
     AttackTarget = 2,
     StopShip = 3,
+    Forfeit = 4,       // arena 8-player peer-drop (ruling C9): host proposes on wall-clock miss, every peer
+                       // applies "mark SubjectId slot's ships dead + drop from LivePeers" on the committed
+                       // exec tick. Append-only — never renumber. Forfeited slot rides in SimCommand.SubjectId.
     DebugSpawn = 200,  // test-only, pre-tick-0
 }
 

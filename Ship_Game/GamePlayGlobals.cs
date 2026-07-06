@@ -117,6 +117,14 @@ public class GamePlayGlobals
     // false = today's name-only behavior, unchanged (a true no-op — no table is emitted or consumed).
     [StarData] public bool EnableArenaCustomFleet;
 
+    // ARENA 8-PLAYER + FIRST-CLASS TEAMS (STARDRIVE_ARENA_8PLAYER_TEAMS_DETERMINISM_RULING_20260707, ruling
+    // C10): layered ON TOP of EnableArenaCustomFleet. When true, the arena lobby exposes up-to-8 combatant
+    // slots with host-assigned team pills, the start payload carries the fingerprinted ArenaPlayerRoster,
+    // spawn/hostility/win generalize to N teams (FFA = N teams of 1), and the N-peer commit barrier +
+    // deterministic Forfeit peer-drop are active. Default false = today's exact 2-peer path, byte-identical
+    // to trunk (the empty-roster fold is skipped and the fixed-remote transport/barrier are unchanged).
+    [StarData] public bool EnableArena8Player;
+
     // ARENA DESYNC FIELD DUMP (self-diagnosing lockstep desync, ARENA_DESYNC_INSTRUMENTATION_REPORT).
     // When true AND an Arena lockstep desync fires, each peer writes a FIELD-LEVEL breakdown of its own
     // authoritative sim state (per-ship digests for the diverging turn + the turn before, then a per-field

@@ -98,6 +98,14 @@ public sealed class SessionStartMessage : LockstepMessage
     public string HostDesignTable = "";
     public string JoinDesignTable = "";
 
+    // Arena 8-player + first-class teams (STARDRIVE_ARENA_8PLAYER_TEAMS_DETERMINISM_RULING_20260707).
+    // Canonically-encoded per-slot roster: one record per occupied combatant slot, sorted by
+    // host-assigned slot id, each record (slotId, teamId, designBundleHash) — the team map + slot
+    // order both peers must agree on. Folded into SettingsHash AND StartFingerprint (ruling C2/C3).
+    // Optional trailing string (append-only after RulesetUnlimitedAmmo, ruling C8): a pre-field reader
+    // stops before it and gets "" = "FFA-of-N / no team override", byte-identical to the 2-peer path.
+    public string ArenaPlayerRoster = "";
+
     // Optional authoritative 4X launch payload. Arena/skirmish sessions leave this false
     // and ignore the fields; 4X lobby handoff uses it to generate the same real galaxy on
     // host and clients before attaching the authoritative session.

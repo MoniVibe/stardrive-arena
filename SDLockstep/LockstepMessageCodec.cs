@@ -159,6 +159,11 @@ public static class LockstepMessageCodec
                     w.Write(start.RulesetSetupPhase);
                     // Persistent ammo economy toggle (append-only optional trailing field, default true).
                     w.Write(start.RulesetUnlimitedAmmo);
+                    // Arena 8-player teams roster (append-only AFTER RulesetUnlimitedAmmo, ruling C8). Empty
+                    // string for legacy 2-peer / FFA-of-N launches; a pre-field reader stops before it and
+                    // decodes "" = no team override. ProtocolVersion is bumped 5->6 so a v5 peer that would
+                    // mis-decode an N-player match as 2-player fails cleanly at the version gate.
+                    WriteString(w, start.ArenaPlayerRoster);
                     break;
                 case SessionStartAckMessage ack:
                     w.Write(SessionStartAck);
@@ -394,6 +399,10 @@ public static class LockstepMessageCodec
                 // that reaches end-of-stream gets true = today's spawn-full + regen behavior (byte-identical
                 // to trunk). Only an explicit false (finite magazine) is ever written by a newer host.
                 bool rulesetUnlimitedAmmo = r.BaseStream.Position >= r.BaseStream.Length || r.ReadBoolean();
+                // Arena 8-player teams roster (optional trailing field, ruling C8). A pre-field reader stops
+                // before it and gets "" = no team override (FFA-of-N / legacy 2-peer). Read as the LAST field
+                // so the append-only guarantee holds against any older writer.
+                string arenaPlayerRoster = ReadOptionalString(r);
                 message = new SessionStartMessage
                 {
                     ProtocolVersion = protocolVersion,
@@ -463,6 +472,7 @@ public static class LockstepMessageCodec
                     JoinDesignTable = joinDesignTable,
                     RulesetSetupPhase = rulesetSetupPhase,
                     RulesetUnlimitedAmmo = rulesetUnlimitedAmmo,
+                    ArenaPlayerRoster = arenaPlayerRoster,
                 };
                 break;
             case SessionStartAck:

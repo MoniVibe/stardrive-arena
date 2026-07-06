@@ -136,6 +136,9 @@ public sealed class ArenaCareer
     [StarData] public bool PilotTraitScopeVessel;
     // Custom-fleet master toggle (design-in-arena setup flow). Same persist/apply pattern; default off.
     [StarData] public bool EnableArenaCustomFleet;
+    // 8-player + first-class-teams toggle (ruling C10), layered over EnableArenaCustomFleet. Same
+    // persist/apply pattern; default off = today's exact 2-peer path.
+    [StarData] public bool EnableArena8Player;
 
     // BETTING — an open wager on the exact queued next fight option. The stake is deducted
     // immediately; resolving the chosen bout clears this slip and pays only on a win.

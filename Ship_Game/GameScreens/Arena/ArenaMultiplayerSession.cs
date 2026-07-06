@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using SDLockstep;
@@ -21,6 +22,93 @@ public enum ArenaMultiplayerRole
     Join = 1,
 }
 
+/// <summary>
+/// One occupied arena combatant slot in the host-authored roster (ruling C1/C2). The host-assigned
+/// SlotId is the canonical key (globally agreed after C1's host-authoritative assignment); TeamId
+/// carries the first-class team map (FFA = every slot a distinct team); DesignBundleHash pins the
+/// slot's fleet content so a tampered bundle rejects at the handshake. Immutable value type.
+/// </summary>
+public readonly struct ArenaPlayerRosterRecord
+{
+    public readonly int SlotId;
+    public readonly int TeamId;
+    public readonly string DesignBundleHash;
+
+    public ArenaPlayerRosterRecord(int slotId, int teamId, string designBundleHash)
+    {
+        SlotId = slotId;
+        TeamId = teamId;
+        DesignBundleHash = designBundleHash ?? "";
+    }
+}
+
+/// <summary>
+/// Canonical roster encoding (ruling C3), mirroring Authoritative4XLobbyNetworkFlow.Encode/DecodeRoster.
+/// Records are joined by ';' in EXPLICIT ascending SlotId order; each record is 'slotId,teamId,base64(hash)'.
+/// Decode re-sorts by SlotId so the fold is order-independent of wire arrival. NEVER fold a Dictionary/
+/// HashSet enumeration — this sorts independently on both the encode site and the fold site.
+/// </summary>
+public static class ArenaPlayerRosterCodec
+{
+    public static string Encode(IEnumerable<ArenaPlayerRosterRecord> records)
+    {
+        if (records == null)
+            return "";
+        return string.Join(";", records
+            .OrderBy(r => r.SlotId)
+            .Select(r => string.Join(",",
+                r.SlotId.ToString(CultureInfo.InvariantCulture),
+                r.TeamId.ToString(CultureInfo.InvariantCulture),
+                B64(r.DesignBundleHash))));
+    }
+
+    public static ArenaPlayerRosterRecord[] Decode(string roster)
+    {
+        if (string.IsNullOrEmpty(roster))
+            return Array.Empty<ArenaPlayerRosterRecord>();
+        var records = new List<ArenaPlayerRosterRecord>();
+        foreach (string row in roster.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            string[] parts = row.Split(',');
+            if (parts.Length < 3
+                || !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int slotId)
+                || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int teamId))
+                throw new InvalidOperationException("Arena player roster was malformed.");
+            records.Add(new ArenaPlayerRosterRecord(slotId, teamId, UnB64(parts[2])));
+        }
+        return records.OrderBy(r => r.SlotId).ToArray();
+    }
+
+    /// <summary>
+    /// Folds the roster into a DetHash in a FIXED sub-order (slotId:int, teamId:int, designBundleHash:string)
+    /// over records iterated in ASCENDING SlotId order (ruling C2). Skipped entirely when the roster is empty
+    /// so the legacy 2-peer fingerprint is reproduced byte-for-byte (ruling C10). Used identically by
+    /// SettingsHash and StartFingerprint so the 2-peer law and N-peer law can never disagree.
+    /// </summary>
+    public static void Fold(ref DetHash h, ArenaPlayerRosterRecord[] records)
+    {
+        if (records == null || records.Length == 0)
+            return;
+        foreach (ArenaPlayerRosterRecord r in records.OrderBy(r => r.SlotId))
+        {
+            h.AddInt(r.SlotId);
+            h.AddInt(r.TeamId);
+            h.AddString(r.DesignBundleHash ?? "");
+        }
+    }
+
+    static string B64(string text)
+        => Convert.ToBase64String(Encoding.UTF8.GetBytes(text ?? ""));
+
+    static string UnB64(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return "";
+        try { return Encoding.UTF8.GetString(Convert.FromBase64String(text)); }
+        catch (FormatException) { return ""; }
+    }
+}
+
 public sealed class ArenaMultiplayerSettings
 {
     // 3 -> 4: RulesetV0 + canonical design bundles enter the start payload.
@@ -29,7 +117,12 @@ public sealed class ArenaMultiplayerSettings
     // is a NEW SEMANTIC: a v4 peer would decode it as "" and then fail to resolve the custom @arena/<hash>
     // name with a confusing "design not available" error. The bump makes a v4<->v5 pairing fail cleanly at the
     // version gate instead. One bump covers the whole custom-fleet + N-player program.
-    public const int ProtocolVersion = 5;
+    // 5 -> 6: the 8-player + first-class-teams ArenaPlayerRoster enters the start payload
+    // (STARDRIVE_ARENA_8PLAYER_TEAMS_DETERMINISM_RULING_20260707, ruling C8). The codec is append-
+    // tolerant, but the roster is a NEW SEMANTIC: a v5 peer that never reads it would mis-decode an
+    // N-player match as a 2-player one, spawn 2 fleets, and desync. The bump makes a v5<->v6 pairing
+    // fail cleanly at ValidateStartMessage's exact-equality version gate before anyone spawns.
+    public const int ProtocolVersion = 6;
     const char FleetSeparator = '\u001f';
 
     public int MatchSeed = 0x5EED;
@@ -89,6 +182,15 @@ public sealed class ArenaMultiplayerSettings
     public string HostDesignTable = "";
     public string JoinDesignTable = "";
 
+    // Arena 8-player + first-class teams (ruling C2/C3). The host-authored per-slot roster: one record
+    // per occupied combatant slot, carrying (slotId, teamId, designBundleHash). Canonically encoded
+    // (ArenaPlayerRosterCodec.Encode: EXPLICIT ascending slot-id sort, base64 the free-text hash) and
+    // folded into SettingsHash AND StartFingerprint AFTER the design bundle hashes, so a divergent team
+    // map or slot order rejects at the handshake. Empty (the 2-peer default) reproduces the legacy
+    // Host/Join two-slot fingerprint EXACTLY (the fold is skipped when there are no roster records),
+    // which keeps flag-off byte-identical to trunk (ruling C10).
+    public ArenaPlayerRosterRecord[] Roster = Array.Empty<ArenaPlayerRosterRecord>();
+
     public string HostDesignBundleHash =>
         ArenaFleetBundle.DesignBundleHash(ResolveBundleOrNames(HostFleetBundle, HostFleetDesignNames));
     public string JoinDesignBundleHash =>
@@ -131,6 +233,11 @@ public sealed class ArenaMultiplayerSettings
             (Ruleset ?? new ArenaMultiplayerRuleset()).AppendTo(ref h);
             h.AddString(HostDesignBundleHash);
             h.AddString(JoinDesignBundleHash);
+            // Arena 8-player teams roster (ruling C2/C3), folded LAST after the design bundle hashes in
+            // ascending slot-id order. Empty roster (the 2-peer default) skips the fold => byte-identical
+            // to the legacy fingerprint (ruling C10). A divergent team map / slot order changes this hash,
+            // which ValidateStartMessage compares for exact equality and rejects at the handshake.
+            ArenaPlayerRosterCodec.Fold(ref h, Roster);
             return "0x" + h.Value.ToString("X16", CultureInfo.InvariantCulture);
         }
     }
@@ -177,6 +284,7 @@ public sealed class ArenaMultiplayerSettings
             JoinDesignBundleHash = JoinDesignBundleHash,
             HostDesignTable = HostDesignTable ?? "",
             JoinDesignTable = JoinDesignTable ?? "",
+            ArenaPlayerRoster = ArenaPlayerRosterCodec.Encode(Roster),
         };
     }
 
@@ -202,6 +310,7 @@ public sealed class ArenaMultiplayerSettings
             JoinFleetBundle = message.JoinFleetBundle ?? "",
             HostDesignTable = message.HostDesignTable ?? "",
             JoinDesignTable = message.JoinDesignTable ?? "",
+            Roster = ArenaPlayerRosterCodec.Decode(message.ArenaPlayerRoster),
         };
 
     public static ArenaMultiplayerRuleset RulesetFromStartMessage(SessionStartMessage message)
@@ -259,6 +368,10 @@ public sealed class ArenaMultiplayerSettings
         h.AddString(start.RulesetContentFingerprint ?? "");
         h.AddString(start.HostDesignBundleHash ?? "");
         h.AddString(start.JoinDesignBundleHash ?? "");
+        // Arena 8-player teams roster (ruling C2/C3), folded LAST — IDENTICAL law to SettingsHash so the
+        // 2-peer + N-peer fingerprints can never disagree. Decode re-sorts by slot id, then Fold re-sorts,
+        // so wire order is irrelevant. Empty roster skips the fold (byte-identical legacy fingerprint).
+        ArenaPlayerRosterCodec.Fold(ref h, ArenaPlayerRosterCodec.Decode(start.ArenaPlayerRoster));
         return "0x" + h.Value.ToString("X16", CultureInfo.InvariantCulture);
     }
 
@@ -393,6 +506,11 @@ public sealed class ArenaMultiplayerSettings
             // dropped, silently disabling custom designs on every path that re-resolves).
             HostDesignTable = HostDesignTable ?? "",
             JoinDesignTable = JoinDesignTable ?? "",
+            // 8-player teams roster (ruling C2): carry the host-authored team map through fleet resolution.
+            // Dropping it here would silently fold an EMPTY roster into SettingsHash on every re-resolve
+            // path (ValidateStartMessage calls WithResolvedFleets), defeating the divergent-team-map reject
+            // and reproducing the exact "silently disabled" bug the design-table carry-through above fixed.
+            Roster = Roster ?? Array.Empty<ArenaPlayerRosterRecord>(),
             MatchSeed = MatchSeed,
             RngSeed = RngSeed,
             InputDelay = Math.Max(0, InputDelay),

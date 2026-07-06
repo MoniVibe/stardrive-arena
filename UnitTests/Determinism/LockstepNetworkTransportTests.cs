@@ -66,6 +66,8 @@ public class LockstepNetworkTransportTests
             DisableResearchStations = true,
             DisableMiningOps = true,
             AuthoritativePlayerRoster = "2,1,SG9zdA==,VW5pdGVk,;3,1,Sm9pbg==,S3VscmF0aGk=,QXF1YXRpYw==",
+            // Arena 8-player teams roster (ruling C8): append-only field after RulesetUnlimitedAmmo.
+            ArenaPlayerRoster = "1,0,MHhBQUFB;2,0,MHhCQkJC;3,1,MHhDQ0ND;4,1,MHhERERERA==",
         }, decoded =>
         {
             var msg = (SessionStartMessage)decoded.Message;
@@ -102,6 +104,8 @@ public class LockstepNetworkTransportTests
             Assert.IsTrue(msg.DisableMiningOps);
             Assert.AreEqual("2,1,SG9zdA==,VW5pdGVk,;3,1,Sm9pbg==,S3VscmF0aGk=,QXF1YXRpYw==",
                 msg.AuthoritativePlayerRoster);
+            Assert.AreEqual("1,0,MHhBQUFB;2,0,MHhCQkJC;3,1,MHhDQ0ND;4,1,MHhERERERA==",
+                msg.ArenaPlayerRoster);
         });
 
         RoundTrip(0, new SessionHelloMessage

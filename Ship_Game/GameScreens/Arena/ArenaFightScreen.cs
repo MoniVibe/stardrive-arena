@@ -1302,6 +1302,10 @@ public sealed partial class ArenaFightScreen : UniverseScreen
             // process custom designs); clobbering it off from a joiner's local career would desync. OR-in only.
             GlobalStats.Defaults.EnableArenaCustomFleet =
                 Career.EnableArenaCustomFleet || GlobalStats.Defaults.EnableArenaCustomFleet;
+            // 8-player + teams flag (ruling C10): same OR-in restore, never clobber an already-on
+            // authoritative match flag from a joiner's local career.
+            GlobalStats.Defaults.EnableArena8Player =
+                Career.EnableArena8Player || GlobalStats.Defaults.EnableArena8Player;
         }
 
         if (!CareerPerksApplied)

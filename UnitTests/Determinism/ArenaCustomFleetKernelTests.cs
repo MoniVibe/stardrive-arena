@@ -326,10 +326,10 @@ public class ArenaCustomFleetKernelTests : StarDriveTest
     // ---------------------------------------------------------------------------------------------------
 
     [TestMethod]
-    public void Kernel_ProtocolVersionBumpedTo5_Headless()
+    public void Kernel_ProtocolVersionBumpedTo6_Headless()
     {
-        Assert.AreEqual(5, ArenaMultiplayerSettings.ProtocolVersion,
-            "The custom-fleet exchange kernel bumps the Arena MP protocol version 4 -> 5.");
+        Assert.AreEqual(6, ArenaMultiplayerSettings.ProtocolVersion,
+            "The 8-player + first-class-teams roster bumps the Arena MP protocol version 5 -> 6 (ruling C8).");
     }
 
     [TestMethod]
