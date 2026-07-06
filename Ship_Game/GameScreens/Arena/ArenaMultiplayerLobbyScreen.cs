@@ -299,6 +299,16 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     public string FirstRemotePeerDesignTableForHeadless()
         => RemotePeers.OrderBy(p => p.Key).Select(p => p.Value?.DesignTable ?? "").FirstOrDefault() ?? "";
     public string[] ToWireFleetNamesForHeadless(string[] displayNames) => ToWireFleetNames(displayNames);
+    // Slot-card render seams (ISSUE 2): assert what each combatant slot's title/status/detail row shows without a
+    // GPU boot. SlotDetail carries the per-peer FleetSummary on the StarGladiator surface.
+    public string SlotTitleForHeadless(int peerId) => SlotTitle(peerId);
+    public string SlotStatusForHeadless(int peerId) => SlotStatus(peerId);
+    public string SlotDetailForHeadless(int peerId) => SlotDetail(peerId);
+    public int LocalSlotPeerIdForHeadless => LocalSlotPeerId;
+    public const int HostSlotPeerIdForHeadless = HostPlayerPeerId4X;
+    // Setup-pill discoverability seams (ISSUE 3): assert the label text in both states and the STATUS hint.
+    public string SetupPillLabelForHeadless => SetupPillLabel();
+    public string SetupHintLineForHeadless => SetupHintLine();
     public void IngestRemoteLobbyForHeadless(SessionLobbyMessage lobby)
     {
         RemotePeers[lobby.PeerId] = LobbyPeer.From(lobby, $"P{lobby.PeerId}");
@@ -594,15 +604,33 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         // When the flag is off the pill is not added at all -> a true no-op, the current duel path is unchanged.
         if (GlobalStats.Defaults.EnableArenaCustomFleet)
         {
-            UIButton setupPhase = ArenaTheme.AddPillButton(setup3, "", _ => ToggleArenaSetupPhase(), 156f);
+            // Discoverability (director live-QA): when custom-fleet is on, the design-in-arena flow was buried
+            // behind an opaque "SETUP: OFF" label. Make BOTH states spell out what the pill does (design ships in
+            // the arena vs. pick a fleet in the lobby) and widen the pill so the extra text fits. A matching
+            // one-line hint is surfaced in the STATUS area (SetupHintLine) so a player who never toggled the pill
+            // still learns the design flow exists.
+            UIButton setupPhase = ArenaTheme.AddPillButton(setup3, "", _ => ToggleArenaSetupPhase(), 214f);
             setupPhase.Name = "arena_mp_setup_phase";
-            setupPhase.DynamicText = () => RequestArenaSetupPhase ? "SETUP: DESIGN IN ARENA" : "SETUP: OFF";
+            setupPhase.DynamicText = () => SetupPillLabel();
+            SetStatus(SetupHintLine());
         }
     }
 
     // Host-controlled toggle for the in-arena PRE-MATCH SETUP phase (custom-fleet UI wiring). Mirrors the other
     // ruleset pills: gated to the host (the join sees it read-only via HostSettingsAreLockedToRemote), re-broadcast
     // so the peers agree, and folded into the authoritative start's ruleset (BuildArenaRuleset.SetupPhase).
+    // ISSUE 3 (discoverability): the SETUP pill's label spells out the design flow in BOTH states so it is not a
+    // hidden toggle. ON => the match opens in the in-arena PRE-MATCH SETUP page where ships are designed/imported;
+    // OFF => the match spawns straight from the lobby fleet picks. Only meaningful when EnableArenaCustomFleet is on
+    // (the pill is not added otherwise).
+    string SetupPillLabel()
+        => RequestArenaSetupPhase ? "SETUP: DESIGN IN ARENA (design ships)" : "SETUP: pick fleet in lobby";
+
+    // One-line lobby STATUS hint that advertises the design-in-arena flow to a player who never toggled the pill.
+    // Only surfaced when EnableArenaCustomFleet is on.
+    string SetupHintLine()
+        => "Custom Fleet on: toggle SETUP to design ships in the arena before the fight.";
+
     void ToggleArenaSetupPhase()
     {
         if (!GlobalStats.Defaults.EnableArenaCustomFleet)
@@ -722,12 +750,11 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     // names ride the P1 bundle path — deterministic-safe, no wire/hash change.
     void OpenFleetPicker()
     {
-        if (HostSettingsAreLockedToRemote())
-        {
-            SetStatus("Fleet is locked once the match settings are mirrored from the host.");
-            GameAudio.NegativeClick();
-            return;
-        }
+        // SET FLEET is each player's OWN fleet choice, NOT a host ruleset — so it is available to BOTH the host
+        // and the joiner (each edits their own LocalPeer.FleetDesignNames). The joiner's pick reaches the host
+        // over SendLocalLobby -> SessionLobbyMessage.Fleet -> RemotePeers[peerId].FleetDesignNames and is used at
+        // launch. Do NOT gate this on HostSettingsAreLockedToRemote(); that guard is only for RULESET pills
+        // (ARENA/BUDGET/MATCH-LENGTH/SETUP) whose value must come from the authoritative host.
         string[] options = FleetPickerOptions();
         if (options.Length == 0)
         {
@@ -808,6 +835,10 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             ? "Fleet cleared — a default roster fields the fight."
             : FleetSummary(legal));
         GameAudio.AffirmativeClick();
+        // Broadcast the OWN-fleet change immediately (mirrors CycleRace/ToggleTrait) so the other player's slot
+        // card reflects it live: the host's pick reaches the joiner and the joiner's reaches the host over the
+        // lobby sync. No-op when not connected (SendLocalLobby returns early with no transport).
+        SendLocalLobby();
         RefreshSetup();
     }
 
@@ -1383,7 +1414,15 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     void OnJoinMessage(LockstepMessage message)
     {
         if (message is SessionLobbyMessage lobby && lobby.PeerId == HostPlayerPeerId4X)
-            RemotePeer = LobbyPeer.From(lobby, "Host");
+        {
+            LobbyPeer host = LobbyPeer.From(lobby, "Host");
+            RemotePeer = host;
+            // Mirror the host into RemotePeers so the HOST slot card (peer id HostPlayerPeerId4X) renders the
+            // host's own fielded fleet on the JOINER's screen. The host broadcasts its lobby to the joiner after
+            // every change (SendLocalLobby's host->join path), so this stays live as the host re-picks its fleet.
+            RemotePeers[HostPlayerPeerId4X] = host;
+            RefreshPrimaryRemotePeer();
+        }
         if (message is SessionStartMessage start)
         {
             string fingerprint = StartFingerprint(start);
@@ -2323,12 +2362,24 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     bool SlotAcceptsHuman(int peerId)
         => IsRemotePlayerPeer(peerId) && SlotMode(peerId) == ArenaMultiplayerSlotMode.Human;
 
+    // Which lobby slot the LOCAL player occupies: the host authors from HostPlayerPeerId4X, a joiner from its
+    // chosen JoinPeerSlot. Slot cards render the LOCAL player's own LobbyPeer at this id and every OTHER occupied
+    // combatant from RemotePeers — so on the joiner's screen the HOST card shows the host's fleet (ingested over
+    // the wire into RemotePeers[HostPlayerPeerId4X]) while the joiner's OWN card shows its own fleet.
+    int LocalSlotPeerId => LocalRole == ArenaMultiplayerRole.Join ? JoinPeerSlot : HostPlayerPeerId4X;
+
+    bool IsLocalSlot(int peerId) => peerId == LocalSlotPeerId;
+
     string SlotTitle(int peerId)
-        => peerId == HostPlayerPeerId4X ? "P2 HOST" : $"P{peerId} {SlotModeLabel(SlotMode(peerId))}";
+    {
+        if (peerId == HostPlayerPeerId4X)
+            return "P2 HOST";
+        return $"P{peerId} {SlotModeLabel(SlotMode(peerId))}";
+    }
 
     string SlotStatus(int peerId)
     {
-        if (peerId == HostPlayerPeerId4X)
+        if (IsLocalSlot(peerId))
             return $"{LocalPeer.PlayerName} | {(LocalPeer.Ready ? "READY" : "NOT READY")}";
         if (RemotePeers.TryGetValue(peerId, out LobbyPeer peer))
             return $"{peer.PlayerName} | {(peer.Ready ? "READY" : "NOT READY")}";
@@ -2342,7 +2393,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
     string SlotDetail(int peerId)
     {
-        if (peerId == HostPlayerPeerId4X)
+        if (IsLocalSlot(peerId))
         {
             if (Surface == ArenaMultiplayerLobbySurface.StarGladiator)
                 return FleetSummary(LocalPeer.FleetDesignNames);

@@ -3251,6 +3251,165 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         }
     }
 
+    // ===================================================================================================
+    // ARENA LOBBY FLEET UX (director live-QA). ISSUE 1: the JOINER can set its OWN fleet via the picker path —
+    // SET FLEET is each player's own choice, NOT a host ruleset, so it is not gated to the host. ISSUE 2: every
+    // occupied combatant slot shows that peer's current fleet (host sees the joiner's ingested fleet, joiner sees
+    // the host's). ISSUE 3: the design-in-arena SETUP pill label + STATUS hint make the flow discoverable.
+    // ===================================================================================================
+
+    // ISSUE 1 — the JOINER (LocalRole=Join) opens the fleet picker and commits its OWN fleet. The picker path is
+    // NOT host-gated: a joiner composing its own LocalPeer.FleetDesignNames must succeed even though ruleset pills
+    // (ARENA/BUDGET/MATCH-LENGTH/SETUP) are locked to the host. Proven WITHOUT a live transport (pure own-fleet path).
+    [TestMethod]
+    public void PROOF_JOINER_CAN_SET_OWN_FLEET_NOT_HOST_GATED_Headless()
+    {
+        LoadAllGameData();
+
+        var joiner = new ArenaMultiplayerLobbyScreen(ArenaMultiplayerLobbySurface.StarGladiator);
+        joiner.LoadContent();
+        joiner.SetLocalRoleForHeadless(ArenaMultiplayerRole.Join);
+        joiner.SetArenaModeForHeadless(ArenaMatchMode.Sandbox, ArenaBudgetModel.Unlimited);
+
+        // The picker opens for the joiner (NOT denied as "locked to the host"): a player's OWN fleet is not a host
+        // ruleset. (Before the fix, OpenFleetPicker was gated by HostSettingsAreLockedToRemote and returned null
+        // for a joiner.)
+        ArenaFleetPickerScreen picker = joiner.OpenFleetPickerForHeadless();
+        Assert.IsNotNull(picker,
+            "A joiner MUST be able to open the SET FLEET picker — a player's own fleet is not a host ruleset.");
+
+        // Choose a design the fleet does NOT currently field, toggle it ON, and commit — the joiner directs its own
+        // composition and the change reaches its OWN LocalPeer.FleetDesignNames.
+        string[] before = joiner.LocalFleetDesignNamesForHeadless;
+        string pick = joiner.FleetPickerOptionsForHeadless.First(n => !before.Contains(n));
+        Assert.IsFalse(picker.IsSelectedForHeadless(pick),
+            "Precondition: the chosen design must not already be in the joiner's fleet.");
+        Assert.IsTrue(picker.ToggleForHeadless(pick),
+            "The joiner's own-fleet pick must be accepted (no host-gate on the local player's fleet).");
+        picker.CommitForHeadless();
+
+        CollectionAssert.Contains(joiner.LocalFleetDesignNamesForHeadless, pick,
+            $"The joiner's committed pick '{pick}' must land in its OWN LocalPeer.FleetDesignNames. "
+            + $"landed=[{string.Join(",", joiner.LocalFleetDesignNamesForHeadless)}]");
+
+        // A second open still works (the gate never engages for the local fleet regardless of role).
+        picker = joiner.OpenFleetPickerForHeadless();
+        Assert.IsNotNull(picker, "The joiner must be able to RE-open the picker to change its own fleet.");
+    }
+
+    // ISSUE 2 — over TWO REAL lobbies (host+join) driven to a launched fight, each peer's slot card reflects THAT
+    // peer's fielded fleet on BOTH screens: the host slot shows the host's fleet, the join slot shows the join's
+    // fleet, and neither peer's own card leaks into the other's slot. The fleets travel the real SessionLobbyMessage
+    // sync (host->join and join->host), reconstructed from received bytes.
+    [TestMethod]
+    public void PROOF_EACH_SLOT_SHOWS_THAT_PEERS_FLEET_Headless()
+    {
+        LoadAllGameData();
+        string dir = Path.Combine(Path.GetTempPath(), $"arena_slotfleet_{Guid.NewGuid():N}");
+        string savedSlotDir = CareerManager.SlotDirectoryOverride;
+        string savedStaticPath = ArenaFightScreen.CareerSavePath;
+        string savedLobbyConfig = ArenaMultiplayerLobbyConfig.ConfigPathOverride;
+        ArenaMultiplayerLobbyScreen hostLobby = null, joinLobby = null;
+        ArenaFightScreen hostFight = null, joinFight = null;
+        try
+        {
+            Directory.CreateDirectory(dir);
+            CareerManager.SlotDirectoryOverride = dir;
+            ArenaFightScreen.CareerSavePath = Path.Combine(dir, "lobby.yaml");
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = Path.Combine(dir, "mp-config.yaml");
+            ArenaFightScreen.PendingPlayerDesignName = null;
+
+            string[] stock = TwoDistinctStockHulls();
+            string hostShip = stock[0];
+            string joinShip = stock[1];
+
+            void Sandbox(ArenaMultiplayerLobbyScreen l) =>
+                l.SetArenaModeForHeadless(ArenaMatchMode.Sandbox, ArenaBudgetModel.Unlimited);
+
+            (hostLobby, joinLobby, hostFight, joinFight) =
+                DriveRealLobbiesToLaunchedFight(
+                    l => { Sandbox(l); l.SetFleetForHeadless(new[] { hostShip }); },
+                    l => { Sandbox(l); l.SetFleetForHeadless(new[] { joinShip }); });
+
+            int hostSlot = ArenaMultiplayerLobbyScreen.HostSlotPeerIdForHeadless;
+            int joinSlot = joinLobby.JoinPeerSlotForHeadless;
+            string hostFleetSummary = $"Fleet: {hostShip}";
+            string joinFleetSummary = $"Fleet: {joinShip}";
+
+            // The joiner is the LOCAL player on its own screen; the host is the local player on the host's screen.
+            Assert.AreEqual(joinSlot, joinLobby.LocalSlotPeerIdForHeadless,
+                "The joiner's local slot must be its chosen JoinPeerSlot (not the host slot).");
+            Assert.AreEqual(hostSlot, hostLobby.LocalSlotPeerIdForHeadless,
+                "The host's local slot must be the host slot.");
+
+            // HOST screen: host card shows the host's fleet (its own), join card shows the join's fleet (ingested).
+            Assert.AreEqual(hostFleetSummary, hostLobby.SlotDetailForHeadless(hostSlot),
+                "On the HOST screen, the host slot must show the host's own fleet.");
+            Assert.AreEqual(joinFleetSummary, hostLobby.SlotDetailForHeadless(joinSlot),
+                "On the HOST screen, the join slot must show the JOINER's ingested fleet.");
+
+            // JOIN screen: host card shows the host's fleet (ingested over the wire), join card shows its own fleet.
+            Assert.AreEqual(hostFleetSummary, joinLobby.SlotDetailForHeadless(hostSlot),
+                "On the JOIN screen, the host slot must show the HOST's fleet (broadcast to the joiner).");
+            Assert.AreEqual(joinFleetSummary, joinLobby.SlotDetailForHeadless(joinSlot),
+                "On the JOIN screen, the join slot must show the joiner's OWN fleet.");
+        }
+        finally
+        {
+            try { hostFight?.ExitScreen(); } catch { }
+            try { joinFight?.ExitScreen(); } catch { }
+            DisposeLobbyTransport(hostLobby);
+            DisposeLobbyTransport(joinLobby);
+            CareerManager.SlotDirectoryOverride = savedSlotDir;
+            ArenaFightScreen.CareerSavePath = savedStaticPath;
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = savedLobbyConfig;
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
+
+    // ISSUE 3 — the design-in-arena SETUP pill spells out the flow in BOTH states (design ships vs. pick fleet) and
+    // a STATUS hint advertises it, so a player who never toggled the pill still discovers the design flow. The pill
+    // exists ONLY when EnableArenaCustomFleet is on (flag off => interim behavior unchanged, pill absent).
+    [TestMethod]
+    public void PROOF_SETUP_PILL_DISCOVERABILITY_Headless()
+    {
+        LoadAllGameData();
+        bool savedFlag = GlobalStats.Defaults.EnableArenaCustomFleet;
+        try
+        {
+            GlobalStats.Defaults.EnableArenaCustomFleet = true;
+            var lobby = new ArenaMultiplayerLobbyScreen(ArenaMultiplayerLobbySurface.StarGladiator);
+            lobby.LoadContent();
+
+            Assert.IsTrue(lobby.Find("arena_mp_setup_phase", out UIButton _),
+                "With custom-fleet ON, the SETUP pill must be present so the design flow is reachable.");
+
+            lobby.SetRequestArenaSetupPhaseForHeadless(false);
+            StringAssert.Contains(lobby.SetupPillLabelForHeadless, "pick fleet",
+                "The SETUP-off label must say the match picks the fleet in the lobby.");
+
+            lobby.SetRequestArenaSetupPhaseForHeadless(true);
+            StringAssert.Contains(lobby.SetupPillLabelForHeadless, "DESIGN IN ARENA",
+                "The SETUP-on label must announce designing ships in the arena.");
+            StringAssert.Contains(lobby.SetupPillLabelForHeadless, "design ships",
+                "The SETUP-on label must spell out that ships are designed (director discoverability).");
+
+            StringAssert.Contains(lobby.SetupHintLineForHeadless, "design ships in the arena",
+                "The STATUS hint must advertise the design-in-arena flow.");
+
+            // Flag OFF: the pill is not added at all (interim behavior unchanged).
+            GlobalStats.Defaults.EnableArenaCustomFleet = false;
+            var off = new ArenaMultiplayerLobbyScreen(ArenaMultiplayerLobbySurface.StarGladiator);
+            off.LoadContent();
+            Assert.IsFalse(off.Find("arena_mp_setup_phase", out UIButton _),
+                "With custom-fleet OFF, the SETUP pill must be absent (flag-off leaves the interim path untouched).");
+        }
+        finally
+        {
+            GlobalStats.Defaults.EnableArenaCustomFleet = savedFlag;
+        }
+    }
+
     static void DisposeLobbyTransport(ArenaMultiplayerLobbyScreen lobby)
     {
         if (lobby == null)
