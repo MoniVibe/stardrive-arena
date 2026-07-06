@@ -50,6 +50,15 @@ public sealed class ArenaMultiplayerRuleset
     // false => flag-off / legacy launch is unchanged (spawns immediately, as today).
     public bool SetupPhase;
 
+    // Persistent ammo economy (STARDRIVE_ARENA_AMMO_ECONOMY_EXEC_PLAN_20260706). When true (DEFAULT), arena
+    // ships spawn full AND regen ordnance exactly as trunk does today — so a flag-off / default match is
+    // byte-identical to trunk (the no-op default). When false, ordnance is a FINITE MAGAZINE: regen is
+    // suppressed for arena combatants (Ship.ArenaFiniteAmmo) and spent ammo persists + costs cash to rearm.
+    // Carried in the authoritative start so BOTH peers agree; folded into SettingsHash via AppendTo below
+    // (appended LAST) so a divergent toggle rejects cleanly at the handshake instead of a one-sided
+    // finite/infinite desync. Default true keeps the append-only fingerprint stable for legacy launches.
+    public bool UnlimitedAmmo = true;
+
     // Resolved countdown length in SIM TICKS (never wall-clock). 60 Hz. Stored so no float->tick
     // conversion happens per frame.
     public uint CountdownTicks => (uint)(CountdownSeconds < 0 ? 0 : CountdownSeconds) * 60u;
@@ -75,6 +84,12 @@ public sealed class ArenaMultiplayerRuleset
         // that disagree on the setup opt-in fail ValidateStartMessage's SettingsHash check up front instead of
         // one entering setup while the other spawns. Constant-false for flag-off matches (both peers agree).
         h.AddInt(SetupPhase ? 1 : 0);
+        // Appended LAST after SetupPhase (append-only ordering, no protocol bump). Folding UnlimitedAmmo
+        // means two peers that disagree on the finite-ammo toggle fail ValidateStartMessage's SettingsHash
+        // check up front instead of one running a finite magazine while the other regens ordnance. The
+        // toggle rides SettingsHash only (like SetupPhase) — the SIM digest is unchanged when UnlimitedAmmo
+        // is on (regen still fires), so a default match reproduces trunk's lockstep fingerprint exactly.
+        h.AddInt(UnlimitedAmmo ? 1 : 0);
     }
 
     public ArenaMultiplayerRuleset Clone() => new()
@@ -91,5 +106,6 @@ public sealed class ArenaMultiplayerRuleset
         RosterCommitmentHash = RosterCommitmentHash ?? "",
         ContentFingerprint = ContentFingerprint ?? "",
         SetupPhase = SetupPhase,
+        UnlimitedAmmo = UnlimitedAmmo,
     };
 }

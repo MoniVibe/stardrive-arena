@@ -157,6 +157,8 @@ public static class LockstepMessageCodec
                     WriteString(w, start.JoinDesignTable);
                     // Host-authored in-arena SETUP-phase opt-in (append-only optional trailing field).
                     w.Write(start.RulesetSetupPhase);
+                    // Persistent ammo economy toggle (append-only optional trailing field, default true).
+                    w.Write(start.RulesetUnlimitedAmmo);
                     break;
                 case SessionStartAckMessage ack:
                     w.Write(SessionStartAck);
@@ -388,6 +390,10 @@ public static class LockstepMessageCodec
                 string joinDesignTable = ReadOptionalString(r);
                 // Host-authored in-arena SETUP-phase opt-in (optional trailing field; pre-field readers get false).
                 bool rulesetSetupPhase = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
+                // Persistent ammo economy toggle (optional trailing field). DEFAULT TRUE: a pre-field reader
+                // that reaches end-of-stream gets true = today's spawn-full + regen behavior (byte-identical
+                // to trunk). Only an explicit false (finite magazine) is ever written by a newer host.
+                bool rulesetUnlimitedAmmo = r.BaseStream.Position >= r.BaseStream.Length || r.ReadBoolean();
                 message = new SessionStartMessage
                 {
                     ProtocolVersion = protocolVersion,
@@ -456,6 +462,7 @@ public static class LockstepMessageCodec
                     HostDesignTable = hostDesignTable,
                     JoinDesignTable = joinDesignTable,
                     RulesetSetupPhase = rulesetSetupPhase,
+                    RulesetUnlimitedAmmo = rulesetUnlimitedAmmo,
                 };
                 break;
             case SessionStartAck:

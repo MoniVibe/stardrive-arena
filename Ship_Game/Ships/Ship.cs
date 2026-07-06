@@ -969,6 +969,16 @@ namespace Ship_Game.Ships
         // ships fight on with whatever they have. Transient (never [StarData]); false for 4X ships.
         public bool ArenaCombatant;
 
+        // Arena finite-magazine marker (persistent ammo economy 2026-07-06). Set true once at spawn on
+        // every arena combatant when the resolved ruleset's UnlimitedAmmo toggle is OFF (finite ==
+        // !UnlimitedAmmo), via the CreateArenaShipAtPoint choke — symmetrically on both peers, NEVER
+        // mutated per-tick — so it is lockstep-safe exactly like ArenaCombatant. Read in the sim
+        // (UpdateModulesAndStatus) to SUPPRESS ordnance regen so a magazine actually runs dry. Threaded as
+        // an INSTANCE bool (not a process-global static) so a same-process two-peer proof can never let one
+        // match's toggle leak into another. Transient (never [StarData]); false for 4X ships and for
+        // UnlimitedAmmo (default) matches, whose regen stays byte-identical to trunk.
+        public bool ArenaFiniteAmmo;
+
         // @return Filtered list of purely offensive weapons
         public Weapon[] OffensiveWeapons => Weapons.Filter(w => w.DamageAmount > 0.1f && !w.TruePD);
 
@@ -1302,7 +1312,11 @@ namespace Ship_Game.Ships
             if (ShouldRecalculatePower) // must be before ShipStatusChange
                 RecalculatePower();
             
-            if (OrdAddedPerSecond > 0f)
+            // Finite-magazine gate (arena ammo economy): an arena combatant in a finite-ammo match gets
+            // NO ordnance regen — its magazine is real and runs dry. Both flags are set symmetrically at
+            // spawn and never mutated per-tick, so this branch evaluates identically on every peer =>
+            // lockstep-safe. No-op for 4X ships and for UnlimitedAmmo (default) matches => byte-identical to trunk.
+            if (OrdAddedPerSecond > 0f && !(ArenaCombatant && ArenaFiniteAmmo))
                 ChangeOrdnance(OrdAddedPerSecond); // Add ordnance
 
             if (OrdnanceChanged)

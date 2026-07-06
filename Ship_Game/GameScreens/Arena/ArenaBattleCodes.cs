@@ -20,7 +20,9 @@ public static class ArenaBattleCodes
     // the existing fields so a format-1 code still parses (missing fields -> defaults).
     // 3: host-authored in-arena SETUP-phase opt-in (RulesetSetupPhase), appended after the format-2
     // fields so a format-2 code still parses (the flag defaults to false = legacy launch).
-    const int FormatVersion = 3;
+    // 4: persistent ammo economy toggle (RulesetUnlimitedAmmo), appended after the format-3 field so a
+    // format-3 code still parses (the flag defaults to TRUE = today's spawn-full + regen behavior).
+    const int FormatVersion = 4;
 
     public static string Export(ArenaMultiplayerSettings settings, string sequenceSha256)
         => Export(settings, sequenceSha256, buildHashOverride: null);
@@ -74,6 +76,8 @@ public static class ArenaBattleCodes
             WriteString(w, start.JoinFleetBundle);
             // Format 3: host-authored in-arena SETUP-phase opt-in (append-only after the format-2 fields).
             w.Write(start.RulesetSetupPhase);
+            // Format 4: persistent ammo economy toggle (append-only after the format-3 field).
+            w.Write(start.RulesetUnlimitedAmmo);
             WriteString(w, digest);
         }
 
@@ -144,6 +148,10 @@ public static class ArenaBattleCodes
             }
             if (format >= 3)
                 start.RulesetSetupPhase = r.ReadBoolean();
+            // Format 4: persistent ammo economy toggle. A format-3 code has no field -> default TRUE
+            // (today's spawn-full + regen), so an older code replays byte-identically.
+            if (format >= 4)
+                start.RulesetUnlimitedAmmo = r.ReadBoolean();
             string sequenceSha256 = NormalizeSha256(ReadString(r));
             if (payload.Position != payload.Length)
             {

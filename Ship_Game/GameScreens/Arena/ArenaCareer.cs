@@ -253,6 +253,10 @@ public sealed class ArenaCareer
             v.MaxHullHealth = Math.Max(0f, v.MaxHullHealth);
             if (v.MaxHullHealth > 0f && v.CurrentHullHealth >= v.MaxHullHealth - 0.5f)
                 v.CurrentHullHealth = 0f; // zero means fully repaired/unscarred
+            v.CurrentOrdnance = Math.Max(0f, v.CurrentOrdnance);
+            v.MaxOrdnance = Math.Max(0f, v.MaxOrdnance);
+            if (v.MaxOrdnance > 0f && v.CurrentOrdnance >= v.MaxOrdnance - 0.5f)
+                v.CurrentOrdnance = 0f; // zero means full magazine (spawn full)
             v.DestroyedModules = NormalizeDestroyedModules(v.DestroyedModules);
             v.ModuleOverrides = NormalizeModuleOverrides(v.ModuleOverrides);
             owned.Add(v);
@@ -1367,6 +1371,14 @@ public sealed class OwnedVessel
     // so repair pricing can scale by actual damage.
     [StarData] public float CurrentHullHealth;
     [StarData] public float MaxHullHealth;
+
+    // ---- SPENT AMMO (persistent ammo economy 2026-07-06) — exact twin of the hull scar above. ----
+    // Zero/negative CurrentOrdnance (or >= MaxOrdnance) means "spawn full" (unspent magazine). A positive
+    // value < MaxOrdnance carries spent ammo into the next spawn. MaxOrdnance records OrdinanceMax at bank
+    // time so rearm pricing can scale by ammo spent. Additive [StarData], default 0 => old saves spawn full
+    // (no regression). Only banked when the run's UnlimitedAmmo is OFF; otherwise always 0 (ammo never persists).
+    [StarData] public float CurrentOrdnance;
+    [StarData] public float MaxOrdnance;
 
     // Destroyed module slots are removed from the next spawn until refit. SlotIndex is the
     // original design-slot index, stable across skipped destroyed slots.

@@ -48,6 +48,25 @@ public readonly struct ArenaRepairResult
     }
 }
 
+// Result of a between-match rearm spend (persistent ammo economy), exact twin of ArenaRepairResult.
+public readonly struct ArenaRearmResult
+{
+    public readonly bool Success;
+    public readonly string Message;
+    public readonly int CashBefore;
+    public readonly int CashAfter;
+    public readonly int RearmedShips;
+
+    public ArenaRearmResult(bool success, string message, int cashBefore, int cashAfter, int rearmedShips)
+    {
+        Success = success;
+        Message = message ?? "";
+        CashBefore = cashBefore;
+        CashAfter = cashAfter;
+        RearmedShips = Math.Max(0, rearmedShips);
+    }
+}
+
 public readonly struct ArenaVesselActivationResult
 {
     public readonly bool Success;
@@ -212,6 +231,21 @@ public sealed partial class ArenaFightScreen : UniverseScreen
     int Cash;
     int PendingWingmen; // extra player warships bought in the shop, spawned next round
     RunPhase Phase = RunPhase.Fighting;
+
+    // Persistent ammo economy (STARDRIVE_ARENA_AMMO_ECONOMY_EXEC_PLAN_20260706). Resolved ONCE per
+    // spawn from the finite-ammo source (MP: the fingerprinted ruleset's UnlimitedAmmo; SP career: the
+    // CareerUnlimitedAmmo config default) and stamped onto each arena ship as ship.ArenaFiniteAmmo at the
+    // CreateArenaShipAtPoint choke. NOT read inside the sim tick — the sim reads only the per-ship instance
+    // flag, so this screen-level bool never enters a lockstep digest. True == finite magazine (regen off,
+    // ammo persists, rearm costs cash); false (default) == today's spawn-full + regen behavior.
+    bool ArenaFiniteAmmoActive;
+
+    // SP career finite-ammo toggle (host/config). DEFAULT UnlimitedAmmo=true == today's behavior, so a
+    // default career is byte-identical to trunk. Mirrors the MP ruleset's UnlimitedAmmo field for the
+    // single-player career arena (which has no ArenaMultiplayerRuleset object). Static config knob, resolved
+    // to the instance flag at spawn; never read in the sim.
+    public static bool CareerUnlimitedAmmo = true;
+
     bool RunStarted;
     bool AdvanceRoundOnNextFight;
     readonly bool StartAtHub;
@@ -255,6 +289,9 @@ public sealed partial class ArenaFightScreen : UniverseScreen
     public const int CashPerClear = 300;
     // Shop costs.
     public const int RepairCost  = 50;
+    // Rearm base cost (persistent ammo economy), mirrors RepairCost. Scaled by ammo-spent fraction and the
+    // repair_crews discount (v0 shares the repair discount). Tunable; no balance locked.
+    public const int RearmCost   = 40;
     public const int WingmanCost = 100;
     public const int FleetSlotUpgradeBaseCost = 500;
     public const int FleetSlotUpgradeStepCost = 150;
@@ -620,6 +657,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
     UIPanel ShopPanel;
     UILabel ShopTitle;
     UIButton RepairButton;
+    UIButton RearmButton;
     UIButton WingmanButton;
     UIButton UnlockChassisButton; // 'Unlock Chassis' buy (unlocks a foreign faction's hulls)
     UIButton CustomizeButton;     // in the shop panel (between rounds)
@@ -1100,6 +1138,22 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         vessel.CurrentHullHealth = ship.Health < repairableMax - 0.5f
             ? Math.Max(1f, ship.Health.UpperBound(repairableMax))
             : 0f;
+
+        // Bank spent ammo (persistent ammo economy), exact twin of the hull scar above. Only when finite-ammo
+        // is active for the run — under UnlimitedAmmo we always bank 0 (full), so ammo never persists (matching
+        // the ruleset promise). 0 == "spawn full"; a positive value < OrdinanceMax carries the spent magazine.
+        if (ArenaFiniteAmmoActive)
+        {
+            vessel.MaxOrdnance = ship.OrdinanceMax;
+            vessel.CurrentOrdnance = ship.Ordinance < ship.OrdinanceMax - 0.5f
+                ? ship.Ordinance.LowerBound(0f)
+                : 0f;
+        }
+        else
+        {
+            vessel.MaxOrdnance = 0f;
+            vessel.CurrentOrdnance = 0f;
+        }
 
         int[] baseSlotIndices = FleetShipBaseSlotIndices.TryGetValue(ship, out int[] mapped)
             ? mapped
@@ -2030,6 +2084,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
     public int CurrentGeneratedFightCash
         => ArenaFightOptions.RewardCashForEnemyStrength(Career, CurrentEnemyTotalStrength());
     public int CurrentRepairCost => CurrentRepairAllCost();
+    public int CurrentRearmCost => CurrentRearmAllCost();
     public int CurrentMaxFleetSize => Career?.MaxFleetSize ?? ArenaCareer.ArenaMaxFleetSize;
     public int CurrentFleetSlotUpgradeCost => FleetSlotUpgradeCost(CurrentMaxFleetSize);
     public bool CanBuyFleetSlotUpgrade
@@ -2044,6 +2099,11 @@ public sealed partial class ArenaFightScreen : UniverseScreen
     public bool CurrentPlayerShipsPermadeath => Career?.PlayerShipsPermadeath ?? true;
     public bool HasPendingBossReward => PendingBossPerkChoices != null && PendingBossPerkChoices.Length > 0;
     public bool HasQueuedFightOption => PendingFightOption != null;
+
+    // Headless proof surface (persistent ammo economy): current/max ordnance of the fielded player ships,
+    // flagship first, so a test can assert re-applied persisted ammo (Phase 2) and rearm restore (Phase 3).
+    public (float Ordnance, float OrdinanceMax)[] PlayerShipOrdnanceForHeadless
+        => PlayerShips.Where(s => s != null).Select(s => (s.Ordinance, s.OrdinanceMax)).ToArray();
     public bool HasPendingBet => Career?.PendingBet != null;
     public ArenaBetSlip PendingBet => Career?.PendingBet;
     public ArenaSettledBet[] SettledBets => Career?.SettledBets ?? Empty<ArenaSettledBet>.Array;
@@ -2330,6 +2390,11 @@ public sealed partial class ArenaFightScreen : UniverseScreen
 
     static void RearmArenaShip(Ship ship, float fixedDeltaTime)
     {
+        // Finite-magazine gate: a finite-ammo ship gets NO free local rearm — its magazine runs dry and is
+        // only restored by paying cash at the hub (Phase 3). This is a screen-side helper (career-only, not
+        // the lockstep sim), gated per-ship so today's UnlimitedAmmo behavior is unchanged when finite is off.
+        if (ship.ArenaFiniteAmmo)
+            return;
         if (ship.OrdinanceMax <= 0f || ship.Ordinance >= ship.OrdinanceMax)
             return;
         if (!ship.Position.InRadius(ArenaCenter, ArenaLocalRearmRadius))
@@ -3979,6 +4044,110 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         ship.Health = RepairableHullMax(ship);
     }
 
+    // ===================== REARM (persistent ammo economy) — mirrors the repair economy 1:1 =====================
+    // DETERMINISM BOUNDARY: like RepairAllFromHub, RearmAllFromHub is BETWEEN-MATCH client economy. It runs
+    // only in Phase == Shopping|Idle, mutates Career.Cash + OwnedVessel records + saves, and NEVER touches a
+    // live sim tick. Cash/persisted-ammo differences between peers can never desync because the sim reads
+    // neither. Only meaningful when finite-ammo is active; under UnlimitedAmmo vessels bank full (cost 0).
+
+    void BuyRearm()
+        => RearmAllFromHub();
+
+    int CurrentRearmAllCost()
+    {
+        int baseCost = ArenaPerks.RepairCost(RearmCost, Career?.Perks); // v0 shares the repair_crews discount
+        float spent = CurrentAmmoSpentFraction();
+        return spent <= 0f ? 0 : Math.Max(1, (int)Math.Ceiling(baseCost * spent));
+    }
+
+    // Ammo-spent fraction over fielded + surviving owned vessels, exact twin of CurrentRepairDamageFraction.
+    float CurrentAmmoSpentFraction()
+    {
+        float totalMax = 0f;
+        float totalSpent = 0f;
+        var liveVessels = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (KeyValuePair<Ship, OwnedVessel> link in FleetShipVessel)
+        {
+            Ship s = link.Key;
+            OwnedVessel v = link.Value;
+            if (s == null || v == null || !s.IsAlive || s.OrdinanceMax <= 0f)
+                continue;
+            if (v.VesselId.NotEmpty())
+                liveVessels.Add(v.VesselId);
+            totalMax += s.OrdinanceMax;
+            totalSpent += Math.Max(0f, s.OrdinanceMax - s.Ordinance);
+        }
+
+        foreach (OwnedVessel v in Career?.OwnedVessels ?? Empty<OwnedVessel>.Array)
+        {
+            if (v == null || v.VesselId.IsEmpty() || liveVessels.Contains(v.VesselId))
+                continue;
+            if (v.MaxOrdnance <= 0f || v.CurrentOrdnance <= 0f || v.MaxOrdnance <= v.CurrentOrdnance)
+                continue; // 0 == full (nothing to pay for)
+            totalMax += v.MaxOrdnance;
+            totalSpent += v.MaxOrdnance - v.CurrentOrdnance;
+        }
+
+        return totalMax > 0f ? (totalSpent / totalMax).Clamped(0f, 1f) : 0f;
+    }
+
+    int CountRearmableOwnedVessels()
+    {
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (KeyValuePair<Ship, OwnedVessel> link in FleetShipVessel)
+        {
+            Ship s = link.Key;
+            OwnedVessel v = link.Value;
+            if (s == null || v == null || !s.IsAlive || s.OrdinanceMax <= 0f)
+                continue;
+            if (s.Ordinance < s.OrdinanceMax - 0.5f && v.VesselId.NotEmpty())
+                ids.Add(v.VesselId);
+        }
+        foreach (OwnedVessel v in Career?.OwnedVessels ?? Empty<OwnedVessel>.Array)
+        {
+            if (v == null || v.VesselId.IsEmpty())
+                continue;
+            if (v.MaxOrdnance > 0f && v.CurrentOrdnance > 0f && v.MaxOrdnance > v.CurrentOrdnance + 0.5f)
+                ids.Add(v.VesselId);
+        }
+        return ids.Count;
+    }
+
+    public ArenaRearmResult RearmAllFromHub()
+    {
+        int spentShips = CountRearmableOwnedVessels();
+        if (spentShips == 0)
+            return new ArenaRearmResult(false, "No ships need rearming.", Cash, Cash, 0);
+
+        int cost = CurrentRearmCost;
+        // DETERMINISM BOUNDARY: the spend runs ONLY between matches (Shopping/Idle), never in a sim tick.
+        if ((Phase != RunPhase.Shopping && Phase != RunPhase.Idle) || Cash < cost)
+            return new ArenaRearmResult(false,
+                Cash < cost ? $"Need ${cost} to rearm." : "Rearming is only available between fights.",
+                Cash, Cash, 0);
+
+        int cashBefore = Cash;
+        Cash -= cost;
+        foreach (Ship s in PlayerShips)
+            if (s != null && s.IsAlive && s.OrdinanceMax > 0f) s.SetOrdnance(s.OrdinanceMax);
+        Career ??= new ArenaCareer();
+        foreach (OwnedVessel v in Career.OwnedVessels ?? Empty<OwnedVessel>.Array)
+        {
+            if (v == null)
+                continue;
+            v.CurrentOrdnance = 0f; // 0 == full magazine
+            v.MaxOrdnance = 0f;
+        }
+        Career.Cash = Cash;
+        Career.AddChronicleEvent("rearm", "fleet",
+            $"Rearmed {spentShips} ship(s) for ${cost}.",
+            ChronicleSeed($"rearm:{spentShips}:{cost}"));
+        CareerManager.Save(Career, CareerSavePath);
+        RefreshShop();
+        return new ArenaRearmResult(true, $"Rearmed {spentShips} ship(s) for ${cost}.", cashBefore, Cash, spentShips);
+    }
+
     static float RepairableHullMax(Ship ship)
     {
         if (ship == null)
@@ -4104,20 +4273,25 @@ public sealed partial class ArenaFightScreen : UniverseScreen
     static readonly Vector2 EnemySpawnFacing = new(-1f, 0f);
 
     static Ship CreateArenaShipAtPoint(UniverseState state, string designName,
-        Empire owner, Vector2 position, Vector2 facing)
+        Empire owner, Vector2 position, Vector2 facing, bool finiteAmmo = false)
     {
         Ship ship = Ship.CreateShipAtPoint(state, designName, owner, position);
         FaceArenaShip(ship, facing);
         ArenaCombatTuning.ApplyAntiKiteDefaults(ship);
+        // Finite-magazine stamp: threaded onto the ship INSTANCE at the single arena spawn choke (mirrors
+        // the ArenaCombatant marker set just above), symmetrically on both peers, so the sim's regen gate
+        // reads a per-ship flag rather than any process-global state. False (default) == today's regen.
+        if (ship != null) ship.ArenaFiniteAmmo = finiteAmmo;
         return ship;
     }
 
     static Ship CreateArenaShipAtPoint(UniverseState state, Ship template,
-        Empire owner, Vector2 position, Vector2 facing)
+        Empire owner, Vector2 position, Vector2 facing, bool finiteAmmo = false)
     {
         Ship ship = Ship.CreateShipAtPoint(state, template, owner, position);
         FaceArenaShip(ship, facing);
         ArenaCombatTuning.ApplyAntiKiteDefaults(ship);
+        if (ship != null) ship.ArenaFiniteAmmo = finiteAmmo;
         return ship;
     }
 
@@ -4131,6 +4305,11 @@ public sealed partial class ArenaFightScreen : UniverseScreen
     void SpawnPlayerShips(bool firstRound)
     {
         Vector2 center = ArenaCenter;
+
+        // Resolve finite-ammo ONCE for this SP spawn from the career config toggle (default UnlimitedAmmo
+        // => finite off => today's behavior). MP resolves its own flag from the fingerprinted ruleset at
+        // the multiplayer spawn choke. Stamped onto each ship instance below via CreateArenaShipAtPoint.
+        ArenaFiniteAmmoActive = !CareerUnlimitedAmmo;
 
         // FLEET COMPOSITION: the run fields ALL owned vessels in the active fleet (flagship
         // first), then the hired wingmen on top. A FRESH single-vessel career fields exactly the
@@ -4199,8 +4378,8 @@ public sealed partial class ArenaFightScreen : UniverseScreen
             }
 
             Ship s = spawnTemplate != null
-                ? CreateArenaShipAtPoint(UState, spawnTemplate, ArenaPlayer, center + slot, PlayerSpawnFacing)
-                : CreateArenaShipAtPoint(UState, designName, ArenaPlayer, center + slot, PlayerSpawnFacing);
+                ? CreateArenaShipAtPoint(UState, spawnTemplate, ArenaPlayer, center + slot, PlayerSpawnFacing, ArenaFiniteAmmoActive)
+                : CreateArenaShipAtPoint(UState, designName, ArenaPlayer, center + slot, PlayerSpawnFacing, ArenaFiniteAmmoActive);
             if (s != null)
             {
                 s.SensorRange = 400000;
@@ -4214,6 +4393,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
                     if (baseSlotIndices != null)
                         FleetShipBaseSlotIndices[s] = baseSlotIndices;
                     ApplyCarriedVesselHullState(s, slotVessel);
+                    ApplyCarriedVesselOrdnance(s, slotVessel);
                 }
             }
         }
@@ -4312,6 +4492,17 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         ship.Health = vessel.CurrentHullHealth.Clamped(1f, ship.HealthMax);
     }
 
+    // Re-apply persisted spent ammo at spawn (exact twin of ApplyCarriedVesselHullState). 0 == "spawn full"
+    // (unspent, or old save lacking the field) => leave the ship at OrdinanceMax. A positive persisted value
+    // sets the magazine directly via SetOrdnance (clamped, deterministic — same on both peers because it is
+    // driven off the persisted career value, exactly like scars/veterancy). Never touches a live sim tick.
+    static void ApplyCarriedVesselOrdnance(Ship ship, OwnedVessel vessel)
+    {
+        if (ship == null || vessel == null || vessel.CurrentOrdnance <= 0f)
+            return; // 0 == spawn full (also the old-save default)
+        ship.SetOrdnance(vessel.CurrentOrdnance.Clamped(0f, ship.OrdinanceMax));
+    }
+
     // The spawn-time layout slot (relative to ArenaCenter) for the i'th player ship of
     // `count`. When the hub built a PlayerFleet AND the i'th ship already has an assigned
     // FleetOffset, that formation offset is used (left-shifted by Gap so the wing stays on
@@ -4368,7 +4559,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
             float y = (i - (count - 1) / 2f) * RowSpan;
             // First `bossCount` slots are the mini-boss; the rest are escorts.
             IShipDesign design = i < bossCount ? boss : escort;
-            Ship e = CreateArenaShipAtPoint(UState, design.Name, ArenaEnemy, center + new Vector2(+Gap, y), EnemySpawnFacing);
+            Ship e = CreateArenaShipAtPoint(UState, design.Name, ArenaEnemy, center + new Vector2(+Gap, y), EnemySpawnFacing, ArenaFiniteAmmoActive);
             if (e != null)
             {
                 e.SensorRange = 400000;
@@ -4395,7 +4586,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
             return false;
         }
 
-        Ship boss = CreateArenaShipAtPoint(UState, design.Name, ArenaEnemy, center + new Vector2(+Gap, 0f), EnemySpawnFacing);
+        Ship boss = CreateArenaShipAtPoint(UState, design.Name, ArenaEnemy, center + new Vector2(+Gap, 0f), EnemySpawnFacing, ArenaFiniteAmmoActive);
         if (boss == null)
         {
             CurrentBossEncounter = ArenaBossEncounter.None;
@@ -4441,7 +4632,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         {
             float y = (i - (option.EnemyCount - 1) / 2f) * RowSpan;
             IShipDesign design = i < bossCount ? boss : escort;
-            Ship e = CreateArenaShipAtPoint(UState, design.Name, ArenaEnemy, center + new Vector2(+Gap, y), EnemySpawnFacing);
+            Ship e = CreateArenaShipAtPoint(UState, design.Name, ArenaEnemy, center + new Vector2(+Gap, y), EnemySpawnFacing, ArenaFiniteAmmoActive);
             if (e == null)
                 continue;
             e.SensorRange = 400000;
@@ -4504,7 +4695,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
             return false;
         }
 
-        Ship e = CreateArenaShipAtPoint(UState, design.Name, ArenaEnemy, center + new Vector2(+Gap, 0f), EnemySpawnFacing);
+        Ship e = CreateArenaShipAtPoint(UState, design.Name, ArenaEnemy, center + new Vector2(+Gap, 0f), EnemySpawnFacing, ArenaFiniteAmmoActive);
         if (e == null)
         {
             Log.Warning($"ArenaFightScreen: failed to spawn queued ladder challenge '{design.Name}'; falling back to normal spawn.");
@@ -4592,17 +4783,21 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         float by = panelRect.Y + 54;
         RepairButton = ShopPanel.Add(new UIButton(ButtonStyle.Medium,
             new Vector2(bx, by), $"Repair All (${CurrentRepairCost})") { OnClick = _ => BuyRepair() });
+        // Rearm All: between-match ammo restore beside Repair (persistent ammo economy). Hidden/disabled when
+        // finite-ammo is off (nothing to pay for); label + enabled state refreshed in RefreshShop.
+        RearmButton = ShopPanel.Add(new UIButton(ButtonStyle.Medium,
+            new Vector2(bx, by + 52), $"Rearm All (${CurrentRearmCost})") { OnClick = _ => BuyRearm() });
         WingmanButton = ShopPanel.Add(new UIButton(ButtonStyle.Medium,
-            new Vector2(bx, by + 52), $"Hire Wingman (${WingmanCost})") { OnClick = _ => BuyWingman() });
+            new Vector2(bx, by + 104), $"Hire Wingman (${WingmanCost})") { OnClick = _ => BuyWingman() });
         // 'Unlock Chassis': spend UnlockChassisCost to unlock the NEXT foreign faction's
         // warship hulls (they then appear in the Customize designer + spawn fine). Label
         // shows the next faction; disabled/relabelled when all chassis are unlocked.
         UnlockChassisButton = ShopPanel.Add(new UIButton(ButtonStyle.Medium,
-            new Vector2(bx, by + 104), $"Unlock Chassis (${UnlockChassisCost})") { OnClick = _ => BuyUnlockChassis() });
+            new Vector2(bx, by + 156), $"Unlock Chassis (${UnlockChassisCost})") { OnClick = _ => BuyUnlockChassis() });
         CustomizeButton = ShopPanel.Add(new UIButton(ButtonStyle.Medium,
-            new Vector2(bx, by + 156), "Customize Gladiator") { OnClick = _ => OpenGladiatorCustomizer() });
+            new Vector2(bx, by + 208), "Customize Gladiator") { OnClick = _ => OpenGladiatorCustomizer() });
         NextFightButton = ShopPanel.Add(new UIButton(ButtonStyle.Medium,
-            new Vector2(bx, by + 208), "Next Fight") { OnClick = _ => NextFight() });
+            new Vector2(bx, by + 260), "Next Fight") { OnClick = _ => NextFight() });
     }
 
     // ---- CUSTOMIZE GLADIATOR (live layer) -------------------------------------------
@@ -4823,6 +5018,15 @@ public sealed partial class ArenaFightScreen : UniverseScreen
             int cost = CurrentRepairCost;
             RepairButton.Text = $"Repair All (${cost})";
             RepairButton.Enabled = cost > 0 && Cash >= cost;
+        }
+        // Rearm is only meaningful when finite-ammo is active (under UnlimitedAmmo vessels bank full, so cost
+        // is 0). Hide the pill when there is nothing to pay for; otherwise label the cost and gate on cash.
+        if (RearmButton != null)
+        {
+            int cost = CurrentRearmCost;
+            RearmButton.Visible = cost > 0;
+            RearmButton.Text = $"Rearm All (${cost})";
+            RearmButton.Enabled = cost > 0 && Cash >= cost;
         }
         if (WingmanButton != null)
             WingmanButton.Enabled = Cash >= WingmanCost;

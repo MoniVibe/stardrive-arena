@@ -82,6 +82,7 @@
     <Compile Include="..\x64Migration\Tools\ArenaFingerprint\PortableFingerprint.cs" Link="Determinism\ArenaPortableFingerprintRunner.cs" />
     <Compile Include="..\x64Migration\Tools\ArenaLockstepProbe\PortableLockstepProbe.cs" Link="Determinism\ArenaPortableLockstepProbeRunner.cs" />
     <Compile Include="Determinism\DeterminismHashTests.cs" />
+    <Compile Include="Determinism\ArenaAmmoEconomyTests.cs" />
     <Compile Include="Determinism\ArenaCustomFleetKernelTests.cs" />
     <Compile Include="Determinism\ArenaAfterActionReportTests.cs" />
     <Compile Include="Determinism\ArenaCustomFleetUiTests.cs" />

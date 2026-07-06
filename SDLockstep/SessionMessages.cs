@@ -81,6 +81,10 @@ public sealed class SessionStartMessage : LockstepMessage
     // Host-authored custom-fleet in-arena SETUP-phase opt-in (append-only optional trailing field; no
     // ProtocolVersion bump — a pre-field reader stops before it and gets the default false = legacy launch).
     public bool RulesetSetupPhase;
+    // Persistent ammo economy toggle (append-only optional trailing field; no ProtocolVersion bump). DEFAULT
+    // TRUE = today's spawn-full + regen behavior, so a pre-field reader that stops before it gets true and
+    // stays byte-identical to trunk. False = finite magazine + persistent/rearm economy.
+    public bool RulesetUnlimitedAmmo = true;
     public string HostFleetBundle = "";
     public string JoinFleetBundle = "";
     public string HostDesignBundleHash = "";

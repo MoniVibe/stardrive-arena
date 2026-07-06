@@ -170,6 +170,7 @@ public sealed class ArenaMultiplayerSettings
             RulesetCommitmentHash = ruleset.RosterCommitmentHash ?? "",
             RulesetContentFingerprint = ruleset.ContentFingerprint ?? "",
             RulesetSetupPhase = ruleset.SetupPhase,
+            RulesetUnlimitedAmmo = ruleset.UnlimitedAmmo,
             HostFleetBundle = HostFleetBundle ?? "",
             JoinFleetBundle = JoinFleetBundle ?? "",
             HostDesignBundleHash = HostDesignBundleHash,
@@ -218,6 +219,7 @@ public sealed class ArenaMultiplayerSettings
             RosterCommitmentHash = message.RulesetCommitmentHash ?? "",
             ContentFingerprint = message.RulesetContentFingerprint ?? "",
             SetupPhase = message.RulesetSetupPhase,
+            UnlimitedAmmo = message.RulesetUnlimitedAmmo,
         };
 
     public static string StartFingerprint(SessionStartMessage start)

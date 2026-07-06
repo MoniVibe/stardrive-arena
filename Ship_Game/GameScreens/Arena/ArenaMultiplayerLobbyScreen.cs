@@ -293,6 +293,12 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     // arming, so authoring happens in the arena and spawn waits for the setup->fight rebuild. Flag-gated.
     public bool RequestArenaSetupPhase;
     public void SetRequestArenaSetupPhaseForHeadless(bool on) => RequestArenaSetupPhase = on;
+
+    // Persistent ammo economy toggle (host-authored). DEFAULT TRUE == today's spawn-full + regen behavior,
+    // so a default lobby builds a ruleset byte-identical to trunk. Host-gated like the other ruleset pills;
+    // folded into the authoritative start's ruleset (BuildArenaRuleset.UnlimitedAmmo) and the fingerprint.
+    public bool RequestUnlimitedAmmo = true;
+    public void SetRequestUnlimitedAmmoForHeadless(bool on) => RequestUnlimitedAmmo = on;
     public void SetLocalRoleForHeadless(ArenaMultiplayerRole role) => LocalRole = role;
     public string BuildLocalDesignTableForHeadless() => BuildLocalDesignTable();
     public string RemoteDesignTableUnionForHeadless() => UnionRemoteDesignTables();
@@ -572,6 +578,13 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         UIButton matchLen = ArenaTheme.AddPillButton(setup, "", _ => CycleMatchLength(), 168f);
         matchLen.Name = "arena_mp_match_length";
         matchLen.DynamicText = MatchLengthLabel;
+        // Persistent ammo economy pill (host-authored ruleset toggle, mirrors ARENA/BUDGET/MATCH-LENGTH). ON
+        // (default) == today's spawn-full + regen; FINITE == magazine runs dry + persists + costs cash to
+        // rearm. Rides the authoritative start's ruleset so the join agrees; a divergent toggle rejects at
+        // the SettingsHash handshake (BuildArenaRuleset.UnlimitedAmmo -> AppendTo).
+        UIButton ammo = ArenaTheme.AddPillButton(setup, "", _ => ToggleUnlimitedAmmo(), 168f);
+        ammo.Name = "arena_mp_ammo";
+        ammo.DynamicText = AmmoPillLabel;
 
         UIList setup2 = AddList(new Vector2(panel.X + 24, panel.Y + 430));
         setup2.Direction = new Vector2(1f, 0f);
@@ -647,6 +660,26 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         SetStatus(RequestArenaSetupPhase
             ? "Star Gladiator setup: design/import ships and arrange your fleet IN the arena before the fight."
             : "Star Gladiator setup off: the match spawns immediately from the fleet picks.");
+        GameAudio.AffirmativeClick();
+    }
+
+    // Host-controlled persistent-ammo toggle. Mirrors the other ruleset pills: gated to the host (the join
+    // sees it read-only via HostSettingsAreLockedToRemote) and folded into the authoritative start's ruleset
+    // (BuildArenaRuleset.UnlimitedAmmo). ON (default) => spawn-full + regen as today; FINITE => magazine.
+    string AmmoPillLabel()
+        => RequestUnlimitedAmmo ? "AMMO UNLIMITED" : "AMMO FINITE";
+
+    void ToggleUnlimitedAmmo()
+    {
+        if (HostSettingsAreLockedToRemote())
+        {
+            GameAudio.NegativeClick();
+            return;
+        }
+        RequestUnlimitedAmmo = !RequestUnlimitedAmmo;
+        SetStatus(RequestUnlimitedAmmo
+            ? "Ammo unlimited: ships spawn full and regenerate ordnance (today's behavior)."
+            : "Ammo finite: magazines run dry and must be rearmed for cash between fights.");
         GameAudio.AffirmativeClick();
     }
 
@@ -1615,6 +1648,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             // Host-authored in-arena SETUP-phase opt-in: carried in the authoritative start so the JOIN peer
             // enters setup too (LaunchVisibleArena reads it back from the received ruleset). Flag-gated.
             SetupPhase = RequestArenaSetupPhase && GlobalStats.Defaults.EnableArenaCustomFleet,
+            // Host-authored persistent-ammo toggle. Default true == today's regen; false == finite magazine.
+            UnlimitedAmmo = RequestUnlimitedAmmo,
         };
 
     ArenaMultiplayerSettings BuildArenaSettings()

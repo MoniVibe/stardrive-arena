@@ -277,6 +277,11 @@ public sealed partial class ArenaFightScreen
         MultiplayerHostFleetDesigns = ArenaMultiplayerSettings.NormalizeFleet(resolved.HostFleetDesignNames);
         MultiplayerJoinFleetDesigns = ArenaMultiplayerSettings.NormalizeFleet(resolved.JoinFleetDesignNames);
         MultiplayerPvPMode = MultiplayerHostFleetDesigns.Length > 0 && MultiplayerJoinFleetDesigns.Length > 0;
+        // Resolve finite-ammo HERE from the FINGERPRINTED ruleset — this is the method that receives the
+        // full match settings on every MP path (RunInProcess/BuildPeerScreen, live lobby, setup rebind),
+        // whereas MultiplayerLiveSession may not be armed yet at spawn. finite == !UnlimitedAmmo; the default
+        // (true) leaves finite off => regen unchanged from trunk. Stamped onto each ship at the spawn choke.
+        ArenaFiniteAmmoActive = !(resolved.Ruleset ?? new ArenaMultiplayerRuleset()).UnlimitedAmmo;
     }
 
     // Register the current match's custom-design tables (idempotent for rematch), tearing down any set left
@@ -982,10 +987,14 @@ public sealed partial class ArenaFightScreen
 
         PlayerDesign = hostDesigns[0];
         EnemyDesign = joinDesigns[0];
+        // Finite-ammo was resolved from the FINGERPRINTED ruleset in ConfigureMultiplayerPvP (which runs on
+        // every MP spawn path before LoadContent, even when MultiplayerLiveSession isn't armed yet), so both
+        // peers carry the same handshaked value here and stamp identical ship.ArenaFiniteAmmo flags =>
+        // lockstep-safe. Default UnlimitedAmmo=true => finite off => regen unchanged from trunk.
         // sideMirror mirrors the join side across the arena centerline so both fleets face each
         // other; BOTH peers apply the SAME rule so ship i lands at the same absolute position.
-        SpawnMultiplayerFormation(PlayerShips, ArenaPlayer, hostBundle, -Gap, +1f, PlayerSpawnFacing);
-        SpawnMultiplayerFormation(EnemyShips, ArenaEnemy, joinBundle, +Gap, -1f, EnemySpawnFacing);
+        SpawnMultiplayerFormation(PlayerShips, ArenaPlayer, hostBundle, -Gap, +1f, PlayerSpawnFacing, ArenaFiniteAmmoActive);
+        SpawnMultiplayerFormation(EnemyShips, ArenaEnemy, joinBundle, +Gap, -1f, EnemySpawnFacing, ArenaFiniteAmmoActive);
 
         // Deterministic countdown: resolve tick length from the ruleset once (never per-frame).
         MultiplayerCountdownTicks = (liveSettings?.Ruleset ?? new ArenaMultiplayerRuleset()).CountdownTicks;
@@ -2003,7 +2012,7 @@ public sealed partial class ArenaFightScreen
     // Placement: ArenaCenter + (sideX,0) + offset*sideMirror on X. Only legal combat designs spawn;
     // an illegal node is skipped (matching ResolveMultiplayerFleet), keeping both peers in agreement.
     static void SpawnMultiplayerFormation(List<Ship> ships, Empire owner, FleetDesignT bundle,
-        float sideX, float sideMirror, Vector2 facing)
+        float sideX, float sideMirror, Vector2 facing, bool finiteAmmo = false)
     {
         Vector2 center = ArenaCenter;
         var nodes = ArenaFleetBundle.StableNodeOrder(bundle);
@@ -2019,7 +2028,7 @@ public sealed partial class ArenaFightScreen
             Vector2 placed = offset == Vector2.Zero
                 ? new Vector2(sideX, (index - (nodes.Count - 1) / 2f) * RowSpan)
                 : new Vector2(sideX + offset.X * sideMirror, offset.Y);
-            Ship ship = CreateArenaShipAtPoint(owner.Universe, node.ShipName, owner, center + placed, facing);
+            Ship ship = CreateArenaShipAtPoint(owner.Universe, node.ShipName, owner, center + placed, facing, finiteAmmo);
             if (ship == null)
                 throw new InvalidOperationException($"Failed to spawn Arena PvP ship '{node.ShipName}'.");
             ship.SensorRange = 400000f;

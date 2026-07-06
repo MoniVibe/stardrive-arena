@@ -201,3 +201,4 @@ TestResults/
 dist/arena-fingerprint/
 dist/arena-lockstep-probe/
 **/.codex-obj/
+sim-output/
