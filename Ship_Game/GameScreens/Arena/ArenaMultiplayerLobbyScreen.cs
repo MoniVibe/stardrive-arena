@@ -38,6 +38,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     public const int LiveAuthoritative4XMaxTurns = 0;
     public const int DefaultJoinPeerSlot = 3;
     public const int LastJoinPeerSlot = 9;
+    // Star Gladiator is a 1v1 fleet duel: host (P2) + exactly one joiner (P3). The 4X surface keeps
+    // the full up-to-eight roster; this bound is applied only when Surface == StarGladiator.
+    public const int StarGladiatorLastJoinPeerSlot = DefaultJoinPeerSlot;
     const int AuthorityPeerId = Authoritative4XLobby.AuthorityPeerId;
     const int HostPlayerPeerId4X = 2;
     const string DefaultHost = "127.0.0.1";
@@ -148,6 +151,10 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     ArenaMatchMode ArenaMode = ArenaMatchMode.Career;
     ArenaBudgetModel ArenaBudgetModel = ArenaBudgetModel.Unlimited;
     int ArenaBudgetCredits = 5000;
+    // Star Gladiator fleet picker: when the local player picks a fleet via SET FLEET, the chosen
+    // legal design names are pinned here so ApplyLocalSelection stops auto-deriving from career/roster.
+    // Only rides the existing P1 bundle path (legal combat-craft names) — no wire/hash change.
+    string[] ManualFleetDesignNames;
     bool JoinInProgress;
     bool ScreenExiting;
     bool Launching;
@@ -170,6 +177,11 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     }
 
     public ArenaMultiplayerLobbySurface SurfaceMode => Surface;
+    // Highest visible player slot for the active surface: 2 slots (host + one joiner) on the Star
+    // Gladiator duel surface, up to eight on the authoritative 4X surface.
+    int HighestVisibleSlot => Surface == ArenaMultiplayerLobbySurface.StarGladiator
+        ? StarGladiatorLastJoinPeerSlot
+        : LastJoinPeerSlot;
     public string HeaderTitleForHeadless => Surface == ArenaMultiplayerLobbySurface.Authoritative4X
         ? "STARDRIVE MULTIPLAYER"
         : "STAR GLADIATOR";
@@ -233,6 +245,26 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     public string ValidateArenaStartForHeadless(SessionStartMessage start) => ValidateArenaStart(start);
     public Authoritative4XGeneratedGameStart CreateGenerated4XGameForHeadless(SessionStartMessage start)
         => CreateGenerated4XGame(start);
+
+    // Star Gladiator fleet-picker headless seams. The picker screen writes back through
+    // ApplyPickedFleet; these let a headless test exercise the same path without the modal stack.
+    public string[] FleetPickerOptionsForHeadless => FleetPickerOptions();
+    public string[] LocalFleetDesignNamesForHeadless => LocalPeer.FleetDesignNames;
+    public ArenaBudgetModel ArenaBudgetModelForHeadless => ArenaBudgetModel;
+    public int ArenaBudgetCreditsForHeadless => ArenaBudgetCredits;
+    public void CycleArenaModeForHeadless() => CycleArenaMode();
+    public void CycleBudgetForHeadless() => CycleBudget();
+    public void SetFleetForHeadless(string[] designNames) => ApplyPickedFleet(designNames);
+    public ArenaFleetPickerScreen OpenFleetPickerForHeadless()
+    {
+        string[] options = FleetPickerOptions();
+        if (options.Length == 0)
+            return null;
+        return new ArenaFleetPickerScreen(this, options, LocalPeer.FleetDesignNames,
+            ArenaMode == ArenaMatchMode.Sandbox && ArenaBudgetModel == ArenaBudgetModel.Cap
+                ? ArenaBudgetCredits : 0,
+            ApplyPickedFleet);
+    }
 
     public void Configure4XForHeadless(Authoritative4XGameSettings settings, string localRace, string localTraits,
         string remoteRace, string remoteTraits)
@@ -321,8 +353,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         AddField(panel.X + 210, panel.Y + 164, "SEED", ParseSeed().ToString(CultureInfo.InvariantCulture), out SeedEntry, allowPeriod: false, maxChars: 9, "arena_mp_seed_entry");
         AddField(panel.X + 396, panel.Y + 164, "SPEED", ParseSpeed().ToString(CultureInfo.InvariantCulture), out SpeedEntry, allowPeriod: true, maxChars: 4, "arena_mp_speed_entry");
 
-        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 206), "PLAYER SLOTS"));
-        for (int peerSlot = HostPlayerPeerId4X; peerSlot <= LastJoinPeerSlot; ++peerSlot)
+        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 206),
+            Surface == ArenaMultiplayerLobbySurface.StarGladiator ? "COMBATANTS" : "PLAYER SLOTS"));
+        for (int peerSlot = HostPlayerPeerId4X; peerSlot <= HighestVisibleSlot; ++peerSlot)
         {
             int index = peerSlot - HostPlayerPeerId4X;
             int col = index % 4;
@@ -331,6 +364,38 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         }
 
         Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 364), "SETUP"));
+        if (Surface == ArenaMultiplayerLobbySurface.StarGladiator)
+            BuildStarGladiatorSetup(panel);
+        else
+            BuildAuthoritative4XSetup(panel);
+        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 534), "STATUS"));
+        for (int i = 0; i < 3; ++i)
+        {
+            int line = i;
+            Add(new UILabel(new Vector2(panel.X + 24, panel.Y + 560 + i * 18),
+                StatusLine(line), ArenaTheme.BodySmallFont, ArenaTheme.TextSecondary)
+            {
+                DynamicText = _ => StatusLine(line),
+            });
+        }
+
+        UIList actions = AddList(new Vector2(panel.X + 24, panel.Bottom - 52));
+        actions.Direction = new Vector2(1f, 0f);
+        actions.Padding = new Vector2(8f, 8f);
+        actions.LayoutStyle = ListLayoutStyle.ResizeList;
+        ArenaTheme.AddPrimaryButton(actions, "HOST", _ => StartHost(), 96f).Name = "arena_mp_host";
+        ArenaTheme.AddPillButton(actions, "JOIN", _ => StartJoin(), 96f).Name = "arena_mp_join";
+        ArenaTheme.AddPillButton(actions, "READY", _ => ToggleReady(), 96f).Name = "arena_mp_ready";
+        ArenaTheme.AddPrimaryButton(actions, "LAUNCH", _ => LaunchAsHost(), 112f).Name = "arena_mp_launch";
+        ArenaTheme.AddPillButton(actions, "SELF TEST", _ => StartSelfTest(), 126f).Name = "arena_mp_self_test";
+        ArenaTheme.AddPillButton(actions, "BACK", _ => ExitScreen(), 90f).Name = "arena_mp_back";
+    }
+
+    // Authoritative 4X galaxy-generation chrome — the full RegularSettings.* pill grid plus the 4X
+    // game-mode selector. Built ONLY on the Authoritative4X surface; the Star Gladiator duel surface
+    // has no galaxy to generate, so none of these apply there.
+    void BuildAuthoritative4XSetup(RectF panel)
+    {
         UIList setup = AddList(new Vector2(panel.X + 24, panel.Y + 392));
         setup.Direction = new Vector2(1f, 0f);
         setup.Padding = new Vector2(8f, 8f);
@@ -422,28 +487,214 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         UIButton rules = ArenaTheme.AddPillButton(setup4, "", _ => CycleAIRules(), 126f);
         rules.Name = "arena_mp_ai_rules";
         rules.DynamicText = AIRulesLabel;
+    }
 
-        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 534), "STATUS"));
-        for (int i = 0; i < 3; ++i)
+    // Star Gladiator duel chrome — a small arena-specific control set (match mode, budget, loadout
+    // flavor, start-live/paused, slot, fleet picker). No galaxy-generation pills: a 1v1 fleet duel
+    // has no galaxy to generate.
+    void BuildStarGladiatorSetup(RectF panel)
+    {
+        UIList setup = AddList(new Vector2(panel.X + 24, panel.Y + 392));
+        setup.Direction = new Vector2(1f, 0f);
+        setup.Padding = new Vector2(8f, 8f);
+        setup.LayoutStyle = ListLayoutStyle.ResizeList;
+        UIButton arenaMode = ArenaTheme.AddPillButton(setup, "", _ => CycleArenaMode(), 168f);
+        arenaMode.Name = "arena_mp_arena_mode";
+        arenaMode.DynamicText = () => $"ARENA {(ArenaMode == ArenaMatchMode.Sandbox ? "SANDBOX" : "CAREER")}";
+        UIButton budget = ArenaTheme.AddPillButton(setup, "", _ => CycleBudget(), 168f);
+        budget.Name = "arena_mp_budget";
+        budget.DynamicText = BudgetLabel;
+        budget.Visible = ArenaMode == ArenaMatchMode.Sandbox;
+        budget.Enabled = ArenaMode == ArenaMatchMode.Sandbox;
+        UIButton fleet = ArenaTheme.AddPillButton(setup, "", _ => OpenFleetPicker(), 168f);
+        fleet.Name = "arena_mp_set_fleet";
+        fleet.DynamicText = () => $"SET FLEET ({LocalPeer.FleetDesignNames.Length})";
+
+        UIList setup2 = AddList(new Vector2(panel.X + 24, panel.Y + 430));
+        setup2.Direction = new Vector2(1f, 0f);
+        setup2.Padding = new Vector2(8f, 8f);
+        setup2.LayoutStyle = ListLayoutStyle.ResizeList;
+        UIButton race = ArenaTheme.AddPillButton(setup2, "", _ => CycleRace(), 152f);
+        race.Name = "arena_mp_race";
+        race.DynamicText = () => $"RACE {LocalPeer.RacePreference}";
+        UIButton trait = ArenaTheme.AddPillButton(setup2, "", _ => CycleTrait(), 148f);
+        trait.Name = "arena_mp_trait";
+        trait.DynamicText = () => $"TRAIT {CurrentTraitLabel()}";
+        UIButton traitToggle = ArenaTheme.AddPillButton(setup2, "", _ => ToggleTrait(), 142f);
+        traitToggle.Name = "arena_mp_trait_toggle";
+        traitToggle.DynamicText = TraitToggleLabel;
+
+        UIList setup3 = AddList(new Vector2(panel.X + 24, panel.Y + 468));
+        setup3.Direction = new Vector2(1f, 0f);
+        setup3.Padding = new Vector2(8f, 8f);
+        setup3.LayoutStyle = ListLayoutStyle.ResizeList;
+        UIButton pause = ArenaTheme.AddPillButton(setup3, "", _ => ToggleStartPaused(), 126f);
+        pause.Name = "arena_mp_start_paused";
+        pause.DynamicText = () => StartPaused ? "START PAUSED" : "START LIVE";
+        UIButton slot = ArenaTheme.AddPillButton(setup3, "", _ => CycleJoinSlot(), 92f);
+        slot.Name = "arena_mp_peer_slot";
+        slot.DynamicText = () => LocalRole == ArenaMultiplayerRole.Host ? "SLOT HOST" : $"SLOT P{JoinPeerSlot}";
+    }
+
+    string BudgetLabel()
+    {
+        if (ArenaMode != ArenaMatchMode.Sandbox || ArenaBudgetModel == ArenaBudgetModel.Unlimited)
+            return "BUDGET UNLIMITED";
+        return $"BUDGET CAP {ArenaBudgetCredits}";
+    }
+
+    // Flip Career<->Sandbox, mirroring SetArenaModeForHeadless's effect on the budget model
+    // (Career forces Unlimited; Sandbox retains the last chosen cap). Rebuilds so the budget pill's
+    // visibility tracks the mode.
+    void CycleArenaMode()
+    {
+        if (HostSettingsAreLockedToRemote())
         {
-            int line = i;
-            Add(new UILabel(new Vector2(panel.X + 24, panel.Y + 560 + i * 18),
-                StatusLine(line), ArenaTheme.BodySmallFont, ArenaTheme.TextSecondary)
-            {
-                DynamicText = _ => StatusLine(line),
-            });
+            GameAudio.NegativeClick();
+            return;
         }
+        ArenaMode = ArenaMode == ArenaMatchMode.Career ? ArenaMatchMode.Sandbox : ArenaMatchMode.Career;
+        if (ArenaMode != ArenaMatchMode.Sandbox)
+            ArenaBudgetModel = ArenaBudgetModel.Unlimited;
+        // Career and Sandbox derive fleets from different sources; drop a stale manual pick so the
+        // label re-derives, then let ApplyLocalSelection refresh it.
+        ManualFleetDesignNames = null;
+        ApplyLocalSelection();
+        SetStatus(ArenaMode == ArenaMatchMode.Sandbox
+            ? "Sandbox arena: all-content roster, optional budget cap."
+            : "Career arena: your career-locked roster fields the fight.");
+        GameAudio.AffirmativeClick();
+        RefreshSetup();
+    }
 
-        UIList actions = AddList(new Vector2(panel.X + 24, panel.Bottom - 52));
-        actions.Direction = new Vector2(1f, 0f);
-        actions.Padding = new Vector2(8f, 8f);
-        actions.LayoutStyle = ListLayoutStyle.ResizeList;
-        ArenaTheme.AddPrimaryButton(actions, "HOST", _ => StartHost(), 96f).Name = "arena_mp_host";
-        ArenaTheme.AddPillButton(actions, "JOIN", _ => StartJoin(), 96f).Name = "arena_mp_join";
-        ArenaTheme.AddPillButton(actions, "READY", _ => ToggleReady(), 96f).Name = "arena_mp_ready";
-        ArenaTheme.AddPrimaryButton(actions, "LAUNCH", _ => LaunchAsHost(), 112f).Name = "arena_mp_launch";
-        ArenaTheme.AddPillButton(actions, "SELF TEST", _ => StartSelfTest(), 126f).Name = "arena_mp_self_test";
-        ArenaTheme.AddPillButton(actions, "BACK", _ => ExitScreen(), 90f).Name = "arena_mp_back";
+    // Flip the sandbox budget: Unlimited -> Cap N -> Unlimited (cap amount steps through a small set).
+    void CycleBudget()
+    {
+        if (ArenaMode != ArenaMatchMode.Sandbox)
+        {
+            GameAudio.NegativeClick();
+            return;
+        }
+        if (HostSettingsAreLockedToRemote())
+        {
+            GameAudio.NegativeClick();
+            return;
+        }
+        if (ArenaBudgetModel == ArenaBudgetModel.Unlimited)
+        {
+            ArenaBudgetModel = ArenaBudgetModel.Cap;
+            ArenaBudgetCredits = 5000;
+        }
+        else if (ArenaBudgetCredits < 20000)
+        {
+            ArenaBudgetCredits += 5000;
+        }
+        else
+        {
+            ArenaBudgetModel = ArenaBudgetModel.Unlimited;
+            ArenaBudgetCredits = 5000;
+        }
+        SetStatus(BudgetLabel());
+        GameAudio.AffirmativeClick();
+    }
+
+    void RefreshSetup()
+    {
+        // Simplest reliable way to reflect visibility/label changes: rebuild the screen content.
+        LoadContent();
+    }
+
+    // Interim fleet picker (the drag-drop FleetDesignScreen formation editor is DEFERRED). Opens a
+    // lightweight modal listing the legal fielded designs for the active arena mode; the player's
+    // multi-select writes LocalPeer.FleetDesignNames (pinned via ManualFleetDesignNames) so the
+    // existing settings/bundle path and the "Fleet: ..." label pick it up. Only legal combat-craft
+    // names ride the P1 bundle path — deterministic-safe, no wire/hash change.
+    void OpenFleetPicker()
+    {
+        if (HostSettingsAreLockedToRemote())
+        {
+            SetStatus("Fleet is locked once the match settings are mirrored from the host.");
+            GameAudio.NegativeClick();
+            return;
+        }
+        string[] options = FleetPickerOptions();
+        if (options.Length == 0)
+        {
+            SetStatus(ArenaMode == ArenaMatchMode.Career
+                ? "No owned career vessels to field yet."
+                : "No legal arena combat craft available.");
+            GameAudio.NegativeClick();
+            return;
+        }
+        ScreenManager.AddScreen(new ArenaFleetPickerScreen(this, options, LocalPeer.FleetDesignNames,
+            ArenaMode == ArenaMatchMode.Sandbox && ArenaBudgetModel == ArenaBudgetModel.Cap
+                ? ArenaBudgetCredits : 0,
+            ApplyPickedFleet));
+        GameAudio.AffirmativeClick();
+    }
+
+    // The legal design names offered by the picker for the active arena mode. Career: the career's
+    // owned vessels' designs. Sandbox: every legal arena combat-craft design.
+    string[] FleetPickerOptions()
+    {
+        try
+        {
+            if (ArenaMode == ArenaMatchMode.Career)
+            {
+                string[] career = CareerOwnedFleetDesignNames();
+                if (career.Length > 0)
+                    return career;
+            }
+            return ResourceManager.Ships.Designs
+                .Where(d => IsLegalArenaFleetDesignName(d.Name))
+                .Select(d => d.Name)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(n => n, StringComparer.Ordinal)
+                .ToArray();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    // The full owned-vessel design roster for the active career (superset of the currently-fielded
+    // fleet), so the player can compose from everything they own.
+    static string[] CareerOwnedFleetDesignNames()
+    {
+        try
+        {
+            ArenaCareer career = CareerManager.LoadSlot(ArenaFightScreen.ActiveCareerSlot);
+            if (career == null || career.IsFresh)
+                career = CareerManager.Load(ArenaFightScreen.CareerSavePath);
+            if (career == null || career.IsFresh || career.OwnedVessels == null)
+                return Array.Empty<string>();
+            return LegalArenaFleetNames(career.OwnedVessels
+                .Where(v => v != null)
+                .Select(v => v.DesignName)
+                .ToArray())
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    // Commit the picker's selection: normalize to legal names, pin it so ApplyLocalSelection won't
+    // re-derive, and refresh so the SET FLEET count + slot "Fleet: ..." label update.
+    void ApplyPickedFleet(string[] picked)
+    {
+        string[] legal = LegalArenaFleetNames(picked);
+        ManualFleetDesignNames = legal;
+        LocalPeer.FleetDesignNames = legal;
+        SavePersistentConfig();
+        SetStatus(legal.Length == 0
+            ? "Fleet cleared — a default roster fields the fight."
+            : FleetSummary(legal));
+        GameAudio.AffirmativeClick();
+        RefreshSetup();
     }
 
     void AddField(float x, float y, string label, string value, out UITextEntry entry,
@@ -1576,7 +1827,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             return;
         }
         JoinPeerSlot++;
-        if (JoinPeerSlot > LastJoinPeerSlot)
+        if (JoinPeerSlot > HighestVisibleSlot)
             JoinPeerSlot = DefaultJoinPeerSlot;
         SavePersistentConfig();
         SetStatus($"Join slot set to P{JoinPeerSlot}. Each remote player needs a unique slot.");
@@ -1588,7 +1839,11 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         LocalPeer.RacePreference = RaceOptions.Length == 0 ? "United" : RaceOptions[RaceIndex.Clamped(0, RaceOptions.Length - 1)];
         LocalPeer.LoadoutTrait = ArenaStartArchetype.Wingmates.ToString();
         LocalPeer.TraitOptions = NormalizeTraitSelection(LocalPeer.TraitOptions);
-        LocalPeer.FleetDesignNames = CurrentArenaFleetDesignNames(LocalPeer.LoadoutTrait, hostSide: LocalRole != ArenaMultiplayerRole.Join);
+        // A manual pick from the fleet picker overrides auto-derivation so the player's choice sticks
+        // through the (frequent) ApplyLocalSelection re-derives.
+        LocalPeer.FleetDesignNames = ManualFleetDesignNames != null && ManualFleetDesignNames.Length > 0
+            ? ManualFleetDesignNames
+            : CurrentArenaFleetDesignNames(LocalPeer.LoadoutTrait, hostSide: LocalRole != ArenaMultiplayerRole.Join);
         RegularSettings.HostRacePreference = LocalPeer.RacePreference;
         RegularSettings.JoinRacePreference = RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference;
     }

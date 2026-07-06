@@ -59,69 +59,136 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             Assert.IsTrue(menu.Find("arena_back", out UIButton _),
                 "The Arena career entry screen must expose Back in the main action row.");
 
+            // ---- STAR GLADIATOR (arena duel) surface: an arena face, NOT the 4X galaxy shell. ----
             var lobby = new ArenaMultiplayerLobbyScreen();
             sm.GoToScreen(lobby, clear3DObjects: true);
             Assert.AreEqual(ArenaMultiplayerLobbySurface.StarGladiator, lobby.SurfaceMode);
             Assert.AreEqual("STAR GLADIATOR", lobby.HeaderTitleForHeadless);
             Assert.AreEqual("MULTIPLAYER LOBBY", lobby.HeaderSubtitleForHeadless);
             Assert.IsTrue(lobby.Find("arena_mp_host", out UIButton _),
-                "The multiplayer lobby must expose a Host action.");
+                "The arena lobby must expose a Host action.");
             Assert.IsTrue(lobby.Find("arena_mp_join", out UIButton _),
-                "The multiplayer lobby must expose a Join action.");
+                "The arena lobby must expose a Join action.");
             Assert.IsTrue(lobby.Find("arena_mp_ready", out UIButton _),
-                "The multiplayer lobby must expose an explicit Ready action.");
+                "The arena lobby must expose an explicit Ready action.");
             Assert.IsTrue(lobby.Find("arena_mp_launch", out UIButton _),
-                "The multiplayer lobby must expose a host Launch action.");
+                "The arena lobby must expose a host Launch action.");
             Assert.IsTrue(lobby.Find("arena_mp_self_test", out UIButton _),
-                "The multiplayer lobby must expose a local self-test action.");
+                "The arena lobby must expose a local self-test action.");
+            Assert.IsTrue(lobby.Find("arena_mp_back", out UIButton _),
+                "The arena lobby must expose a Back action.");
             Assert.IsTrue(lobby.Find("arena_mp_race", out UIButton _),
-                "The multiplayer lobby must expose a race selector.");
+                "The arena lobby keeps a race selector (loadout flavor).");
             Assert.IsTrue(lobby.Find("arena_mp_trait", out UIButton _),
-                "The multiplayer lobby must expose a racial trait selector for 4X starts.");
+                "The arena lobby keeps a trait selector (loadout flavor).");
             Assert.IsTrue(lobby.Find("arena_mp_trait_toggle", out UIButton _),
-                "The multiplayer lobby must expose an add/remove control so players can pick multiple traits.");
-            Assert.IsTrue(lobby.Find("arena_mp_regular_settings", out UIButton _),
-                "The multiplayer lobby must expose regular-game map settings instead of Arena loadouts.");
-            Assert.IsTrue(lobby.Find("arena_mp_stars", out UIButton _),
-                "The multiplayer lobby must expose host-controlled star density.");
-            Assert.IsTrue(lobby.Find("arena_mp_difficulty", out UIButton _),
-                "The multiplayer lobby must expose host-controlled difficulty.");
-            Assert.IsTrue(lobby.Find("arena_mp_opponents", out UIButton _),
-                "The multiplayer lobby must expose host-controlled AI opponent count.");
-            Assert.IsTrue(lobby.Find("arena_mp_richness", out UIButton _),
-                "The multiplayer lobby must expose host-controlled planet richness.");
-            Assert.IsTrue(lobby.Find("arena_mp_turn_timer", out UIButton _),
-                "The multiplayer lobby must expose host-controlled seconds-per-turn.");
-            Assert.IsTrue(lobby.Find("arena_mp_pace", out UIButton _),
-                "The multiplayer lobby must expose host-controlled game pacing.");
+                "The arena lobby keeps the add/remove trait control.");
+            Assert.IsTrue(lobby.Find("arena_mp_start_paused", out UIButton _),
+                "The arena lobby keeps START LIVE/PAUSED.");
             Assert.IsTrue(lobby.Find("arena_mp_peer_slot", out UIButton _),
-                "The multiplayer lobby must expose a join peer-slot selector for 3-8 remote players.");
-            for (int peer = 2; peer <= 9; ++peer)
+                "The arena lobby keeps the SLOT control.");
+
+            // The 4X galaxy-generation chrome and the 4X game-mode selector must NOT be built here.
+            foreach (string chrome in new[]
+                     {
+                         "arena_mp_mode", "arena_mp_regular_settings", "arena_mp_stars",
+                         "arena_mp_difficulty", "arena_mp_opponents", "arena_mp_richness",
+                         "arena_mp_extra_planets", "arena_mp_remnants", "arena_mp_pace",
+                         "arena_mp_turn_timer", "arena_mp_decay", "arena_mp_volcanos",
+                         "arena_mp_maintenance", "arena_mp_ftl", "arena_mp_gravity",
+                         "arena_mp_pirates", "arena_mp_remnant_story", "arena_mp_station_ops",
+                         "arena_mp_ai_rules",
+                     })
             {
-                Assert.IsTrue(lobby.Find($"arena_mp_slot_{peer}", out UIPanel _),
-                    $"The multiplayer lobby must expose fixed visible slot P{peer}.");
-                if (peer > 2)
-                {
-                    Assert.IsTrue(lobby.Find($"arena_mp_slot_mode_{peer}", out UIButton _),
-                        $"The host must be able to cycle P{peer} between human, AI, and closed.");
-                    Assert.IsTrue(lobby.Find($"arena_mp_slot_kick_{peer}", out UIButton _),
-                        $"The host must be able to kick/clear P{peer}.");
-                }
+                Assert.IsFalse(lobby.Find(chrome, out UIButton _),
+                    $"The Star Gladiator duel surface must NOT build the 4X galaxy pill '{chrome}'.");
             }
+
+            // Arena-mode + fleet controls are the arena face.
+            Assert.IsTrue(lobby.Find("arena_mp_arena_mode", out UIButton arenaModeButton),
+                "The arena lobby must expose an ARENA Career/Sandbox control.");
+            Assert.IsTrue(lobby.Find("arena_mp_set_fleet", out UIButton _),
+                "The arena lobby must expose a SET FLEET picker.");
+
+            // CycleArenaMode flips Career <-> Sandbox (and toggles the sandbox-only BUDGET pill).
+            Assert.AreEqual(ArenaMatchMode.Career, lobby.ArenaModeForHeadless,
+                "The arena lobby defaults to Career.");
+            Assert.IsFalse(lobby.Find("arena_mp_budget", out UIButton careerBudget) && careerBudget.Visible,
+                "The BUDGET pill is hidden in Career.");
+            lobby.CycleArenaModeForHeadless();
+            Assert.AreEqual(ArenaMatchMode.Sandbox, lobby.ArenaModeForHeadless,
+                "CycleArenaMode must flip Career -> Sandbox.");
+            Assert.IsTrue(lobby.Find("arena_mp_budget", out UIButton budgetButton) && budgetButton.Visible,
+                "The BUDGET pill is visible in Sandbox.");
+            lobby.CycleArenaModeForHeadless();
+            Assert.AreEqual(ArenaMatchMode.Career, lobby.ArenaModeForHeadless,
+                "CycleArenaMode must flip Sandbox -> Career.");
+
+            // A fleet selection updates LocalPeer.FleetDesignNames through the picker's commit path.
+            lobby.CycleArenaModeForHeadless(); // Sandbox so we can pick from the all-content roster
+            string[] options = lobby.FleetPickerOptionsForHeadless;
+            Assert.IsTrue(options.Length > 0, "Sandbox must offer legal arena combat-craft designs to pick.");
+            string[] pick = options.Take(2).ToArray();
+            lobby.SetFleetForHeadless(pick);
+            CollectionAssert.AreEqual(pick, lobby.LocalFleetDesignNamesForHeadless,
+                "Picking a fleet must write LocalPeer.FleetDesignNames.");
+            lobby.CycleArenaModeForHeadless(); // back to Career for a clean default
+
+            // Exactly two combatant slots (host P2 + one joiner P3) on the duel surface.
+            for (int peer = 2; peer <= 3; ++peer)
+                Assert.IsTrue(lobby.Find($"arena_mp_slot_{peer}", out UIPanel _),
+                    $"The arena duel lobby must expose combatant slot P{peer}.");
+            for (int peer = 4; peer <= 9; ++peer)
+                Assert.IsFalse(lobby.Find($"arena_mp_slot_{peer}", out UIPanel _),
+                    $"The arena duel lobby must NOT expose 4X slot P{peer}.");
+
             Assert.IsTrue(lobby.Find("arena_mp_host_entry", out UITextEntry _),
-                "The multiplayer lobby must expose a host/IP entry.");
+                "The arena lobby must expose a host/IP entry.");
             Assert.IsTrue(lobby.Find("arena_mp_port_entry", out UITextEntry _),
-                "The multiplayer lobby must expose a port entry.");
+                "The arena lobby must expose a port entry.");
             Assert.IsTrue(lobby.Find("arena_mp_seed_entry", out UITextEntry _),
-                "The multiplayer lobby must expose a host-controlled match seed.");
+                "The arena lobby must expose a host-controlled match seed.");
             Assert.IsTrue(lobby.Find("arena_mp_speed_entry", out UITextEntry _),
-                "The multiplayer lobby must expose a host-controlled game speed.");
+                "The arena lobby must expose a host-controlled game speed.");
             Assert.IsFalse(lobby.Find("arena_mp_turns_entry", out UITextEntry _),
                 "Live multiplayer is indefinite; the lobby should no longer expose a finite turns field.");
             Assert.IsFalse(lobby.HasTurnsFieldForHeadless,
                 "The lobby headless probe should agree that the finite turns field is absent.");
             Assert.AreEqual(ArenaMultiplayerLobbyScreen.DefaultJoinPeerSlot, lobby.JoinPeerSlotForHeadless,
                 "The default join slot must preserve the existing two-player host/laptop path.");
+
+            // ---- AUTHORITATIVE 4X surface: the full galaxy shell + up-to-eight slots is unchanged. ----
+            var lobby4X = new ArenaMultiplayerLobbyScreen(ArenaMultiplayerLobbySurface.Authoritative4X);
+            sm.GoToScreen(lobby4X, clear3DObjects: true);
+            Assert.AreEqual(ArenaMultiplayerLobbySurface.Authoritative4X, lobby4X.SurfaceMode);
+            foreach (string chrome in new[]
+                     {
+                         "arena_mp_mode", "arena_mp_regular_settings", "arena_mp_stars",
+                         "arena_mp_difficulty", "arena_mp_opponents", "arena_mp_richness",
+                         "arena_mp_turn_timer", "arena_mp_pace", "arena_mp_pirates",
+                         "arena_mp_gravity", "arena_mp_ai_rules",
+                     })
+            {
+                Assert.IsTrue(lobby4X.Find(chrome, out UIButton _),
+                    $"The authoritative 4X surface must keep the galaxy pill '{chrome}'.");
+            }
+            Assert.IsFalse(lobby4X.Find("arena_mp_arena_mode", out UIButton _),
+                "The 4X surface must NOT build the arena-mode control.");
+            Assert.IsFalse(lobby4X.Find("arena_mp_set_fleet", out UIButton _),
+                "The 4X surface must NOT build the arena fleet picker.");
+            for (int peer = 2; peer <= 9; ++peer)
+            {
+                Assert.IsTrue(lobby4X.Find($"arena_mp_slot_{peer}", out UIPanel _),
+                    $"The 4X lobby must expose fixed visible slot P{peer}.");
+                if (peer > 2)
+                {
+                    Assert.IsTrue(lobby4X.Find($"arena_mp_slot_mode_{peer}", out UIButton _),
+                        $"The host must be able to cycle P{peer} between human, AI, and closed.");
+                    Assert.IsTrue(lobby4X.Find($"arena_mp_slot_kick_{peer}", out UIButton _),
+                        $"The host must be able to kick/clear P{peer}.");
+                }
+            }
+            sm.GoToScreen(lobby, clear3DObjects: true); // restore the arena lobby for the rest of the test
 
             var ext = new CapturingExtensionPoints();
             new ArenaPlugin().Register(ext);
