@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using Ship_Game.Audio;
 using Ship_Game.Multiplayer.Authoritative;
 using Ship_Game.Ships;
 using Color = Microsoft.Xna.Framework.Color;
@@ -104,6 +105,86 @@ public partial class UniverseScreen
 
     public bool IsLocalShipForUi(Ship ship)
         => ship?.Loyalty != null && IsLocalEmpireForUi(ship.Loyalty);
+
+    // VIEW-ONLY (spectator) world input for arena multiplayer (director QA 2026-07-06).
+    // In a lockstep arena the player is a SPECTATOR: they may move/zoom the camera and click ships
+    // to inspect them, but they must NOT issue orders (right-click move/attack, waypoints, AO/trade
+    // routes, fleet reassignment) — those would mutate the sim on this peer only and desync.
+    //
+    // This is a deliberately curated SUBSET of UniverseScreen.HandleInput that runs ONLY the safe,
+    // per-client view-state surfaces and OMITS every order/mutation surface:
+    //   ALLOWED (per-client view state — camera CamDestination + selection SelectedShip/List):
+    //     - HandleEdgeDetection      (camera pan: edge scroll, middle-mouse drag, arrow keys)
+    //     - HandleCameraZoomScrolling(camera zoom)
+    //     - base.HandleInput         (UIElementV2: info panels, buttons, exit)
+    //     - HandleGUIClicks          (minimap camera jump + read-only ship/planet info panels)
+    //     - UpdateSelectedShips / HandlePrevSelectedShipChange (cull dead selections, cycle target)
+    //     - HandleSelectionBox / LeftClickOnClickableItem / HandleDoubleClickShipsAndSolarObjects
+    //       (box-select, click-select, double-click view-snap — selection only)
+    //   OMITTED (would issue orders / mutate the sim => desync):
+    //     - HandleShipSelectionAndOrders (right-click move/attack, RMB fleet projection)
+    //     - HandleDragAORect, HandleTradeRoutesDefinition (AO / trade-route order authoring)
+    //     - EmpireUI.HandleInput and fleet hotkeys (fleet assignment / build commands)
+    //     - HandleInputNotLookingAtPlanet as a whole (its line-96 order call is the desync surface)
+    //
+    // DETERMINISM: camera (CamDestination/CamPos) and selection (SelectedShip/SelectedShipList) are
+    // per-client view state; they never feed the sim and are not folded into the per-turn checksum
+    // (UniverseStateHash.WriteAuthoritative covers Pos/Vel/Rotation/Health only). None of the calls
+    // below issue a SimCommand or set ship.AI orders, so this path cannot mutate the shared sim.
+    public bool HandleSpectatorViewInput(InputState input)
+    {
+        if (!Visible || !Enabled || !IsActive)
+            return false;
+
+        Input = input;
+
+        // Camera pan (edge/drag/arrows) — pure CamDestination view state.
+        HandleEdgeDetection(input);
+        UpdateVisibleShields();
+
+        // UI elements first (info panels, buttons) — read-only, may consume input.
+        if (base.HandleInput(input))
+            return true;
+
+        // Keep the selection consistent as ships die; allow prev-target cycling (view state only).
+        UpdateSelectedShips();
+        if (HandlePrevSelectedShipChange(input))
+            return true;
+
+        // Escape closes the screen just like the UI-only fallback did.
+        if (CanEscapeFromScreen && input.Escaped)
+        {
+            GameAudio.EchoAffirmative();
+            ExitScreen();
+            return true;
+        }
+
+        if (LookingAtPlanet)
+            return false; // no planet-colony interactions in a spectator arena
+
+        // Minimap camera jump + read-only info panels.
+        if (HandleGUIClicks(input))
+            return true;
+
+        // Camera zoom.
+        HandleCameraZoomScrolling(input);
+
+        // NOTE: HandleShipSelectionAndOrders() is intentionally NOT called here — it is the
+        // order-issuing (right-click move/attack) surface that must stay blocked in multiplayer.
+
+        // Double-click view-snap (camera) + selection.
+        if (input.LeftMouseDoubleClick && HandleDoubleClickShipsAndSolarObjects(input))
+            return true;
+
+        // Box-select and single left-click ship/planet selection (view state only).
+        if (HandleSelectionBox(input))
+            return true;
+
+        if (input.LeftMouseClick && LeftClickOnClickableItem(input))
+            return true;
+
+        return false;
+    }
 
     public bool IsHostileShipTargetForUi(Ship ship)
     {

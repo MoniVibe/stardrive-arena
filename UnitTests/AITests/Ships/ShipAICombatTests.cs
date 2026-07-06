@@ -407,5 +407,74 @@ namespace UnitTests.AITests.Ships
 
             AssertHighAlertTimesOutCorrectly();
         }
+
+        // ---- ISSUE 2 PROOF (director QA 2026-07-06): arena combatants NEVER flee/resupply on low ----
+        // ---- ordnance. There is nowhere to resupply in an arena, so an out-of-ammo ship fights on. ----
+
+        // Set up a kinetic frigate with depleted ordnance and no ordnance production, in combat with a
+        // nearby enemy, so Supply.Resupply() genuinely wants to send it to resupply (LowOrdnance*) and
+        // ProcessResupply would order it to Flee (BadGuysNear + no rally point). Returns the frigate.
+        TestShip SpawnDepletedOrdnanceFrigateInCombat()
+        {
+            var ship = SpawnShip(FrigateName, Player, new Vector2(0, 0));
+            ship.AI.SetCombatTriggerDelay(30f); // don't actually fire (headless render has no particles)
+            RunObjectsSim(TestSimStep);
+            // Deplete ordnance and starve production so the ordnance-based resupply path is the reason.
+            ship.SetOrdnance(0f);
+            ship.OrdAddedPerSecond = 0f;
+            ship.AI.BadGuysNear = true; // pin the in-combat predicate the flee branch keys off
+            return ship;
+        }
+
+        [TestMethod]
+        public void ArenaCombatant_OutOfOrdnance_DoesNotResupplyOrFlee()
+        {
+            // ---- CONTROL: a NON-arena (4X) ship out of ordnance under fire takes the flee action. ----
+            TestShip control = SpawnDepletedOrdnanceFrigateInCombat();
+            Assert.IsFalse(control.ArenaCombatant, "4X ship must not be marked as an arena combatant.");
+
+            // Precondition: this exact fixture WANTS to resupply on low ordnance (no arena gate yet).
+            ResupplyReason baseline = control.Supply.Resupply();
+            Assert.IsTrue(
+                baseline == ResupplyReason.LowOrdnanceCombatOrDepleted ||
+                baseline == ResupplyReason.LowOrdnanceNonCombat,
+                $"Test setup must produce a low-ordnance resupply reason, got {baseline}. " +
+                "If this fires, the frigate's ordnance tuning changed and the proof needs a new fixture.");
+
+            control.AI.ChangeAIState(AIState.Combat);
+            control.UpdateResupply();
+            // With no arena gate, ProcessResupply acts on the low-ordnance reason: it breaks the ship
+            // OUT of its combat state (OrderFlee clears the target/orders; with no reachable rally point
+            // or flee vector it lands in AwaitingOrders). The point that matters: it did NOT stay in
+            // Combat — the resupply/flee decision fired.
+            Assert.AreNotEqual(AIState.Combat, control.AI.State,
+                "Control (non-arena) low-ordnance ship should be pulled out of combat by the resupply/flee decision.");
+
+            // ---- ARENA: the same ship marked as an arena combatant keeps fighting instead. ----
+            TestShip arena = SpawnDepletedOrdnanceFrigateInCombat();
+            arena.ArenaCombatant = true; // persistent marker both peers set at spawn (deterministic)
+            arena.AI.ChangeAIState(AIState.Combat);
+
+            // Same low-ordnance precondition holds for this ship too...
+            ResupplyReason arenaReason = arena.Supply.Resupply();
+            Assert.IsTrue(
+                arenaReason == ResupplyReason.LowOrdnanceCombatOrDepleted ||
+                arenaReason == ResupplyReason.LowOrdnanceNonCombat,
+                $"Arena fixture must also produce a low-ordnance reason, got {arenaReason}.");
+
+            // ...but the gate flips it to NotNeeded inside UpdateResupply, so no flee/resupply happens.
+            arena.UpdateResupply();
+
+            Assert.AreEqual(AIState.Combat, arena.AI.State,
+                "Arena combatant out of ordnance must STAY in combat, not flee/resupply.");
+            Assert.AreNotEqual(AIState.Resupply, arena.AI.State,
+                "Arena combatant out of ordnance must NOT enter Resupply.");
+            Assert.AreNotEqual(AIState.ResupplyEscort, arena.AI.State,
+                "Arena combatant out of ordnance must NOT enter ResupplyEscort.");
+            Assert.AreNotEqual(AIState.Flee, arena.AI.State,
+                "Arena combatant out of ordnance must NOT flee.");
+            Assert.IsFalse(arena.AI.IgnoreCombat,
+                "Arena combatant out of ordnance must keep fighting (IgnoreCombat stays false).");
+        }
     }
 }

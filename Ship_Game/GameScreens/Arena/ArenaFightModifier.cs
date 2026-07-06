@@ -145,5 +145,9 @@ public static class ArenaCombatTuning
         ship.ArenaEngagementBias = DefaultEngagementBias;
         ship.ArenaStandoffDecay = true;
         ship.ArenaCombatTicks = 0;
+        // No-retreat marker: every arena combatant is flagged here (the single arena ship-creation
+        // chokepoint), symmetrically on both peers, so an out-of-ammo ship fights on instead of
+        // fleeing to a resupply point that doesn't exist in an arena. Never touched again per-tick.
+        ship.ArenaCombatant = true;
     }
 }

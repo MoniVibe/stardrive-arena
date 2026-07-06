@@ -2075,6 +2075,19 @@ public sealed partial class ArenaFightScreen : UniverseScreen
             UpdateMultiplayerSetup(fixedDeltaTime);
             UpdateMultiplayerLive(fixedDeltaTime);
             UState.Paused = MultiplayerLiveDisplayPaused;
+
+            // Death-explosion VFX (director QA 2026-07-06): the MP live path holds UState.Paused=true
+            // so the deterministic lockstep sim (UpdateMultiplayerLive) is the sole world driver. That
+            // pause also skips UniverseScreen.UpdateMiscComponents -> ExplosionManager.Update, so a
+            // ship-death explosion spawns at Time=0 and freezes on frame 0 (static sprite, alpha=1)
+            // and its light never clears. ExplosionManager state is pure render-only VFX (a static
+            // ActiveExplosions list of position/time/light) — it is NOT part of the sim world and NOT
+            // folded into the per-turn checksum (UniverseStateHash.WriteAuthoritative covers
+            // Pos/Vel/Rotation/Health only), so advancing it on the DISPLAY frame delta here is
+            // determinism-safe and identical on both peers up to their own frame timing. Only advance
+            // while the display is live (not paused), so a paused display holds the frame as expected.
+            if (!MultiplayerLiveDisplayPaused && fixedDeltaTime > 0f)
+                ExplosionManager.Update(this, fixedDeltaTime);
             return;
         }
 

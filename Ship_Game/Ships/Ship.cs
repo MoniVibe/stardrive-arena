@@ -941,6 +941,15 @@ namespace Ship_Game.Ships
         public bool ArenaStandoffDecay;
         public int ArenaCombatTicks;
 
+        // Arena no-retreat marker (director QA 2026-07-06). Set true once at spawn on every arena
+        // combatant (via ArenaCombatTuning.ApplyAntiKiteDefaults, the single arena ship-creation
+        // chokepoint), on BOTH peers identically, and NEVER mutated per-tick — so it is lockstep-safe
+        // exactly like ArenaHoldFire. Unlike ArenaHoldFire it does NOT flip at the engage tick: it
+        // marks the ship as an arena combatant for the whole match. Read in the sim (UpdateResupply)
+        // to suppress the low-ordnance Resupply/Flee decision — an arena has nowhere to resupply, so
+        // ships fight on with whatever they have. Transient (never [StarData]); false for 4X ships.
+        public bool ArenaCombatant;
+
         // @return Filtered list of purely offensive weapons
         public Weapon[] OffensiveWeapons => Weapons.Filter(w => w.DamageAmount > 0.1f && !w.TruePD);
 
@@ -1341,6 +1350,20 @@ namespace Ship_Game.Ships
             
             Carrier.SupplyShuttles.ProcessSupplyShuttles(AI.GetSensorRadius());
             ResupplyReason resupplyReason = Supply.Resupply();
+
+            // Arena no-retreat: an arena combatant has nowhere to resupply, so an out-of-ordnance
+            // ship must FIGHT ON (energy weapons / whatever it has) rather than break off to flee to
+            // a rally point. Suppress ONLY the ordnance-driven Resupply/Flee reasons; low-health,
+            // low-troops, fighter-reactor and hangar/drone handling below are all unchanged. The
+            // ArenaCombatant marker is set identically on both peers at spawn and never mutated, so
+            // this branch evaluates the same on every peer => lockstep-safe. No-op for 4X ships.
+            if (ArenaCombatant
+                && (resupplyReason == ResupplyReason.LowOrdnanceCombatOrDepleted
+                    || resupplyReason == ResupplyReason.LowOrdnanceNonCombat))
+            {
+                resupplyReason = ResupplyReason.NotNeeded;
+            }
+
             if (resupplyReason != ResupplyReason.NotNeeded)
             {
                 if (Mothership?.Active == true)

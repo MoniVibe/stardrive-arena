@@ -213,10 +213,16 @@ public sealed partial class ArenaFightScreen
         if (!MultiplayerLiveActive)
             return base.HandleInput(input);
 
-        // In network lockstep, local world input must not mutate UniverseScreen state directly.
-        // Only screen UI controls are allowed here; gameplay commands enter through SimCommand frames.
+        // In network lockstep the player is a SPECTATOR of the auto-battle. Local world input must
+        // not mutate UniverseScreen sim state (gameplay commands enter through SimCommand frames),
+        // but VIEW-ONLY input is allowed: camera pan/zoom and ship selection/inspection — both are
+        // per-client view state and never touch the sim or the per-turn checksum. Order-issuing
+        // (right-click move/attack, waypoints, AO/trade routes, fleet commands) stays blocked because
+        // HandleSpectatorViewInput deliberately omits HandleShipSelectionAndOrders and every other
+        // order surface. (Previously this routed to HandleScreenInputOnly, which froze the camera and
+        // selection too — the QA bug.)
         Input = input;
-        return HandleScreenInputOnly(input);
+        return HandleSpectatorViewInput(input);
     }
 
     public ArenaMultiplayerShipSnapshot MultiplayerSnapshot()

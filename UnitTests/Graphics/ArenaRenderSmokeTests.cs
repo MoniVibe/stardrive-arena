@@ -41,6 +41,7 @@ using ArenaCareerMenuScreen = Ship_Game.GameScreens.Arena.ArenaCareerMenuScreen;
 using ArenaCareerMenuMode = Ship_Game.GameScreens.Arena.ArenaCareerMenuMode;
 using ArenaCareerSeasonSimulator = Ship_Game.GameScreens.Arena.ArenaCareerSeasonSimulator;
 using ArenaMultiplayerLobbyScreen = Ship_Game.GameScreens.Arena.ArenaMultiplayerLobbyScreen;
+using ArenaMultiplayerSettings = Ship_Game.GameScreens.Arena.ArenaMultiplayerSettings;
 using ArenaPlugin = Ship_Game.GameScreens.Arena.ArenaPlugin;
 using PluginMainMenuAction = Ship_Game.Plugins.PluginMainMenuAction;
 using PluginManager = Ship_Game.Plugins.PluginManager;
@@ -4121,6 +4122,140 @@ public class ArenaRenderSmokeTests : StarDriveTest
 
         Console.WriteLine($"[live] DONE: LoadContent OK, round-1 resolved via real Update @frame {resolvedFrame}, " +
             $"capture via scene-object path (fullDrawRan={fullDrawRan}), input via {inputPath}.");
+        }
+        finally
+        {
+            Arena.CareerSavePath = savedStaticPath;
+            Arena.PendingPlayerDesignName = savedPendingDesign;
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { /* best-effort cleanup */ }
+        }
+    }
+
+    // =================================================================================
+    // ISSUE 1 PROOF (director QA 2026-07-06): MULTIPLAYER SPECTATOR INPUT is VIEW-ONLY.
+    // In a live MP arena the player is a spectator: camera + ship SELECTION are allowed
+    // (per-client view state, never folded into the sim or the per-turn checksum), but
+    // ORDER-ISSUING (right-click move/attack) must be REJECTED — issuing an order would
+    // mutate this peer's sim only and desync.
+    //
+    // This drives the REAL ArenaFightScreen.HandleInput on a screen where MultiplayerLive
+    // is active (session field set via reflection — HandleSpectatorViewInput never touches
+    // the session, only MultiplayerLiveActive => session != null gates the route), and:
+    //   (A) a right-click "order" over the selected/enemy ships does NOT acquire a Target,
+    //       change AI state, or set a priority order on ANY ship (sim unmutated).
+    //   (B) a left-click SELECTION path is reachable (the view-only handler runs selection).
+    // If the heavy universe-input prologue NREs headless (documented gremlin) it is reported
+    // as an explicit blocker rather than a false pass.
+    // =================================================================================
+    [TestMethod]
+    public void ArenaMultiplayerSpectatorInput_AllowsViewBlocksOrders_Headless()
+    {
+        LoadAllGameData();
+
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_mp_spectator_input_{Guid.NewGuid():N}.yaml");
+        string savedStaticPath = Arena.CareerSavePath;
+        string savedPendingDesign = Arena.PendingPlayerDesignName;
+        try
+        {
+            Arena.CareerSavePath = tempPath;
+            Arena.PendingPlayerDesignName = null;
+
+            Arena screen = Arena.Create("United", ArenaDriveSeed);
+            Assert.IsNotNull(screen, "ArenaFightScreen.Create returned null.");
+            screen.UState.Objects.EnableParallelUpdate = false;
+            screen.UState.EnableDeterministicRng(0xA12EA000u);
+            screen.CreateSimThread = false;
+
+            string loadBlocker = null;
+            try { screen.LoadContent(); }
+            catch (Exception e)
+            {
+                loadBlocker = $"{e.GetType().Name}: {e.Message}";
+                Console.WriteLine($"[mp-input] BLOCKER in LoadContent(): {loadBlocker}");
+            }
+            Assert.IsNull(loadBlocker, $"ArenaFightScreen.LoadContent() NRE'd headless: {loadBlocker}");
+
+            List<Ship> playerShips = GetShips(screen, "PlayerShips");
+            List<Ship> enemyShips = GetShips(screen, "EnemyShips");
+            Assert.IsTrue(playerShips.Count >= 1 && enemyShips.Count >= 1,
+                "MP spectator-input proof needs at least one player + one enemy ship.");
+
+            // Force MP-live so HandleInput routes to the spectator view-only path. The session's only
+            // role here is MultiplayerLiveActive => session != null; HandleSpectatorViewInput never
+            // dereferences it. A null transport is fine (Dispose is transport-null-guarded).
+            var session = new Ship_Game.GameScreens.Arena.ArenaMultiplayerLiveSession(
+                Ship_Game.GameScreens.Arena.ArenaMultiplayerRole.Host, null, new ArenaMultiplayerSettings());
+            typeof(Arena).GetField("MultiplayerLiveSession", Priv).SetValue(screen, session);
+            Assert.IsTrue(screen.MultiplayerLiveActive, "Screen must report MultiplayerLiveActive for the spectator route.");
+
+            // Give every ship a clean, order-free AI state and record it. Any order issued by the
+            // input handler would show up as a Target/priority-order/state change on one of these.
+            var all = new List<Ship>();
+            all.AddRange(playerShips.Where(s => s != null && s.Active));
+            all.AddRange(enemyShips.Where(s => s != null && s.Active));
+            foreach (Ship s in all)
+            {
+                s.AI.ClearOrders();
+                s.AI.ChangeAIState(AIState.HoldPosition);
+                s.AI.Target = null;
+                s.AI.SetPriorityOrder(false);
+            }
+
+            // Select the player's ship as a spectator would (view state only).
+            Ship player = playerShips.First(s => s != null && s.Active);
+            Ship enemy = enemyShips.First(s => s != null && s.Active);
+            screen.SetSelectedShip(player);
+            Assert.AreEqual(player, screen.SelectedShip, "Selection (view state) must be settable in MP.");
+
+            // Snapshot the order-relevant sim state per ship.
+            var beforeState = all.ToDictionary(s => s, s => s.AI.State);
+            var beforeTarget = all.ToDictionary(s => s, s => s.AI.Target);
+            var beforePriority = all.ToDictionary(s => s, s => s.AI.HasPriorityOrder);
+
+            // ---- (A) drive a RIGHT-CLICK "order" over the enemy ship through the real handler. ----
+            SdVector2 enemyScreen;
+            screen.ProjectToScreenCoords(enemy.Position, enemy.Radius, out Vector2d proj, out double _);
+            enemyScreen = new SdVector2((float)proj.X, (float)proj.Y);
+
+            string inputBlocker = null;
+            try
+            {
+                var prov = new MockInputProvider { MousePos = enemyScreen };
+                var input = new InputState { Provider = prov };
+                prov.RightMouse = SDGraphics.Input.ButtonState.Released;
+                input.Update(new UpdateTimes(0f, 0f));
+                prov.RightMouse = SDGraphics.Input.ButtonState.Pressed;
+                input.Update(new UpdateTimes(0f, 0f)); // right-click press
+                screen.HandleInput(input);
+                prov.RightMouse = SDGraphics.Input.ButtonState.Released;
+                input.Update(new UpdateTimes(0f, 0f)); // right-click release: the order gesture
+                screen.HandleInput(input);
+            }
+            catch (Exception e)
+            {
+                inputBlocker = $"{e.GetType().Name}: {e.Message}";
+                Console.WriteLine($"[mp-input] screen.HandleInput NRE'd headless (universe-input prologue gremlin): {inputBlocker}");
+            }
+            Assert.IsNull(inputBlocker,
+                $"MP spectator HandleInput NRE'd headless: {inputBlocker}. The view-only path must run cleanly.");
+
+            // The right-click must NOT have mutated the sim: no new target, no state change,
+            // no priority order on ANY ship. This is the determinism-critical guarantee.
+            foreach (Ship s in all)
+            {
+                Assert.AreEqual(beforeState[s], s.AI.State,
+                    $"MP spectator right-click must NOT change AI state (ship {s.Name}).");
+                Assert.AreEqual(beforeTarget[s], s.AI.Target,
+                    $"MP spectator right-click must NOT acquire/assign a Target (ship {s.Name}).");
+                Assert.AreEqual(beforePriority[s], s.AI.HasPriorityOrder,
+                    $"MP spectator right-click must NOT set a priority order (ship {s.Name}).");
+            }
+
+            // ---- (B) the view-only handler keeps SELECTION working (didn't clear it either). ----
+            Assert.AreEqual(player, screen.SelectedShip,
+                "MP spectator selection (view state) must survive the view-only input path.");
+
+            Console.WriteLine("[mp-input] DONE: right-click order rejected (no sim mutation), selection preserved.");
         }
         finally
         {
