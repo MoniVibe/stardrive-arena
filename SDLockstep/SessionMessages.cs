@@ -76,6 +76,14 @@ public sealed class SessionStartMessage : LockstepMessage
     public string HostDesignBundleHash = "";
     public string JoinDesignBundleHash = "";
 
+    // Arena custom-fleet exchange kernel (STARDRIVE_ARENA_CUSTOM_FLEET_PROGRAM_PLAN_20260706).
+    // The PARALLEL design TABLE: full custom-design payloads keyed by content-derived @arena/<hash> names,
+    // exchanged alongside the lean FleetBundle so a peer can reconstruct a design it has never seen. Optional
+    // trailing strings; empty when EnableArenaCustomFleet is off (today's name-only behavior). Semantically
+    // new payload => ProtocolVersion bumped 4->5 so a v4 peer fails cleanly at the version gate.
+    public string HostDesignTable = "";
+    public string JoinDesignTable = "";
+
     // Optional authoritative 4X launch payload. Arena/skirmish sessions leave this false
     // and ignore the fields; 4X lobby handoff uses it to generate the same real galaxy on
     // host and clients before attaching the authoritative session.

@@ -52,6 +52,7 @@
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaCareerSeasonSimulator.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaConfigScreen.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaDealershipScreen.cs" />
+    <Compile Include="Ship_Game\GameScreens\Arena\ArenaDesignTable.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaDesignTooltipProvider.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaEngineCapabilities.cs" />
     <Compile Include="Ship_Game\GameScreens\Arena\ArenaFightModifier.cs" />

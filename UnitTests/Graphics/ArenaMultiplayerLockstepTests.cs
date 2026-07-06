@@ -1478,8 +1478,8 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         // Step 2 proof: RulesetV0 + bundles round-trip through ToStartMessage->FromStartMessage,
         // SettingsHash parses, ProtocolVersion is 4, and flipping any ruleset field changes the hash.
         LoadAllGameData();
-        Assert.AreEqual(4, ArenaMultiplayerSettings.ProtocolVersion,
-            "P1 bumps the Arena MP protocol version to 4.");
+        Assert.AreEqual(5, ArenaMultiplayerSettings.ProtocolVersion,
+            "The custom-fleet exchange kernel bumps the Arena MP protocol version to 5.");
 
         var settings = new ArenaMultiplayerSettings
         {
@@ -1502,7 +1502,7 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         Assert.AreEqual(18, hash.Length, "SettingsHash must be a parseable 0x + 16 hex digits.");
 
         SessionStartMessage start = settings.ToStartMessage();
-        Assert.AreEqual(4, start.ProtocolVersion);
+        Assert.AreEqual(5, start.ProtocolVersion);
         Assert.AreEqual((int)ArenaMatchMode.Sandbox, start.RulesetMode);
         Assert.AreEqual(999999, start.RulesetBudgetCredits);
         Assert.AreEqual(settings.HostDesignBundleHash, start.HostDesignBundleHash);

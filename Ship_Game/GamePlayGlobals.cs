@@ -110,6 +110,13 @@ public class GamePlayGlobals
     // desync on Level-0-vs-veteran). Default false; the MP spawn path asserts on this.
     [StarData] public bool EnableArenaPilotTraitsInMultiplayer;
 
+    // ARENA CUSTOM FLEET (exchange kernel, STARDRIVE_ARENA_CUSTOM_FLEET_PROGRAM_PLAN_20260706): when true,
+    // the Arena start payload carries a PARALLEL design TABLE of full custom-design payloads, transiently
+    // registered under content-derived @arena/<hash> names before validation so a peer can reconstruct a
+    // custom ship it has never seen (byte-identically) and reject any mismatch at the handshake. Default
+    // false = today's name-only behavior, unchanged (a true no-op — no table is emitted or consumed).
+    [StarData] public bool EnableArenaCustomFleet;
+
     // visual modifiers
     [StarData] public float SpaceportScale = 0.5f;
     [StarData] public float ExplosionVisualIncreaser = 1f;

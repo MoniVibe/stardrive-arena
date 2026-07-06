@@ -23,9 +23,13 @@ public enum ArenaMultiplayerRole
 
 public sealed class ArenaMultiplayerSettings
 {
-    // 3 -> 4: RulesetV0 + canonical design bundles enter the start payload (the ONE bump for the
-    // whole Arena-MP-modes program). A v3 peer is cleanly rejected against a v4 peer.
-    public const int ProtocolVersion = 4;
+    // 3 -> 4: RulesetV0 + canonical design bundles enter the start payload.
+    // 4 -> 5: the parallel custom-design TABLE enters the start payload (Arena custom-fleet exchange kernel,
+    // STARDRIVE_ARENA_CUSTOM_FLEET_PROGRAM_PLAN_20260706). The codec is append-tolerant, but the design table
+    // is a NEW SEMANTIC: a v4 peer would decode it as "" and then fail to resolve the custom @arena/<hash>
+    // name with a confusing "design not available" error. The bump makes a v4<->v5 pairing fail cleanly at the
+    // version gate instead. One bump covers the whole custom-fleet + N-player program.
+    public const int ProtocolVersion = 5;
     const char FleetSeparator = '\u001f';
 
     public int MatchSeed = 0x5EED;
@@ -51,6 +55,16 @@ public sealed class ArenaMultiplayerSettings
     public ArenaMultiplayerRuleset Ruleset = new();
     public string HostFleetBundle = "";
     public string JoinFleetBundle = "";
+
+    // Arena custom-fleet exchange kernel (STARDRIVE_ARENA_CUSTOM_FLEET_PROGRAM_PLAN_20260706).
+    // The parallel custom-design TABLE for each side: full canonical payloads keyed by content-derived
+    // @arena/<hash> names, encoded via ArenaDesignTable.Encode. Empty when EnableArenaCustomFleet is off.
+    // The table content is NOT folded into SettingsHash directly — it folds TRANSITIVELY via the bundle
+    // hashes (the bundle references @arena/<hash> names, and those names ARE the design content hash), so a
+    // divergent module list changes the name -> changes the bundle hash -> changes SettingsHash. Folding the
+    // raw table string too would false-reject benign base64/ordering variance between peers.
+    public string HostDesignTable = "";
+    public string JoinDesignTable = "";
 
     public string HostDesignBundleHash =>
         ArenaFleetBundle.DesignBundleHash(ResolveBundleOrNames(HostFleetBundle, HostFleetDesignNames));
@@ -136,6 +150,8 @@ public sealed class ArenaMultiplayerSettings
             JoinFleetBundle = JoinFleetBundle ?? "",
             HostDesignBundleHash = HostDesignBundleHash,
             JoinDesignBundleHash = JoinDesignBundleHash,
+            HostDesignTable = HostDesignTable ?? "",
+            JoinDesignTable = JoinDesignTable ?? "",
         };
     }
 
@@ -159,6 +175,8 @@ public sealed class ArenaMultiplayerSettings
             Ruleset = RulesetFromStartMessage(message),
             HostFleetBundle = message.HostFleetBundle ?? "",
             JoinFleetBundle = message.JoinFleetBundle ?? "",
+            HostDesignTable = message.HostDesignTable ?? "",
+            JoinDesignTable = message.JoinDesignTable ?? "",
         };
 
     public static ArenaMultiplayerRuleset RulesetFromStartMessage(SessionStartMessage message)
@@ -330,6 +348,10 @@ public sealed class ArenaMultiplayerSettings
             Ruleset = (Ruleset ?? new ArenaMultiplayerRuleset()).Clone(),
             HostFleetBundle = HostFleetBundle ?? "",
             JoinFleetBundle = JoinFleetBundle ?? "",
+            // Rematch reuses the SAME custom designs (WithRematchSeed keeps the bundle/design names), so carry
+            // the design tables forward; the caller re-registers them at each match start (idempotent dedup).
+            HostDesignTable = HostDesignTable ?? "",
+            JoinDesignTable = JoinDesignTable ?? "",
         }.WithResolvedFleets();
     }
 
@@ -340,6 +362,10 @@ public sealed class ArenaMultiplayerSettings
             Ruleset = (Ruleset ?? new ArenaMultiplayerRuleset()).Clone(),
             HostFleetBundle = HostFleetBundle ?? "",
             JoinFleetBundle = JoinFleetBundle ?? "",
+            // Custom-fleet exchange kernel: carry the design tables through fleet resolution (they were being
+            // dropped, silently disabling custom designs on every path that re-resolves).
+            HostDesignTable = HostDesignTable ?? "",
+            JoinDesignTable = JoinDesignTable ?? "",
             MatchSeed = MatchSeed,
             RngSeed = RngSeed,
             InputDelay = Math.Max(0, InputDelay),
@@ -549,13 +575,70 @@ public static class ArenaMultiplayerSession
     public const int DefaultPort = 47377;
     static readonly object PeerScreenBuildGate = new();
 
+    /// <summary>
+    /// Arena custom-fleet exchange kernel: BIDIRECTIONALLY decode + validate + transiently register EVERY
+    /// peer's custom-design table BEFORE ValidateStartMessage / spawn (amendment 6). The returned name set is
+    /// the EXACT set to tear down in the caller's finally on every exit path — throw/reject/disconnect/rematch
+    /// (amendment 4). Authored to generalize to N peers even though this phase tests N=2.
+    ///
+    /// Registration RE-DERIVES each name from the received bytes (never a sender-supplied name), so a tampered
+    /// payload registers under its own @arena/<hash> and the bundle's referenced name fails to resolve at the
+    /// existing FirstUnavailableFleetDesign gate (amendment 1 tamper-close). A malformed/oversized/carrier/
+    /// mod-gap payload rejects cleanly here via the out error, never crashing the peer (amendment 5, 7).
+    ///
+    /// No-op (returns an empty set, "" error) when GlobalStats.Defaults.EnableArenaCustomFleet is off — the
+    /// legacy name-only behavior is unchanged and no @arena/ design is ever registered.
+    /// </summary>
+    public static IReadOnlyList<string> RegisterPeerDesignTables(ArenaMultiplayerSettings settings, out string error)
+    {
+        error = "";
+        var registered = new List<string>();
+        if (settings == null || !(GlobalStats.Defaults?.EnableArenaCustomFleet ?? false))
+            return registered;
+
+        foreach (string table in new[] { settings.HostDesignTable, settings.JoinDesignTable })
+        {
+            if ((table ?? "").IsEmpty())
+                continue;
+            ArenaDesignTable.DecodeResult decoded = ArenaDesignTable.Decode(table);
+            if (!decoded.Ok)
+            {
+                error = $"Arena custom-fleet design table rejected: {decoded.Error}";
+                UnregisterPeerDesignTables(registered); // undo anything already registered this call
+                registered.Clear();
+                return registered;
+            }
+            registered.AddRange(ArenaDesignTable.RegisterTransient(decoded.Designs.Values));
+        }
+        return registered;
+    }
+
+    /// <summary>Tears down exactly the set returned by <see cref="RegisterPeerDesignTables"/>. Safe on empty/partial.</summary>
+    public static void UnregisterPeerDesignTables(IReadOnlyList<string> registeredNames)
+        => ArenaDesignTable.UnregisterTransient(registeredNames);
+
     public static ArenaMultiplayerRunResult RunInProcess(ArenaMultiplayerSettings settings,
         int forceDesyncAfterTurn = -1)
     {
         settings = (settings ?? new ArenaMultiplayerSettings()).WithResolvedFleets();
-        ArenaFightScreen hostScreen = BuildPeerScreen(settings);
-        ArenaFightScreen joinScreen = BuildPeerScreen(settings);
-        return RunTwoPeerLockstep(settings, hostScreen, joinScreen, new FakeTransport(), forceDesyncAfterTurn);
+        // Register both peers' custom-design tables before building the peer screens (so the @arena/<hash>
+        // names resolve during spawn), and tear them down on EVERY exit path (amendment 4).
+        IReadOnlyList<string> registered = RegisterPeerDesignTables(settings, out string tableError);
+        if (tableError.NotEmpty())
+        {
+            UnregisterPeerDesignTables(registered);
+            throw new InvalidOperationException(tableError);
+        }
+        try
+        {
+            ArenaFightScreen hostScreen = BuildPeerScreen(settings);
+            ArenaFightScreen joinScreen = BuildPeerScreen(settings);
+            return RunTwoPeerLockstep(settings, hostScreen, joinScreen, new FakeTransport(), forceDesyncAfterTurn);
+        }
+        finally
+        {
+            UnregisterPeerDesignTables(registered);
+        }
     }
 
     public static ArenaMultiplayerRunResult RunLoopbackTcpSelfTest(ArenaMultiplayerSettings settings,
@@ -673,8 +756,25 @@ public static class ArenaMultiplayerSession
             throw new TimeoutException("Client connected but did not ready-up.");
 
         transport.Send(JoinPlayerPeerId, settings.ToStartMessage());
-        ArenaFightScreen screen = BuildPeerScreen(settings);
-        return RunHostNetworkLoop(settings, screen, transport, () => remoteReadyCount >= 2, log);
+        // Arena custom-fleet exchange kernel: the host registers BOTH peers' custom-design tables so its own
+        // spawn resolves the @arena/<hash> names, then tears them down on every exit path (amendment 4, 6).
+        IReadOnlyList<string> registered = RegisterPeerDesignTables(settings, out string tableError);
+        if (tableError.NotEmpty())
+        {
+            UnregisterPeerDesignTables(registered);
+            transport.Send(JoinPlayerPeerId,
+                new SessionErrorMessage { FromPeer = LockstepHost.HostPeerId, Error = tableError });
+            throw new InvalidOperationException(tableError);
+        }
+        try
+        {
+            ArenaFightScreen screen = BuildPeerScreen(settings);
+            return RunHostNetworkLoop(settings, screen, transport, () => remoteReadyCount >= 2, log);
+        }
+        finally
+        {
+            UnregisterPeerDesignTables(registered);
+        }
     }
 
     public static ArenaMultiplayerRunResult RunNetworkJoin(string host, int port,
@@ -723,12 +823,28 @@ public static class ArenaMultiplayerSession
         if (start == null)
             throw new TimeoutException("Host did not send Arena multiplayer start settings.");
 
-        string startError = ArenaMultiplayerSettings.ValidateStartMessage(start, out ArenaMultiplayerSettings settings);
-        if (startError.NotEmpty())
-            throw new InvalidOperationException(startError);
+        // Arena custom-fleet exchange kernel: register BOTH peers' custom-design tables BEFORE ValidateStartMessage
+        // (which throws on any error — the A2 leak path) and tear them down on EVERY exit path (amendment 4).
+        ArenaMultiplayerSettings preSettings = ArenaMultiplayerSettings.FromStartMessage(start);
+        IReadOnlyList<string> registered = RegisterPeerDesignTables(preSettings, out string tableError);
+        if (tableError.NotEmpty())
+        {
+            UnregisterPeerDesignTables(registered);
+            throw new InvalidOperationException(tableError);
+        }
+        try
+        {
+            string startError = ArenaMultiplayerSettings.ValidateStartMessage(start, out ArenaMultiplayerSettings settings);
+            if (startError.NotEmpty())
+                throw new InvalidOperationException(startError);
 
-        ArenaFightScreen screen = BuildPeerScreen(settings);
-        return RunJoinNetworkLoop(settings, screen, transport, log);
+            ArenaFightScreen screen = BuildPeerScreen(settings);
+            return RunJoinNetworkLoop(settings, screen, transport, log);
+        }
+        finally
+        {
+            UnregisterPeerDesignTables(registered);
+        }
     }
 
     static ArenaFightScreen BuildPeerScreen(ArenaMultiplayerSettings settings)

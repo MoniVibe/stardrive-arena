@@ -132,6 +132,11 @@ public sealed partial class ArenaFightScreen
     bool MultiplayerLiveInitialized;
     bool MultiplayerLiveComplete;
     UIPanel MultiplayerEndPanel;
+    // Arena custom-fleet exchange kernel: the EXACT set of transient @arena/<hash> designs registered for the
+    // CURRENT live match, so teardown undoes precisely this set on EVERY exit path — match end, lobby exit,
+    // disconnect, and rematch re-registration (amendment 4). Never blanket-delete @arena/* (a concurrent
+    // side-orchestrator match may share the process-global ResourceManager.Ships namespace).
+    IReadOnlyList<string> MultiplayerRegisteredDesigns = Array.Empty<string>();
 
     public bool MultiplayerLiveActive => MultiplayerLiveSession != null;
     public bool MultiplayerLiveDisplayPaused => MultiplayerLiveActive && MultiplayerLivePaused;
@@ -178,10 +183,35 @@ public sealed partial class ArenaFightScreen
         MultiplayerPvPMode = MultiplayerHostFleetDesigns.Length > 0 && MultiplayerJoinFleetDesigns.Length > 0;
     }
 
+    // Register the current match's custom-design tables (idempotent for rematch), tearing down any set left
+    // over from a previous match first so re-registration is clean and nothing accumulates across rematches.
+    void RegisterMultiplayerCustomDesigns(ArenaMultiplayerSettings settings)
+    {
+        TeardownMultiplayerCustomDesigns();
+        IReadOnlyList<string> registered = ArenaMultiplayerSession.RegisterPeerDesignTables(settings, out string tableError);
+        if (tableError.NotEmpty())
+        {
+            ArenaMultiplayerSession.UnregisterPeerDesignTables(registered);
+            throw new InvalidOperationException(tableError);
+        }
+        MultiplayerRegisteredDesigns = registered;
+    }
+
+    // Tear down exactly the current match's transient @arena/ designs. Safe to call repeatedly / when empty.
+    void TeardownMultiplayerCustomDesigns()
+    {
+        if (MultiplayerRegisteredDesigns.Count > 0)
+            ArenaMultiplayerSession.UnregisterPeerDesignTables(MultiplayerRegisteredDesigns);
+        MultiplayerRegisteredDesigns = Array.Empty<string>();
+    }
+
     public void ArmMultiplayerLive(ArenaMultiplayerLiveSession session)
     {
         MultiplayerLiveSession = session ?? throw new ArgumentNullException(nameof(session));
         ArenaMultiplayerSettings settings = session.Settings.WithResolvedFleets();
+        // Register this match's custom designs before spawn so the @arena/<hash> names resolve (amendment 6);
+        // teardown is wired into BackToMultiplayerLobby / StartMultiplayerRematch / disconnect (amendment 4).
+        RegisterMultiplayerCustomDesigns(settings);
         MultiplayerTelemetry?.Dispose();
         MultiplayerTelemetry = ArenaMultiplayerTelemetry.Start(session.Role.ToString(), "live-arena", settings);
         // A silent send-to-nowhere must never again be silent: surface transport routing
@@ -960,6 +990,9 @@ public sealed partial class ArenaFightScreen
 
     void BackToMultiplayerLobby()
     {
+        // Amendment 4: tear down this match's transient @arena/ designs so the global table returns to its
+        // pre-match state on lobby exit (BackToMultiplayerLobby didn't do this before).
+        TeardownMultiplayerCustomDesigns();
         MultiplayerLiveSession?.Dispose();
         MultiplayerLiveSession = null;
         MultiplayerTelemetry?.Dispose();
@@ -972,6 +1005,10 @@ public sealed partial class ArenaFightScreen
         if (MultiplayerLiveSession == null)
             return;
 
+        // Amendment 4: tear down THIS screen's registration before handing the transport to the rematch screen.
+        // The rematch's ArmMultiplayerLive re-registers the (same) custom designs idempotently, so nothing
+        // accumulates across rematches and the rematch never finds them missing.
+        TeardownMultiplayerCustomDesigns();
         TcpLockstepTransport transport = MultiplayerLiveSession.Transport;
         ArenaMultiplayerRole role = MultiplayerLiveSession.Role;
         ArenaMultiplayerSettings settings = MultiplayerLiveSession.Settings.WithRematchSeed();
@@ -1035,6 +1072,9 @@ public sealed partial class ArenaFightScreen
 
     public override void ExitScreen()
     {
+        // Amendment 4 catch-all: guarantee no transient @arena/ design leaks on ANY screen exit — disconnect,
+        // force-close, match-end-then-exit. Idempotent with the lobby/rematch teardown paths.
+        TeardownMultiplayerCustomDesigns();
         MultiplayerLiveSession?.Dispose();
         MultiplayerLiveSession = null;
         MultiplayerTelemetry?.Dispose();
