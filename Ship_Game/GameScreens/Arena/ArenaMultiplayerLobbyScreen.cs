@@ -587,6 +587,39 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         UIButton slot = ArenaTheme.AddPillButton(setup3, "", _ => CycleJoinSlot(), 92f);
         slot.Name = "arena_mp_peer_slot";
         slot.DynamicText = () => LocalRole == ArenaMultiplayerRole.Host ? "SLOT HOST" : $"SLOT P{JoinPeerSlot}";
+
+        // Custom-fleet opt-in (flag-gated): host toggles whether the match opens in the in-arena PRE-MATCH SETUP
+        // phase (design/import ships + arrange the fleet page) instead of spawning immediately. Host-controlled
+        // like the other ruleset pills; the join mirrors it read-only (it rides the authoritative start's ruleset).
+        // When the flag is off the pill is not added at all -> a true no-op, the current duel path is unchanged.
+        if (GlobalStats.Defaults.EnableArenaCustomFleet)
+        {
+            UIButton setupPhase = ArenaTheme.AddPillButton(setup3, "", _ => ToggleArenaSetupPhase(), 156f);
+            setupPhase.Name = "arena_mp_setup_phase";
+            setupPhase.DynamicText = () => RequestArenaSetupPhase ? "SETUP: DESIGN IN ARENA" : "SETUP: OFF";
+        }
+    }
+
+    // Host-controlled toggle for the in-arena PRE-MATCH SETUP phase (custom-fleet UI wiring). Mirrors the other
+    // ruleset pills: gated to the host (the join sees it read-only via HostSettingsAreLockedToRemote), re-broadcast
+    // so the peers agree, and folded into the authoritative start's ruleset (BuildArenaRuleset.SetupPhase).
+    void ToggleArenaSetupPhase()
+    {
+        if (!GlobalStats.Defaults.EnableArenaCustomFleet)
+        {
+            GameAudio.NegativeClick();
+            return;
+        }
+        if (HostSettingsAreLockedToRemote())
+        {
+            GameAudio.NegativeClick();
+            return;
+        }
+        RequestArenaSetupPhase = !RequestArenaSetupPhase;
+        SetStatus(RequestArenaSetupPhase
+            ? "Star Gladiator setup: design/import ships and arrange your fleet IN the arena before the fight."
+            : "Star Gladiator setup off: the match spawns immediately from the fleet picks.");
+        GameAudio.AffirmativeClick();
     }
 
     string BudgetLabel()
@@ -1507,7 +1540,12 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         // §2.3: when the host requested the in-arena PRE-MATCH SETUP phase (design/import/formation INSIDE the
         // arena), enter it BEFORE arming so ArmMultiplayerLive registers the setup-exchange observer and LoadContent
         // does not spawn until the setup->fight rebuild completes. Flag-gated; a no-op otherwise (spawns as today).
-        if (RequestArenaSetupPhase && GlobalStats.Defaults.EnableArenaCustomFleet)
+        // The opt-in is host-authored and rides the authoritative start's ruleset (SetupPhase), so BOTH the host
+        // (its own pill folded into the start it built) AND the JOIN (which never set the local pill) enter setup
+        // in lockstep — a divergent value already rejected at ValidateStartMessage's SettingsHash check above.
+        bool enterSetup = (RequestArenaSetupPhase || settings.Ruleset?.SetupPhase == true)
+            && GlobalStats.Defaults.EnableArenaCustomFleet;
+        if (enterSetup)
             screen.EnterMultiplayerSetupPhase();
         screen.ArmMultiplayerLive(new ArenaMultiplayerLiveSession(role, transport, settings));
         if (LaunchScreenOverrideForHeadless != null)
@@ -1535,6 +1573,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             WagerCredits = 0,
             RosterCommitmentHash = "",
             ContentFingerprint = GlobalStats.HasMod ? $"{GlobalStats.ModName} {GlobalStats.ModVersion}" : "Vanilla",
+            // Host-authored in-arena SETUP-phase opt-in: carried in the authoritative start so the JOIN peer
+            // enters setup too (LaunchVisibleArena reads it back from the received ruleset). Flag-gated.
+            SetupPhase = RequestArenaSetupPhase && GlobalStats.Defaults.EnableArenaCustomFleet,
         };
 
     ArenaMultiplayerSettings BuildArenaSettings()

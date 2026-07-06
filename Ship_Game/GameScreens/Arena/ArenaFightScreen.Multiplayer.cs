@@ -440,6 +440,139 @@ public sealed partial class ArenaFightScreen
         SetupLocalFleetBundle = "";
     }
 
+    // ===================================================================================================
+    // IN-ARENA SETUP HUD (custom-fleet UI wiring). A lean on-screen control set shown ONLY while the pre-match
+    // SETUP phase is active (ArenaSetupPhase.Setup). Every button routes to an ALREADY-PROVEN endpoint — the real
+    // base editors (OpenArenaSetupDesigner / OpenArenaSetupFormation), the import flow, and MarkSetupLocalReady.
+    // The FLEET PAGE (the real FleetDesignScreen) is the primary UI per the director; the others are entry points
+    // to it. Built once in LoadContent (BuildArenaSetupHud); visibility/labels refreshed per frame. Flag-off / a
+    // legacy launch never enters setup, so these controls stay hidden — a true no-op.
+    // ===================================================================================================
+    UIButton SetupDesignButton;
+    UIButton SetupImportButton;
+    UIButton SetupFormationButton;
+    UIButton SetupReadyButton;
+    UILabel SetupTitleLabel;
+    UILabel SetupBudgetLabel;
+    UILabel SetupStatusLabel;
+
+    void BuildArenaSetupHud()
+    {
+        // Centered-top control cluster, sitting clear of the top-left bout/cash HUD. Built unconditionally but
+        // hidden until the setup phase is active (RefreshArenaSetupHud toggles Visible).
+        float cx = ScreenWidth * 0.5f - 190f;
+        float y = 70f;
+        SetupTitleLabel = Add(new UILabel(new Vector2(cx, y), "STAR GLADIATOR — PRE-MATCH SETUP", Fonts.Arial20Bold));
+        SetupBudgetLabel = Add(new UILabel(new Vector2(cx, y + 28f), "", Fonts.Arial14Bold)
+        {
+            DynamicText = _ => SetupBudgetReadout()
+        });
+        SetupStatusLabel = Add(new UILabel(new Vector2(cx, y + 50f), "", Fonts.Arial12Bold)
+        {
+            DynamicText = _ => SetupHudError.NotEmpty() ? SetupHudError : SetupReadyStatusReadout()
+        });
+
+        float bx = cx;
+        float by = y + 76f;
+        // [Design Ship] -> the REAL base ShipDesignScreen against the arena universe (build a custom anew).
+        SetupDesignButton = Add(new UIButton(ButtonStyle.Medium, new Vector2(bx, by), "Design Ship")
+        { OnClick = _ => OpenArenaSetupDesigner() });
+        // [Import Design] -> a design-load list (reused ArenaFleetPickerScreen) feeding ImportSetupDesignByName.
+        SetupImportButton = Add(new UIButton(ButtonStyle.Medium, new Vector2(bx + 190f, by), "Import Design")
+        { OnClick = _ => OpenArenaSetupImportPicker() });
+        // [Fleet / Formation] -> THE fleet page (real FleetDesignScreen), the PRIMARY setup UI per the director.
+        SetupFormationButton = Add(new UIButton(ButtonStyle.Medium, new Vector2(bx, by + 44f), "Fleet / Formation")
+        { OnClick = _ => OpenArenaSetupFormation() });
+        // [Ready] -> MarkSetupLocalReady; when both peers Ready, the already-built rebuild+broadcast advances to Fight.
+        SetupReadyButton = Add(new UIButton(ButtonStyle.Medium, new Vector2(bx + 190f, by + 44f), "Ready")
+        { OnClick = _ => OnArenaSetupReadyClicked() });
+
+        RefreshArenaSetupHud();
+    }
+
+    // Show/hide the setup HUD to track the setup phase (called per frame from UpdateMultiplayerSetup, and once at
+    // build). Visible only while authoring (ArenaSetupPhase.Setup); once Ready is pressed the button set locks so a
+    // second press can't republish mid-exchange. A no-op when the controls were never built (headless).
+    void RefreshArenaSetupHud()
+    {
+        bool inSetup = MultiplayerLiveActive && MultiplayerSetupPhase != ArenaSetupPhase.Fight;
+        bool authoring = MultiplayerLiveActive && MultiplayerSetupPhase == ArenaSetupPhase.Setup;
+        if (SetupTitleLabel != null) SetupTitleLabel.Visible = inSetup;
+        if (SetupBudgetLabel != null) SetupBudgetLabel.Visible = inSetup;
+        if (SetupStatusLabel != null) SetupStatusLabel.Visible = inSetup;
+        // Authoring buttons enabled only in Setup; after Ready they stay visible (context) but disabled.
+        if (SetupDesignButton != null) { SetupDesignButton.Visible = inSetup; SetupDesignButton.Enabled = authoring; }
+        if (SetupImportButton != null) { SetupImportButton.Visible = inSetup; SetupImportButton.Enabled = authoring; }
+        if (SetupFormationButton != null) { SetupFormationButton.Visible = inSetup; SetupFormationButton.Enabled = authoring; }
+        if (SetupReadyButton != null) { SetupReadyButton.Visible = inSetup; SetupReadyButton.Enabled = authoring; }
+    }
+
+    // Budget readout: the authored fleet's total BaseStrength cost vs the host budget cap (SumBundleCost is the SAME
+    // currency the handshake enforces). Unlimited when no cap is set.
+    string SetupBudgetReadout()
+    {
+        ArenaMultiplayerRuleset ruleset = MultiplayerLiveSession?.Settings?.Ruleset;
+        int cost = ArenaMultiplayerSettings.SumBundleCost(SetupLocalFleetBundle, Array.Empty<string>());
+        if (ruleset == null || ruleset.BudgetModel != ArenaBudgetModel.Cap || ruleset.BudgetCredits <= 0)
+            return $"Fleet cost {cost}  |  Budget UNLIMITED  |  Designs: {SetupScratchDesigns.Count}";
+        return $"Fleet cost {cost} / {ruleset.BudgetCredits}  |  Designs: {SetupScratchDesigns.Count}";
+    }
+
+    string SetupReadyStatusReadout()
+    {
+        switch (MultiplayerSetupPhase)
+        {
+            case ArenaSetupPhase.Setup:      return "Design or import ships, arrange your fleet, then press Ready.";
+            case ArenaSetupPhase.LocalReady: return SetupRemoteReady
+                ? "Both ready — building the match..."
+                : "You are READY. Waiting for the other gladiator...";
+            default:                          return "Starting the fight...";
+        }
+    }
+
+    // [Import Design] flow: a design-load list (reused ArenaFleetPickerScreen — the SAME modal the lobby fleet
+    // picker uses) over the legal arena combat designs; each picked name is imported into the @arena/<hash> scratch
+    // set via the proven ImportSetupDesignByName seam (so an import is byte-indistinguishable from a build-anew).
+    void OpenArenaSetupImportPicker()
+    {
+        if (MultiplayerSetupPhase != ArenaSetupPhase.Setup)
+            return;
+        string[] options;
+        try
+        {
+            options = ResourceManager.Ships.Designs
+                .Where(d => d?.Name != null && !d.Name.StartsWith("@arena/", StringComparison.Ordinal))
+                .Select(d => d.Name)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(n => n, StringComparer.Ordinal)
+                .ToArray();
+        }
+        catch { options = Array.Empty<string>(); }
+        if (options.Length == 0)
+        {
+            SetupHudError = "No designs available to import.";
+            return;
+        }
+        ArenaMultiplayerRuleset ruleset = MultiplayerLiveSession?.Settings?.Ruleset;
+        int budget = ruleset != null && ruleset.BudgetModel == ArenaBudgetModel.Cap ? ruleset.BudgetCredits : 0;
+        ScreenManager.AddScreen(new ArenaFleetPickerScreen(this, options, Array.Empty<string>(), budget,
+            picked =>
+            {
+                foreach (string name in picked ?? Array.Empty<string>())
+                    ImportSetupDesignByName(name);
+            }));
+    }
+
+    // [Ready] click: finalize local authoring. Publishing + the setup->fight rebuild are driven by the existing
+    // per-frame UpdateMultiplayerSetup; this just flips the local machine Setup -> LocalReady.
+    void OnArenaSetupReadyClicked()
+    {
+        if (MultiplayerSetupPhase != ArenaSetupPhase.Setup)
+            return;
+        MarkSetupLocalReady();
+        RefreshArenaSetupHud();
+    }
+
     // ---------------------------------------------------------------------------------------------------
     // §2.3 SETUP -> FIGHT AUTHORITATIVE-START REBUILD + RE-BROADCAST over the CURRENT (fight/setup) transport.
     // Reuses the Phase A exchange: each peer publishes its setup DesignTable+Fleet via SessionLobbyMessage; the
@@ -455,7 +588,13 @@ public sealed partial class ArenaFightScreen
     public void UpdateMultiplayerSetup(float dt)
     {
         if (MultiplayerLiveSession == null || MultiplayerSetupPhase == ArenaSetupPhase.Fight)
+        {
+            RefreshArenaSetupHud(); // hides the setup controls once the phase advances to Fight (or was never in setup)
             return;
+        }
+
+        // Keep the on-screen setup controls (buttons/labels) in sync with the phase every frame.
+        RefreshArenaSetupHud();
 
         MultiplayerLiveSession.Transport.Poll();
 

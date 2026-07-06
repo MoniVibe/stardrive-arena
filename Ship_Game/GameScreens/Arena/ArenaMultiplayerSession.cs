@@ -169,6 +169,7 @@ public sealed class ArenaMultiplayerSettings
             RulesetWagerCredits = ruleset.WagerCredits,
             RulesetCommitmentHash = ruleset.RosterCommitmentHash ?? "",
             RulesetContentFingerprint = ruleset.ContentFingerprint ?? "",
+            RulesetSetupPhase = ruleset.SetupPhase,
             HostFleetBundle = HostFleetBundle ?? "",
             JoinFleetBundle = JoinFleetBundle ?? "",
             HostDesignBundleHash = HostDesignBundleHash,
@@ -216,6 +217,7 @@ public sealed class ArenaMultiplayerSettings
             WagerCredits = message.RulesetWagerCredits,
             RosterCommitmentHash = message.RulesetCommitmentHash ?? "",
             ContentFingerprint = message.RulesetContentFingerprint ?? "",
+            SetupPhase = message.RulesetSetupPhase,
         };
 
     public static string StartFingerprint(SessionStartMessage start)

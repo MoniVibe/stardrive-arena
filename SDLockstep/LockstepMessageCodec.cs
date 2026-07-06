@@ -155,6 +155,8 @@ public static class LockstepMessageCodec
                     // Arena custom-fleet exchange kernel: the parallel design tables (append-only, optional).
                     WriteString(w, start.HostDesignTable);
                     WriteString(w, start.JoinDesignTable);
+                    // Host-authored in-arena SETUP-phase opt-in (append-only optional trailing field).
+                    w.Write(start.RulesetSetupPhase);
                     break;
                 case SessionStartAckMessage ack:
                     w.Write(SessionStartAck);
@@ -384,6 +386,8 @@ public static class LockstepMessageCodec
                 // Arena custom-fleet exchange kernel: parallel design tables (optional trailing fields).
                 string hostDesignTable = ReadOptionalString(r);
                 string joinDesignTable = ReadOptionalString(r);
+                // Host-authored in-arena SETUP-phase opt-in (optional trailing field; pre-field readers get false).
+                bool rulesetSetupPhase = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
                 message = new SessionStartMessage
                 {
                     ProtocolVersion = protocolVersion,
@@ -451,6 +455,7 @@ public static class LockstepMessageCodec
                     JoinDesignBundleHash = joinDesignBundleHash,
                     HostDesignTable = hostDesignTable,
                     JoinDesignTable = joinDesignTable,
+                    RulesetSetupPhase = rulesetSetupPhase,
                 };
                 break;
             case SessionStartAck:

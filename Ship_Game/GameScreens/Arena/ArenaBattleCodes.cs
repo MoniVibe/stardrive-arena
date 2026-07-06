@@ -18,7 +18,9 @@ public static class ArenaBattleCodes
     const string Magic = "SGB1";
     // 2: Arena P1 RulesetV0 + canonical design bundles (folded into SettingsHash), appended after
     // the existing fields so a format-1 code still parses (missing fields -> defaults).
-    const int FormatVersion = 2;
+    // 3: host-authored in-arena SETUP-phase opt-in (RulesetSetupPhase), appended after the format-2
+    // fields so a format-2 code still parses (the flag defaults to false = legacy launch).
+    const int FormatVersion = 3;
 
     public static string Export(ArenaMultiplayerSettings settings, string sequenceSha256)
         => Export(settings, sequenceSha256, buildHashOverride: null);
@@ -70,6 +72,8 @@ public static class ArenaBattleCodes
             WriteString(w, start.RulesetContentFingerprint);
             WriteString(w, start.HostFleetBundle);
             WriteString(w, start.JoinFleetBundle);
+            // Format 3: host-authored in-arena SETUP-phase opt-in (append-only after the format-2 fields).
+            w.Write(start.RulesetSetupPhase);
             WriteString(w, digest);
         }
 
@@ -138,6 +142,8 @@ public static class ArenaBattleCodes
                 start.HostFleetBundle = ReadString(r);
                 start.JoinFleetBundle = ReadString(r);
             }
+            if (format >= 3)
+                start.RulesetSetupPhase = r.ReadBoolean();
             string sequenceSha256 = NormalizeSha256(ReadString(r));
             if (payload.Position != payload.Length)
             {

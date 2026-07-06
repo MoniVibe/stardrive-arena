@@ -833,6 +833,7 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         CamDestination = UState.CamPos;
 
         BuildHudAndShop();
+        BuildArenaSetupHud();
 
         Round = 1;
         PendingWingmen = 0;

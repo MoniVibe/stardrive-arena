@@ -78,6 +78,9 @@ public sealed class SessionStartMessage : LockstepMessage
     public int RulesetWagerCredits;
     public string RulesetCommitmentHash = "";
     public string RulesetContentFingerprint = "";
+    // Host-authored custom-fleet in-arena SETUP-phase opt-in (append-only optional trailing field; no
+    // ProtocolVersion bump — a pre-field reader stops before it and gets the default false = legacy launch).
+    public bool RulesetSetupPhase;
     public string HostFleetBundle = "";
     public string JoinFleetBundle = "";
     public string HostDesignBundleHash = "";

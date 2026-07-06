@@ -2294,6 +2294,212 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
     }
 
     // ===================================================================================================
+    // UI WIRING — THE LOBBY OPT-IN REACHES BOTH PEERS. The host toggles the new "Star Gladiator setup" pill
+    // (SetRequestArenaSetupPhaseForHeadless mirrors that click); it rides the authoritative start's ruleset
+    // (Ruleset.SetupPhase) so the JOIN — which never touched the pill — ALSO enters setup. Two REAL lobbies over
+    // loopback TCP through the actual Host/Join/Ready/Launch flow: after launch BOTH fight screens must be in the
+    // in-arena SETUP phase (neither has spawned). This is the clickable entry the player now has.
+    // ===================================================================================================
+    [TestMethod]
+    public void PROOF_LOBBY_OPT_IN_ENTERS_SETUP_ON_BOTH_PEERS_Headless()
+    {
+        LoadAllGameData();
+        string dir = Path.Combine(Path.GetTempPath(), $"arena_mp_optin_{Guid.NewGuid():N}");
+        string savedConfigPath = ArenaMultiplayerLobbyConfig.ConfigPathOverride;
+        string savedStaticPath = ArenaFightScreen.CareerSavePath;
+        string tempCareer = Path.Combine(Path.GetTempPath(), $"arena_mp_optin_{Guid.NewGuid():N}.yaml");
+        bool savedFlag = GlobalStats.Defaults.EnableArenaCustomFleet;
+        int snapshot = ResourceManager.Ships.Designs.Count;
+        ArenaFightScreen.CareerSavePath = tempCareer;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+        ArenaMultiplayerLobbyScreen hostLobby = null;
+        ArenaMultiplayerLobbyScreen joinLobby = null;
+        ArenaFightScreen hostFight = null;
+        ArenaFightScreen joinFight = null;
+        try
+        {
+            GlobalStats.Defaults.EnableArenaCustomFleet = true;
+            Directory.CreateDirectory(dir);
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = Path.Combine(dir, "mp-lobby-config.yaml");
+            int port = FreeTcpPort();
+            Assert.IsTrue(ArenaMultiplayerLobbyConfig.Save(new ArenaMultiplayerLobbyConfig
+            {
+                Host = "127.0.0.1",
+                Port = port,
+                PeerSlot = ArenaMultiplayerLobbyScreen.DefaultJoinPeerSlot,
+            }), "Lobby config must save to the temp override path.");
+
+            // The HOST clicks the new opt-in pill (SetRequestArenaSetupPhaseForHeadless mirrors ToggleArenaSetupPhase).
+            // The JOIN never touches it — it must learn the opt-in ONLY from the host's authoritative start ruleset.
+            (hostLobby, joinLobby, hostFight, joinFight) = DriveRealLobbiesToLaunchedFight(
+                host => host.SetRequestArenaSetupPhaseForHeadless(true));
+
+            Assert.IsNotNull(hostFight, "Host fight screen must have launched.");
+            Assert.IsNotNull(joinFight, "Join fight screen must have launched.");
+            // BOTH peers entered the in-arena SETUP phase — the host from its pill, the JOIN from the ruleset over
+            // the wire (it never set the local field). Neither may have spawned yet (the setup gate holds).
+            Assert.IsTrue(hostFight.ArenaSetupActiveForHeadless,
+                "The host opted into the setup phase via the pill — it MUST enter the in-arena SETUP phase.");
+            Assert.IsTrue(joinFight.ArenaSetupActiveForHeadless,
+                "The JOIN never touched the pill — the host opt-in MUST reach it over the wire (Ruleset.SetupPhase) "
+                + "so both peers enter setup together (else one spawns while the other authors => desync).");
+            Assert.AreEqual(ArenaFightScreen.ArenaSetupPhase.Setup, hostFight.MultiplayerSetupPhaseForHeadless,
+                "The host must start in the authoring (Setup) sub-phase.");
+            Assert.AreEqual(ArenaFightScreen.ArenaSetupPhase.Setup, joinFight.MultiplayerSetupPhaseForHeadless,
+                "The join must start in the authoring (Setup) sub-phase.");
+            Assert.AreEqual(-1L, hostFight.MultiplayerLiveSimTickForHeadless,
+                "The host must NOT spawn while the setup gate holds.");
+            Assert.AreEqual(-1L, joinFight.MultiplayerLiveSimTickForHeadless,
+                "The join must NOT spawn while the setup gate holds.");
+        }
+        finally
+        {
+            try { hostFight?.ExitScreen(); } catch { }
+            try { joinFight?.ExitScreen(); } catch { }
+            DisposeLobbyTransport(hostLobby);
+            DisposeLobbyTransport(joinLobby);
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = savedConfigPath;
+            ArenaFightScreen.CareerSavePath = savedStaticPath;
+            GlobalStats.Defaults.EnableArenaCustomFleet = savedFlag;
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+            try { if (File.Exists(tempCareer)) File.Delete(tempCareer); } catch { }
+            Assert.AreEqual(snapshot, ResourceManager.Ships.Designs.Count,
+                "Teardown must leave the global design table exactly as it started (no leaked designs).");
+        }
+    }
+
+    // Flag-OFF regression: the opt-in is a true no-op when EnableArenaCustomFleet is off — even if the pill flag is
+    // somehow set, BuildArenaRuleset zeroes SetupPhase and LaunchVisibleArena won't enter setup. The duel spawns as
+    // today (both peers advance the sim), and the in-arena setup controls never appear.
+    [TestMethod]
+    public void PROOF_LOBBY_OPT_IN_IS_NOOP_WHEN_FLAG_OFF_Headless()
+    {
+        LoadAllGameData();
+        string dir = Path.Combine(Path.GetTempPath(), $"arena_mp_optinoff_{Guid.NewGuid():N}");
+        string savedConfigPath = ArenaMultiplayerLobbyConfig.ConfigPathOverride;
+        string savedStaticPath = ArenaFightScreen.CareerSavePath;
+        string tempCareer = Path.Combine(Path.GetTempPath(), $"arena_mp_optinoff_{Guid.NewGuid():N}.yaml");
+        bool savedFlag = GlobalStats.Defaults.EnableArenaCustomFleet;
+        ArenaFightScreen.CareerSavePath = tempCareer;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+        ArenaMultiplayerLobbyScreen hostLobby = null;
+        ArenaMultiplayerLobbyScreen joinLobby = null;
+        ArenaFightScreen hostFight = null;
+        ArenaFightScreen joinFight = null;
+        try
+        {
+            GlobalStats.Defaults.EnableArenaCustomFleet = false; // flag OFF
+            Directory.CreateDirectory(dir);
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = Path.Combine(dir, "mp-lobby-config.yaml");
+            int port = FreeTcpPort();
+            Assert.IsTrue(ArenaMultiplayerLobbyConfig.Save(new ArenaMultiplayerLobbyConfig
+            {
+                Host = "127.0.0.1",
+                Port = port,
+                PeerSlot = ArenaMultiplayerLobbyScreen.DefaultJoinPeerSlot,
+            }));
+
+            // Even with the pill flag set, a flag-off launch must NOT enter setup.
+            (hostLobby, joinLobby, hostFight, joinFight) = DriveRealLobbiesToLaunchedFight(
+                host => host.SetRequestArenaSetupPhaseForHeadless(true));
+
+            Assert.IsFalse(hostFight.ArenaSetupActiveForHeadless,
+                "Flag OFF: the host must NOT enter the setup phase (a true no-op — spawns as today).");
+            Assert.IsFalse(joinFight.ArenaSetupActiveForHeadless,
+                "Flag OFF: the join must NOT enter the setup phase.");
+            // And the legacy duel still runs: the sim advances on both peers.
+            bool live = false;
+            for (int frame = 0; frame < 1800 && !live; ++frame)
+            {
+                hostFight.Update(1f / 60f);
+                joinFight.Update(1f / 60f);
+                live = hostFight.MultiplayerLiveSimTickForHeadless > 0
+                       && joinFight.MultiplayerLiveSimTickForHeadless > 0;
+            }
+            Assert.IsTrue(live, "Flag-off duel must spawn and advance the sim exactly as before.");
+        }
+        finally
+        {
+            try { hostFight?.ExitScreen(); } catch { }
+            try { joinFight?.ExitScreen(); } catch { }
+            DisposeLobbyTransport(hostLobby);
+            DisposeLobbyTransport(joinLobby);
+            ArenaMultiplayerLobbyConfig.ConfigPathOverride = savedConfigPath;
+            ArenaFightScreen.CareerSavePath = savedStaticPath;
+            GlobalStats.Defaults.EnableArenaCustomFleet = savedFlag;
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+            try { if (File.Exists(tempCareer)) File.Delete(tempCareer); } catch { }
+        }
+    }
+
+    // ===================================================================================================
+    // UI WIRING — THE IN-ARENA SETUP ENTRY BUTTONS ROUTE TO THE REAL ENDPOINTS. In the SETUP phase the fight
+    // screen's HUD offers [Design Ship]/[Import Design]/[Fleet-Formation]/[Ready]. This proves those buttons are
+    // built, visible only in setup, and that clicking [Design Ship] and [Fleet / Formation] mount the REAL base
+    // ShipDesignScreen / FleetDesignScreen (like PROOF_REAL_EDITORS_LAUNCH), and [Ready] advances the phase.
+    // ===================================================================================================
+    [TestMethod]
+    public void PROOF_SETUP_ENTRY_BUTTONS_ROUTE_TO_REAL_EDITORS_Headless()
+    {
+        LoadAllGameData();
+        bool savedFlag = GlobalStats.Defaults.EnableArenaCustomFleet;
+        int snapshot = ResourceManager.Ships.Designs.Count;
+        ArenaFightScreen screen = null;
+        ScreenManager sm = ScreenManager.Instance;
+        try
+        {
+            GlobalStats.Defaults.EnableArenaCustomFleet = true;
+            sm.ExitAll(clear3DObjects: true);
+            screen = ArenaFightScreen.Create("United", 0x5EED, startAtHub: false, opponentPreference: "");
+            sm.GoToScreen(screen, clear3DObjects: true); // LoadContent builds EmpireUI + ArenaPlayer + the setup HUD
+            screen.EnterMultiplayerSetupPhase();
+
+            // The setup HUD buttons exist and are wired (found by Name on the fight screen's UI tree).
+            UIButton design = FindButtonByName(screen, "SetupDesignButton");
+            UIButton import = FindButtonByName(screen, "SetupImportButton");
+            UIButton formation = FindButtonByName(screen, "SetupFormationButton");
+            UIButton ready = FindButtonByName(screen, "SetupReadyButton");
+            Assert.IsNotNull(design, "The in-arena setup HUD must offer a [Design Ship] button.");
+            Assert.IsNotNull(import, "The in-arena setup HUD must offer an [Import Design] button.");
+            Assert.IsNotNull(formation, "The in-arena setup HUD must offer a [Fleet / Formation] button (the primary UI).");
+            Assert.IsNotNull(ready, "The in-arena setup HUD must offer a [Ready] button.");
+
+            // [Design Ship] routes to the REAL base ShipDesignScreen against the arena universe.
+            design.OnClick(design);
+            Assert.IsNotNull(FindScreenOnScreenManager<ShipDesignScreen>(),
+                "[Design Ship] MUST mount the REAL base ShipDesignScreen (OpenArenaSetupDesigner).");
+
+            // [Fleet / Formation] routes to the REAL base FleetDesignScreen — the PRIMARY setup UI per the director.
+            formation.OnClick(formation);
+            Assert.IsNotNull(FindScreenOnScreenManager<FleetDesignScreen>(),
+                "[Fleet / Formation] MUST mount the REAL base FleetDesignScreen (OpenArenaSetupFormation).");
+
+            // [Ready] advances the setup machine Setup -> LocalReady (MarkSetupLocalReady).
+            Assert.AreEqual(ArenaFightScreen.ArenaSetupPhase.Setup, screen.MultiplayerSetupPhaseForHeadless);
+            ready.OnClick(ready);
+            Assert.AreEqual(ArenaFightScreen.ArenaSetupPhase.LocalReady, screen.MultiplayerSetupPhaseForHeadless,
+                "[Ready] MUST advance the setup machine to LocalReady (MarkSetupLocalReady).");
+        }
+        finally
+        {
+            try { screen?.ExitScreen(); } catch { }
+            try { sm.ExitAll(clear3DObjects: true); } catch { }
+            GlobalStats.Defaults.EnableArenaCustomFleet = savedFlag;
+            Assert.AreEqual(snapshot, ResourceManager.Ships.Designs.Count,
+                "Teardown must leave the global design table exactly as it started (no leaked designs).");
+        }
+    }
+
+    // Find a UIButton on a screen's UI tree by its field-assigned Name (the setup HUD sets none, so we reflect the
+    // private field directly — the buttons are private fields on ArenaFightScreen).
+    static UIButton FindButtonByName(ArenaFightScreen screen, string fieldName)
+    {
+        const BindingFlags Priv = BindingFlags.Instance | BindingFlags.NonPublic;
+        FieldInfo f = typeof(ArenaFightScreen).GetField(fieldName, Priv);
+        return f?.GetValue(screen) as UIButton;
+    }
+
+    // ===================================================================================================
     // §2.3 — THE LOOP IS CLOSED: a custom authored INSIDE the in-arena SETUP phase actually reaches the FIGHT.
     // Two REAL peers over loopback TCP each author a DISTINCT custom (a hull the other never authored) in the
     // setup phase, capture a formation, reach Ready. The host rebuilds the authoritative start from the SETUP

@@ -43,6 +43,13 @@ public sealed class ArenaMultiplayerRuleset
     public string RosterCommitmentHash = "";             // reserved (honor-system, Q3)
     public string ContentFingerprint = "";               // resolved design/module content fingerprint
 
+    // Host-authored opt-in (custom-fleet UI wiring): when true AND EnableArenaCustomFleet is on, the fight
+    // screen enters the in-arena PRE-MATCH SETUP phase (design/import ships + arrange a formation) before the
+    // fight spawns. Carried in the authoritative start so BOTH peers agree to enter setup (a divergent value
+    // rejects cleanly at the handshake via AppendTo below — never a one-sided setup->spawn desync). Default
+    // false => flag-off / legacy launch is unchanged (spawns immediately, as today).
+    public bool SetupPhase;
+
     // Resolved countdown length in SIM TICKS (never wall-clock). 60 Hz. Stored so no float->tick
     // conversion happens per frame.
     public uint CountdownTicks => (uint)(CountdownSeconds < 0 ? 0 : CountdownSeconds) * 60u;
@@ -64,6 +71,10 @@ public sealed class ArenaMultiplayerRuleset
         h.AddInt(WagerCredits);
         h.AddString(RosterCommitmentHash ?? "");
         h.AddString(ContentFingerprint ?? "");
+        // Appended LAST (matches the append-only wire/exporter ordering). Folding SetupPhase means two peers
+        // that disagree on the setup opt-in fail ValidateStartMessage's SettingsHash check up front instead of
+        // one entering setup while the other spawns. Constant-false for flag-off matches (both peers agree).
+        h.AddInt(SetupPhase ? 1 : 0);
     }
 
     public ArenaMultiplayerRuleset Clone() => new()
@@ -79,5 +90,6 @@ public sealed class ArenaMultiplayerRuleset
         WagerCredits = WagerCredits,
         RosterCommitmentHash = RosterCommitmentHash ?? "",
         ContentFingerprint = ContentFingerprint ?? "",
+        SetupPhase = SetupPhase,
     };
 }
