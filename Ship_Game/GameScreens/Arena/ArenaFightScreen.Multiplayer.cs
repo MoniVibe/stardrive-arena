@@ -224,11 +224,20 @@ public sealed partial class ArenaFightScreen
 
     // Field-level desync diagnostic (ARENA_DESYNC_INSTRUMENTATION_REPORT). On the live path each peer only holds
     // its OWN sim state (the remote is a 128-bit checksum), so each peer dumps ITS OWN per-ship field breakdown
-    // when a desync fires; diffing the two machines' logs pinpoints the diverging ship + field. We cache the last
-    // turn's per-ship digests so the PRIOR (last-clean) turn can be dumped alongside the diverging turn. Populated
-    // only while the dump flag is on — a true no-op otherwise.
-    List<UniverseStateFieldDump.ShipDigest> MultiplayerPriorTurnDigests;
-    uint MultiplayerPriorTurnNumber;
+    // when a match ends abnormally; diffing the two machines' logs pinpoints the diverging ship + field.
+    //
+    // ROLLING WINDOW: the two peers stop at DIFFERENT turns (host detects the desync and voids at turn N; the join
+    // never detects it — it stalls a few turns later then eats a disconnect). To diff at a COMMON turn each peer
+    // must have several recent turns cached, so we keep a ring buffer of the last K turns' per-ship digests instead
+    // of just the single prior turn. On any abnormal completion BOTH peers flush the whole window (each labeled by
+    // its absolute turn number), so the join — which only ever sees the disconnect — still writes its recent state.
+    // Populated only while the dump is armed (ArenaDesyncFieldDumpEnabled) — a true no-op otherwise; pure
+    // observation that never touches an [StarData] field, the RNG, or the wire checksum.
+    const int MultiplayerDesyncWindowTurns = 8;
+    readonly (uint Turn, List<UniverseStateFieldDump.ShipDigest> Digests)[] MultiplayerDesyncWindow
+        = new (uint, List<UniverseStateFieldDump.ShipDigest>)[MultiplayerDesyncWindowTurns];
+    int MultiplayerDesyncWindowCount; // number of slots filled (caps at MultiplayerDesyncWindowTurns)
+    int MultiplayerDesyncWindowNext;  // next write index (ring cursor)
     bool MultiplayerDesyncFieldsDumped;
 
     public bool MultiplayerLiveActive => MultiplayerLiveSession != null;
@@ -1673,25 +1682,67 @@ public sealed partial class ArenaFightScreen
             DumpMultiplayerDesyncFields(turn);
         }
 
-        // Cache THIS turn's per-ship digests so the next turn (which may be the diverging one) can dump the
-        // last-clean state alongside. Gated behind the dump flag — pure observation, never perturbs the sim.
+        // Push THIS turn's per-ship digests into the rolling window so an abnormal end can dump the last K turns
+        // (each peer stops at a different turn; a common turn must be cached on BOTH). Gated behind the arm check —
+        // pure observation, never perturbs the sim.
         if (ArenaDesyncFieldDumpEnabled())
+            PushMultiplayerDesyncWindow(turn);
+    }
+
+    // Cache one turn's per-ship digests into the ring buffer, evicting the oldest beyond K. Pure read of UState.
+    void PushMultiplayerDesyncWindow(uint turn)
+    {
+        MultiplayerDesyncWindow[MultiplayerDesyncWindowNext] = (turn, UniverseStateFieldDump.ShipDigests(UState));
+        MultiplayerDesyncWindowNext = (MultiplayerDesyncWindowNext + 1) % MultiplayerDesyncWindowTurns;
+        if (MultiplayerDesyncWindowCount < MultiplayerDesyncWindowTurns)
+            ++MultiplayerDesyncWindowCount;
+    }
+
+    // The window's cached turns in ascending turn order (oldest first). Empty when nothing has been captured.
+    IEnumerable<(uint Turn, List<UniverseStateFieldDump.ShipDigest> Digests)> MultiplayerDesyncWindowInOrder()
+    {
+        int count = MultiplayerDesyncWindowCount;
+        // Oldest slot is Next when full; when not yet full, entries occupy [0, count) in write order.
+        int start = MultiplayerDesyncWindowCount == MultiplayerDesyncWindowTurns ? MultiplayerDesyncWindowNext : 0;
+        for (int i = 0; i < count; ++i)
         {
-            MultiplayerPriorTurnDigests = UniverseStateFieldDump.ShipDigests(UState);
-            MultiplayerPriorTurnNumber = turn;
+            var entry = MultiplayerDesyncWindow[(start + i) % MultiplayerDesyncWindowTurns];
+            if (entry.Digests != null)
+                yield return entry;
         }
     }
 
-    // Whether the field-level desync dump is armed. On by the explicit flag, and auto-on whenever the custom-fleet
-    // telemetry path is active (that is the path that produced the live turn-1232 desync), so a live custom-fleet
-    // reproduction self-diagnoses with no extra toggle. Pure gate — a false result means nothing is captured.
-    static bool ArenaDesyncFieldDumpEnabled()
-        => GlobalStats.Defaults != null
-           && (GlobalStats.Defaults.EnableArenaDesyncFieldDump || GlobalStats.Defaults.EnableArenaCustomFleet);
+    // Look up the cached digests for a specific turn number in the window (null if evicted / never captured).
+    List<UniverseStateFieldDump.ShipDigest> MultiplayerDesyncWindowDigestsForTurn(uint turn)
+    {
+        foreach (var e in MultiplayerDesyncWindowInOrder())
+            if (e.Turn == turn)
+                return e.Digests;
+        return null;
+    }
 
-    // Emit the field-level breakdown for the diverging turn AND the turn before (idempotent — a desync fires
-    // once per match). Each peer dumps ITS OWN authoritative state; the two machines' DESYNC_FIELDS lines diff
-    // to reveal the first divergent ship + field. No-op when the flag is off or already dumped.
+    // Whether the field-level desync dump is armed. Auto-on for EVERY live MP session (the dump only WRITES on an
+    // abnormal end, which is rare, and per-turn digest caching is cheap pure observation — arming it for all live
+    // matches guarantees self-diagnosis regardless of how the fleets were sourced, closing the by-NAME fleet-picker
+    // hole where EnableArenaCustomFleet stayed off and nothing was ever captured). The explicit
+    // EnableArenaDesyncFieldDump flag still forces it on for headless runs with no live session. Pure gate — a
+    // false result means nothing is captured; a true result never perturbs the sim.
+    bool ArenaDesyncFieldDumpEnabled()
+        => ArenaDesyncFieldDumpArmed(
+            liveSessionActive: MultiplayerLiveSession != null,
+            explicitFlag: GlobalStats.Defaults?.EnableArenaDesyncFieldDump == true,
+            customFleetFlag: GlobalStats.Defaults?.EnableArenaCustomFleet == true);
+
+    // Pure predicate behind the arm gate (exposed for a direct truth-table unit test). Armed whenever a live MP
+    // session is active — regardless of how fleets were sourced (by-NAME picker, by-design table, or setup phase) —
+    // OR either headless flag is set.
+    public static bool ArenaDesyncFieldDumpArmed(bool liveSessionActive, bool explicitFlag, bool customFleetFlag)
+        => liveSessionActive || explicitFlag || customFleetFlag;
+
+    // Emit the field-level breakdown at desync-DETECT time (host only — the join never detects). Dumps the
+    // diverging turn AND the turn before (from the ring buffer), then flushes the whole rolling window so the
+    // host's window is in the identical format the join will emit on its disconnect completion. Idempotent —
+    // guarded by MultiplayerDesyncFieldsDumped. No-op when unarmed or telemetry is unavailable.
     void DumpMultiplayerDesyncFields(uint divergingTurn)
     {
         if (MultiplayerDesyncFieldsDumped || !ArenaDesyncFieldDumpEnabled() || MultiplayerTelemetry == null)
@@ -1700,21 +1751,49 @@ public sealed partial class ArenaFightScreen
         try
         {
             IReadOnlyList<UniverseStateFieldDump.ShipDigest> prior =
-                MultiplayerPriorTurnDigests != null && MultiplayerPriorTurnNumber == divergingTurn - 1
-                    ? MultiplayerPriorTurnDigests
-                    : null;
+                MultiplayerDesyncWindowDigestsForTurn(divergingTurn - 1);
             // PRIOR line from the CACHED digests (the last-clean turn, captured before the sim advanced into the
             // diverging turn — current UState has already moved on, so we cannot re-read it).
             if (prior != null)
                 MultiplayerTelemetry.FieldDump("PRIOR",
-                    UniverseStateFieldDump.DumpFromDigests(prior, MultiplayerPriorTurnNumber, null));
+                    UniverseStateFieldDump.DumpFromDigests(prior, divergingTurn - 1, null));
             // DIVERGING line from LIVE UState, anchored on the first ship whose digest changed since PRIOR.
             MultiplayerTelemetry.FieldDump("DIVERGING", UniverseStateFieldDump.DumpTurn(UState, divergingTurn, prior));
+            // Flush the whole window too (each turn labeled), so host+join share one comparable window format.
+            EmitMultiplayerDesyncWindow();
         }
         catch (Exception e)
         {
             MultiplayerTelemetry.Event("DESYNC_FIELDS_ERROR", e.Message);
         }
+    }
+
+    // Flush the entire rolling window as one WINDOW line per cached turn, labeled by absolute turn number, so a
+    // peer-to-peer diff aligns by turn (find the common turn present on BOTH logs, diff its per-ship ShipDigest
+    // roster to localize the first ship+field whose IEEE754 bits differ). Reuses UniverseStateFieldDump's per-ship,
+    // per-field bit emission. Called at most once per match (callers set MultiplayerDesyncFieldsDumped first).
+    void EmitMultiplayerDesyncWindow()
+    {
+        if (MultiplayerTelemetry == null)
+            return;
+        foreach (var e in MultiplayerDesyncWindowInOrder())
+            MultiplayerTelemetry.FieldDump($"WINDOW turn={e.Turn}",
+                UniverseStateFieldDump.DumpFromDigests(e.Digests, e.Turn, null));
+    }
+
+    // Whether a completion reason marks an ABNORMAL end that must flush the window on BOTH peers. The join in a
+    // real cross-machine desync never detects the desync — it STALLED then took a NETWORK disconnect, so those two
+    // prefixes are the whole point of dumping on completion. LIVENESS (host saw the peer go unresponsive) and a
+    // bare session error are abnormal too. Normal ends ("time limit", "draw", "winner peer N") do NOT dump.
+    static bool IsAbnormalMultiplayerCompletion(string reason)
+    {
+        if (string.IsNullOrEmpty(reason))
+            return false;
+        return reason.StartsWith("DESYNC", StringComparison.Ordinal)
+            || reason.StartsWith("NETWORK", StringComparison.Ordinal)
+            || reason.StartsWith("STALLED", StringComparison.Ordinal)
+            || reason.StartsWith("LIVENESS", StringComparison.Ordinal)
+            || reason.StartsWith("session error", StringComparison.Ordinal);
     }
 
     void CompleteMultiplayerLive(string reason)
@@ -1731,6 +1810,20 @@ public sealed partial class ArenaFightScreen
             $"reason='{reason}' turns={MultiplayerLiveResult.TurnsCompleted} final={MultiplayerLiveResult.FinalHash}");
         Log.Warning($"Arena MP COMPLETE role={MultiplayerLiveSession.Role} reason='{reason}' "
                     + $"turns={MultiplayerLiveResult.TurnsCompleted} final={MultiplayerLiveResult.FinalHash}");
+        // BOTH-PEERS WINDOW FLUSH (ARENA_DESYNC_INSTRUMENTATION_REPORT). On ANY abnormal end — desync, disconnect,
+        // stall, liveness, session error — dump the whole rolling window so the JOIN (which only ever sees the
+        // disconnect and never detected the desync) still writes its recent-turns field state, matching the host's
+        // window format for a turn-aligned peer-to-peer diff. Idempotent via MultiplayerDesyncFieldsDumped; the
+        // host's detect-time dump may already have set it (then this is a no-op). Pure observation, gated by arm.
+        if (!MultiplayerDesyncFieldsDumped
+            && ArenaDesyncFieldDumpEnabled()
+            && MultiplayerTelemetry != null
+            && IsAbnormalMultiplayerCompletion(reason))
+        {
+            MultiplayerDesyncFieldsDumped = true;
+            try { EmitMultiplayerDesyncWindow(); }
+            catch (Exception e) { MultiplayerTelemetry.Event("DESYNC_FIELDS_ERROR", e.Message); }
+        }
         // ADDENDUM 3: gather the after-action report once, at Resolve, from the final fielded ship state.
         MultiplayerAfterAction = GatherMultiplayerAfterAction();
         ShowMultiplayerEndPanel();
@@ -2204,6 +2297,52 @@ public sealed partial class ArenaFightScreen
     // the supplied prior digests, else highest-Id). Used by the in-process harness + live desync telemetry.
     public string MultiplayerFieldDumpText(uint turn, IReadOnlyList<UniverseStateFieldDump.ShipDigest> prior = null)
         => UniverseStateFieldDump.DumpTurn(UState, turn, prior);
+
+    // ---- Rolling-window desync-instrumentation test seams (ARENA_DESYNC_INSTRUMENTATION_REPORT). These call the
+    // REAL production helpers so a headless test proves the live-path ring buffer + both-peers window flush without
+    // standing up a full network match (RunTwoPeerLockstep bypasses the live Record/Complete path). Test-only.
+    public int MultiplayerDesyncWindowCapacityForTest => MultiplayerDesyncWindowTurns;
+
+    // Push one turn's digests into the ring (real PushMultiplayerDesyncWindow — reads current UState).
+    public void MultiplayerDesyncWindowPushForTest(uint turn) => PushMultiplayerDesyncWindow(turn);
+
+    // The turns currently cached in the window, oldest-first (proves K-cap eviction ordering).
+    public IReadOnlyList<uint> MultiplayerDesyncWindowTurnsForTest()
+        => MultiplayerDesyncWindowInOrder().Select(e => e.Turn).ToArray();
+
+    // Arm a telemetry writer into dir so the flush's DESYNC_FIELDS lines land in a readable file. Returns its path.
+    public string MultiplayerArmTelemetryForTest(string dir, ArenaMultiplayerSettings settings = null)
+    {
+        ArenaMultiplayerTelemetry.OutputDirectoryOverride = dir;
+        MultiplayerTelemetry?.Dispose();
+        MultiplayerTelemetry = ArenaMultiplayerTelemetry.Start("test", "live-arena", settings);
+        return MultiplayerTelemetry.SessionPath;
+    }
+
+    // Flush the window through the REAL EmitMultiplayerDesyncWindow, guarding once like the production callers do.
+    public void MultiplayerDesyncWindowFlushForTest()
+    {
+        if (MultiplayerDesyncFieldsDumped)
+            return;
+        MultiplayerDesyncFieldsDumped = true;
+        EmitMultiplayerDesyncWindow();
+        MultiplayerTelemetry?.Event("TEST_FLUSH_DONE", "");
+    }
+
+    // Whether the field dump would arm for this peer right now (proves the by-NAME live-match arm-gate hole is shut).
+    public bool MultiplayerDesyncDumpArmedForTest() => ArenaDesyncFieldDumpEnabled();
+
+    // Dispose the test telemetry writer so the log file is fully flushed + closed before the test reads it back.
+    public void MultiplayerTelemetryDisposeForTest()
+    {
+        MultiplayerTelemetry?.Dispose();
+        MultiplayerTelemetry = null;
+    }
+
+    // The exact abnormal-completion classifier the completion dump uses (proves STALLED/NETWORK/DESYNC dump; the
+    // normal ends do not). Static production logic exposed for a direct unit assertion.
+    public static bool MultiplayerCompletionIsAbnormalForTest(string reason)
+        => IsAbnormalMultiplayerCompletion(reason);
 
     public void ForceMultiplayerDesyncForTest()
     {

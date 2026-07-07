@@ -105,9 +105,10 @@ public sealed class ArenaMultiplayerTelemetry : IDisposable
             + $"hash={hash} commandsSubmitted={commandsSubmitted} playerAlive={playerAlive} enemyAlive={enemyAlive}");
     }
 
-    // Field-level desync breakdown (ARENA_DESYNC_INSTRUMENTATION_REPORT). Emitted per peer when a desync fires,
-    // for the diverging turn AND the turn before, so a peer-to-peer log diff localizes ship + field. Always
-    // forced (a desync is rare and this is the whole point of the run). label is "DIVERGING" or "PRIOR".
+    // Field-level desync breakdown (ARENA_DESYNC_INSTRUMENTATION_REPORT). Emitted per peer on an abnormal match
+    // end so a peer-to-peer log diff localizes ship + field. label is "DIVERGING"/"PRIOR" (host detect-time) or
+    // "WINDOW turn=<n>" (rolling-window flush on completion — one line per cached turn, so both peers emit
+    // overlapping absolute turns even though they stopped at different turns). Always written (rare + the point).
     public void FieldDump(string label, string dump)
         => Write("DESYNC_FIELDS", $"which={label} {dump ?? ""}");
 

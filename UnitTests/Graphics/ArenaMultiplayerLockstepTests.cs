@@ -2151,6 +2151,120 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
         }
     }
 
+    // ROLLING-WINDOW + BOTH-PEERS-ON-COMPLETION dump (ARENA_DESYNC_INSTRUMENTATION_REPORT follow-up). The live
+    // 2-machine desync captured nothing because (a) the arm gate never fired for a by-NAME fleet match, and (b)
+    // only the detecting peer dumped — the JOIN merely stalled then disconnected and wrote nothing. This proves
+    // the fixes: the gate arms for any live session; the ring buffer keeps the last K turns; and the completion
+    // dump flushes the whole window (labeled by absolute turn, with per-field IEEE754 bits) on an abnormal end —
+    // which is exactly the path the JOIN takes (STALLED / NETWORK). RunTwoPeerLockstep bypasses the live
+    // Record/Complete path, so we drive the REAL production helpers directly via test seams on one screen.
+    [TestMethod]
+    public void DesyncWindow_RollingCaptureAndBothPeersCompletionDump_Headless()
+    {
+        LoadAllGameData();
+        string tempPath = Path.Combine(Path.GetTempPath(), $"arena_mp_window_{Guid.NewGuid():N}.yaml");
+        string telemetryDir = Path.Combine(Path.GetTempPath(), $"arena_mp_window_tel_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(telemetryDir);
+        string savedOverride = ArenaMultiplayerTelemetry.OutputDirectoryOverride;
+        ArenaFightScreen.CareerSavePath = tempPath;
+        ArenaFightScreen.PendingPlayerDesignName = null;
+        ArenaFightScreen screen = null;
+
+        try
+        {
+            // ARM-GATE truth table (pure predicate): a live session arms the dump regardless of the custom-fleet
+            // flag — this is the fix for the by-NAME fleet-picker hole where EnableArenaCustomFleet stayed off.
+            Assert.IsTrue(ArenaFightScreen.ArenaDesyncFieldDumpArmed(liveSessionActive: true,
+                explicitFlag: false, customFleetFlag: false),
+                "A live MP session must arm the field dump even when NO custom-fleet/explicit flag is set (by-NAME hole).");
+            Assert.IsTrue(ArenaFightScreen.ArenaDesyncFieldDumpArmed(false, explicitFlag: true, customFleetFlag: false),
+                "The explicit headless flag must still arm the dump with no live session.");
+            Assert.IsFalse(ArenaFightScreen.ArenaDesyncFieldDumpArmed(false, false, false),
+                "With no live session and no flag the dump must stay off (a true no-op).");
+
+            // ABNORMAL-completion classifier (the exact production condition CompleteMultiplayerLive uses). The
+            // JOIN's real symptom is STALLED then NETWORK — both must dump; a clean end must not.
+            Assert.IsTrue(ArenaFightScreen.MultiplayerCompletionIsAbnormalForTest("STALLED: WAIT_HOST_FRAME turn=183"),
+                "A STALLED completion (the JOIN's exact symptom) must trigger the window dump.");
+            Assert.IsTrue(ArenaFightScreen.MultiplayerCompletionIsAbnormalForTest("NETWORK: Peer disconnected."),
+                "A NETWORK disconnect must trigger the window dump.");
+            Assert.IsTrue(ArenaFightScreen.MultiplayerCompletionIsAbnormalForTest("DESYNC turn 180: ..."),
+                "A DESYNC completion must trigger the window dump.");
+            Assert.IsFalse(ArenaFightScreen.MultiplayerCompletionIsAbnormalForTest("time limit"),
+                "A clean time-limit end must NOT dump.");
+            Assert.IsFalse(ArenaFightScreen.MultiplayerCompletionIsAbnormalForTest("winner peer 1"),
+                "A clean winner end must NOT dump.");
+            Assert.IsFalse(ArenaFightScreen.MultiplayerCompletionIsAbnormalForTest("draw"),
+                "A clean draw must NOT dump.");
+
+            // Stand up a spawned arena so the window captures real per-ship digests (mirrors the guard test setup).
+            var settings = new ArenaMultiplayerSettings
+            {
+                MatchSeed = 0x5EED, RngSeed = 0xA12EA000u, InputDelay = 3, MaxTurns = 30, CommandEveryTurns = 1,
+                HostFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x1001ul),
+                JoinFleetDesignNames = FleetNames(ArenaStartArchetype.Wingmates, 0x2002ul),
+            }.WithResolvedFleets();
+
+            screen = ArenaFightScreen.Create(settings.HostRacePreference, settings.MatchSeed,
+                startAtHub: false, opponentPreference: settings.JoinRacePreference);
+            screen.ConfigureMultiplayerPvP(settings);
+            screen.CreateSimThread = false;
+            screen.LoadContent();
+            screen.PrepareForMultiplayerLockstep(settings.RngSeed);
+
+            int k = screen.MultiplayerDesyncWindowCapacityForTest;
+            Assert.IsTrue(k >= 4, $"Window capacity K should be a small window >= 4, was {k}.");
+
+            // Push MORE than K turns; the ring must retain exactly the LAST K, oldest evicted, ascending order.
+            // (Turn numbers chosen to overlap what a second peer stalled a few turns later would also have cached.)
+            uint firstTurn = 170;
+            uint lastTurn = 190;
+            for (uint t = firstTurn; t <= lastTurn; ++t)
+                screen.MultiplayerDesyncWindowPushForTest(t);
+
+            IReadOnlyList<uint> turns = screen.MultiplayerDesyncWindowTurnsForTest();
+            Assert.AreEqual(k, turns.Count, $"Window must retain exactly K={k} turns, had {turns.Count}.");
+            Assert.AreEqual(lastTurn, turns[turns.Count - 1], "Newest cached turn must be the last pushed.");
+            Assert.AreEqual(lastTurn - (uint)k + 1, turns[0], "Oldest cached turn must be lastTurn-K+1 (evicted older).");
+            for (int i = 1; i < turns.Count; ++i)
+                Assert.AreEqual(turns[i - 1] + 1, turns[i], "Cached turns must be contiguous ascending (in-order flush).");
+
+            // Arm telemetry and flush the window through the REAL EmitMultiplayerDesyncWindow, then read it back.
+            string logPath = screen.MultiplayerArmTelemetryForTest(telemetryDir, settings);
+            screen.MultiplayerDesyncWindowFlushForTest();
+            // Second flush must be a no-op (idempotent guard) — proves at-most-once-per-match.
+            screen.MultiplayerDesyncWindowFlushForTest();
+            screen.MultiplayerTelemetryDisposeForTest();
+
+            string[] lines = File.ReadAllLines(logPath);
+            string[] windowLines = lines.Where(l => l.Contains("DESYNC_FIELDS which=WINDOW")).ToArray();
+            Assert.AreEqual(k, windowLines.Length,
+                $"The completion flush must emit exactly one WINDOW line per cached turn (K={k}), got {windowLines.Length}. "
+                + $"Lines:\n{string.Join("\n", windowLines)}");
+
+            // Every WINDOW line must be labeled with its absolute turn AND carry per-field IEEE754 bits so a
+            // peer-to-peer diff aligns by turn and localizes an FP low-bit drift vs a discrete flip.
+            for (uint t = turns[0]; t <= lastTurn; ++t)
+            {
+                string expectedLabel = $"which=WINDOW turn={t} ";
+                Assert.IsTrue(windowLines.Any(l => l.Contains(expectedLabel)),
+                    $"Missing WINDOW line for turn {t}. Lines:\n{string.Join("\n", windowLines)}");
+            }
+            // Per-field bits present (PosX=..(0x........)) and the per-ship roster (id:hi:lo) for turn alignment.
+            Assert.IsTrue(windowLines.All(l => l.Contains("roster=[")),
+                "Each WINDOW line must carry the per-ship digest roster (id:hi:lo) so a diff finds the divergent ship.");
+            Assert.IsTrue(windowLines.All(l => System.Text.RegularExpressions.Regex.IsMatch(l, @"PosX=[^ ]+\(0x[0-9A-F]{8}\)")),
+                "Each WINDOW line must expand a ship's per-field IEEE754 bits (PosX=..(0x........)) to classify FP drift vs flip.");
+        }
+        finally
+        {
+            ArenaMultiplayerTelemetry.OutputDirectoryOverride = savedOverride;
+            try { screen?.ExitScreen(); } catch { }
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+            try { if (Directory.Exists(telemetryDir)) Directory.Delete(telemetryDir, true); } catch { }
+        }
+    }
+
     static string[] FleetNames(ArenaStartArchetype archetype, ulong seed)
         => CareerManager.StartingRosterDesigns(archetype, seed)
             .Select(d => d.Name)
