@@ -49,7 +49,13 @@ public readonly struct ArenaMultiplayerMatchStatus
     public readonly int EnemyAlive;
     public readonly bool Ended;
     public readonly int WinnerPeerId;
+    // C6: the winning TEAM id (0 = no winner / draw / timeout). At N=2 this maps team 1 -> host, team 2 -> join
+    // (see WinnerPeerId). For N>2 the caller reads WinnerTeamId directly; WinnerPeerId is set to the winning
+    // team's LOWEST slot id (documented tie-break) so single-int consumers still get a stable, peer-agreed value.
+    public readonly int WinnerTeamId;
 
+    // N=2 legacy constructor — LITERALLY the pre-Lane-B reduction (ruling C10 / §5 de-risk a). Untouched so the
+    // byte-identity gate holds: player side alive vs enemy side alive, winner is the surviving side's peer id.
     public ArenaMultiplayerMatchStatus(int playerAlive, int enemyAlive)
     {
         PlayerAlive = playerAlive;
@@ -59,6 +65,35 @@ public readonly struct ArenaMultiplayerMatchStatus
             : playerAlive > 0 && enemyAlive == 0 ? ArenaMultiplayerSession.HostPlayerPeerId
             : enemyAlive > 0 && playerAlive == 0 ? ArenaMultiplayerSession.JoinPlayerPeerId
             : 0;
+        WinnerTeamId = !Ended ? 0
+            : playerAlive > 0 && enemyAlive == 0 ? 1
+            : enemyAlive > 0 && playerAlive == 0 ? 2
+            : 0;
+    }
+
+    // C6 N-SLOT last-team-standing constructor (ruling C6). Pure reduction over replicated per-slot ship state:
+    // aliveByTeam is the OR over each team's slots (a team is alive iff ANY of its slots has an alive ship);
+    // Ended when the count of teams-with-any-alive is <= 1; the winner is that sole surviving team (0 if none).
+    // WinnerPeerId is the winning team's LOWEST slot id (stable, peer-agreed). PlayerAlive/EnemyAlive carry the
+    // slot-0/slot-1 alive counts for the (display-only) losses readout; the DECISION uses only the team reduction.
+    public ArenaMultiplayerMatchStatus(int slot0Alive, int slot1Alive,
+        System.Collections.Generic.IReadOnlyDictionary<int, int> aliveByTeam, int winnerLowestSlotId)
+    {
+        PlayerAlive = slot0Alive;
+        EnemyAlive = slot1Alive;
+        int teamsAlive = 0;
+        int soleTeam = 0;
+        foreach (System.Collections.Generic.KeyValuePair<int, int> kv in aliveByTeam)
+        {
+            if (kv.Value > 0)
+            {
+                teamsAlive++;
+                soleTeam = kv.Key;
+            }
+        }
+        Ended = teamsAlive <= 1;
+        WinnerTeamId = Ended && teamsAlive == 1 ? soleTeam : 0;
+        WinnerPeerId = Ended && teamsAlive == 1 ? winnerLowestSlotId : 0;
     }
 }
 
@@ -974,6 +1009,16 @@ public sealed partial class ArenaFightScreen
                 + "pilot loadout into the match fingerprint would desync the peers. Keep it false "
                 + "until Layer 2 lands.");
 
+        // DETERMINISM (root fix, advisor-ruled): force SERIAL ship-AI update on EVERY MP spawn path. The live path
+        // sets this in PrepareForMultiplayerLockstep, but the in-process build path (RunInProcess/BuildPeerScreen)
+        // never arms a live session, so EnableParallelUpdate stayed at its default TRUE. Under a parallel tick, the
+        // Parallel.For partition boundaries shift when the combatant fleets add ships at N>2, reordering draws on a
+        // shared per-empire RNG stream (e.g. the arena opponent's unfrozen home-system ships in ShipAI.Movement) —
+        // diverging the digest build-to-build/peer-to-peer. Serial update makes those draws a stable, id-ordered,
+        // peer-invariant sequence. Harmless at N=2 (stable ship count already), and it matches the live path.
+        if (UState?.Objects != null)
+            UState.Objects.EnableParallelUpdate = false;
+
         Round = 1;
         AdvanceRoundOnNextFight = false;
         Phase = RunPhase.Fighting;
@@ -1019,16 +1064,21 @@ public sealed partial class ArenaFightScreen
         // List<Ship> instances as PlayerShips/EnemyShips (they are populated by the spawn calls below), and
         // the slot Empires alias ArenaPlayer/ArenaEnemy. Lane A never reads TeamId; it exists for Lane B.
         BuildArenaSlots(liveSettings);
+        // C4 TEAM HOSTILITY (ruling C4). Declare war across every cross-team slot pair in a FIXED ascending
+        // (a,b) slot-pair order on every peer, so the diplomacy graph is a pure fn of the fingerprinted team
+        // map. N==2 keeps the LEGACY single declaration made in Create (ArenaPlayer<->ArenaEnemy) untouched for
+        // byte-parity; the N>2 pass only runs for real N-slot matches (a never-existed surface pre-Lane-B).
+        DeclareMultiplayerTeamHostility();
         // sideMirror mirrors the join side across the arena centerline so both fleets face each
         // other; BOTH peers apply the SAME rule so ship i lands at the same absolute position.
         // Finite-ammo was resolved from the FINGERPRINTED ruleset in ConfigureMultiplayerPvP (which runs on
         // every MP spawn path before LoadContent, even when MultiplayerLiveSession isn't armed yet), so both
         // peers carry the same handshaked value here and stamp identical ship.ArenaFiniteAmmo flags =>
         // lockstep-safe. Default UnlimitedAmmo=true => finite off => regen unchanged from trunk.
-        // N-FLEET SPAWN LOOP (B0 §3). N==2 is LITERALLY the current two calls (byte-parity, never "generalize then
-        // hope it reduces"). N>2 iterates ArenaSlots ascending: slots 0/1 resolve from Host/JoinFleetBundle exactly
-        // as at N=2; slots >=2 resolve their bundle from the per-slot carrier and use a B0 PLACEHOLDER placement
-        // (NOT the C7 arc). Ship-id order is a pure fn of (slot order, per-slot StableNodeOrder) => peer-invariant.
+        // N-FLEET SPAWN LOOP. N==2 is LITERALLY the current two calls (byte-parity, never "generalize then hope it
+        // reduces"). N>2 uses the C7 TEAM SPAWN ARC (ruling C7): order slots by (TeamId, SlotId), place each at a
+        // radial slotCenter derived FROM its integer global index k, facing the arena centre. Ship-id order is a
+        // pure fn of (slot order, per-slot StableNodeOrder) => peer-invariant (proof #6).
         if (ArenaSlots.Length == 2)
         {
             SpawnMultiplayerFormation(PlayerShips, ArenaPlayer, hostBundle, -Gap, +1f, PlayerSpawnFacing, ArenaFiniteAmmoActive);
@@ -1036,17 +1086,7 @@ public sealed partial class ArenaFightScreen
         }
         else
         {
-            for (int i = 0; i < ArenaSlots.Length; ++i)
-            {
-                ArenaSlot slot = ArenaSlots[i];
-                FleetDesignT bundle = ResolveSlotBundle(i, liveSettings, hostBundle, joinBundle);
-                (float sideX, float sideMirror, Vector2 facing) = B0PlacementFor(i);
-                // Per-slot Y lane so same-side slots don't overlap (B0 placeholder; pure fn of index). Slots 0/1
-                // stay on lane 0 (the legacy Y range); each subsequent same-side slot steps out by one lane span.
-                float laneY = i < 2 ? 0f : (i / 2) * B0LaneSpacing;
-                SpawnMultiplayerFormation(slot.Ships, slot.Empire, bundle, sideX, sideMirror, facing,
-                    ArenaFiniteAmmoActive, laneY);
-            }
+            SpawnMultiplayerTeamArcs(liveSettings, hostBundle, joinBundle);
         }
 
         // Deterministic countdown: resolve tick length from the ruleset once (never per-frame).
@@ -1060,10 +1100,28 @@ public sealed partial class ArenaFightScreen
         // Route freeze through ArenaSlots in ascending-slot order (freeze is order-neutral but must run for
         // every slot); at N=2 slot[0]/[1] alias Player/EnemyShips so this is bit-identical to the two calls.
         FreezeMultiplayerSlots();
+        // Root fix (N>2): REMOVE the Create() scaffolding ships — the player/opponent home-system starting ships
+        // that are NOT in any ArenaSlot fleet. These exist only so LoadContent finds a home planet; they are fought
+        // far from ArenaCenter and are never part of the arena match. Their spawn POSITIONS (system generation) and
+        // tick-0 AI both read shared/per-empire RNG streams that shift when the combatant fleets change the ship
+        // count at N>2, diverging the digest. Cleanly removing them (deterministic, ascending Ship.Id) takes them
+        // out of the authoritative hash entirely, closing the desync vector at its source. N=2 keeps them (guarded)
+        // so the byte-identity gate is untouched — at N=2 both peers create the identical set and never diverge.
+        if (ArenaSlots.Length > 2)
+            RemoveNonArenaScaffoldingShips();
         RetargetTimer = 0f;
         RunStarted = PlayerShips.Count > 0 && EnemyShips.Count > 0;
         if (!RunStarted)
             throw new InvalidOperationException("Arena PvP lockstep failed to spawn both fleets.");
+        // DETERMINISM (N>2), LAST spawn step: creating combatant empires + declaring team hostility + spawning the
+        // arena fleets draw a build-order-dependent number of values from the pre-existing empires' per-empire
+        // Random streams (gameplay-invisible, but the RNG-state canary in the authoritative hash catches them,
+        // diverging the empire-lane digest between two in-process peer builds — real peers are separate processes
+        // and agree). Re-seed EVERY empire's Random by its final Id off the fingerprinted RngSeed AFTER all empire
+        // + ship creation is done, resetting each stream to a fresh, build-invariant state right before the first
+        // tick. Called directly (the reflection shim can silently no-op headless). N=2 is guarded out (untouched).
+        if (ArenaSlots.Length > 2 && UState.DeterministicRootSeed != 0)
+            UState.EnableDeterministicRng(UState.DeterministicRootSeed);
         StabilizeMultiplayerArenaViewAndVisibility();
         MultiplayerTelemetry?.Event("PVP_SPAWNED",
             $"hostDesigns=[{string.Join(",", hostDesigns.Select(d => d.Name))}] "
@@ -1077,7 +1135,15 @@ public sealed partial class ArenaFightScreen
         UState.Paused = false;
         UState.P.GravityWellRange = 0;
         UState.Objects.EnableParallelUpdate = false;
-        ArenaEngineCapabilities.TryEnableSeededRng(UState, rngSeed);
+        // If a deterministic root seed is ALREADY established (Create seeded it, and the N>2 spawn re-seeds every
+        // empire's stream by its final Id off that SAME root as the last spawn step), re-seed by that ESTABLISHED
+        // root — NOT the raw rngSeed, whose different topology would re-key the streams away from the spawn-time
+        // reset and re-introduce the empire RNG-canary divergence in the in-process N-peer harness. Falls back to
+        // the reflection shim with rngSeed only when no root was set (legacy/stock-engine path).
+        if (UState.DeterministicRootSeed != 0)
+            UState.EnableDeterministicRng(UState.DeterministicRootSeed);
+        else
+            ArenaEngineCapabilities.TryEnableSeededRng(UState, rngSeed);
     }
 
     public void UpdateMultiplayerLive(float dt)
@@ -1354,6 +1420,9 @@ public sealed partial class ArenaFightScreen
         // on both peers (the committed tick just advanced). This is where the deterministic countdown
         // fires EngageAll — a tick threshold, never a wall-clock dt.
         AdvanceMultiplayerPhase(MultiplayerLiveSim.Tick);
+        // C9 (ruling C9 §3): derive per-slot Forfeited from the committed Empire.ArenaForfeited marker so the
+        // barrier (LivePeerIds) and C6 see a consistent, deterministic drop on the same tick on every peer.
+        RefreshMultiplayerForfeitedSlots();
 
         ArenaMultiplayerMatchStatus status = MultiplayerMatchStatus();
         if (status.Ended)
@@ -1926,10 +1995,67 @@ public sealed partial class ArenaFightScreen
             ScreenManager.GoToScreen(screen, clear3DObjects: true);
     }
 
+    // C9-barrier (ruling C9). The turn advances once EVERY LIVE (non-forfeited) peer has submitted for it. Waits
+    // on PEERS, not teams (3v5 / 1v7 auto-work — there is NO team-count derivation here). At N=2 (the legacy live
+    // duel) LivePeerIds() == { HostPlayerPeerId, JoinPlayerPeerId }, so this is byte-identical to the old two-id
+    // check. A forfeited slot drops out of LivePeerIds() (its Empire.ArenaForfeited flipped by the committed
+    // Forfeit apply), so the host stops waiting on it — while a combat-wiped-but-not-forfeited peer stays in the
+    // wait set (it still submits NoOps). Grep-confirm: the wait set is LivePeerIds().All(peers.Contains).
     bool HasBothInputsForTurn(uint turn)
-        => MultiplayerSubmittedInputs.TryGetValue(turn, out HashSet<int> peers)
-           && peers.Contains(ArenaMultiplayerSession.HostPlayerPeerId)
-           && peers.Contains(ArenaMultiplayerSession.JoinPlayerPeerId);
+    {
+        if (!MultiplayerSubmittedInputs.TryGetValue(turn, out HashSet<int> peers))
+            return false;
+        foreach (int live in LivePeerIds())
+            if (!peers.Contains(live))
+                return false;
+        return true;
+    }
+
+    // The live (non-forfeited) peer id set the barrier waits on, ascending. Waits on PEERS, not teams (there is NO
+    // team-count derivation here — 3v5 / 1v7 just work). At N=2 (empty substrate or the legacy two-slot alias) this
+    // is { HostPlayerPeerId, JoinPlayerPeerId } — the exact legacy wait set. For N>2 it is each live slot's EMPIRE
+    // id: that is the id every peer stamps into SimCommand.PlayerId (the applicator resolves ownership by empire
+    // id, so the submit-tracker keys on it), and a forfeited slot (Empire.ArenaForfeited flipped by the committed
+    // Forfeit apply) drops out — while a combat-wiped-but-not-forfeited peer stays in (it still submits NoOps).
+    public IEnumerable<int> LivePeerIds()
+    {
+        if (ArenaSlots.Length <= 2)
+            return new[] { ArenaMultiplayerSession.HostPlayerPeerId, ArenaMultiplayerSession.JoinPlayerPeerId };
+        return ArenaSlots
+            .Where(s => s.Empire != null && !(s.Forfeited || s.Empire.ArenaForfeited))
+            .Select(s => s.Empire.Id)
+            .OrderBy(id => id)
+            .ToArray();
+    }
+
+    // The empire id of the slot a peer occupies, by SlotId (for the N-peer harness / forfeit proposal). 0 if none.
+    public int EmpireIdForSlotForHeadless(int slotId)
+    {
+        for (int i = 0; i < ArenaSlots.Length; ++i)
+            if (ArenaSlots[i].SlotId == slotId)
+                return ArenaSlots[i].Empire?.Id ?? 0;
+        return 0;
+    }
+
+    // Whether this peer's own slot (by SlotId) has been marked forfeited (Empire.ArenaForfeited). For the harness.
+    public bool SlotForfeitedForHeadless(int slotId)
+    {
+        for (int i = 0; i < ArenaSlots.Length; ++i)
+            if (ArenaSlots[i].SlotId == slotId)
+                return ArenaSlots[i].Forfeited || ArenaSlots[i].Empire?.ArenaForfeited == true;
+        return false;
+    }
+
+    // C9 (ruling C9 §3). After each committed tick, derive ArenaSlot.Forfeited from the deterministic per-empire
+    // Empire.ArenaForfeited marker the applicator set (sticky — once true, stays true). NOT from "0 ships alive":
+    // a combat-wiped peer keeps submitting NoOps and must remain in the barrier wait set, whereas a forfeited peer
+    // must drop out. Presentation-side only; never touches the digest. Called at the single committed-tick site.
+    void RefreshMultiplayerForfeitedSlots()
+    {
+        for (int i = 0; i < ArenaSlots.Length; ++i)
+            if (ArenaSlots[i].Empire?.ArenaForfeited == true)
+                ArenaSlots[i].Forfeited = true;
+    }
 
     static bool ShouldSubmitMultiplayer(ArenaMultiplayerSettings settings, uint turn)
         => settings.CommandEveryTurns <= 1 || turn % (uint)settings.CommandEveryTurns == 0;
@@ -2010,6 +2136,46 @@ public sealed partial class ArenaFightScreen
             return new SimCommand(tick, peerId, localSequence, SimCommandKind.AttackTarget, subject.Id, target.Id);
         }
 
+        if (ArenaSlots.Length > 2)
+        {
+            // C5 N-SLOT FOCUS COMMAND (ruling C5). The submitting peer is identified by its EMPIRE id (peerId ==
+            // slot.Empire.Id). Subject = the first-alive ship of that slot (ascending Ship.Id). Target = the nearest
+            // ship across every HOSTILE (different-team) slot, scanning hostile slots ascending and breaking exact-
+            // distance ties by ascending Ship.Id — identical to EngageAll's C5 scan, so the emitted target is a pure
+            // fn of committed state (order-insensitive; proof #9). Allied slots are excluded.
+            int subjectIndex = -1;
+            for (int i = 0; i < ArenaSlots.Length; ++i)
+                if (ArenaSlots[i].Empire != null && ArenaSlots[i].Empire.Id == peerId) { subjectIndex = i; break; }
+            if (subjectIndex < 0)
+                return new SimCommand(tick, peerId, localSequence, SimCommandKind.NoOp);
+
+            Ship subject = FirstAlive(ArenaSlots[subjectIndex].Ships);
+            if (subject == null)
+                return new SimCommand(tick, peerId, localSequence, SimCommandKind.NoOp);
+
+            Ship best = null;
+            float bestDist = float.MaxValue;
+            int subjectTeam = ArenaSlots[subjectIndex].TeamId;
+            for (int def = 0; def < ArenaSlots.Length; ++def)
+            {
+                if (def == subjectIndex) continue;
+                if (ArenaSlots[def].TeamId == subjectTeam) continue; // allied => excluded
+                foreach (Ship t in ArenaSlots[def].Ships)
+                {
+                    if (t == null || !t.IsAlive) continue;
+                    float d = subject.Position.SqDist(t.Position);
+                    if (d < bestDist || (d == bestDist && (best == null || t.Id < best.Id)))
+                    {
+                        bestDist = d;
+                        best = t;
+                    }
+                }
+            }
+            if (best == null)
+                return new SimCommand(tick, peerId, localSequence, SimCommandKind.NoOp);
+            return new SimCommand(tick, peerId, localSequence, SimCommandKind.AttackTarget, subject.Id, best.Id);
+        }
+
         // Legacy fallback (ArenaSlots not built — no MP substrate in scope).
         bool peerIsPlayer = ArenaPlayer != null && peerId == ArenaPlayer.Id;
         bool peerIsEnemy = ArenaEnemy != null && peerId == ArenaEnemy.Id;
@@ -2062,6 +2228,50 @@ public sealed partial class ArenaFightScreen
         return count;
     }
 
+    // Proof #9 tie-construction seam (ruling §c #9): by construction place two enemy-team ships EXACTLY equidistant
+    // from an attacker so the C5 tie-break is genuinely exercised. Applied IDENTICALLY on every peer before tick 0
+    // (a pure position set, deterministic), so it does not itself desync — it just guarantees the tie exists. The
+    // attacker's first-alive ship goes to the arena centre; the two named enemy slots' first-alive ships go to
+    // (+d, 0) and (-d, 0) — identical SqDist. C5 must then pick the LOWER Ship.Id regardless of list order; a peer
+    // whose ship list was reversed (PerturbMultiplayerShipListOrderForTest) must still choose the same target.
+    // Returns true iff all three ships were found and placed.
+    public bool ForceEquidistantTieForTest(int attackerSlotId, int enemySlotIdA, int enemySlotIdB, float d = 1500f)
+    {
+        Ship atk = FirstAliveInSlot(attackerSlotId);
+        Ship ea = FirstAliveInSlot(enemySlotIdA);
+        Ship eb = FirstAliveInSlot(enemySlotIdB);
+        if (atk == null || ea == null || eb == null)
+            return false;
+        atk.Position = ArenaCenter;
+        ea.Position = ArenaCenter + new Vector2(+d, 0f);
+        eb.Position = ArenaCenter + new Vector2(-d, 0f);
+        return true;
+    }
+
+    Ship FirstAliveInSlot(int slotId)
+    {
+        for (int i = 0; i < ArenaSlots.Length; ++i)
+            if (ArenaSlots[i].SlotId == slotId)
+                return FirstAlive(ArenaSlots[i].Ships);
+        return null;
+    }
+
+    // Proof #9 seam (ruling §c #9): REVERSE the ship-list iteration order of every ArenaSlot on THIS peer, after
+    // spawn but before tick 0, WITHOUT changing any ship state. This feeds an order-perturbed collection into the
+    // C5 target scan + C4 hostility scan on one peer only; if those scans are order-INSENSITIVE (they break ties
+    // by stable Ship.Id, never iteration order) the per-turn digest still matches across peers (GREEN). A first-
+    // wins tie-break would diverge here. Pure diagnostic — behaviour-neutral except at an order-sensitive site.
+    public int PerturbMultiplayerShipListOrderForTest()
+    {
+        int count = 0;
+        for (int i = 0; i < ArenaSlots.Length; ++i)
+        {
+            ArenaSlots[i].Ships.Reverse();
+            count += ArenaSlots[i].Ships.Count;
+        }
+        return count;
+    }
+
     // Build the ascending-SlotId ArenaSlots array (plan §1). Slots [0] and [1] ALIAS the legacy
     // PlayerShips/EnemyShips lists + ArenaPlayer/ArenaEnemy empires so the spawn calls that populate those
     // lists also populate the slots, and every SP-shared helper keeps working. The roster (already sorted
@@ -2103,10 +2313,6 @@ public sealed partial class ArenaFightScreen
         ArenaSlots = slots;
     }
 
-    // B0 §3 placeholder lane spacing: the Y step between same-side slots so their formations don't overlap. Wide
-    // enough to clear a full RowSpan fan-out. Placeholder only — Lane B's C7 arc replaces this whole placement.
-    const float B0LaneSpacing = 6000f;
-
     // B0 POPULATION (§1). The combatant empires created for slots >= 2, keyed by host-assigned SlotId. Populated by
     // PopulateMultiplayerCombatantEmpires BEFORE BuildArenaSlots; read there to own each i>=2 slot's fleet. Empty at
     // N=2 (the populate step is a no-op). Never contains slots 0/1 (those alias ArenaPlayer/ArenaEnemy).
@@ -2141,31 +2347,75 @@ public sealed partial class ArenaFightScreen
                 + "empire personalities clock-random (drawn before the deterministic re-seed) and desyncs the peers.");
 
         ArenaPlayerRosterRecord[] ordered = roster.OrderBy(r => r.SlotId).ToArray();
-        int combatantsNeeded = ordered.Length - 2;
 
-        // Deterministic race pool: major races NOT already used by an existing empire (Create's player + opponent +
-        // any minor that shares the pool), shuffled by MatchSeed so the assignment is a pure fn of (MatchSeed).
-        // System.Random(seed) Fisher-Yates == the exact idiom Create uses (races.Shuffle(seed)), peer-invariant on
-        // a shared build. Distinct races per slot avoid CreateEmpire's GetEmpireByName duplicate-name throw.
-        var pool = new List<IEmpireData>();
-        foreach (IEmpireData data in ResourceManager.MajorRaces)
-        {
-            if (UState.GetEmpireByName(data.Name) == null)
-                pool.Add(data);
-        }
+        // Deterministic race pool: ALL major races, shuffled by MatchSeed so the per-slot assignment is a pure fn
+        // of (MatchSeed). System.Random(seed) Fisher-Yates == the exact idiom Create uses (races.Shuffle(seed)),
+        // peer-invariant on a shared build.
+        // RACE-CAP LIFT (ruling): allow race REUSE for real 8-player. Combatants are assigned pool[(i-2) % pool
+        // .Count] in ascending slot order, WRAPPING past the pool size instead of throwing. A race that is already
+        // fielded (by Create's player/opponent, a minor, or an earlier combatant this loop created) is given a
+        // DETERMINISTIC distinct name suffixed by SlotId, so CreateEmpire's GetEmpireByName duplicate guard does
+        // not throw and the CreateId() count per combatant stays exactly ONE (the name is a string only — it
+        // consumes no ids and does not touch the personality-seed topology). This keeps the N=8 spawn peer-
+        // invariant (proof #6 / the smoke test asserts identical per-slot summaries across peers).
+        var pool = new List<IEmpireData>(ResourceManager.MajorRaces);
         pool.Shuffle(matchSeed);
-        if (pool.Count < combatantsNeeded)
-            throw new InvalidOperationException(
-                $"Arena B0 population needs {combatantsNeeded} distinct combatant races but only {pool.Count} "
-                + "unused major races are available. (B0 caps at the number of distinct major races; larger N "
-                + "awaits Lane B race-reuse handling.)");
+        if (pool.Count == 0)
+            throw new InvalidOperationException("Arena N>2 population found no major races to draw from.");
 
         for (int i = 2; i < ordered.Length; ++i)
         {
-            IEmpireData raceData = pool[i - 2];
+            IEmpireData raceData = pool[(i - 2) % pool.Count];
+            // If this race name is already fielded, mint a deterministic distinct name (race + slot id). The check
+            // is against the LIVE empire list, so the FIRST use of a race keeps its real name and later reuses get
+            // the suffix — a pure fn of (roster order, race pool) => identical on every peer.
+            string name = raceData.Name;
+            string nameOverride = UState.GetEmpireByName(name) != null
+                ? $"{name} #{ordered[i].SlotId}"
+                : null;
             // No generated home system (§5 #1): CreateEmpire alone consumes exactly one CreateId().
-            Empire e = UState.CreateEmpire(raceData, isPlayer: false, difficulty: GameDifficulty.Hard);
+            Empire e = UState.CreateEmpire(raceData, isPlayer: false, GameDifficulty.Hard, nameOverride);
             CombatantEmpiresBySlot[ordered[i].SlotId] = e;
+        }
+    }
+
+    // C7 TEAM SPAWN ARC radius (arena units). Chosen so N teams sit clearly apart around the centre while staying
+    // inside the ~12k camera frustum's neighbourhood; the exact value is a spawn-position surface only (never at
+    // N=2, which is literally special-cased), so it perturbs nothing that existed pre-Lane-B.
+    const float TeamArcRadius = 4200f;
+
+    // C7 (ruling C7). Order slots by (TeamId, SlotId) to get a stable global index k in 0..N-1; each slot's centre
+    // is ArenaCenter + TeamArcRadius*(cos angle, sin angle) with angle = k*(2/N)*pi computed FROM the integer k
+    // each iteration (never accumulated — no FP drift). Facing points from the slot centre toward the arena centre.
+    // Per-ship offset stays the bundle's StableNodeOrder, rotated into the slot's facing frame. Degenerates to a
+    // radial FFA when every team is size 1 (then (TeamId,SlotId) order == the plain slot order). N==2 never reaches
+    // here (special-cased above), so the legacy two-side layout is untouched.
+    void SpawnMultiplayerTeamArcs(ArenaMultiplayerSettings liveSettings,
+        FleetDesignT hostBundle, FleetDesignT joinBundle)
+    {
+        int n = ArenaSlots.Length;
+        // Stable global ordering: (TeamId, SlotId) ascending. Carry the ORIGINAL slot index so we resolve the
+        // right bundle and populate the right slot's ship list.
+        int[] order = Enumerable.Range(0, n)
+            .OrderBy(i => ArenaSlots[i].TeamId)
+            .ThenBy(i => ArenaSlots[i].SlotId)
+            .ToArray();
+
+        for (int k = 0; k < n; ++k)
+        {
+            int slotIndex = order[k];
+            ArenaSlot slot = ArenaSlots[slotIndex];
+            FleetDesignT bundle = ResolveSlotBundle(slotIndex, liveSettings, hostBundle, joinBundle);
+            // angle FROM the integer k (deterministic, no accumulation).
+            double angle = k * (2.0 / n) * Math.PI;
+            var slotCenter = new Vector2(
+                (float)(Math.Cos(angle) * TeamArcRadius),
+                (float)(Math.Sin(angle) * TeamArcRadius));
+            // Face from the slot centre toward the arena centre (i.e. -slotCenter direction).
+            Vector2 facing = slotCenter == Vector2.Zero
+                ? PlayerSpawnFacing
+                : (-slotCenter).Normalized();
+            SpawnMultiplayerFormationAt(slot.Ships, slot.Empire, bundle, slotCenter, facing, ArenaFiniteAmmoActive);
         }
     }
 
@@ -2183,19 +2433,61 @@ public sealed partial class ArenaFightScreen
         return ResolveMultiplayerBundle(encoded, MultiplayerHostFleetDesigns);
     }
 
-    // B0 §3 PLACEHOLDER placement — NOT the C7 arc (Lane B owns the float surface + spawn-determinism proof #6).
-    // Slots 0/1 keep the literal legacy (-Gap,+1f,PlayerFacing) / (+Gap,-1f,EnemyFacing) so if this loop ever ran
-    // at N==2 it would still reduce correctly; slots >= 2 alternate sides (even i -> left, odd i -> right) and are
-    // staggered into a per-slot Y lane by index so fleets don't overlap. Pure fn of index (peer-invariant), minimal.
-    (float sideX, float sideMirror, Vector2 facing) B0PlacementFor(int index)
+
+    // C4 TEAM HOSTILITY (ruling C4). Iterate ArenaSlots ascending in a nested (a,b), a<b loop; a pair is HOSTILE
+    // IFF their TeamId differ; declare SetRelationsAsKnown + DeclareWarOn(ImperialistWar) in that FIXED slot-pair
+    // order on every peer, so the diplomacy graph is a pure fn of the fingerprinted team map (never enumeration
+    // order). Same-team slots are left ALLIED and are EXCLUDED from targeting (EngageAll skips allied fleets).
+    // Each non-first slot's empire also gets ApplyArenaNoDiplomacy so it never generates a peace turn (mirrors the
+    // legacy N=2 lever applied to ArenaEnemy). N==2 is a NO-OP here — Create already declared ArenaPlayer<->ArenaEnemy
+    // (identical pair), so re-declaring would be redundant and this path is skipped for byte-parity.
+    void DeclareMultiplayerTeamHostility()
     {
-        if (index == 0) return (-Gap, +1f, PlayerSpawnFacing);
-        if (index == 1) return (+Gap, -1f, EnemySpawnFacing);
-        bool left = (index % 2) == 0;
-        float sideX = left ? -Gap : +Gap;
-        float sideMirror = left ? +1f : -1f;
-        Vector2 facing = left ? PlayerSpawnFacing : EnemySpawnFacing;
-        return (sideX, sideMirror, facing);
+        if (ArenaSlots.Length <= 2)
+            return; // N=2 keeps the legacy Create declaration; nothing to add.
+
+        // Silence the per-turn diplomacy of every combatant empire so no peace offers fire (deterministic, and
+        // matches the N=2 lever). Slot 0 is the local player; leaving it non-faction is fine (the player never
+        // auto-offers peace to a faction). Applied in ascending slot order for a stable, peer-agreed sequence.
+        for (int i = 1; i < ArenaSlots.Length; ++i)
+            if (ArenaSlots[i].Empire != null)
+                ApplyArenaNoDiplomacy(ArenaSlots[i].Empire);
+
+        for (int a = 0; a < ArenaSlots.Length; ++a)
+        {
+            Empire ea = ArenaSlots[a].Empire;
+            if (ea == null) continue;
+            for (int b = a + 1; b < ArenaSlots.Length; ++b)
+            {
+                Empire eb = ArenaSlots[b].Empire;
+                if (eb == null) continue;
+                if (ArenaSlots[a].TeamId == ArenaSlots[b].TeamId)
+                    continue; // same team => allied, no war declared, excluded from targeting.
+
+                Empire.SetRelationsAsKnown(ea, eb);
+                if (!ea.IsAtWarWith(eb))
+                    ea.AI.DeclareWarOn(eb, WarType.ImperialistWar);
+                Empire.SetRelationsAsKnown(eb, ea);
+                if (!eb.IsAtWarWith(ea))
+                    eb.AI.DeclareWarOn(ea, WarType.ImperialistWar);
+            }
+        }
+    }
+
+    // C4 proof seam (headless): the hostility graph as (slotA, slotB, atWar) triples in ascending slot-pair order,
+    // so a proof can assert IsAtWarWith is TRUE across teams and FALSE within a team (allied). Pure read-out.
+    public (int SlotA, int SlotB, bool AtWar, bool SameTeam)[] MultiplayerHostilityGraphForHeadless()
+    {
+        var edges = new List<(int, int, bool, bool)>();
+        for (int a = 0; a < ArenaSlots.Length; ++a)
+        for (int b = a + 1; b < ArenaSlots.Length; ++b)
+        {
+            Empire ea = ArenaSlots[a].Empire, eb = ArenaSlots[b].Empire;
+            bool atWar = ea != null && eb != null && ea.IsAtWarWith(eb);
+            bool sameTeam = ArenaSlots[a].TeamId == ArenaSlots[b].TeamId;
+            edges.Add((ArenaSlots[a].SlotId, ArenaSlots[b].SlotId, atWar, sameTeam));
+        }
+        return edges.ToArray();
     }
 
     public ArenaMultiplayerMatchStatus MultiplayerMatchStatus()
@@ -2206,6 +2498,32 @@ public sealed partial class ArenaFightScreen
         // so the reduction reduces bit-for-bit to new(AliveCount(PlayerShips), AliveCount(EnemyShips)).
         if (ArenaSlots.Length == 2)
             return new(AliveCount(ArenaSlots[0].Ships), AliveCount(ArenaSlots[1].Ships));
+        if (ArenaSlots.Length > 2)
+        {
+            // C6 (ruling C6 + TRAP #2 CATCH): the Ended/Winner DECISION reads ONLY ArenaSlots[i].Ships in ascending
+            // slot order — NEVER the PlayerShips/EnemyShips alias. AliveBySlot -> AliveByTeam (OR over a team's
+            // slots) -> Ended = teams-with-any-alive <= 1, winner = that team (its lowest slot id). Forfeited slots
+            // contribute 0 (their ships were killed by the committed Forfeit apply), so a forfeited team drops out.
+            var aliveByTeam = new Dictionary<int, int>();
+            int winnerLowestSlotId = int.MaxValue;
+            for (int i = 0; i < ArenaSlots.Length; ++i)
+            {
+                int alive = AliveCount(ArenaSlots[i].Ships);
+                int team = ArenaSlots[i].TeamId;
+                aliveByTeam.TryGetValue(team, out int running);
+                aliveByTeam[team] = running + alive; // OR-over-slots via a running sum (>0 iff any slot alive)
+            }
+            // The winning team's lowest slot id (stable tie-break) — recomputed only if a sole team survives.
+            int soleTeam = -1, teamsAlive = 0;
+            foreach (KeyValuePair<int, int> kv in aliveByTeam)
+                if (kv.Value > 0) { teamsAlive++; soleTeam = kv.Key; }
+            if (teamsAlive == 1)
+                for (int i = 0; i < ArenaSlots.Length; ++i)
+                    if (ArenaSlots[i].TeamId == soleTeam && ArenaSlots[i].SlotId < winnerLowestSlotId)
+                        winnerLowestSlotId = ArenaSlots[i].SlotId;
+            return new(AliveCount(ArenaSlots[0].Ships), AliveCount(ArenaSlots[1].Ships),
+                aliveByTeam, winnerLowestSlotId == int.MaxValue ? 0 : winnerLowestSlotId);
+        }
         return new(AliveCount(PlayerShips), AliveCount(EnemyShips));
     }
 
@@ -2259,6 +2577,39 @@ public sealed partial class ArenaFightScreen
         }
     }
 
+    // C7 spawn overload: place a slot's formation at an ABSOLUTE slotCenter (ArenaCenter-relative), facing a given
+    // direction, iterating the SAME shared StableNodeOrder so ship-id assignment order is identical on every peer.
+    // Per-ship offset is rotated into the facing frame (offset.X along -facing "depth", offset.Y along the
+    // perpendicular), so each team's formation points inward consistently. A zero-offset (name-list fallback) fans
+    // out along the perpendicular so ships don't stack. Pure fn of (slotCenter, facing, bundle) => peer-invariant.
+    static void SpawnMultiplayerFormationAt(List<Ship> ships, Empire owner, FleetDesignT bundle,
+        Vector2 slotCenter, Vector2 facing, bool finiteAmmo)
+    {
+        Vector2 center = ArenaCenter + slotCenter;
+        Vector2 fwd = facing == Vector2.Zero ? PlayerSpawnFacing : facing.Normalized();
+        // Perpendicular (right-hand) for the formation width axis.
+        var right = new Vector2(-fwd.Y, fwd.X);
+        var nodes = ArenaFleetBundle.StableNodeOrder(bundle);
+        int index = 0;
+        foreach (FleetDataDesignNode node in nodes)
+        {
+            if (!ResourceManager.Ships.GetDesign(node.ShipName, out IShipDesign design)
+                || !IsLegalCombatCraft(design))
+                continue;
+            Vector2 offset = node.RelativeFleetOffset;
+            Vector2 placed = offset == Vector2.Zero
+                ? right * ((index - (nodes.Count - 1) / 2f) * RowSpan)
+                // Rotate the authored offset into the facing frame: X = depth along forward, Y = along right.
+                : fwd * offset.X + right * offset.Y;
+            Ship ship = CreateArenaShipAtPoint(owner.Universe, node.ShipName, owner, center + placed, fwd, finiteAmmo);
+            if (ship == null)
+                throw new InvalidOperationException($"Failed to spawn Arena PvP ship '{node.ShipName}'.");
+            ship.SensorRange = 400000f;
+            ships.Add(ship);
+            ++index;
+        }
+    }
+
     // Countdown freeze/unfreeze. ShipAI autonomously acquires sensor targets and fires regardless of
     // CombatState, so the true "hold fire" gate is AI.IgnoreCombat (checked in both the retarget and
     // the weapon-fire paths). ClearOrders resets IgnoreCombat, so set it true AFTER clearing. This is
@@ -2270,6 +2621,32 @@ public sealed partial class ArenaFightScreen
     {
         for (int i = 0; i < ArenaSlots.Length; ++i)
             FreezeMultiplayerFleet(ArenaSlots[i].Ships);
+    }
+
+    // Remove every universe ship that is NOT part of an arena-slot fleet (the Create() scaffolding: home-system
+    // starting ships of the player + opponent empires). These are not part of the arena match; removing them takes
+    // them out of the authoritative hash entirely so no per-empire/system RNG they touched can desync the digest.
+    // Deterministic ascending-Ship.Id order; cleanupOnly:true (no RNG death roll), the same removal B0 uses.
+    void RemoveNonArenaScaffoldingShips()
+    {
+        var arenaShips = new HashSet<Ship>();
+        for (int i = 0; i < ArenaSlots.Length; ++i)
+            foreach (Ship s in ArenaSlots[i].Ships)
+                if (s != null) arenaShips.Add(s);
+
+        Ship[] all = UState?.Objects?.GetShips() ?? Array.Empty<Ship>();
+        bool removedAny = false;
+        foreach (Ship s in all.Where(s => s != null && !arenaShips.Contains(s)).OrderBy(s => s.Id).ToArray())
+            if (s.Active)
+            {
+                s.Die(null, cleanupOnly: true);
+                removedAny = true;
+            }
+        // Flush the removals out of the object lists NOW so the removed scaffolding ships leave the authoritative
+        // hash immediately (Die only queues removal; UpdateLists commits it). Their divergent spawn positions then
+        // cannot contribute to the digest at all.
+        if (removedAny)
+            UState.Objects.UpdateLists(removeInactiveObjects: true);
     }
 
     void UnfreezeMultiplayerSlots()

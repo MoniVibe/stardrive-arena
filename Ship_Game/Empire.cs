@@ -58,6 +58,14 @@ namespace Ship_Game
         public IReadOnlyList<Ship> OwnedShips => EmpireShips.OwnedShips;
         public IReadOnlyList<Ship> OwnedProjectors => EmpireShips.OwnedProjectors;
 
+        // Arena 8-player teams — C9 forfeit marker. Set by StarDriveCommandApplicator when a Forfeit SimCommand
+        // commits for this empire (every peer, same committed tick). READ ONLY by the Arena fight screen's
+        // presentation-side barrier/LivePeers derivation; NEVER folded into the sim digest and NEVER an input to
+        // any system that contributes to the digest — a write-by-applicator / read-by-presentation flag only. It
+        // is set deterministically, so even a paranoid future hash would stay identical; the contract is: do not
+        // fold it. Not [StarData]: arena matches are never saved, and it must not enter any serialization digest.
+        public bool ArenaForfeited;
+
         [StarData] public IncomingThreatDetector ThreatDetector;
         public IncomingThreat[] SystemsWithThreat => ThreatDetector.SystemsWithThreat;
 

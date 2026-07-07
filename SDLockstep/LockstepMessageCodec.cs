@@ -63,6 +63,7 @@ public static class LockstepMessageCodec
                     WriteString(w, hello.PlayerName);
                     WriteString(w, hello.BuildHash);
                     WriteString(w, hello.BuildSummary);
+                    WriteString(w, hello.ClientNonce); // C1 per-joiner token, append-only
                     break;
                 case SessionReadyMessage ready:
                     w.Write(SessionReady);
@@ -303,6 +304,7 @@ public static class LockstepMessageCodec
                     PlayerName = ReadString(r),
                     BuildHash = ReadOptionalString(r),
                     BuildSummary = ReadOptionalString(r),
+                    ClientNonce = ReadOptionalString(r), // C1 per-joiner token, append-only
                 };
                 break;
             case SessionReady:

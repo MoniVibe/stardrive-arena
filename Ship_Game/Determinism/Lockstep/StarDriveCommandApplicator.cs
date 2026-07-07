@@ -45,8 +45,33 @@ public sealed class StarDriveCommandApplicator
             case SimCommandKind.MoveShip:     return ApplyMove(c);
             case SimCommandKind.AttackTarget: return ApplyAttack(c);
             case SimCommandKind.StopShip:     return ApplyStop(c);
+            case SimCommandKind.Forfeit:      return ApplyForfeit(c);
             default:                          return false;
         }
+    }
+
+    // Arena 8-player teams — C9 forfeit apply (ruling C9). SubjectId carries the forfeiting EMPIRE id (universe-
+    // resolvable; a slot id would have no universe referent, breaking the applicator's universe-only contract).
+    // Set the deterministic per-empire ArenaForfeited marker (read only by the fight screen's presentation-side
+    // barrier, never hashed), then kill every one of that empire's ACTIVE ships. The kill set is snapshotted and
+    // SORTED by ascending Ship.Id so the death sequence — and therefore the digest fold — is identical on every
+    // peer regardless of the empire's live-ship list ordering. cleanupOnly:true bypasses the RNG-driven death
+    // roll (WillShipDieNow / explosion chance) so no order-dependent RNG side effect can diverge the digest —
+    // the exact removal B0's RemoveMultiplayerShips already uses.
+    bool ApplyForfeit(in SimCommand c)
+    {
+        Empire empire = Resolver.ResolveEmpire(c.SubjectId);
+        if (empire == null)
+            return false;
+        empire.ArenaForfeited = true;
+        var doomed = new System.Collections.Generic.List<Ship>();
+        foreach (Ship ship in empire.OwnedShips)
+            if (ship != null && ship.Active)
+                doomed.Add(ship);
+        doomed.Sort((a, b) => a.Id.CompareTo(b.Id));
+        foreach (Ship ship in doomed)
+            ship.Die(null, cleanupOnly: true);
+        return true;
     }
 
     bool ApplyMove(in SimCommand c)

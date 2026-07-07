@@ -58,10 +58,21 @@ public partial class UniverseState
     }
 
     public Empire CreateEmpire(IEmpireData readOnlyData, bool isPlayer, GameDifficulty difficulty = GameDifficulty.Normal)
+        => CreateEmpire(readOnlyData, isPlayer, difficulty, nameOverride: null);
+
+    // nameOverride (Arena 8-player race-reuse, ruling race-cap lift): create an empire from a race that is ALREADY
+    // fielded by another combatant, giving the new empire a DETERMINISTIC distinct name so GetEmpireByName's
+    // duplicate-name guard does not throw. The override renames only the created instance's Traits.Name (a string
+    // — it consumes ZERO CreateId()s and does not touch the personality-seed topology, which keys off EmpireList
+    // .Count), so the global CreateId() sequence stays peer-invariant regardless of the name string. A null/empty
+    // override is EXACTLY today's CreateEmpire (byte-identical) — the duplicate-name check runs against the real
+    // race name as before.
+    public Empire CreateEmpire(IEmpireData readOnlyData, bool isPlayer, GameDifficulty difficulty, string nameOverride)
     {
-        if (GetEmpireByName(readOnlyData.Name) != null)
-            throw new InvalidOperationException($"BUG: Empire already created! {readOnlyData.Name}");
-        Empire e = CreateEmpireFromEmpireData(readOnlyData, isPlayer);
+        string effectiveName = nameOverride.NotEmpty() ? nameOverride : readOnlyData.Name;
+        if (GetEmpireByName(effectiveName) != null)
+            throw new InvalidOperationException($"BUG: Empire already created! {effectiveName}");
+        Empire e = CreateEmpireFromEmpireData(readOnlyData, isPlayer, nameOverride);
         AddEmpire(e);
         InitRelationships(e, difficulty);
         return e;
@@ -277,8 +288,16 @@ public partial class UniverseState
     }
 
     Empire CreateEmpireFromEmpireData(IEmpireData readOnlyData, bool isPlayer)
+        => CreateEmpireFromEmpireData(readOnlyData, isPlayer, nameOverride: null);
+
+    Empire CreateEmpireFromEmpireData(IEmpireData readOnlyData, bool isPlayer, string nameOverride)
     {
         EmpireData data = readOnlyData.CreateInstance();
+        // Race-reuse (ruling race-cap lift): rename the fresh instance's Traits.Name to the deterministic distinct
+        // name BEFORE anything reads data.Name, so this reused-race empire has a unique name and later
+        // GetEmpireByName lookups for OTHER reused instances of the same race don't collide. Pure string mutation.
+        if (nameOverride.NotEmpty())
+            data.Traits.Name = nameOverride;
         DiplomaticTraits dt = ResourceManager.DiplomaticTraits;
         var empire = new Empire(us: this)
         {

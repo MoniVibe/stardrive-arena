@@ -13,6 +13,11 @@ public sealed class SessionHelloMessage : LockstepMessage
     public string PlayerName = "";
     public string BuildHash = "";
     public string BuildSummary = "";
+    // Arena 8-player teams — C1 host-authoritative slot assignment. A per-JOINER random token minted once per
+    // join attempt. The host uses it to tell "the same joiner re-sending its hello" (identical nonce -> idempotent,
+    // adopt/confirm) from "a DIFFERENT joiner claiming an already-occupied slot" (different nonce -> DISTINCT
+    // slot-taken reject). Append-only trailing string (ReadOptionalString), so a pre-field peer decodes it as "".
+    public string ClientNonce = "";
 }
 
 public sealed class SessionReadyMessage : LockstepMessage

@@ -811,6 +811,39 @@ public sealed class ArenaMultiplayerRunResult
 }
 
 /// <summary>
+/// One peer's per-turn digest trace from the N-peer TCP harness (ruling §4). Each peer records its OWN
+/// per-turn (lo, hi) hash so the harness can assert TURN-BY-TURN equality across ALL peers (NOT just the
+/// FinalHash — a self-healing divergence would false-green a FinalHash-only compare). Also carries the
+/// peer's slot id, its per-turn last-known match outcome, and any forfeit ticks it observed.
+/// </summary>
+public sealed class ArenaNPeerTrace
+{
+    public int SlotId;
+    public readonly List<(uint Turn, ulong Lo, ulong Hi)> TurnHashes = new();
+    public bool MatchEnded;
+    public int WinnerPeerId;      // winning team's lowest slot id (C6)
+    public int WinnerTeamId;      // winning team id (C6)
+    public long MatchEndedTurn = -1;
+    public string Error = "";
+    public string SettingsHash = "";
+    // The turn at which this peer observed its own slot become forfeited (Empire.ArenaForfeited), or -1.
+    public long ForfeitedAtTurn = -1;
+}
+
+/// <summary>
+/// Aggregate result of an N-peer TCP arena run: every peer's independent trace, plus the reference SettingsHash
+/// computed by an INDEPENDENT third encode of the roster (trap #1 catch). The harness caller asserts per-turn
+/// equality across traces and each trace's SettingsHash == the reference.
+/// </summary>
+public sealed class ArenaNPeerRunResult
+{
+    public readonly List<ArenaNPeerTrace> Traces = new();
+    public string ReferenceSettingsHash = "";
+    public string HarnessError = "";
+    public int TurnsCompleted;
+}
+
+/// <summary>
 /// Phase-1, 2-player Arena lockstep session harness. Single-player Arena never calls this; it is
 /// a separate multiplayer path that creates two deterministic Arena peers, exchanges canonical
 /// command frames, and halts on checksum divergence.
@@ -959,6 +992,358 @@ public static class ArenaMultiplayerSession
 
         hostResult.JoinSnapshot = joinResult.JoinSnapshot;
         return hostResult;
+    }
+
+    // ==================================================================================================
+    // N-PEER TCP PROOF HARNESS (STARDRIVE_ARENA_8PLAYER_TEAMS_SUBSTRATE_REFACTOR §4 + ruling §c). This is the
+    // REAL-transport proof surface for Lane B: host opens a HostMulti listener; each of the (peerCount-1) joiners
+    // connects over loopback TCP and INDEPENDENTLY self-selects its slot (so the host runs the real C1 assign
+    // path — trap #1 catch: RunInProcess shares a process-global slot space that would hide the collision). Every
+    // peer runs its OWN ArenaFightScreen + LockstepClient over its own transport; per-turn digests are collected
+    // PER PEER and the caller asserts turn-by-turn equality across ALL peers (NOT FinalHash — trap: a self-healing
+    // divergence false-greens a FinalHash-only compare), plus a THIRD independently-encoded reference SettingsHash.
+    // ==================================================================================================
+
+    // Options for a single N-peer TCP run.
+    public sealed class NPeerRunOptions
+    {
+        public int MaxTurns = 60;
+        // Reverse the ship-list iteration order on the peer occupying THIS slot id, after spawn but before tick 0
+        // (proof #9: proves C5 tie-break + C4 hostility scan are order-insensitive). 0 = no perturbation.
+        public int PerturbPeerSlotId;
+        // Host proposes a Forfeit for the empire occupying THIS slot id at this exec-tick base (proof #5). The host
+        // stops receiving that peer's submits after the forfeit turn (the peer is told to stop). 0 = no forfeit.
+        public int ForfeitSlotId;
+        public int ForfeitAtTurn = -1;
+        // Applied on EVERY peer's screen after spawn but before tick 0 (identical on all peers, so it does not
+        // desync). Proof #9 uses it to construct an exact-distance C5 tie via ForceEquidistantTieForTest.
+        public Action<ArenaFightScreen> BeforeTick0AllPeers;
+    }
+
+    /// <summary>
+    /// Run a real-TCP N-peer arena match. slotRoster is the host-authored roster (ascending SlotId); the HOST
+    /// occupies slotRoster[0], each remaining record is a joiner that self-selects its slot id. Returns every
+    /// peer's independent per-turn digest trace + a reference SettingsHash for the caller to assert against.
+    /// </summary>
+    public static ArenaNPeerRunResult RunNPeerLockstepTcp(ArenaMultiplayerSettings settings,
+        NPeerRunOptions options = null, Action<string> log = null)
+    {
+        options ??= new NPeerRunOptions();
+        settings = (settings ?? new ArenaMultiplayerSettings()).WithResolvedFleets();
+        var result = new ArenaNPeerRunResult
+        {
+            // THIRD, INDEPENDENT encode of the roster (trap #1 catch): recompute the SettingsHash from a fresh
+            // copy of the settings so it does not share the object each peer folds. Every peer's locally-computed
+            // SettingsHash must equal this reference.
+            ReferenceSettingsHash = settings.WithResolvedFleets().SettingsHash,
+        };
+
+        ArenaPlayerRosterRecord[] roster = (settings.Roster ?? Array.Empty<ArenaPlayerRosterRecord>())
+            .OrderBy(r => r.SlotId).ToArray();
+        if (roster.Length < 2)
+        {
+            result.HarnessError = "RunNPeerLockstepTcp requires a roster of at least 2 slots.";
+            return result;
+        }
+
+        int port = FreeTcpPort();
+        int hostSlotId = roster[0].SlotId;
+        int[] joinerSlotIds = roster.Skip(1).Select(r => r.SlotId).ToArray();
+
+        // Register both/all peers' custom-design tables ONCE for this process (the peers share ResourceManager.Ships).
+        IReadOnlyList<string> registered = RegisterPeerDesignTables(settings, out string tableError);
+        if (tableError.NotEmpty())
+        {
+            UnregisterPeerDesignTables(registered);
+            result.HarnessError = tableError;
+            return result;
+        }
+
+        TcpLockstepTransport hostTransport = null;
+        var joinerTransports = new List<TcpLockstepTransport>();
+        try
+        {
+            hostTransport = TcpLockstepTransport.HostMulti(port);
+            log?.Invoke($"NPEER host listening on {port} slots=[{string.Join(",", roster.Select(r => r.SlotId))}]");
+
+            // Each joiner independently self-selects its slot id and announces it (the real C1 self-selection).
+            foreach (int slot in joinerSlotIds)
+            {
+                TcpLockstepTransport jt = TcpLockstepTransport.JoinAsPeer("127.0.0.1", port, slot, LockstepHost.HostPeerId);
+                joinerTransports.Add(jt);
+            }
+            if (!hostTransport.WaitForConnections(joinerSlotIds.Length, TimeSpan.FromSeconds(10)))
+            {
+                result.HarnessError = $"NPEER host accepted only {hostTransport.ConnectedRemotePeerIds.Length}"
+                    + $" of {joinerSlotIds.Length} joiners.";
+                return result;
+            }
+
+            var traces = new ArenaNPeerTrace[roster.Length];
+            var tasks = new List<Task>();
+            // BUILD BARRIER: every peer builds its screen (Create + spawn) then hits this barrier BEFORE its tick
+            // loop, so no peer ticks while another is still building. Building an ArenaFightScreen touches process-
+            // global state (ResourceManager design tables, lazy static warm-up); letting a tick run concurrently
+            // with another peer's build races that state and diverges the digest. The barrier serializes build-vs-
+            // tick without serializing the ticks themselves (which must interleave over the lockstep transport).
+            using var buildBarrier = new Barrier(roster.Length);
+
+            // HOST peer task.
+            tasks.Add(Task.Run(() =>
+            {
+                traces[0] = RunNPeerHostPeer(settings, roster, hostTransport, options, log, buildBarrier);
+            }));
+            // JOINER peer tasks.
+            for (int j = 0; j < joinerSlotIds.Length; ++j)
+            {
+                int idx = j + 1;
+                int slot = joinerSlotIds[j];
+                TcpLockstepTransport jt = joinerTransports[j];
+                tasks.Add(Task.Run(() =>
+                {
+                    traces[idx] = RunNPeerJoinerPeer(settings, roster, slot, jt, options, log, buildBarrier);
+                }));
+            }
+
+            if (!Task.WaitAll(tasks.ToArray(), TimeSpan.FromSeconds(180)))
+            {
+                result.HarnessError = "NPEER run timed out.";
+                return result;
+            }
+            foreach (Task t in tasks)
+                if (t.Exception != null)
+                {
+                    result.HarnessError = t.Exception.GetBaseException().Message;
+                    return result;
+                }
+
+            foreach (ArenaNPeerTrace tr in traces)
+                if (tr != null) result.Traces.Add(tr);
+            result.TurnsCompleted = result.Traces.Count > 0 ? result.Traces.Max(t => t.TurnHashes.Count) : 0;
+            return result;
+        }
+        finally
+        {
+            foreach (TcpLockstepTransport jt in joinerTransports)
+                jt?.Dispose();
+            hostTransport?.Dispose();
+            UnregisterPeerDesignTables(registered);
+        }
+    }
+
+    // The HOST peer of an N-peer TCP run. It is the lockstep authority (LockstepHost) AND fields slot 0's fleet.
+    // Sends the start to every joiner, waits for readies, then runs the per-tick commit loop: submit its own focus
+    // command, wait until every LIVE peer submitted for the exec tick (barrier over LivePeerIds — empire ids), commit,
+    // pump, record its own per-turn digest. The LockstepHost's DesyncDetector collects every peer's checksum, so a
+    // divergence on ANY peer is caught here; per-turn equality is also asserted by the caller across all traces.
+    static ArenaNPeerTrace RunNPeerHostPeer(ArenaMultiplayerSettings settings, ArenaPlayerRosterRecord[] roster,
+        TcpLockstepTransport transport, NPeerRunOptions options, Action<string> log, Barrier buildBarrier = null)
+    {
+        int hostSlotId = roster[0].SlotId;
+        var trace = new ArenaNPeerTrace { SlotId = hostSlotId };
+
+        // Track every peer's submitted exec ticks (barrier) + latest checksum tick, keyed by the submitting
+        // empire id (SimCommand.PlayerId). This is the host-authoritative wait set.
+        var submittedInputs = new Dictionary<uint, HashSet<int>>();
+        var readyPeers = new HashSet<int>();
+        transport.AddObserver(LockstepHost.HostPeerId, m =>
+        {
+            if (m is SessionReadyMessage r && r.Ready)
+                readyPeers.Add(r.PeerId);
+            if (m is SubmitCommandMessage s)
+            {
+                if (!submittedInputs.TryGetValue(s.Command.Tick, out HashSet<int> peers))
+                    submittedInputs[s.Command.Tick] = peers = new HashSet<int>();
+                peers.Add(s.Command.PlayerId);
+            }
+        });
+
+        // Send the authoritative start to every joiner (addressed by its self-selected slot id).
+        SessionStartMessage startMsg = settings.ToStartMessage();
+        for (int i = 1; i < roster.Length; ++i)
+            transport.Send(roster[i].SlotId, startMsg);
+
+        // Build the HOST screen from the SAME round-tripped (validated) settings the joiners build from, not the
+        // raw settings object — so every peer spawns from a byte-identical settings decode (any spawn-affecting
+        // field that survives the wire but isn't in the fingerprint stays identical across host + joiners).
+        string hostValidateErr = ArenaMultiplayerSettings.ValidateStartMessage(startMsg, out ArenaMultiplayerSettings hostSettings);
+        if (hostValidateErr.NotEmpty()) { trace.Error = hostValidateErr; return trace; }
+        ArenaFightScreen screen = BuildPeerScreen(hostSettings);
+        options.BeforeTick0AllPeers?.Invoke(screen);
+        trace.SettingsHash = hostSettings.SettingsHash;
+        int hostEmpireId = screen.EmpireIdForSlotForHeadless(hostSlotId);
+
+        // Every peer has finished building + spawning its screen; wait here so no peer ticks while another builds.
+        buildBarrier?.SignalAndWait(TimeSpan.FromSeconds(60));
+
+        var host = new LockstepHost(transport);
+        var sim = screen.CreateMultiplayerLockstepSimulation();
+        var client = new LockstepClient(transport, hostEmpireId, sim);
+        // AddClient per LIVE peer (empire id) — the barrier waits on PEERS not teams; grep-confirm no team count.
+        foreach (int liveEmpireId in screen.LivePeerIds())
+            host.AddClient(liveEmpireId);
+
+        // Wait for every joiner to ready-up.
+        WaitFor(() => readyPeers.Count >= roster.Length - 1, transport, TimeSpan.FromSeconds(30),
+            "not every joiner readied up");
+
+        int forfeitEmpireId = options.ForfeitSlotId != 0 ? screen.EmpireIdForSlotForHeadless(options.ForfeitSlotId) : 0;
+        var forfeitProposed = new HashSet<int>();
+
+        uint maxTurns = (uint)Math.Min(settings.EffectiveMaxTurns, (uint)Math.Max(1, options.MaxTurns));
+        for (uint turn = 0; turn < maxTurns; ++turn)
+        {
+            // Live wait set for THIS turn (drops any peer already forfeited).
+            int[] live = screen.LivePeerIds().ToArray();
+
+            if (ShouldSubmit(settings, turn) && !screen.SlotForfeitedForHeadless(hostSlotId))
+            {
+                client.Submit(screen.BuildMultiplayerFocusCommand(hostEmpireId, turn + (uint)settings.InputDelay, turn));
+                // Host's own submit is observed locally too (it never rides the wire back), so record it directly.
+                if (!submittedInputs.TryGetValue(turn + (uint)settings.InputDelay, out HashSet<int> hp))
+                    submittedInputs[turn + (uint)settings.InputDelay] = hp = new HashSet<int>();
+                hp.Add(hostEmpireId);
+            }
+
+            // C9 FORFEIT PROPOSAL (ruling C9 §4). At the configured turn the host proposes exactly ONE Forfeit for
+            // the target empire at exec tick T = turn + InputDelay; every peer applies it deterministically at T.
+            if (forfeitEmpireId != 0 && (int)turn == options.ForfeitAtTurn && forfeitProposed.Add(forfeitEmpireId))
+            {
+                uint execT = turn + (uint)settings.InputDelay;
+                client.Submit(new SimCommand(execT, hostEmpireId, turn, SimCommandKind.Forfeit, forfeitEmpireId));
+                log?.Invoke($"NPEER host proposes Forfeit empire={forfeitEmpireId} execTick={execT}");
+            }
+
+            transport.Poll();
+            if (ShouldHaveSubmittedForExecTick(settings, turn))
+                WaitFor(() => NPeerHasAllInputs(submittedInputs, turn, screen.LivePeerIds()),
+                    transport, TimeSpan.FromSeconds(15), $"not all live peers submitted for turn {turn}");
+
+            host.CommitTick(turn);
+            transport.Poll();
+            client.Pump();
+            transport.Poll();
+            WaitFor(() => sim.Tick > turn, transport, TimeSpan.FromSeconds(10), $"host sim did not apply turn {turn}");
+
+            // Record this peer's per-turn digest KEYED BY THE SIM TICK it represents (sim.Tick == last-completed
+            // tick + 1). The host and joiners advance their sim tick at slightly different loop offsets (a joiner's
+            // Pump applies every buffered frame at once, racing ahead of its loop-turn index), so aligning by the
+            // raw loop-turn index compares mismatched ticks — the harness alignment bug. Keying by sim.Tick makes
+            // the cross-peer comparison compare the SAME committed tick's state.
+            uint hostTick = sim.Tick;
+            (ulong lo, ulong hi) = sim.Hash();
+            trace.TurnHashes.Add((hostTick, lo, hi));
+            if (trace.ForfeitedAtTurn < 0 && screen.SlotForfeitedForHeadless(hostSlotId))
+                trace.ForfeitedAtTurn = turn;
+
+            ArenaMultiplayerMatchStatus status = screen.MultiplayerMatchStatus();
+            if (host.Desync.HasDesync)
+            {
+                trace.Error = DesyncSummary(host.Desync);
+                break;
+            }
+            if (status.Ended)
+            {
+                trace.MatchEnded = true;
+                trace.MatchEndedTurn = turn;
+                trace.WinnerPeerId = status.WinnerPeerId;
+                trace.WinnerTeamId = status.WinnerTeamId;
+                break;
+            }
+        }
+        try { screen.ExitScreen(); } catch { }
+        return trace;
+    }
+
+    // A JOINER peer of an N-peer TCP run. Self-selected its slot id via JoinAsPeer already; here it announces ready,
+    // receives + validates the authoritative start, builds its screen, and runs the client loop: submit its own
+    // focus command under its EMPIRE id, pump the host's frames, record its own per-turn digest. It stops submitting
+    // once its own slot is forfeited (the committed Forfeit apply flips Empire.ArenaForfeited on every peer).
+    static ArenaNPeerTrace RunNPeerJoinerPeer(ArenaMultiplayerSettings settings, ArenaPlayerRosterRecord[] roster,
+        int slotId, TcpLockstepTransport transport, NPeerRunOptions options, Action<string> log, Barrier buildBarrier = null)
+    {
+        var trace = new ArenaNPeerTrace { SlotId = slotId };
+        SessionStartMessage start = null;
+        string sessionError = "";
+        transport.AddObserver(slotId, m =>
+        {
+            if (m is SessionStartMessage s) start = s;
+            if (m is SessionErrorMessage e) sessionError = e.Error;
+        });
+        // Announce ready (build signature not enforced in the harness beyond the version gate ValidateStartMessage runs).
+        transport.Send(LockstepHost.HostPeerId, new SessionReadyMessage
+        {
+            FromPeer = slotId, PeerId = slotId, Ready = true,
+            BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
+            BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
+        });
+
+        WaitFor(() => start != null || sessionError.NotEmpty(), transport, TimeSpan.FromSeconds(30),
+            "joiner did not receive the authoritative start");
+        if (sessionError.NotEmpty()) { trace.Error = sessionError; return trace; }
+
+        // VALIDATE the received start (proof #4: a divergent-team-map peer rejects HERE, before spawn).
+        string startError = ArenaMultiplayerSettings.ValidateStartMessage(start, out ArenaMultiplayerSettings validated);
+        if (startError.NotEmpty()) { trace.Error = startError; return trace; }
+        trace.SettingsHash = validated.SettingsHash;
+
+        ArenaFightScreen screen = BuildPeerScreen(validated);
+        // Identical-on-all-peers pre-tick-0 hook (e.g. construct the C5 tie) runs BEFORE the one-peer perturbation,
+        // so the tie exists on every peer and the reversal then probes order-sensitivity against it.
+        options.BeforeTick0AllPeers?.Invoke(screen);
+        if (options.PerturbPeerSlotId == slotId)
+            screen.PerturbMultiplayerShipListOrderForTest(); // proof #9 (this peer only)
+
+        int myEmpireId = screen.EmpireIdForSlotForHeadless(slotId);
+        var sim = screen.CreateMultiplayerLockstepSimulation();
+        var client = new LockstepClient(transport, myEmpireId, sim);
+
+        // Every peer has finished building + spawning its screen; wait here so no peer ticks while another builds.
+        buildBarrier?.SignalAndWait(TimeSpan.FromSeconds(60));
+
+        uint maxTurns = (uint)Math.Min(validated.EffectiveMaxTurns, (uint)Math.Max(1, options.MaxTurns));
+        for (uint turn = 0; turn < maxTurns; ++turn)
+        {
+            if (ShouldSubmit(validated, turn) && !screen.SlotForfeitedForHeadless(slotId))
+            {
+                client.Submit(screen.BuildMultiplayerFocusCommand(myEmpireId, turn + (uint)validated.InputDelay, turn));
+            }
+            transport.Poll();
+            client.Pump();
+            transport.Poll();
+            WaitForClientTick(client, sim, transport, turn, TimeSpan.FromSeconds(15),
+                $"joiner slot {slotId} did not apply turn {turn}");
+
+            // Key by sim.Tick (see the host-side note): align cross-peer digests by committed tick, not loop index.
+            uint joinTick = sim.Tick;
+            (ulong lo, ulong hi) = sim.Hash();
+            trace.TurnHashes.Add((joinTick, lo, hi));
+            if (trace.ForfeitedAtTurn < 0 && screen.SlotForfeitedForHeadless(slotId))
+                trace.ForfeitedAtTurn = turn;
+
+            ArenaMultiplayerMatchStatus status = screen.MultiplayerMatchStatus();
+            if (status.Ended)
+            {
+                trace.MatchEnded = true;
+                trace.MatchEndedTurn = turn;
+                trace.WinnerPeerId = status.WinnerPeerId;
+                trace.WinnerTeamId = status.WinnerTeamId;
+                break;
+            }
+            Thread.Sleep(1);
+        }
+        try { screen.ExitScreen(); } catch { }
+        return trace;
+    }
+
+    static bool NPeerHasAllInputs(Dictionary<uint, HashSet<int>> submittedInputs, uint turn, IEnumerable<int> livePeers)
+    {
+        if (!submittedInputs.TryGetValue(turn, out HashSet<int> peers))
+            return false;
+        foreach (int p in livePeers)
+            if (!peers.Contains(p))
+                return false;
+        return true;
     }
 
     public static string DesyncSummary(DesyncDetector desync)

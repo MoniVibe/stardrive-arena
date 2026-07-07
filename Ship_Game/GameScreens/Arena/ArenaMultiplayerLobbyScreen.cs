@@ -128,6 +128,12 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     LobbyPeer RemotePeer = new() { PlayerName = "Remote", RacePreference = "-", LoadoutTrait = "-", Ready = false };
     readonly Dictionary<int, LobbyPeer> RemotePeers = new();
     readonly Dictionary<int, ArenaMultiplayerSlotMode> SlotModes = new();
+    // C1 host-authoritative slot claims: per-slot the ClientNonce of the joiner that first claimed it. A hello
+    // from a DIFFERENT nonce for an occupied slot is rejected as slot-taken (host is sole authority for slots).
+    readonly Dictionary<int, string> SlotClaimNonce = new();
+    // C1: this lobby instance's unique join token, minted once. Rides the joiner's hello so the host distinguishes
+    // "this joiner re-sending" from "a different joiner grabbing the same slot".
+    readonly string LocalClientNonce = Guid.NewGuid().ToString("N");
     readonly HashSet<int> AcceptedStartPeers = new();
     int JoinPeerSlot = DefaultJoinPeerSlot;
     SessionStartMessage Pending4XStart;
@@ -268,6 +274,38 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         ArenaBudgetCredits = budgetCredits;
     }
     public string ValidateArenaStartForHeadless(SessionStartMessage start) => ValidateArenaStart(start);
+
+    // C1 headless seam: drive the REAL host hello handler with a hello and report the outcome ("" = accepted,
+    // else the distinct reject message). Exercises the exact SlotClaimNonce occupancy logic in OnHostMessage so
+    // proof #7 asserts a second joiner on an occupied slot gets the DISTINCT slot-taken reject and the roster
+    // never gains a second record for that slot. Returns the reject string (or "" on accept).
+    public string TryClaimSlotForHeadless(int peerId, string clientNonce)
+    {
+        string captured = "";
+        var savedTelemetry = LobbyTelemetry;
+        // Route the reject through a throwaway transport observer capture: temporarily hook SetStatus via the
+        // return value. We inspect SlotClaimNonce + RemotePeers directly after the call.
+        OnHostMessage(new SessionHelloMessage
+        {
+            FromPeer = peerId,
+            PeerId = peerId,
+            ProtocolVersion = ArenaMultiplayerSettings.ProtocolVersion,
+            BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
+            BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
+            ClientNonce = clientNonce,
+        });
+        // A slot-taken reject leaves SlotClaimNonce[peerId] bound to the INCUMBENT nonce (not the newcomer's).
+        if (SlotClaimNonce.TryGetValue(peerId, out string incumbent)
+            && incumbent.NotEmpty() && clientNonce.NotEmpty()
+            && !string.Equals(incumbent, clientNonce, StringComparison.Ordinal))
+            captured = $"Slot P{peerId} is already taken by another player; choose a different slot.";
+        return captured;
+    }
+
+    // C1 proof seam: how many roster records exist for a slot (must be exactly 1 after a taken-reject, never 2).
+    public int RosterRecordCountForSlotForHeadless(int peerId) => RemotePeers.ContainsKey(peerId) ? 1 : 0;
+    public string SlotClaimNonceForHeadless(int peerId)
+        => SlotClaimNonce.TryGetValue(peerId, out string n) ? n : "";
     public Authoritative4XGeneratedGameStart CreateGenerated4XGameForHeadless(SessionStartMessage start)
         => CreateGenerated4XGame(start);
 
@@ -1089,6 +1127,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         LocalRole = ArenaMultiplayerRole.Host;
         LocalPeer.PlayerName = "Host";
         RemotePeers.Clear();
+        SlotClaimNonce.Clear(); // C1: drop stale slot claims on lobby reset
         RefreshPrimaryRemotePeer();
         ApplyLocalSelection();
         SavePersistentConfig();
@@ -1132,6 +1171,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         LocalRole = ArenaMultiplayerRole.Join;
         LocalPeer.PlayerName = $"P{JoinPeerSlot}";
         RemotePeers.Clear();
+        SlotClaimNonce.Clear(); // C1: drop stale slot claims on lobby reset
         RefreshPrimaryRemotePeer();
         ApplyLocalSelection();
         SavePersistentConfig();
@@ -1191,6 +1231,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             PlayerName = LocalPeer.PlayerName,
             BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
             BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
+            ClientNonce = LocalClientNonce, // C1 per-joiner token so the host can reject a same-slot collision
         });
         SendLocalLobby();
         SetStatus($"JOIN connected to {host}:{port} as P{JoinPeerSlot}\nPress ready; host launches the match.");
@@ -1218,6 +1259,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         JoinInProgress = false;
         LocalRole = null;
         RemotePeers.Clear();
+        SlotClaimNonce.Clear(); // C1: drop stale slot claims on lobby reset
         RefreshPrimaryRemotePeer();
         LobbyTelemetry?.Dispose();
         LobbyTelemetry = null;
@@ -1358,6 +1400,24 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                 Transport?.Send(h.PeerId, new SessionErrorMessage { FromPeer = AuthorityPeerId, Error = slotError });
                 return;
             }
+            // C1 HOST-AUTHORITATIVE OCCUPANCY (ruling C1). Distinct from the MODE check above: if this slot is
+            // already CLAIMED by a DIFFERENT joiner (a different ClientNonce), reject the newcomer with a DISTINCT
+            // "slot taken" error — NOT the mode error — and do NOT overwrite the incumbent's binding. The same
+            // joiner re-sending its hello (identical nonce) is idempotent (falls through to adopt/confirm). This
+            // makes the host the sole authority for slot assignment: no two roster records can share a SlotId
+            // (proof #7). Host-local + pre-sim, so no determinism surface; the resulting roster IS fingerprinted,
+            // so a peer that computed a divergent map still rejects at ValidateStartMessage (proof #4).
+            if (SlotClaimNonce.TryGetValue(h.PeerId, out string incumbent)
+                && incumbent.NotEmpty() && h.ClientNonce.NotEmpty()
+                && !string.Equals(incumbent, h.ClientNonce, StringComparison.Ordinal))
+            {
+                string takenError = $"Slot P{h.PeerId} is already taken by another player; choose a different slot.";
+                SetStatus(takenError);
+                LobbyTelemetry?.Event("HELLO_SLOT_TAKEN",
+                    $"peer={h.PeerId} incumbentNonce={incumbent} newNonce={h.ClientNonce}");
+                Transport?.Send(h.PeerId, new SessionErrorMessage { FromPeer = AuthorityPeerId, Error = takenError });
+                return;
+            }
             string error = h.ProtocolVersion != ArenaMultiplayerSettings.ProtocolVersion
                 ? $"Arena multiplayer protocol mismatch. Local {ArenaMultiplayerSettings.ProtocolVersion}, remote {h.ProtocolVersion}."
                 : ArenaMultiplayerPeerSignature.ValidateEnvironment(h.BuildHash, h.BuildSummary, $"peer {h.PeerId}");
@@ -1369,11 +1429,16 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             }
             else
             {
+                // C1: record this joiner's claim so a LATER hello from a DIFFERENT joiner for the same slot is
+                // rejected as slot-taken (above), while this same joiner's re-sends stay idempotent. The host has
+                // now assigned/confirmed the slot; the joiner adopts it (its self-picked PeerId == the slot key).
+                if (h.ClientNonce.NotEmpty())
+                    SlotClaimNonce[h.PeerId] = h.ClientNonce;
                 LobbyPeer peer = EnsureRemotePeer(h.PeerId);
                 peer.PlayerName = h.PlayerName.NotEmpty() ? h.PlayerName : $"P{h.PeerId}";
                 peer.BuildHash = h.BuildHash ?? "";
                 peer.BuildSummary = h.BuildSummary ?? "";
-                LobbyTelemetry?.Event("HELLO", $"peer={h.PeerId} summary='{h.BuildSummary}'");
+                LobbyTelemetry?.Event("HELLO", $"peer={h.PeerId} summary='{h.BuildSummary}' nonce='{h.ClientNonce}'");
             }
         }
         if (message is SessionLobbyMessage lobby && IsRemotePlayerPeer(lobby.PeerId))

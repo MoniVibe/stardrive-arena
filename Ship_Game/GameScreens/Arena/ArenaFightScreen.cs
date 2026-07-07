@@ -229,9 +229,9 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         public readonly int TeamId;         // from ArenaPlayerRosterRecord.TeamId (Lane B C2); unused by Lane A sim
         public Empire Empire;
         public readonly List<Ship> Ships;   // aliases Player/EnemyShips at N=2 (see build site)
-#pragma warning disable CS0649 // set by Lane B C9 Forfeit apply; reserved here, always false in Lane A
+        // Set by Lane B C9: RefreshMultiplayerForfeitedSlots derives it from Empire.ArenaForfeited after the
+        // committed Forfeit apply. Drives LivePeerIds() (the barrier drops a forfeited slot). Never hashed.
         public bool Forfeited;
-#pragma warning restore CS0649
 
         public ArenaSlot(int slotId, int teamId, Empire empire, List<Ship> ships)
         {
@@ -729,6 +729,14 @@ public sealed partial class ArenaFightScreen : UniverseScreen
     {
         var s = Stopwatch.StartNew();
         ScreenManager.Instance.ClearScene();
+
+        // DETERMINISM (advisor-ruled root fix): reset the process-global EmpireHullBonuses registry + its monotonic
+        // RevisionId counter before creating ANY empire. That registry is indexed by empire Id and is NOT cleared on
+        // the arena Create path (only on full data-load / UniverseScreen teardown). When two peers build in ONE
+        // process (the headless N-peer harness) the second build's empires reuse the first build's stale bonus
+        // entries + a shifted RevisionId, diverging the ship-health/bonus revision cross-build (the "first build
+        // differs, rest agree" signature). Clearing here makes every build start from an identical cold registry.
+        EmpireHullBonuses.Clear();
 
         var settings = new UniverseParams { GenerationSeed = generationSeed };
         var arena = new ArenaFightScreen(settings, UniverseRadius, startAtHub);
@@ -4755,6 +4763,42 @@ public sealed partial class ArenaFightScreen : UniverseScreen
         {
             Order(ArenaSlots[0].Ships, ArenaSlots[1].Ships);
             Order(ArenaSlots[1].Ships, ArenaSlots[0].Ships);
+        }
+        else if (ArenaSlots.Length > 2)
+        {
+            // C5 N-SLOT TARGETING (ruling C5). Each attacking slot's ships pick the nearest ship across EVERY
+            // HOSTILE slot (different TeamId), scanning hostile slots in ascending slot order and breaking exact-
+            // distance ties by ascending stable Ship.Id — NEVER iteration order (proof #9 reverses a peer's ship
+            // list and asserts the digest is unchanged). Same-team (allied) slots are EXCLUDED from the target set.
+            for (int atk = 0; atk < ArenaSlots.Length; ++atk)
+            {
+                ArenaSlot attackerSlot = ArenaSlots[atk];
+                foreach (Ship a in attackerSlot.Ships)
+                {
+                    if (a == null || !a.IsAlive) continue;
+                    Ship best = null;
+                    float bestDist = float.MaxValue;
+                    // Ascending hostile slot order; within a slot, ascending Ship.Id tie-break.
+                    for (int def = 0; def < ArenaSlots.Length; ++def)
+                    {
+                        if (def == atk) continue;
+                        if (ArenaSlots[def].TeamId == attackerSlot.TeamId) continue; // allied => excluded
+                        foreach (Ship t in ArenaSlots[def].Ships)
+                        {
+                            if (t == null || !t.IsAlive) continue;
+                            float d = a.Position.SqDist(t.Position);
+                            // Stable tie-break: strictly closer wins; on an EXACT tie the lower Ship.Id wins.
+                            if (d < bestDist || (d == bestDist && (best == null || t.Id < best.Id)))
+                            {
+                                bestDist = d;
+                                best = t;
+                            }
+                        }
+                    }
+                    if (best != null)
+                        a.AI.OrderAttackSpecificTarget(best);
+                }
+            }
         }
         else
         {
