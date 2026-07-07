@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.Intrinsics.X86;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -726,8 +727,18 @@ public static class ArenaMultiplayerPeerSignature
             ? GlobalStats.ExtendedVersionNoHash
             : GlobalStats.ExtendedVersion.NotEmpty() ? GlobalStats.ExtendedVersion : "unknown-game";
         string mod = GlobalStats.HasMod ? $"{GlobalStats.ModName} {GlobalStats.ModVersion}" : "Vanilla";
-        return $"{game}; {mod}; env {EnvironmentHash()}";
+        return $"{game}; {mod}; env {EnvironmentHash()}; {IntrinsicsSummary()}";
     }
+
+    // Cross-machine FP determinism readout (arena lockstep). FMA (Avx2/Fma) codegen differs across CPUs and is
+    // the leading cross-machine desync suspect: a*b+c fuses to one rounding on a machine that JITs the FMA path,
+    // two roundings on one that doesn't, so the two peers drift 1 ULP/tick and eventually diverge. Launching via
+    // StarDrive-lockstep.cmd sets DOTNET_EnableAVX2=0 so BOTH machines fall to the SSE2 no-FMA baseline and match.
+    // This line is INFORMATIONAL ONLY (telemetry ENV summary) — NOT folded into EnvironmentHash, so it never
+    // affects whether a match starts; read it in the arena-multiplayer-*.log ENV line to confirm the knob took
+    // (want avx2=False fma=False on BOTH peers).
+    public static string IntrinsicsSummary()
+        => $"intrinsics avx2={Avx2.IsSupported} fma={Fma.IsSupported} sse2={Sse2.IsSupported}";
 
     public static string Summary(ArenaMultiplayerSettings settings)
     {
