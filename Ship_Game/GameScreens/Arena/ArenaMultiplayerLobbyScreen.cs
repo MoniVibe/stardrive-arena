@@ -612,7 +612,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         budget.Enabled = ArenaMode == ArenaMatchMode.Sandbox;
         UIButton fleet = ArenaTheme.AddPillButton(setup, "", _ => OpenFleetPicker(), 168f);
         fleet.Name = "arena_mp_set_fleet";
-        fleet.DynamicText = () => $"SET FLEET ({LocalPeer.FleetDesignNames.Length})";
+        fleet.DynamicText = () => $"FLEET SETUP ({LocalPeer.FleetDesignNames.Length})";
+        fleet.Tooltip = "Choose the ships you will field. Each player controls their own fleet.";
         UIButton matchLen = ArenaTheme.AddPillButton(setup, "", _ => CycleMatchLength(), 168f);
         matchLen.Name = "arena_mp_match_length";
         matchLen.DynamicText = MatchLengthLabel;

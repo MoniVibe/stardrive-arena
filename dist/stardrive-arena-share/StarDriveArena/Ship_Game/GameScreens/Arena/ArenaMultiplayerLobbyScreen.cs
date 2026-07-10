@@ -10,6 +10,7 @@ using Ship_Game.Audio;
 using Ship_Game.Data;
 using Ship_Game.Gameplay;
 using Ship_Game.Multiplayer.Authoritative;
+using Ship_Game.Ships;
 using Ship_Game.UI;
 using Ship_Game.Universe;
 using Vector2 = SDGraphics.Vector2;
@@ -33,10 +34,22 @@ enum ArenaMultiplayerSlotMode
 public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 {
     public const int DefaultPort = 47377;
-    public const int DefaultTurns = 600;
+    // Custom-fleet program §5.2: a REAL lobby match's MaxTurns is a HIGH SAFETY CEILING so the host-selected
+    // RulesetV0.MaxMatchSeconds (via ArenaMultiplayerSettings.EffectiveMaxTurns = min(MaxTurns, MaxMatchSeconds*60))
+    // actually drives the match length. Previously 600 turns (~10s @ 60 Hz) hard-capped every match regardless of
+    // the host's choice — the director's "fights too short" complaint. 36000 turns = 10 min @ 60 Hz. Headless
+    // self-tests pass an EXPLICIT small `turns` to stay fast (min() keeps their low MaxTurns authoritative), so
+    // this ceiling only affects real matches that let MaxMatchSeconds bind.
+    public const int DefaultTurns = 36000;
+    // The hard clamp ceiling for a host-entered/derived MaxTurns. Raised from 2000 (~33s) so DefaultTurns and the
+    // longest offered MaxMatchSeconds are not silently re-clamped below the host's choice. 216000 = 60 min @ 60 Hz.
+    public const int MaxTurnsCeiling = 216000;
     public const int LiveAuthoritative4XMaxTurns = 0;
     public const int DefaultJoinPeerSlot = 3;
     public const int LastJoinPeerSlot = 9;
+    // Star Gladiator is a 1v1 fleet duel: host (P2) + exactly one joiner (P3). The 4X surface keeps
+    // the full up-to-eight roster; this bound is applied only when Surface == StarGladiator.
+    public const int StarGladiatorLastJoinPeerSlot = DefaultJoinPeerSlot;
     const int AuthorityPeerId = Authoritative4XLobby.AuthorityPeerId;
     const int HostPlayerPeerId4X = 2;
     const string DefaultHost = "127.0.0.1";
@@ -115,9 +128,16 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     LobbyPeer RemotePeer = new() { PlayerName = "Remote", RacePreference = "-", LoadoutTrait = "-", Ready = false };
     readonly Dictionary<int, LobbyPeer> RemotePeers = new();
     readonly Dictionary<int, ArenaMultiplayerSlotMode> SlotModes = new();
+    // C1 host-authoritative slot claims: per-slot the ClientNonce of the joiner that first claimed it. A hello
+    // from a DIFFERENT nonce for an occupied slot is rejected as slot-taken (host is sole authority for slots).
+    readonly Dictionary<int, string> SlotClaimNonce = new();
+    // C1: this lobby instance's unique join token, minted once. Rides the joiner's hello so the host distinguishes
+    // "this joiner re-sending" from "a different joiner grabbing the same slot".
+    readonly string LocalClientNonce = Guid.NewGuid().ToString("N");
     readonly HashSet<int> AcceptedStartPeers = new();
     int JoinPeerSlot = DefaultJoinPeerSlot;
     SessionStartMessage Pending4XStart;
+    SessionStartMessage PendingArenaStart;
     SessionStartMessage PendingHostStart;
     Action PendingLobbyAction;
     ArenaMultiplayerRunResult LastResult;
@@ -141,6 +161,31 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     int FtlIndex = 3;
     int ExtraRemnantIndex = 2;
     bool StartPaused;
+    // Arena P1 mode selector (flag-gated authoring; Career preserves existing behavior). The host's
+    // selection authors the RulesetV0 attached to the Arena start payload.
+    ArenaMatchMode ArenaMode = ArenaMatchMode.Career;
+    ArenaBudgetModel ArenaBudgetModel = ArenaBudgetModel.Unlimited;
+    int ArenaBudgetCredits = 5000;
+    // Custom-fleet program §5.2: host-settable match length. RulesetV0.MaxMatchSeconds is the REAL cap now
+    // (ArenaMultiplayerSettings.EffectiveMaxTurns = MaxMatchSeconds*60, clamped by MaxTurns). Steps through a
+    // small set of round durations; folded into the fingerprint so both peers agree.
+    int ArenaMaxMatchSeconds = 600;
+    // Star Gladiator fleet picker: when the local player picks a fleet via SET FLEET, the chosen
+    // legal design names are pinned here so ApplyLocalSelection stops auto-deriving from career/roster.
+    // Only rides the existing P1 bundle path (legal combat-craft names) — no wire/hash change.
+    string[] ManualFleetDesignNames;
+    // Custom-fleet PLAYABLE slice (STARDRIVE_ARENA_CUSTOM_FLEET_PROGRAM_PLAN_20260706 §8, advisor ruling
+    // 2026-07-06). FALLBACK COMPOSER path (the real ShipDesignScreen/FleetDesignScreen-from-lobby is DEFERRED
+    // to the next phase, per §step-2 authorization): the slice fields EXISTING / previously-imported designs
+    // through the proven ArenaFleetBundle.FromDesignNames zero-offset column composer, wired into the already
+    // built exchange kernel. The "sandbox scratch set" is an in-memory map from a picked design's ORIGINAL
+    // display name to its content-derived @arena/<hash> wire name; the designs are registered TRANSIENTLY under
+    // those @arena/ names (never Saved Designs, never a dir, never the 4X) so both peers resolve them, and torn
+    // down on every lobby-exit path. LocalPeer.FleetDesignNames stays the DISPLAY names (labels/picker unchanged);
+    // the @arena/ rewrite happens only at the wire boundaries (lobby sync + BuildArenaSettings). Entire feature
+    // is a no-op when EnableArenaCustomFleet is off (map empty, table "", display names ride the wire unchanged).
+    readonly Dictionary<string, string> SandboxDisplayToWire = new(StringComparer.Ordinal);
+    IReadOnlyList<string> SandboxRegisteredNames = Array.Empty<string>();
     bool JoinInProgress;
     bool ScreenExiting;
     bool Launching;
@@ -163,6 +208,11 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     }
 
     public ArenaMultiplayerLobbySurface SurfaceMode => Surface;
+    // Highest visible player slot for the active surface: 2 slots (host + one joiner) on the Star
+    // Gladiator duel surface, up to eight on the authoritative 4X surface.
+    int HighestVisibleSlot => Surface == ArenaMultiplayerLobbySurface.StarGladiator
+        ? StarGladiatorLastJoinPeerSlot
+        : LastJoinPeerSlot;
     public string HeaderTitleForHeadless => Surface == ArenaMultiplayerLobbySurface.Authoritative4X
         ? "STARDRIVE MULTIPLAYER"
         : "STAR GLADIATOR";
@@ -198,9 +248,127 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     public string SlotModesForHeadless => EncodeSlotModes();
     public bool HasTurnsFieldForHeadless => false;
     public Authoritative4XGameSettings Current4XSettingsForHeadless => Build4XSettings();
+    public ArenaMultiplayerSettings CurrentArenaSettingsForHeadless => BuildArenaSettings();
+    // Headless proof seam: captures the launched fight/universe screen instead of swapping the
+    // shared ScreenManager stack (GoToScreen exits ALL screens, which would tear down the other
+    // in-process peer in a two-peer headless test). Everything up to and including screen
+    // construction + ArmMultiplayerLive runs the REAL live path.
+    public Action<GameScreen> LaunchScreenOverrideForHeadless;
+    public void StartHostForHeadless() => StartHost();
+    public void StartJoinForHeadless() => StartJoin();
+    public void ToggleReadyForHeadless() => ToggleReady();
+    public void LaunchAsHostForHeadless() => LaunchAsHost();
+    public bool JoinInProgressForHeadless => JoinInProgress;
+    public bool LocalReadyForHeadless => LocalPeer.Ready;
+    public int RemotePeerCountForHeadless => RemotePeers.Count;
+    public bool RemoteReadyForHeadless => RemotePeers.Values.Any(p => p.Ready);
     public SessionStartMessage Build4XStartForHeadless() => Build4XStartMessage();
+    public SessionStartMessage BuildArenaStartForHeadless() => BuildArenaStartMessage();
+    public ArenaMatchMode ArenaModeForHeadless => ArenaMode;
+    public ArenaMultiplayerRuleset ArenaRulesetForHeadless => BuildArenaRuleset();
+    public void SetArenaModeForHeadless(ArenaMatchMode mode, ArenaBudgetModel budgetModel = ArenaBudgetModel.Unlimited,
+        int budgetCredits = 0)
+    {
+        ArenaMode = mode;
+        ArenaBudgetModel = mode == ArenaMatchMode.Sandbox ? budgetModel : ArenaBudgetModel.Unlimited;
+        ArenaBudgetCredits = budgetCredits;
+    }
+    public string ValidateArenaStartForHeadless(SessionStartMessage start) => ValidateArenaStart(start);
+
+    // C1 headless seam: drive the REAL host hello handler with a hello and report the outcome ("" = accepted,
+    // else the distinct reject message). Exercises the exact SlotClaimNonce occupancy logic in OnHostMessage so
+    // proof #7 asserts a second joiner on an occupied slot gets the DISTINCT slot-taken reject and the roster
+    // never gains a second record for that slot. Returns the reject string (or "" on accept).
+    public string TryClaimSlotForHeadless(int peerId, string clientNonce)
+    {
+        string captured = "";
+        var savedTelemetry = LobbyTelemetry;
+        // Route the reject through a throwaway transport observer capture: temporarily hook SetStatus via the
+        // return value. We inspect SlotClaimNonce + RemotePeers directly after the call.
+        OnHostMessage(new SessionHelloMessage
+        {
+            FromPeer = peerId,
+            PeerId = peerId,
+            ProtocolVersion = ArenaMultiplayerSettings.ProtocolVersion,
+            BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
+            BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
+            ClientNonce = clientNonce,
+        });
+        // A slot-taken reject leaves SlotClaimNonce[peerId] bound to the INCUMBENT nonce (not the newcomer's).
+        if (SlotClaimNonce.TryGetValue(peerId, out string incumbent)
+            && incumbent.NotEmpty() && clientNonce.NotEmpty()
+            && !string.Equals(incumbent, clientNonce, StringComparison.Ordinal))
+            captured = $"Slot P{peerId} is already taken by another player; choose a different slot.";
+        return captured;
+    }
+
+    // C1 proof seam: how many roster records exist for a slot (must be exactly 1 after a taken-reject, never 2).
+    public int RosterRecordCountForSlotForHeadless(int peerId) => RemotePeers.ContainsKey(peerId) ? 1 : 0;
+    public string SlotClaimNonceForHeadless(int peerId)
+        => SlotClaimNonce.TryGetValue(peerId, out string n) ? n : "";
     public Authoritative4XGeneratedGameStart CreateGenerated4XGameForHeadless(SessionStartMessage start)
         => CreateGenerated4XGame(start);
+
+    // Star Gladiator fleet-picker headless seams. The picker screen writes back through
+    // ApplyPickedFleet; these let a headless test exercise the same path without the modal stack.
+    public string[] FleetPickerOptionsForHeadless => FleetPickerOptions();
+    public string[] LocalFleetDesignNamesForHeadless => LocalPeer.FleetDesignNames;
+    public ArenaBudgetModel ArenaBudgetModelForHeadless => ArenaBudgetModel;
+    public int ArenaBudgetCreditsForHeadless => ArenaBudgetCredits;
+    public void CycleArenaModeForHeadless() => CycleArenaMode();
+    public void CycleBudgetForHeadless() => CycleBudget();
+    public void SetFleetForHeadless(string[] designNames) => ApplyPickedFleet(designNames);
+
+    // Phase A (SETUP_PHASE_EXEC_PLAN §3) headless seams: prove the JOIN-SIDE design-table transport WITHOUT the
+    // modal/GPU stack, but through the REAL data path. SetLocalRoleForHeadless picks the authoring role;
+    // IngestRemoteLobbyForHeadless mirrors the host's live SessionLobbyMessage handler (the RemotePeers[..] =
+    // LobbyPeer.From(..) line) — feed it a message that has ROUND-TRIPPED through LockstepMessageCodec so the
+    // DesignTable it carries is reconstructed from received BYTES, never a shared in-process object. Then
+    // BuildArenaStartForHeadless()/CurrentArenaSettingsForHeadless exercises UnionRemoteDesignTables +
+    // BuildArenaSettings for real. BuildLocalDesignTableForHeadless exposes the local scratch table so a proof
+    // can build the "joiner" side's wire payload the exact way SendLocalLobby does.
+    // §2.3: when set, LaunchVisibleArena enters the in-arena PRE-MATCH SETUP phase on the fight screen before
+    // arming, so authoring happens in the arena and spawn waits for the setup->fight rebuild. Flag-gated.
+    public bool RequestArenaSetupPhase;
+    public void SetRequestArenaSetupPhaseForHeadless(bool on) => RequestArenaSetupPhase = on;
+
+    // Persistent ammo economy toggle (host-authored). DEFAULT TRUE == today's spawn-full + regen behavior,
+    // so a default lobby builds a ruleset byte-identical to trunk. Host-gated like the other ruleset pills;
+    // folded into the authoritative start's ruleset (BuildArenaRuleset.UnlimitedAmmo) and the fingerprint.
+    public bool RequestUnlimitedAmmo = true;
+    public void SetRequestUnlimitedAmmoForHeadless(bool on) => RequestUnlimitedAmmo = on;
+    public void SetLocalRoleForHeadless(ArenaMultiplayerRole role) => LocalRole = role;
+    public string BuildLocalDesignTableForHeadless() => BuildLocalDesignTable();
+    public string RemoteDesignTableUnionForHeadless() => UnionRemoteDesignTables();
+    public string FirstRemotePeerDesignTableForHeadless()
+        => RemotePeers.OrderBy(p => p.Key).Select(p => p.Value?.DesignTable ?? "").FirstOrDefault() ?? "";
+    public string[] ToWireFleetNamesForHeadless(string[] displayNames) => ToWireFleetNames(displayNames);
+    // Slot-card render seams (ISSUE 2): assert what each combatant slot's title/status/detail row shows without a
+    // GPU boot. SlotDetail carries the per-peer FleetSummary on the StarGladiator surface.
+    public string SlotTitleForHeadless(int peerId) => SlotTitle(peerId);
+    public string SlotStatusForHeadless(int peerId) => SlotStatus(peerId);
+    public string SlotDetailForHeadless(int peerId) => SlotDetail(peerId);
+    public int LocalSlotPeerIdForHeadless => LocalSlotPeerId;
+    public const int HostSlotPeerIdForHeadless = HostPlayerPeerId4X;
+    // Setup-pill discoverability seams (ISSUE 3): assert the label text in both states and the STATUS hint.
+    public string SetupPillLabelForHeadless => SetupPillLabel();
+    public string SetupHintLineForHeadless => SetupHintLine();
+    public void IngestRemoteLobbyForHeadless(SessionLobbyMessage lobby)
+    {
+        RemotePeers[lobby.PeerId] = LobbyPeer.From(lobby, $"P{lobby.PeerId}");
+        RefreshPrimaryRemotePeer();
+    }
+
+    public ArenaFleetPickerScreen OpenFleetPickerForHeadless()
+    {
+        string[] options = FleetPickerOptions();
+        if (options.Length == 0)
+            return null;
+        return new ArenaFleetPickerScreen(this, options, LocalPeer.FleetDesignNames,
+            ArenaMode == ArenaMatchMode.Sandbox && ArenaBudgetModel == ArenaBudgetModel.Cap
+                ? ArenaBudgetCredits : 0,
+            ApplyPickedFleet);
+    }
 
     public void Configure4XForHeadless(Authoritative4XGameSettings settings, string localRace, string localTraits,
         string remoteRace, string remoteTraits)
@@ -289,8 +457,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         AddField(panel.X + 210, panel.Y + 164, "SEED", ParseSeed().ToString(CultureInfo.InvariantCulture), out SeedEntry, allowPeriod: false, maxChars: 9, "arena_mp_seed_entry");
         AddField(panel.X + 396, panel.Y + 164, "SPEED", ParseSpeed().ToString(CultureInfo.InvariantCulture), out SpeedEntry, allowPeriod: true, maxChars: 4, "arena_mp_speed_entry");
 
-        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 206), "PLAYER SLOTS"));
-        for (int peerSlot = HostPlayerPeerId4X; peerSlot <= LastJoinPeerSlot; ++peerSlot)
+        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 206),
+            Surface == ArenaMultiplayerLobbySurface.StarGladiator ? "COMBATANTS" : "PLAYER SLOTS"));
+        for (int peerSlot = HostPlayerPeerId4X; peerSlot <= HighestVisibleSlot; ++peerSlot)
         {
             int index = peerSlot - HostPlayerPeerId4X;
             int col = index % 4;
@@ -299,6 +468,38 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         }
 
         Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 364), "SETUP"));
+        if (Surface == ArenaMultiplayerLobbySurface.StarGladiator)
+            BuildStarGladiatorSetup(panel);
+        else
+            BuildAuthoritative4XSetup(panel);
+        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 534), "STATUS"));
+        for (int i = 0; i < 3; ++i)
+        {
+            int line = i;
+            Add(new UILabel(new Vector2(panel.X + 24, panel.Y + 560 + i * 18),
+                StatusLine(line), ArenaTheme.BodySmallFont, ArenaTheme.TextSecondary)
+            {
+                DynamicText = _ => StatusLine(line),
+            });
+        }
+
+        UIList actions = AddList(new Vector2(panel.X + 24, panel.Bottom - 52));
+        actions.Direction = new Vector2(1f, 0f);
+        actions.Padding = new Vector2(8f, 8f);
+        actions.LayoutStyle = ListLayoutStyle.ResizeList;
+        ArenaTheme.AddPrimaryButton(actions, "HOST", _ => StartHost(), 96f).Name = "arena_mp_host";
+        ArenaTheme.AddPillButton(actions, "JOIN", _ => StartJoin(), 96f).Name = "arena_mp_join";
+        ArenaTheme.AddPillButton(actions, "READY", _ => ToggleReady(), 96f).Name = "arena_mp_ready";
+        ArenaTheme.AddPrimaryButton(actions, "LAUNCH", _ => LaunchAsHost(), 112f).Name = "arena_mp_launch";
+        ArenaTheme.AddPillButton(actions, "SELF TEST", _ => StartSelfTest(), 126f).Name = "arena_mp_self_test";
+        ArenaTheme.AddPillButton(actions, "BACK", _ => ExitScreen(), 90f).Name = "arena_mp_back";
+    }
+
+    // Authoritative 4X galaxy-generation chrome — the full RegularSettings.* pill grid plus the 4X
+    // game-mode selector. Built ONLY on the Authoritative4X surface; the Star Gladiator duel surface
+    // has no galaxy to generate, so none of these apply there.
+    void BuildAuthoritative4XSetup(RectF panel)
+    {
         UIList setup = AddList(new Vector2(panel.X + 24, panel.Y + 392));
         setup.Direction = new Vector2(1f, 0f);
         setup.Padding = new Vector2(8f, 8f);
@@ -390,28 +591,425 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         UIButton rules = ArenaTheme.AddPillButton(setup4, "", _ => CycleAIRules(), 126f);
         rules.Name = "arena_mp_ai_rules";
         rules.DynamicText = AIRulesLabel;
+    }
 
-        Add(ArenaTheme.SectionHeader(new Vector2(panel.X + 24, panel.Y + 534), "STATUS"));
-        for (int i = 0; i < 3; ++i)
+    // Star Gladiator duel chrome — a small arena-specific control set (match mode, budget, loadout
+    // flavor, start-live/paused, slot, fleet picker). No galaxy-generation pills: a 1v1 fleet duel
+    // has no galaxy to generate.
+    void BuildStarGladiatorSetup(RectF panel)
+    {
+        UIList setup = AddList(new Vector2(panel.X + 24, panel.Y + 392));
+        setup.Direction = new Vector2(1f, 0f);
+        setup.Padding = new Vector2(8f, 8f);
+        setup.LayoutStyle = ListLayoutStyle.ResizeList;
+        UIButton arenaMode = ArenaTheme.AddPillButton(setup, "", _ => CycleArenaMode(), 168f);
+        arenaMode.Name = "arena_mp_arena_mode";
+        arenaMode.DynamicText = () => $"ARENA {(ArenaMode == ArenaMatchMode.Sandbox ? "SANDBOX" : "CAREER")}";
+        UIButton budget = ArenaTheme.AddPillButton(setup, "", _ => CycleBudget(), 168f);
+        budget.Name = "arena_mp_budget";
+        budget.DynamicText = BudgetLabel;
+        budget.Visible = ArenaMode == ArenaMatchMode.Sandbox;
+        budget.Enabled = ArenaMode == ArenaMatchMode.Sandbox;
+        UIButton fleet = ArenaTheme.AddPillButton(setup, "", _ => OpenFleetPicker(), 168f);
+        fleet.Name = "arena_mp_set_fleet";
+        fleet.DynamicText = () => $"FLEET SETUP ({LocalPeer.FleetDesignNames.Length})";
+        fleet.Tooltip = "Choose the ships you will field. Each player controls their own fleet.";
+        UIButton matchLen = ArenaTheme.AddPillButton(setup, "", _ => CycleMatchLength(), 168f);
+        matchLen.Name = "arena_mp_match_length";
+        matchLen.DynamicText = MatchLengthLabel;
+        // Persistent ammo economy pill (host-authored ruleset toggle, mirrors ARENA/BUDGET/MATCH-LENGTH). ON
+        // (default) == today's spawn-full + regen; FINITE == magazine runs dry + persists + costs cash to
+        // rearm. Rides the authoritative start's ruleset so the join agrees; a divergent toggle rejects at
+        // the SettingsHash handshake (BuildArenaRuleset.UnlimitedAmmo -> AppendTo).
+        UIButton ammo = ArenaTheme.AddPillButton(setup, "", _ => ToggleUnlimitedAmmo(), 168f);
+        ammo.Name = "arena_mp_ammo";
+        ammo.DynamicText = AmmoPillLabel;
+
+        UIList setup2 = AddList(new Vector2(panel.X + 24, panel.Y + 430));
+        setup2.Direction = new Vector2(1f, 0f);
+        setup2.Padding = new Vector2(8f, 8f);
+        setup2.LayoutStyle = ListLayoutStyle.ResizeList;
+        UIButton race = ArenaTheme.AddPillButton(setup2, "", _ => CycleRace(), 152f);
+        race.Name = "arena_mp_race";
+        race.DynamicText = () => $"RACE {LocalPeer.RacePreference}";
+        UIButton trait = ArenaTheme.AddPillButton(setup2, "", _ => CycleTrait(), 148f);
+        trait.Name = "arena_mp_trait";
+        trait.DynamicText = () => $"TRAIT {CurrentTraitLabel()}";
+        UIButton traitToggle = ArenaTheme.AddPillButton(setup2, "", _ => ToggleTrait(), 142f);
+        traitToggle.Name = "arena_mp_trait_toggle";
+        traitToggle.DynamicText = TraitToggleLabel;
+
+        UIList setup3 = AddList(new Vector2(panel.X + 24, panel.Y + 468));
+        setup3.Direction = new Vector2(1f, 0f);
+        setup3.Padding = new Vector2(8f, 8f);
+        setup3.LayoutStyle = ListLayoutStyle.ResizeList;
+        UIButton pause = ArenaTheme.AddPillButton(setup3, "", _ => ToggleStartPaused(), 126f);
+        pause.Name = "arena_mp_start_paused";
+        pause.DynamicText = () => StartPaused ? "START PAUSED" : "START LIVE";
+        UIButton slot = ArenaTheme.AddPillButton(setup3, "", _ => CycleJoinSlot(), 92f);
+        slot.Name = "arena_mp_peer_slot";
+        slot.DynamicText = () => LocalRole == ArenaMultiplayerRole.Host ? "SLOT HOST" : $"SLOT P{JoinPeerSlot}";
+
+        // Custom-fleet opt-in (flag-gated): host toggles whether the match opens in the in-arena PRE-MATCH SETUP
+        // phase (design/import ships + arrange the fleet page) instead of spawning immediately. Host-controlled
+        // like the other ruleset pills; the join mirrors it read-only (it rides the authoritative start's ruleset).
+        // When the flag is off the pill is not added at all -> a true no-op, the current duel path is unchanged.
+        if (GlobalStats.Defaults.EnableArenaCustomFleet)
         {
-            int line = i;
-            Add(new UILabel(new Vector2(panel.X + 24, panel.Y + 560 + i * 18),
-                StatusLine(line), ArenaTheme.BodySmallFont, ArenaTheme.TextSecondary)
-            {
-                DynamicText = _ => StatusLine(line),
-            });
+            // Discoverability (director live-QA): when custom-fleet is on, the design-in-arena flow was buried
+            // behind an opaque "SETUP: OFF" label. Make BOTH states spell out what the pill does (design ships in
+            // the arena vs. pick a fleet in the lobby) and widen the pill so the extra text fits. A matching
+            // one-line hint is surfaced in the STATUS area (SetupHintLine) so a player who never toggled the pill
+            // still learns the design flow exists.
+            UIButton setupPhase = ArenaTheme.AddPillButton(setup3, "", _ => ToggleArenaSetupPhase(), 214f);
+            setupPhase.Name = "arena_mp_setup_phase";
+            setupPhase.DynamicText = () => SetupPillLabel();
+            SetStatus(SetupHintLine());
         }
+    }
 
-        UIList actions = AddList(new Vector2(panel.X + 24, panel.Bottom - 52));
-        actions.Direction = new Vector2(1f, 0f);
-        actions.Padding = new Vector2(8f, 8f);
-        actions.LayoutStyle = ListLayoutStyle.ResizeList;
-        ArenaTheme.AddPrimaryButton(actions, "HOST", _ => StartHost(), 96f).Name = "arena_mp_host";
-        ArenaTheme.AddPillButton(actions, "JOIN", _ => StartJoin(), 96f).Name = "arena_mp_join";
-        ArenaTheme.AddPillButton(actions, "READY", _ => ToggleReady(), 96f).Name = "arena_mp_ready";
-        ArenaTheme.AddPrimaryButton(actions, "LAUNCH", _ => LaunchAsHost(), 112f).Name = "arena_mp_launch";
-        ArenaTheme.AddPillButton(actions, "SELF TEST", _ => StartSelfTest(), 126f).Name = "arena_mp_self_test";
-        ArenaTheme.AddPillButton(actions, "BACK", _ => ExitScreen(), 90f).Name = "arena_mp_back";
+    // Host-controlled toggle for the in-arena PRE-MATCH SETUP phase (custom-fleet UI wiring). Mirrors the other
+    // ruleset pills: gated to the host (the join sees it read-only via HostSettingsAreLockedToRemote), re-broadcast
+    // so the peers agree, and folded into the authoritative start's ruleset (BuildArenaRuleset.SetupPhase).
+    // ISSUE 3 (discoverability): the SETUP pill's label spells out the design flow in BOTH states so it is not a
+    // hidden toggle. ON => the match opens in the in-arena PRE-MATCH SETUP page where ships are designed/imported;
+    // OFF => the match spawns straight from the lobby fleet picks. Only meaningful when EnableArenaCustomFleet is on
+    // (the pill is not added otherwise).
+    string SetupPillLabel()
+        => RequestArenaSetupPhase ? "SETUP: DESIGN IN ARENA (design ships)" : "SETUP: pick fleet in lobby";
+
+    // One-line lobby STATUS hint that advertises the design-in-arena flow to a player who never toggled the pill.
+    // Only surfaced when EnableArenaCustomFleet is on.
+    string SetupHintLine()
+        => "Custom Fleet on: toggle SETUP to design ships in the arena before the fight.";
+
+    void ToggleArenaSetupPhase()
+    {
+        if (!GlobalStats.Defaults.EnableArenaCustomFleet)
+        {
+            GameAudio.NegativeClick();
+            return;
+        }
+        if (HostSettingsAreLockedToRemote())
+        {
+            GameAudio.NegativeClick();
+            return;
+        }
+        RequestArenaSetupPhase = !RequestArenaSetupPhase;
+        SetStatus(RequestArenaSetupPhase
+            ? "Star Gladiator setup: design/import ships and arrange your fleet IN the arena before the fight."
+            : "Star Gladiator setup off: the match spawns immediately from the fleet picks.");
+        GameAudio.AffirmativeClick();
+    }
+
+    // Host-controlled persistent-ammo toggle. Mirrors the other ruleset pills: gated to the host (the join
+    // sees it read-only via HostSettingsAreLockedToRemote) and folded into the authoritative start's ruleset
+    // (BuildArenaRuleset.UnlimitedAmmo). ON (default) => spawn-full + regen as today; FINITE => magazine.
+    string AmmoPillLabel()
+        => RequestUnlimitedAmmo ? "AMMO UNLIMITED" : "AMMO FINITE";
+
+    void ToggleUnlimitedAmmo()
+    {
+        if (HostSettingsAreLockedToRemote())
+        {
+            GameAudio.NegativeClick();
+            return;
+        }
+        RequestUnlimitedAmmo = !RequestUnlimitedAmmo;
+        SetStatus(RequestUnlimitedAmmo
+            ? "Ammo unlimited: ships spawn full and regenerate ordnance (today's behavior)."
+            : "Ammo finite: magazines run dry and must be rearmed for cash between fights.");
+        GameAudio.AffirmativeClick();
+    }
+
+    string BudgetLabel()
+    {
+        if (ArenaMode != ArenaMatchMode.Sandbox || ArenaBudgetModel == ArenaBudgetModel.Unlimited)
+            return "BUDGET UNLIMITED";
+        return $"BUDGET CAP {ArenaBudgetCredits}";
+    }
+
+    // Flip Career<->Sandbox, mirroring SetArenaModeForHeadless's effect on the budget model
+    // (Career forces Unlimited; Sandbox retains the last chosen cap). Rebuilds so the budget pill's
+    // visibility tracks the mode.
+    void CycleArenaMode()
+    {
+        if (HostSettingsAreLockedToRemote())
+        {
+            GameAudio.NegativeClick();
+            return;
+        }
+        ArenaMode = ArenaMode == ArenaMatchMode.Career ? ArenaMatchMode.Sandbox : ArenaMatchMode.Career;
+        if (ArenaMode != ArenaMatchMode.Sandbox)
+            ArenaBudgetModel = ArenaBudgetModel.Unlimited;
+        // Career and Sandbox derive fleets from different sources; drop a stale manual pick so the
+        // label re-derives, then let ApplyLocalSelection refresh it.
+        ManualFleetDesignNames = null;
+        ApplyLocalSelection();
+        SetStatus(ArenaMode == ArenaMatchMode.Sandbox
+            ? "Sandbox arena: all-content roster, optional budget cap."
+            : "Career arena: your career-locked roster fields the fight.");
+        GameAudio.AffirmativeClick();
+        RefreshSetup();
+    }
+
+    // Flip the sandbox budget: Unlimited -> Cap N -> Unlimited (cap amount steps through a small set).
+    void CycleBudget()
+    {
+        if (ArenaMode != ArenaMatchMode.Sandbox)
+        {
+            GameAudio.NegativeClick();
+            return;
+        }
+        if (HostSettingsAreLockedToRemote())
+        {
+            GameAudio.NegativeClick();
+            return;
+        }
+        if (ArenaBudgetModel == ArenaBudgetModel.Unlimited)
+        {
+            ArenaBudgetModel = ArenaBudgetModel.Cap;
+            ArenaBudgetCredits = 5000;
+        }
+        else if (ArenaBudgetCredits < 20000)
+        {
+            ArenaBudgetCredits += 5000;
+        }
+        else
+        {
+            ArenaBudgetModel = ArenaBudgetModel.Unlimited;
+            ArenaBudgetCredits = 5000;
+        }
+        SetStatus(BudgetLabel());
+        GameAudio.AffirmativeClick();
+    }
+
+    static readonly int[] MatchLengthChoicesSeconds = { 30, 60, 120, 300, 600 };
+
+    string MatchLengthLabel()
+    {
+        int s = ArenaMaxMatchSeconds;
+        return s % 60 == 0 ? $"MATCH {s / 60} MIN" : $"MATCH {s} SEC";
+    }
+
+    // Cycle the host match length through a small set of round durations. RulesetV0.MaxMatchSeconds is the
+    // REAL cap (custom-fleet program §5.2); it is folded into the fingerprint, so both peers agree on when
+    // the match times out.
+    void CycleMatchLength()
+    {
+        if (HostSettingsAreLockedToRemote())
+        {
+            GameAudio.NegativeClick();
+            return;
+        }
+        int idx = Array.IndexOf(MatchLengthChoicesSeconds, ArenaMaxMatchSeconds);
+        idx = idx < 0 ? 0 : (idx + 1) % MatchLengthChoicesSeconds.Length;
+        ArenaMaxMatchSeconds = MatchLengthChoicesSeconds[idx];
+        SetStatus(MatchLengthLabel());
+        GameAudio.AffirmativeClick();
+    }
+
+    void RefreshSetup()
+    {
+        // Simplest reliable way to reflect visibility/label changes: rebuild the screen content.
+        LoadContent();
+    }
+
+    // Interim fleet picker (the drag-drop FleetDesignScreen formation editor is DEFERRED). Opens a
+    // lightweight modal listing the legal fielded designs for the active arena mode; the player's
+    // multi-select writes LocalPeer.FleetDesignNames (pinned via ManualFleetDesignNames) so the
+    // existing settings/bundle path and the "Fleet: ..." label pick it up. Only legal combat-craft
+    // names ride the P1 bundle path — deterministic-safe, no wire/hash change.
+    void OpenFleetPicker()
+    {
+        // SET FLEET is each player's OWN fleet choice, NOT a host ruleset — so it is available to BOTH the host
+        // and the joiner (each edits their own LocalPeer.FleetDesignNames). The joiner's pick reaches the host
+        // over SendLocalLobby -> SessionLobbyMessage.Fleet -> RemotePeers[peerId].FleetDesignNames and is used at
+        // launch. Do NOT gate this on HostSettingsAreLockedToRemote(); that guard is only for RULESET pills
+        // (ARENA/BUDGET/MATCH-LENGTH/SETUP) whose value must come from the authoritative host.
+        string[] options = FleetPickerOptions();
+        if (options.Length == 0)
+        {
+            SetStatus(ArenaMode == ArenaMatchMode.Career
+                ? "No owned career vessels to field yet."
+                : "No legal arena combat craft available.");
+            GameAudio.NegativeClick();
+            return;
+        }
+        ScreenManager.AddScreen(new ArenaFleetPickerScreen(this, options, LocalPeer.FleetDesignNames,
+            ArenaMode == ArenaMatchMode.Sandbox && ArenaBudgetModel == ArenaBudgetModel.Cap
+                ? ArenaBudgetCredits : 0,
+            ApplyPickedFleet));
+        GameAudio.AffirmativeClick();
+    }
+
+    // The legal design names offered by the picker for the active arena mode. Career: the career's
+    // owned vessels' designs. Sandbox: every legal arena combat-craft design.
+    string[] FleetPickerOptions()
+    {
+        try
+        {
+            if (ArenaMode == ArenaMatchMode.Career)
+            {
+                string[] career = CareerOwnedFleetDesignNames();
+                if (career.Length > 0)
+                    return career;
+            }
+            return ResourceManager.Ships.Designs
+                .Where(d => IsLegalArenaFleetDesignName(d.Name))
+                .Select(d => d.Name)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(n => n, StringComparer.Ordinal)
+                .ToArray();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    // The full owned-vessel design roster for the active career (superset of the currently-fielded
+    // fleet), so the player can compose from everything they own.
+    static string[] CareerOwnedFleetDesignNames()
+    {
+        try
+        {
+            ArenaCareer career = CareerManager.LoadSlot(ArenaFightScreen.ActiveCareerSlot);
+            if (career == null || career.IsFresh)
+                career = CareerManager.Load(ArenaFightScreen.CareerSavePath);
+            if (career == null || career.IsFresh || career.OwnedVessels == null)
+                return Array.Empty<string>();
+            return LegalArenaFleetNames(career.OwnedVessels
+                .Where(v => v != null)
+                .Select(v => v.DesignName)
+                .ToArray())
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    // Commit the picker's selection: normalize to legal names, pin it so ApplyLocalSelection won't
+    // re-derive, and refresh so the SET FLEET count + slot "Fleet: ..." label update.
+    void ApplyPickedFleet(string[] picked)
+    {
+        string[] legal = LegalArenaFleetNames(picked);
+        ManualFleetDesignNames = legal;
+        LocalPeer.FleetDesignNames = legal;
+        // Custom-fleet slice: canonicalize + transiently register the picked designs into the sandbox scratch
+        // set so both peers resolve them and the wire carries content-hash names. No-op when the flag is off.
+        RebuildSandboxScratchSet(legal);
+        SavePersistentConfig();
+        SetStatus(legal.Length == 0
+            ? "Fleet cleared — a default roster fields the fight."
+            : FleetSummary(legal));
+        GameAudio.AffirmativeClick();
+        // Broadcast the OWN-fleet change immediately (mirrors CycleRace/ToggleTrait) so the other player's slot
+        // card reflects it live: the host's pick reaches the joiner and the joiner's reaches the host over the
+        // lobby sync. No-op when not connected (SendLocalLobby returns early with no transport).
+        SendLocalLobby();
+        RefreshSetup();
+    }
+
+    // Rebuild the sandbox scratch set from the currently-picked display names. Tears down the PRIOR transient
+    // registration first (the "player opens the picker twice" leak, advisor risk 3), then for each picked design
+    // that resolves to a real IShipDesign: register it transiently under @arena/<hash> and record the
+    // display->wire mapping. Idempotent and flag-gated. A design that is a custom carrier (or otherwise fails
+    // ValidateContentAvailable) is left mapping to its display name (it rides as a stock name; the handshake is
+    // the authoritative gate either way).
+    void RebuildSandboxScratchSet(string[] displayNames)
+    {
+        TeardownSandboxScratchSet();
+        if (!GlobalStats.Defaults.EnableArenaCustomFleet)
+            return;
+        var toRegister = new List<Ship_Game.Ships.ShipDesign>();
+        foreach (string display in displayNames)
+        {
+            if (!ResourceManager.Ships.GetDesign(display, out IShipDesign design))
+                continue;
+            // Only designs the exchange kernel will accept (non-carrier, all ids resolvable) join the scratch
+            // set; anything else stays a plain stock reference.
+            if (ArenaDesignTable.ValidateContentAvailable(design).NotEmpty())
+                continue;
+            // Register under the @arena/<hash> CONTENT name (not the display name). RegisterTransient only accepts
+            // @arena/-prefixed designs (its defensive guard, matching Decode's re-derive), so we must CLONE the
+            // picked design and rename the clone to its content name before registering — exactly the same
+            // canonicalization the JOIN side does when it reconstructs from received bytes. Registering the raw
+            // display-named object is a no-op (RegisterTransient skips it), which would leave the scratch set —
+            // and thus BuildLocalDesignTable — empty. Clone so the player's saved/stock design keeps its name.
+            string wire = ArenaDesignTable.ContentName(design);
+            SandboxDisplayToWire[display] = wire;
+            var scratch = ((Ship_Game.Ships.ShipDesign)design).GetClone(wire);
+            scratch.Name = wire;
+            toRegister.Add(scratch);
+        }
+        if (toRegister.Count > 0)
+            SandboxRegisteredNames = ArenaDesignTable.RegisterTransient(toRegister);
+    }
+
+    // Undo the transient registration and clear the display->wire map. Safe to call repeatedly; targets the
+    // EXACT tracked set (never a blanket @arena/* delete — a concurrent match shares the process-global table).
+    void TeardownSandboxScratchSet()
+    {
+        if (SandboxRegisteredNames.Count > 0)
+            ArenaDesignTable.UnregisterTransient(SandboxRegisteredNames);
+        SandboxRegisteredNames = Array.Empty<string>();
+        SandboxDisplayToWire.Clear();
+    }
+
+    // Map display fleet names to their @arena/<hash> WIRE names for the exchange kernel. Names not in the
+    // sandbox set (stock designs, or when the flag is off) pass through unchanged.
+    string[] ToWireFleetNames(string[] displayNames)
+    {
+        if (SandboxDisplayToWire.Count == 0 || displayNames == null)
+            return displayNames ?? Array.Empty<string>();
+        return displayNames
+            .Select(n => SandboxDisplayToWire.TryGetValue(n, out string wire) ? wire : n)
+            .ToArray();
+    }
+
+    // Encode the design TABLE for the currently-registered sandbox scratch set (the full canonical payloads the
+    // far peer reconstructs from). "" when nothing custom is fielded / the flag is off.
+    string BuildLocalDesignTable()
+    {
+        if (SandboxRegisteredNames.Count == 0)
+            return "";
+        var designs = new List<IShipDesign>();
+        foreach (string wire in SandboxDisplayToWire.Values.Distinct(StringComparer.Ordinal))
+            if (ResourceManager.Ships.GetDesign(wire, out IShipDesign d))
+                designs.Add(d);
+        return designs.Count > 0 ? ArenaDesignTable.Encode(designs) : "";
+    }
+
+    // Phase A (SETUP_PHASE_EXEC_PLAN §3.2/§3.3): the JOIN-SIDE transport fix. Union every REMOTE peer's design
+    // table (each carries its OWN customs, published in SendLocalLobby) into the single JoinDesignTable the host
+    // folds into the authoritative start. Decode-all-then-Encode-union: the container is dedup-by-content-name
+    // and order-independent, so decoding each remote table's reconstructed designs and re-Encoding yields a
+    // stable union. Any single remote table that fails to decode is skipped (its custom simply won't resolve at
+    // the handshake — a clean rejection, never a desync). "" when no remote fielded a custom / the flag is off.
+    // N-peer: iterating RemotePeers (sorted by id) unions all joiners; at N=2 this is the single joiner's table.
+    string UnionRemoteDesignTables()
+    {
+        if (!GlobalStats.Defaults.EnableArenaCustomFleet)
+            return "";
+        var union = new List<IShipDesign>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (KeyValuePair<int, LobbyPeer> kv in RemotePeers.OrderBy(p => p.Key))
+        {
+            string table = kv.Value?.DesignTable ?? "";
+            if (table.IsEmpty())
+                continue;
+            ArenaDesignTable.DecodeResult decoded = ArenaDesignTable.Decode(table);
+            if (!decoded.Ok)
+                continue; // a malformed remote table simply won't resolve at the handshake; never crash here.
+            foreach (KeyValuePair<string, Ship_Game.Ships.ShipDesign> d in decoded.Designs)
+                if (seen.Add(d.Key))
+                    union.Add(d.Value);
+        }
+        return union.Count > 0 ? ArenaDesignTable.Encode(union) : "";
     }
 
     void AddField(float x, float y, string label, string value, out UITextEntry entry,
@@ -501,10 +1099,21 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             return;
         }
 
-        LastResult = RunLocalSelfTestForHeadless(ParseTurns());
-        Last4XSelfTestResult = null;
-        SetStatus(Summarize(LastResult));
-        GameAudio.AffirmativeClick();
+        try
+        {
+            LastResult = RunLocalSelfTestForHeadless(ParseTurns());
+            Last4XSelfTestResult = null;
+            SetStatus(Summarize(LastResult));
+            GameAudio.AffirmativeClick();
+        }
+        catch (Exception ex)
+        {
+            LastResult = null;
+            Last4XSelfTestResult = null;
+            SetStatus($"SELF TEST failed: {ex.Message}");
+            LobbyTelemetry?.Event("SELF_TEST_FAIL", ex.Message);
+            GameAudio.NegativeClick();
+        }
     }
 
     void StartHost()
@@ -519,6 +1128,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         LocalRole = ArenaMultiplayerRole.Host;
         LocalPeer.PlayerName = "Host";
         RemotePeers.Clear();
+        SlotClaimNonce.Clear(); // C1: drop stale slot claims on lobby reset
         RefreshPrimaryRemotePeer();
         ApplyLocalSelection();
         SavePersistentConfig();
@@ -548,6 +1158,9 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
     void StartJoin()
     {
+        if (Transport != null && LocalRole == ArenaMultiplayerRole.Join && !JoinInProgress)
+            ResetJoinAttemptForRetry();
+
         if (Transport != null || JoinInProgress)
         {
             SetStatus("Already hosting or joined. Back out to reset the socket.");
@@ -559,6 +1172,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         LocalRole = ArenaMultiplayerRole.Join;
         LocalPeer.PlayerName = $"P{JoinPeerSlot}";
         RemotePeers.Clear();
+        SlotClaimNonce.Clear(); // C1: drop stale slot claims on lobby reset
         RefreshPrimaryRemotePeer();
         ApplyLocalSelection();
         SavePersistentConfig();
@@ -618,6 +1232,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             PlayerName = LocalPeer.PlayerName,
             BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
             BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
+            ClientNonce = LocalClientNonce, // C1 per-joiner token so the host can reject a same-slot collision
         });
         SendLocalLobby();
         SetStatus($"JOIN connected to {host}:{port} as P{JoinPeerSlot}\nPress ready; host launches the match.");
@@ -629,11 +1244,26 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     {
         JoinInProgress = false;
         LocalRole = null;
+        Transport?.Dispose();
+        Transport = null;
         LobbyTelemetry?.NetworkError(error);
         LobbyTelemetry?.Dispose();
         LobbyTelemetry = null;
-        SetStatus($"FAILED: {error}\nNo response from {host}:{port}. Check host is listening, VPN/IP, and firewall.");
+        SetStatus($"FAILED: {error}\nNo response from {host}:{port}. Check host is listening, VPN/IP, and firewall.\nPress JOIN to retry.");
         GameAudio.NegativeClick();
+    }
+
+    void ResetJoinAttemptForRetry()
+    {
+        Transport?.Dispose();
+        Transport = null;
+        JoinInProgress = false;
+        LocalRole = null;
+        RemotePeers.Clear();
+        SlotClaimNonce.Clear(); // C1: drop stale slot claims on lobby reset
+        RefreshPrimaryRemotePeer();
+        LobbyTelemetry?.Dispose();
+        LobbyTelemetry = null;
     }
 
     void QueueLobbyAction(Action action)
@@ -688,13 +1318,19 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             GameAudio.NegativeClick();
             return;
         }
-        if (!Transport.IsConnected && AISlotCount() == 0)
+        if (Surface == ArenaMultiplayerLobbySurface.StarGladiator && RemotePeers.Count != 1)
+        {
+            SetStatus("Arena duel launch needs exactly one connected joiner.");
+            GameAudio.NegativeClick();
+            return;
+        }
+        if (!Transport.IsConnected && (Surface == ArenaMultiplayerLobbySurface.StarGladiator || AISlotCount() == 0))
         {
             SetStatus("Waiting for a client connection.");
             GameAudio.NegativeClick();
             return;
         }
-        if (EffectiveOpponentCountForStart() == 0)
+        if (Surface == ArenaMultiplayerLobbySurface.Authoritative4X && EffectiveOpponentCountForStart() == 0)
         {
             SetStatus("Open at least one human or AI slot before launch.");
             GameAudio.NegativeClick();
@@ -725,11 +1361,14 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         try
         {
             SavePersistentConfig();
-            start = Build4XStartMessage();
+            start = Surface == ArenaMultiplayerLobbySurface.Authoritative4X
+                ? Build4XStartMessage()
+                : BuildArenaStartMessage();
         }
         catch (Exception e)
         {
-            string startError = $"4X start failed: {e.Message}\n{Build4XStartDiagnostics()}";
+            string mode = Surface == ArenaMultiplayerLobbySurface.Authoritative4X ? "4X" : "Arena";
+            string startError = $"{mode} start failed: {e.Message}\n{BuildStartDiagnostics()}";
             foreach (int peer in RemotePeers.Keys.OrderBy(p => p))
                 Transport.Send(peer, new SessionErrorMessage { FromPeer = AuthorityPeerId, Error = startError });
             SetStatus(startError);
@@ -737,13 +1376,12 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             GameAudio.NegativeClick();
             return;
         }
-        LobbyTelemetry?.Event("LAUNCH_HOST",
-            $"mode=4x {Authoritative4XLobbyNetworkFlow.StartTelemetrySummary(start)}");
+        LobbyTelemetry?.Event("LAUNCH_HOST", StartTelemetrySummary(start));
         PendingHostStart = start;
         AcceptedStartPeers.Clear();
         foreach (int peer in RemotePeers.Keys.OrderBy(p => p))
             Transport.Send(peer, start);
-        if (RemotePeers.Count == 0)
+        if (RemotePeers.Count == 0 && start.IsAuthoritative4X)
         {
             LaunchVisible4X(Authoritative4XLiveRole.Host, start);
             return;
@@ -763,6 +1401,24 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                 Transport?.Send(h.PeerId, new SessionErrorMessage { FromPeer = AuthorityPeerId, Error = slotError });
                 return;
             }
+            // C1 HOST-AUTHORITATIVE OCCUPANCY (ruling C1). Distinct from the MODE check above: if this slot is
+            // already CLAIMED by a DIFFERENT joiner (a different ClientNonce), reject the newcomer with a DISTINCT
+            // "slot taken" error — NOT the mode error — and do NOT overwrite the incumbent's binding. The same
+            // joiner re-sending its hello (identical nonce) is idempotent (falls through to adopt/confirm). This
+            // makes the host the sole authority for slot assignment: no two roster records can share a SlotId
+            // (proof #7). Host-local + pre-sim, so no determinism surface; the resulting roster IS fingerprinted,
+            // so a peer that computed a divergent map still rejects at ValidateStartMessage (proof #4).
+            if (SlotClaimNonce.TryGetValue(h.PeerId, out string incumbent)
+                && incumbent.NotEmpty() && h.ClientNonce.NotEmpty()
+                && !string.Equals(incumbent, h.ClientNonce, StringComparison.Ordinal))
+            {
+                string takenError = $"Slot P{h.PeerId} is already taken by another player; choose a different slot.";
+                SetStatus(takenError);
+                LobbyTelemetry?.Event("HELLO_SLOT_TAKEN",
+                    $"peer={h.PeerId} incumbentNonce={incumbent} newNonce={h.ClientNonce}");
+                Transport?.Send(h.PeerId, new SessionErrorMessage { FromPeer = AuthorityPeerId, Error = takenError });
+                return;
+            }
             string error = h.ProtocolVersion != ArenaMultiplayerSettings.ProtocolVersion
                 ? $"Arena multiplayer protocol mismatch. Local {ArenaMultiplayerSettings.ProtocolVersion}, remote {h.ProtocolVersion}."
                 : ArenaMultiplayerPeerSignature.ValidateEnvironment(h.BuildHash, h.BuildSummary, $"peer {h.PeerId}");
@@ -774,11 +1430,16 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             }
             else
             {
+                // C1: record this joiner's claim so a LATER hello from a DIFFERENT joiner for the same slot is
+                // rejected as slot-taken (above), while this same joiner's re-sends stay idempotent. The host has
+                // now assigned/confirmed the slot; the joiner adopts it (its self-picked PeerId == the slot key).
+                if (h.ClientNonce.NotEmpty())
+                    SlotClaimNonce[h.PeerId] = h.ClientNonce;
                 LobbyPeer peer = EnsureRemotePeer(h.PeerId);
                 peer.PlayerName = h.PlayerName.NotEmpty() ? h.PlayerName : $"P{h.PeerId}";
                 peer.BuildHash = h.BuildHash ?? "";
                 peer.BuildSummary = h.BuildSummary ?? "";
-                LobbyTelemetry?.Event("HELLO", $"peer={h.PeerId} summary='{h.BuildSummary}'");
+                LobbyTelemetry?.Event("HELLO", $"peer={h.PeerId} summary='{h.BuildSummary}' nonce='{h.ClientNonce}'");
             }
         }
         if (message is SessionLobbyMessage lobby && IsRemotePlayerPeer(lobby.PeerId))
@@ -812,7 +1473,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     {
         if (PendingHostStart == null)
             return;
-        string expected = Authoritative4XLobbyNetworkFlow.StartFingerprint(PendingHostStart);
+        string expected = StartFingerprint(PendingHostStart);
         if (!string.Equals(ack.StartFingerprint, expected, StringComparison.Ordinal))
         {
             string error = $"P{ack.PeerId} acknowledged a different start payload.";
@@ -835,8 +1496,13 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         {
             SessionStartMessage start = PendingHostStart;
             PendingHostStart = null;
-            SetStatus("All clients accepted launch. Starting authoritative game.");
-            LaunchVisible4X(Authoritative4XLiveRole.Host, start);
+            SetStatus(start.IsAuthoritative4X
+                ? "All clients accepted launch. Starting authoritative game."
+                : "Client accepted launch. Starting Arena duel.");
+            if (start.IsAuthoritative4X)
+                LaunchVisible4X(Authoritative4XLiveRole.Host, start);
+            else
+                LaunchVisibleArena(ArenaMultiplayerRole.Host, start);
         }
         else
         {
@@ -847,11 +1513,19 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     void OnJoinMessage(LockstepMessage message)
     {
         if (message is SessionLobbyMessage lobby && lobby.PeerId == HostPlayerPeerId4X)
-            RemotePeer = LobbyPeer.From(lobby, "Host");
+        {
+            LobbyPeer host = LobbyPeer.From(lobby, "Host");
+            RemotePeer = host;
+            // Mirror the host into RemotePeers so the HOST slot card (peer id HostPlayerPeerId4X) renders the
+            // host's own fielded fleet on the JOINER's screen. The host broadcasts its lobby to the joiner after
+            // every change (SendLocalLobby's host->join path), so this stays live as the host re-picks its fleet.
+            RemotePeers[HostPlayerPeerId4X] = host;
+            RefreshPrimaryRemotePeer();
+        }
         if (message is SessionStartMessage start)
         {
-            string fingerprint = Authoritative4XLobbyNetworkFlow.StartFingerprint(start);
-            string error = Validate4XStart(start);
+            string fingerprint = StartFingerprint(start);
+            string error = start.IsAuthoritative4X ? Validate4XStart(start) : ValidateArenaStart(start);
             if (error.NotEmpty())
             {
                 SetStatus(error);
@@ -866,8 +1540,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                 });
                 return;
             }
-            LobbyTelemetry?.Event("START_RECEIVED",
-                $"mode=4x {Authoritative4XLobbyNetworkFlow.StartTelemetrySummary(start)}");
+            LobbyTelemetry?.Event("START_RECEIVED", StartTelemetrySummary(start));
             Transport?.Send(AuthorityPeerId, new SessionStartAckMessage
             {
                 FromPeer = JoinPeerSlot,
@@ -875,7 +1548,10 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                 Accepted = true,
                 StartFingerprint = fingerprint,
             });
-            Pending4XStart = start;
+            if (start.IsAuthoritative4X)
+                Pending4XStart = start;
+            else
+                PendingArenaStart = start;
         }
         if (message is SessionErrorMessage e)
         {
@@ -895,6 +1571,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     {
         if (Transport == null || LocalRole == null)
             return;
+        ApplyLocalSelection();
         int peerId = LocalRole == ArenaMultiplayerRole.Host
             ? HostPlayerPeerId4X
             : JoinPeerSlot;
@@ -910,6 +1587,14 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             RacePreference = LocalPeer.RacePreference,
             LoadoutTrait = LocalPeer.LoadoutTrait,
             TraitOptions = LocalPeer.TraitOptions,
+            // Custom-fleet slice: peers must key on the @arena/<hash> WIRE names (which they resolve against the
+            // exchanged design table), not the local display names. No-op mapping when nothing custom is fielded.
+            Fleet = ArenaMultiplayerSettings.EncodeFleet(ToWireFleetNames(LocalPeer.FleetDesignNames)),
+            // Phase A (SETUP_PHASE_EXEC_PLAN §3): publish this peer's OWN full canonical design-table payloads
+            // alongside its wire names, so a JOINER's customs reach the host over the lobby sync. The host folds
+            // every remote peer's table into JoinDesignTable in BuildArenaSettings. "" when nothing custom is
+            // fielded / EnableArenaCustomFleet is off — today's name-only behaviour unchanged.
+            DesignTable = BuildLocalDesignTable(),
             BuildHash = ArenaMultiplayerPeerSignature.EnvironmentHash(),
             BuildSummary = ArenaMultiplayerPeerSignature.EnvironmentSummary(),
         };
@@ -941,13 +1626,132 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         ScreenManager.GoToScreen(generated.AuthorityUniverse, clear3DObjects: true);
     }
 
-    ArenaMultiplayerSettings BuildHostSettings()
+    void LaunchVisibleArena(ArenaMultiplayerRole role, SessionStartMessage start)
+    {
+        if (Transport == null)
+            return;
+        string error = ArenaMultiplayerSettings.ValidateStartMessage(start, out ArenaMultiplayerSettings settings);
+        if (error.NotEmpty())
+        {
+            SetStatus(error);
+            LobbyTelemetry?.Event("ARENA_LAUNCH_REJECT", error);
+            return;
+        }
+
+        Launching = true;
+        PendingHostStart = null;
+        AcceptedStartPeers.Clear();
+        // Custom-fleet slice: hand off the sandbox scratch set to the fight screen. The fight's ArmMultiplayerLive
+        // re-registers the SAME @arena/<hash> designs from the authoritative start-message tables (idempotent,
+        // content-hash dedup), so unregister the lobby's tracking here for a clean single-owner handoff — the
+        // reconstruction is driven by the exchanged tables, not the lobby's in-memory objects.
+        TeardownSandboxScratchSet();
+        TcpLockstepTransport transport = Transport;
+        Transport = null;
+
+        // The lobby transport speaks the lobby peer-id space (authority=1, joiner=slot N) but the
+        // fight-screen lockstep driver speaks lockstepHost=0 / hostPlayer=1 / joinPlayer=2.
+        // Without explicit routes every fight-side send to an unmapped peer id is parked in
+        // PendingRemote forever — the 2026-07-05 live arm-handshake deadlock (both peers "waiting
+        // to arm" with ZERO deliveries either way, on the SAME transport that had just carried the
+        // lobby handshake fine). Route the fight peer ids over the live lobby connections.
+        if (role == ArenaMultiplayerRole.Host)
+        {
+            int joinerSlot = RemotePeers.Count > 0 ? RemotePeers.Keys.Min() : DefaultJoinPeerSlot;
+            transport.MapPeerRoute(ArenaMultiplayerSession.JoinPlayerPeerId, joinerSlot);
+        }
+        else
+        {
+            transport.MapPeerRoute(LockstepHost.HostPeerId, AuthorityPeerId);
+        }
+
+        LobbyTelemetry?.Event("LAUNCH_VISIBLE_ARENA",
+            $"role={role} {StartTelemetrySummary(start)}");
+        // Dispose lobby telemetry BEFORE arming the live session: both write the
+        // shared last-session log, and the lobby's open handle collides with the
+        // fight screen's telemetry (mirrors the 4X launch path ordering).
+        LobbyTelemetry?.Dispose();
+        LobbyTelemetry = null;
+
+        ArenaFightScreen screen = ArenaFightScreen.Create(settings.HostRacePreference,
+            settings.MatchSeed, startAtHub: false, opponentPreference: settings.JoinRacePreference);
+        // §2.3: when the host requested the in-arena PRE-MATCH SETUP phase (design/import/formation INSIDE the
+        // arena), enter it BEFORE arming so ArmMultiplayerLive registers the setup-exchange observer and LoadContent
+        // does not spawn until the setup->fight rebuild completes. Flag-gated; a no-op otherwise (spawns as today).
+        // The opt-in is host-authored and rides the authoritative start's ruleset (SetupPhase), so BOTH the host
+        // (its own pill folded into the start it built) AND the JOIN (which never set the local pill) enter setup
+        // in lockstep — a divergent value already rejected at ValidateStartMessage's SettingsHash check above.
+        bool enterSetup = (RequestArenaSetupPhase || settings.Ruleset?.SetupPhase == true)
+            && GlobalStats.Defaults.EnableArenaCustomFleet;
+        if (enterSetup)
+            screen.EnterMultiplayerSetupPhase();
+        screen.ArmMultiplayerLive(new ArenaMultiplayerLiveSession(role, transport, settings));
+        if (LaunchScreenOverrideForHeadless != null)
+            LaunchScreenOverrideForHeadless(screen);
+        else
+            ScreenManager.GoToScreen(screen, clear3DObjects: true);
+    }
+
+    // Arena P1: author the RulesetV0 from the host's mode selection. Career defaults preserve the
+    // existing behavior (career-locked roster, unlimited budget); Sandbox rides the all-content
+    // roster + optional budget cap. Content fingerprint folds in the active mod set.
+    ArenaMultiplayerRuleset BuildArenaRuleset()
         => new()
         {
-            MatchSeed = ParseSeed(),
-            RngSeed = (uint)ParseSeed() ^ 0xA12EA000u,
+            Version = 0,
+            Mode = ArenaMode,
+            BudgetModel = ArenaMode == ArenaMatchMode.Sandbox ? ArenaBudgetModel : ArenaBudgetModel.Unlimited,
+            BudgetCredits = ArenaMode == ArenaMatchMode.Sandbox && ArenaBudgetModel == ArenaBudgetModel.Cap
+                ? ArenaBudgetCredits : 0,
+            RosterSource = ArenaMode == ArenaMatchMode.Career
+                ? ArenaRosterSource.CareerLocked : ArenaRosterSource.AllContent,
+            CountdownSeconds = 3,
+            MaxMatchSeconds = ArenaMaxMatchSeconds,
+            MaxFleetShipsPerSide = 32,
+            WagerCredits = 0,
+            RosterCommitmentHash = "",
+            ContentFingerprint = GlobalStats.HasMod ? $"{GlobalStats.ModName} {GlobalStats.ModVersion}" : "Vanilla",
+            // Host-authored in-arena SETUP-phase opt-in: carried in the authoritative start so the JOIN peer
+            // enters setup too (LaunchVisibleArena reads it back from the received ruleset). Flag-gated.
+            SetupPhase = RequestArenaSetupPhase && GlobalStats.Defaults.EnableArenaCustomFleet,
+            // Host-authored persistent-ammo toggle. Default true == today's regen; false == finite magazine.
+            UnlimitedAmmo = RequestUnlimitedAmmo,
+        };
+
+    ArenaMultiplayerSettings BuildArenaSettings()
+    {
+        ApplyLocalSelection();
+        int seed = ParseSeed();
+        // Custom-fleet slice: the LOCAL peer's fleet is display-named; rewrite to @arena/<hash> wire names for the
+        // exchange kernel (no-op when nothing custom is fielded). The REMOTE peer's fleet already arrives as wire
+        // names over the lobby sync (BroadcastLobbyState maps them there).
+        string[] localDisplay = LocalPeer.FleetDesignNames;
+        string[] localWire = ToWireFleetNames(localDisplay);
+        string[] hostFleet = ArenaFleetOrFallback(localWire,
+            seed, LocalPeer.LoadoutTrait, hostSide: true);
+        string[] joinFleet = ArenaFleetOrFallback(RemotePeer.FleetDesignNames,
+            seed, RemotePeer.LoadoutTrait, hostSide: false);
+        ArenaMultiplayerRuleset ruleset = BuildArenaRuleset();
+        // Custom-fleet exchange: carry BOTH sides' full design payloads so either peer reconstructs the other's
+        // customs. localDesignTable is THIS peer's own scratch customs; remoteDesignTable is the UNION of every
+        // remote peer's published table (Phase A: the joiner's customs now reach the host over the lobby sync —
+        // SETUP_PHASE_EXEC_PLAN §3, the confirmed gap). Empty when nothing custom is fielded / the flag is off.
+        // The far peer's RegisterPeerDesignTables consumes both tables bidirectionally before ValidateStartMessage.
+        string localDesignTable = BuildLocalDesignTable();
+        string remoteDesignTable = UnionRemoteDesignTables();
+        // Fallback COMPOSER (advisor ruling A/B): zero-offset column bundles from the resolved wire names — the
+        // proven deterministic formation. Real FleetDesignScreen/ShipDesignScreen-from-lobby are DEFERRED.
+        return new ArenaMultiplayerSettings
+        {
+            MatchSeed = seed,
+            RngSeed = (uint)seed ^ 0xA12EA000u,
             InputDelay = 3,
-            MaxTurns = LiveAuthoritative4XMaxTurns,
+            // MaxTurns is a HIGH ABSOLUTE SAFETY CEILING (custom-fleet program §5.2); the REAL cap derives from
+            // Ruleset.MaxMatchSeconds via EffectiveMaxTurns = min(MaxTurns, MaxMatchSeconds*60). ParseTurns() is now
+            // DefaultTurns=36000 (10 min), and we take the max with the selected duration so the ceiling is ALWAYS
+            // comfortably above the host's choice — MaxMatchSeconds is what actually binds, for any offered length.
+            // Both values are already folded into the fingerprint (MaxTurns directly, MaxMatchSeconds via Ruleset).
+            MaxTurns = Math.Max(ParseTurns(), ruleset.MaxMatchSeconds * 60 + 60),
             CommandEveryTurns = 1,
             HostRacePreference = LocalPeer.RacePreference,
             JoinRacePreference = RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference,
@@ -956,7 +1760,23 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             JoinLoadoutTrait = RemotePeer.LoadoutTrait == "-" ? ArenaStartArchetype.Wingmates.ToString() : RemotePeer.LoadoutTrait,
             GameSpeed = ParseSpeed(),
             StartPaused = StartPaused,
-        };
+            HostFleetDesignNames = hostFleet,
+            JoinFleetDesignNames = joinFleet,
+            Ruleset = ruleset,
+            HostFleetBundle = ArenaFleetBundle.Encode(ArenaFleetBundle.FromDesignNames(hostFleet)),
+            JoinFleetBundle = ArenaFleetBundle.Encode(ArenaFleetBundle.FromDesignNames(joinFleet)),
+            // HostDesignTable = the HOST peer's customs; JoinDesignTable = the JOINER(s)' customs. When THIS peer
+            // is the host, its own scratch set is the host table and the union of remote tables is the join table
+            // (Phase A: the joiner's payloads now arrive over the lobby sync). When THIS peer is a joiner, its own
+            // scratch set is the join table and the remote (host) table is the host table. RegisterPeerDesignTables
+            // registers both bidirectionally, so both peers reconstruct every custom before ValidateStartMessage.
+            HostDesignTable = LocalRole == ArenaMultiplayerRole.Host ? localDesignTable : remoteDesignTable,
+            JoinDesignTable = LocalRole == ArenaMultiplayerRole.Host ? remoteDesignTable : localDesignTable,
+        }.WithResolvedFleets();
+    }
+
+    SessionStartMessage BuildArenaStartMessage()
+        => BuildArenaSettings().ToStartMessage(AuthorityPeerId);
 
     SessionStartMessage Build4XStartMessage()
     {
@@ -1045,6 +1865,12 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         return error.NotEmpty() ? $"{error}\n{Build4XStartDiagnostics(start)}" : "";
     }
 
+    string ValidateArenaStart(SessionStartMessage start)
+    {
+        string error = ArenaMultiplayerSettings.ValidateStartMessage(start, out _);
+        return error.NotEmpty() ? $"{error}\n{BuildArenaStartDiagnostics(start)}" : "";
+    }
+
     Authoritative4XGeneratedGameStart CreateGenerated4XGame(SessionStartMessage start)
         => LobbyFlow.CreateGeneratedGame(start);
 
@@ -1063,6 +1889,42 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                + $"host='{hostRace}' join='{joinRace}' turns={turnText}";
     }
 
+    string BuildArenaStartDiagnostics(SessionStartMessage start = null)
+    {
+        ArenaMultiplayerSettings settings = start != null
+            ? ArenaMultiplayerSettings.FromStartMessage(start).WithResolvedFleets()
+            : BuildArenaSettings();
+        string settingsHash = start?.SettingsHash ?? settings.SettingsHash;
+        return $"seed={settings.MatchSeed} rng={settings.RngSeed} settings={settingsHash} "
+               + $"hostFleet=[{string.Join(",", settings.HostFleetDesignNames)}] "
+               + $"joinFleet=[{string.Join(",", settings.JoinFleetDesignNames)}] "
+               + $"turns={settings.MaxTurns}";
+    }
+
+    string BuildStartDiagnostics(SessionStartMessage start = null)
+        => start?.IsAuthoritative4X == true || (start == null && Surface == ArenaMultiplayerLobbySurface.Authoritative4X)
+            ? Build4XStartDiagnostics(start)
+            : BuildArenaStartDiagnostics(start);
+
+    static string StartFingerprint(SessionStartMessage start)
+        => start?.IsAuthoritative4X == true
+            ? Authoritative4XLobbyNetworkFlow.StartFingerprint(start)
+            : ArenaMultiplayerSettings.StartFingerprint(start);
+
+    static string StartTelemetrySummary(SessionStartMessage start)
+    {
+        if (start?.IsAuthoritative4X == true)
+            return $"mode=4x {Authoritative4XLobbyNetworkFlow.StartTelemetrySummary(start)}";
+        if (start == null)
+            return "mode=arena startFingerprint=";
+        return $"mode=arena startFingerprint={ArenaMultiplayerSettings.StartFingerprint(start)} "
+               + $"protocol={start.ProtocolVersion} settingsHash={start.SettingsHash} "
+               + $"matchSeed={start.MatchSeed} rngSeed={start.RngSeed} turns={start.MaxTurns} "
+               + $"speed={start.GameSpeed:0.###} startPaused={start.StartPaused} "
+               + $"hostFleet=[{string.Join(",", ArenaMultiplayerSettings.DecodeFleet(start.HostFleet))}] "
+               + $"joinFleet=[{string.Join(",", ArenaMultiplayerSettings.DecodeFleet(start.JoinFleet))}]";
+    }
+
     int PlayerCountForStart()
         => HumanPlayerCountForStart();
 
@@ -1078,7 +1940,15 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                 return;
             if (transport.LastError.NotEmpty())
             {
-                SetStatus("NETWORK: " + transport.LastError);
+                string lastError = transport.LastError;
+                if (LocalRole == ArenaMultiplayerRole.Join)
+                {
+                    ResetJoinAttemptForRetry();
+                    SetStatus("NETWORK: " + lastError + "\nPress JOIN to retry.");
+                    return;
+                }
+
+                SetStatus("NETWORK: " + lastError);
                 LobbyTelemetry?.NetworkError(transport.LastError);
             }
             if (LocalRole == ArenaMultiplayerRole.Host && transport.IsConnected && CurrentStatus.StartsWith("HOST listening", StringComparison.Ordinal))
@@ -1092,6 +1962,12 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             SessionStartMessage start = Pending4XStart;
             Pending4XStart = null;
             LaunchVisible4X(Authoritative4XLiveRole.Client, start);
+        }
+        if (PendingArenaStart != null)
+        {
+            SessionStartMessage start = PendingArenaStart;
+            PendingArenaStart = null;
+            LaunchVisibleArena(ArenaMultiplayerRole.Join, start);
         }
     }
 
@@ -1351,7 +2227,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             return;
         }
         JoinPeerSlot++;
-        if (JoinPeerSlot > LastJoinPeerSlot)
+        if (JoinPeerSlot > HighestVisibleSlot)
             JoinPeerSlot = DefaultJoinPeerSlot;
         SavePersistentConfig();
         SetStatus($"Join slot set to P{JoinPeerSlot}. Each remote player needs a unique slot.");
@@ -1363,8 +2239,76 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         LocalPeer.RacePreference = RaceOptions.Length == 0 ? "United" : RaceOptions[RaceIndex.Clamped(0, RaceOptions.Length - 1)];
         LocalPeer.LoadoutTrait = ArenaStartArchetype.Wingmates.ToString();
         LocalPeer.TraitOptions = NormalizeTraitSelection(LocalPeer.TraitOptions);
+        // A manual pick from the fleet picker overrides auto-derivation so the player's choice sticks
+        // through the (frequent) ApplyLocalSelection re-derives.
+        LocalPeer.FleetDesignNames = ManualFleetDesignNames != null && ManualFleetDesignNames.Length > 0
+            ? ManualFleetDesignNames
+            : CurrentArenaFleetDesignNames(LocalPeer.LoadoutTrait, hostSide: LocalRole != ArenaMultiplayerRole.Join);
         RegularSettings.HostRacePreference = LocalPeer.RacePreference;
         RegularSettings.JoinRacePreference = RemotePeer.RacePreference == "-" ? "" : RemotePeer.RacePreference;
+    }
+
+    string[] CurrentArenaFleetDesignNames(string loadoutTrait, bool hostSide)
+    {
+        string[] careerFleet = CareerFleetDesignNames();
+        if (careerFleet.Length > 0)
+            return careerFleet;
+        int seed = ParseSeed();
+        return StartingRosterFleetDesignNames(loadoutTrait,
+            (ulong)(uint)seed ^ (hostSide ? 0xA12E_0001ul : 0xA12E_0002ul));
+    }
+
+    static string[] ArenaFleetOrFallback(string[] names, int seed, string loadoutTrait, bool hostSide)
+    {
+        string[] normalized = LegalArenaFleetNames(names);
+        if (normalized.Length > 0)
+            return normalized;
+        return StartingRosterFleetDesignNames(loadoutTrait,
+            (ulong)(uint)seed ^ (hostSide ? 0xA12E_0001ul : 0xA12E_0002ul));
+    }
+
+    static string[] CareerFleetDesignNames()
+    {
+        try
+        {
+            ArenaCareer career = CareerManager.LoadSlot(ArenaFightScreen.ActiveCareerSlot);
+            if (career == null || career.IsFresh)
+                career = CareerManager.Load(ArenaFightScreen.CareerSavePath);
+            if (career == null || career.IsFresh)
+                return Array.Empty<string>();
+            return LegalArenaFleetNames(career.FieldedFleetVessels()
+                .Select(v => v?.DesignName)
+                .ToArray());
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    static string[] StartingRosterFleetDesignNames(string loadoutTrait, ulong seed)
+        => LegalArenaFleetNames(CareerManager.StartingRosterDesigns(
+                ArenaMultiplayerSettings.ParseLoadoutTrait(loadoutTrait), seed)
+            .Select(d => d?.Name)
+            .ToArray());
+
+    static string[] LegalArenaFleetNames(string[] names)
+        => ArenaMultiplayerSettings.NormalizeFleet(names)
+            .Where(IsLegalArenaFleetDesignName)
+            .ToArray();
+
+    static bool IsLegalArenaFleetDesignName(string name)
+        => name.NotEmpty()
+           && ResourceManager.Ships.GetDesign(name, out IShipDesign design)
+           && ArenaFightScreen.IsLegalCombatCraft(design);
+
+    static string FleetSummary(string[] names)
+    {
+        string[] fleet = ArenaMultiplayerSettings.NormalizeFleet(names);
+        if (fleet.Length == 0)
+            return "Fleet: default";
+        string first = fleet[0];
+        return fleet.Length == 1 ? $"Fleet: {first}" : $"Fleet: {first} +{fleet.Length - 1}";
     }
 
     void InitializeSlotModesFromOpponentCount(int opponents)
@@ -1519,12 +2463,24 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
     bool SlotAcceptsHuman(int peerId)
         => IsRemotePlayerPeer(peerId) && SlotMode(peerId) == ArenaMultiplayerSlotMode.Human;
 
+    // Which lobby slot the LOCAL player occupies: the host authors from HostPlayerPeerId4X, a joiner from its
+    // chosen JoinPeerSlot. Slot cards render the LOCAL player's own LobbyPeer at this id and every OTHER occupied
+    // combatant from RemotePeers — so on the joiner's screen the HOST card shows the host's fleet (ingested over
+    // the wire into RemotePeers[HostPlayerPeerId4X]) while the joiner's OWN card shows its own fleet.
+    int LocalSlotPeerId => LocalRole == ArenaMultiplayerRole.Join ? JoinPeerSlot : HostPlayerPeerId4X;
+
+    bool IsLocalSlot(int peerId) => peerId == LocalSlotPeerId;
+
     string SlotTitle(int peerId)
-        => peerId == HostPlayerPeerId4X ? "P2 HOST" : $"P{peerId} {SlotModeLabel(SlotMode(peerId))}";
+    {
+        if (peerId == HostPlayerPeerId4X)
+            return "P2 HOST";
+        return $"P{peerId} {SlotModeLabel(SlotMode(peerId))}";
+    }
 
     string SlotStatus(int peerId)
     {
-        if (peerId == HostPlayerPeerId4X)
+        if (IsLocalSlot(peerId))
             return $"{LocalPeer.PlayerName} | {(LocalPeer.Ready ? "READY" : "NOT READY")}";
         if (RemotePeers.TryGetValue(peerId, out LobbyPeer peer))
             return $"{peer.PlayerName} | {(peer.Ready ? "READY" : "NOT READY")}";
@@ -1538,10 +2494,18 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
 
     string SlotDetail(int peerId)
     {
-        if (peerId == HostPlayerPeerId4X)
+        if (IsLocalSlot(peerId))
+        {
+            if (Surface == ArenaMultiplayerLobbySurface.StarGladiator)
+                return FleetSummary(LocalPeer.FleetDesignNames);
             return $"{LocalPeer.RacePreference} | {TraitLabel(LocalPeer.TraitOptions)}";
+        }
         if (RemotePeers.TryGetValue(peerId, out LobbyPeer peer))
+        {
+            if (Surface == ArenaMultiplayerLobbySurface.StarGladiator)
+                return FleetSummary(peer.FleetDesignNames);
             return $"{peer.RacePreference} | {TraitLabel(peer.TraitOptions)}";
+        }
         return SlotMode(peerId) switch
         {
             ArenaMultiplayerSlotMode.AI => "Counts as one AI opponent",
@@ -1678,7 +2642,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             MatchSeed = 0x5EED,
             RngSeed = 0xA12EA000u,
             InputDelay = 3,
-            MaxTurns = turns.Clamped(30, 2000),
+            MaxTurns = turns.Clamped(30, MaxTurnsCeiling),
             CommandEveryTurns = 1,
             HostRacePreference = "United",
             JoinRacePreference = "",
@@ -1688,7 +2652,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         };
 
     public static ArenaMultiplayerRunResult RunLocalSelfTestForHeadless(int turns = 90)
-        => ArenaMultiplayerSession.RunInProcess(CreateDefaultSettings(turns));
+        => ArenaMultiplayerSession.RunLoopbackTcpSelfTest(CreateDefaultSettings(turns));
 
     public static Authoritative4XLobbySelfTestResult RunAuthoritative4XSelfTestForHeadless(int turns = 90)
     {
@@ -1699,7 +2663,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             {
                 Passed = false,
                 FailureReason = "setup: authoritative 4X self-test needs two playable major races.",
-                MaxTurns = turns.Clamped(30, 2000),
+                MaxTurns = turns.Clamped(30, MaxTurnsCeiling),
             };
         }
 
@@ -1724,7 +2688,7 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
             races[1], Array.Empty<string>(), ArenaMultiplayerSettings.ProtocolVersion,
             ArenaMultiplayerPeerSignature.EnvironmentHash(),
             ArenaMultiplayerPeerSignature.EnvironmentSummary(),
-            maxTurns: turns.Clamped(30, 2000));
+            maxTurns: turns.Clamped(30, MaxTurnsCeiling));
     }
 
     static string[] AvailableSelfTestRacePreferences()
@@ -2017,6 +2981,10 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         Transport = null;
         LobbyTelemetry?.Dispose();
         LobbyTelemetry = null;
+        // Custom-fleet slice: teardown any transient sandbox designs so the process-global design table returns
+        // to its pre-lobby state (advisor risk 1: a leaked @arena/<hash> registration is a slow correctness/memory
+        // hazard). On launch-to-fight this already ran in LaunchVisibleArena; this covers back-out / abandon.
+        TeardownSandboxScratchSet();
         base.ExitScreen();
         ScreenManager.GoToScreen(new Ship_Game.GameScreens.MainMenu.MainMenuScreen(), clear3DObjects: true);
     }
@@ -2036,6 +3004,11 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
         public string RacePreference = "";
         public string LoadoutTrait = "";
         public string TraitOptions = "";
+        public string[] FleetDesignNames = Array.Empty<string>();
+        // Phase A (SETUP_PHASE_EXEC_PLAN §3): the peer's full canonical design-table payloads (the @arena/<hash>
+        // customs its FleetDesignNames reference). Carried so a remote JOINER's customs reach the host, which
+        // unions every remote peer's table into JoinDesignTable. "" when the peer fielded nothing custom.
+        public string DesignTable = "";
         public string BuildHash = "";
         public string BuildSummary = "";
 
@@ -2051,6 +3024,8 @@ public sealed class ArenaMultiplayerLobbyScreen : GameScreen
                 RacePreference = message.RacePreference.NotEmpty() ? message.RacePreference : "United",
                 LoadoutTrait = ArenaMultiplayerSettings.NormalizeLoadoutTrait(message.LoadoutTrait),
                 TraitOptions = message.TraitOptions ?? "",
+                FleetDesignNames = ArenaMultiplayerSettings.DecodeFleet(message.Fleet),
+                DesignTable = message.DesignTable ?? "",
                 BuildHash = message.BuildHash ?? "",
                 BuildSummary = message.BuildSummary ?? "",
             };

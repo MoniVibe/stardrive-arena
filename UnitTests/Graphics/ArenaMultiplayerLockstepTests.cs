@@ -109,8 +109,12 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
             // Arena-mode + fleet controls are the arena face.
             Assert.IsTrue(lobby.Find("arena_mp_arena_mode", out UIButton arenaModeButton),
                 "The arena lobby must expose an ARENA Career/Sandbox control.");
-            Assert.IsTrue(lobby.Find("arena_mp_set_fleet", out UIButton _),
+            Assert.IsTrue(lobby.Find("arena_mp_set_fleet", out UIButton fleetSetupButton),
                 "The arena lobby must expose a SET FLEET picker.");
+            StringAssert.Contains(fleetSetupButton.DynamicText(), "FLEET SETUP",
+                "The lobby control must clearly identify the fleet-setup flow.");
+            StringAssert.Contains(fleetSetupButton.Tooltip.Text, "Each player controls their own fleet",
+                "The fleet-setup tooltip must explain that host and joiner choose independently.");
 
             // CycleArenaMode flips Career <-> Sandbox (and toggles the sandbox-only BUDGET pill).
             Assert.AreEqual(ArenaMatchMode.Career, lobby.ArenaModeForHeadless,
@@ -3612,6 +3616,33 @@ public class ArenaMultiplayerLockstepTests : StarDriveTest
                 "On the JOIN screen, the host slot must show the HOST's fleet (broadcast to the joiner).");
             Assert.AreEqual(joinFleetSummary, joinLobby.SlotDetailForHeadless(joinSlot),
                 "On the JOIN screen, the join slot must show the joiner's OWN fleet.");
+
+            // The lobby cards are not enough: prove the authoritative start and the actual spawned rosters use
+            // those selections on BOTH peers. This closes the last gap between "button changed a label" and
+            // "the chosen ships entered the fight".
+            foreach ((string who, ArenaFightScreen fight) in new[]
+                     {
+                         ("host", hostFight),
+                         ("join", joinFight),
+                     })
+            {
+                ArenaMultiplayerSettings settings = fight.MultiplayerLiveSettingsForHeadless;
+                Assert.IsNotNull(settings, $"The {who} fight must retain its authoritative lobby settings.");
+                CollectionAssert.AreEqual(new[] { hostShip }, settings.HostFleetDesignNames,
+                    $"The {who} start must carry the host's selected fleet.");
+                CollectionAssert.AreEqual(new[] { joinShip }, settings.JoinFleetDesignNames,
+                    $"The {who} start must carry the joiner's selected fleet.");
+
+                ArenaMultiplayerShipSnapshot snapshot = fight.MultiplayerSnapshot();
+                CollectionAssert.AreEqual(new[] { hostShip }, snapshot.PlayerFleetDesigns,
+                    $"The {who} simulation must spawn the selected host fleet.");
+                CollectionAssert.AreEqual(new[] { joinShip }, snapshot.EnemyFleetDesigns,
+                    $"The {who} simulation must spawn the selected join fleet.");
+                Assert.AreEqual(1, snapshot.PlayerShipIds.Length,
+                    $"The {who} simulation must spawn one host ship for the one-design selection.");
+                Assert.AreEqual(1, snapshot.EnemyShipIds.Length,
+                    $"The {who} simulation must spawn one join ship for the one-design selection.");
+            }
         }
         finally
         {
